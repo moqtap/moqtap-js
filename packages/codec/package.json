@@ -1,0 +1,84 @@
+{
+  "name": "@moqtap/codec",
+  "version": "0.1.0",
+  "description": "MoQT wire-format codec and session state machine — multi-draft, zero dependencies",
+  "type": "module",
+  "license": "MIT",
+  "author": "moqtap",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moqtap/moqtap-js.git",
+    "directory": "packages/codec"
+  },
+  "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/codec",
+  "bugs": "https://github.com/moqtap/moqtap-js/issues",
+  "keywords": [
+    "moqt",
+    "moq",
+    "media-over-quic",
+    "webtransport",
+    "codec",
+    "protocol",
+    "ietf",
+    "quic",
+    "streaming",
+    "real-time"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./draft7": {
+      "bun": "./src/drafts/draft07/index.ts",
+      "types": "./dist/draft7.d.ts",
+      "import": "./dist/draft7.mjs",
+      "require": "./dist/draft7.cjs"
+    },
+    "./draft14": {
+      "bun": "./src/drafts/draft14/index.ts",
+      "types": "./dist/draft14.d.ts",
+      "import": "./dist/draft14.mjs",
+      "require": "./dist/draft14.cjs"
+    },
+    "./session": {
+      "bun": "./src/session.ts",
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.mjs",
+      "require": "./dist/session.cjs"
+    },
+    "./draft7/session": {
+      "bun": "./src/drafts/draft07/session.ts",
+      "types": "./dist/draft7-session.d.ts",
+      "import": "./dist/draft7-session.mjs",
+      "require": "./dist/draft7-session.cjs"
+    },
+    "./draft14/session": {
+      "bun": "./src/drafts/draft14/session.ts",
+      "types": "./dist/draft14-session.d.ts",
+      "import": "./dist/draft14-session.mjs",
+      "require": "./dist/draft14-session.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/__tests__"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@moqtap/test-vectors": "^0.1.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  }
+}

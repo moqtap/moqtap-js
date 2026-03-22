@@ -1,0 +1,61 @@
+{
+  "name": "@moqtap/trace",
+  "version": "0.1.0",
+  "description": "MoQT session trace format — record, serialize, and analyze .moqtrace files",
+  "type": "module",
+  "license": "MIT",
+  "author": "moqtap",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moqtap/moqtap-js.git",
+    "directory": "packages/trace"
+  },
+  "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/trace",
+  "bugs": "https://github.com/moqtap/moqtap-js/issues",
+  "keywords": [
+    "moqt",
+    "moq",
+    "media-over-quic",
+    "webtransport",
+    "trace",
+    "protocol",
+    "cbor",
+    "quic",
+    "streaming",
+    "devtools"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/__tests__",
+    "SPEC.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@moqtap/codec": "^0.1.0"
+  },
+  "dependencies": {
+    "cbor-x": "^1.6.0"
+  },
+  "devDependencies": {
+    "@moqtap/codec": "workspace:*",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  }
+}
