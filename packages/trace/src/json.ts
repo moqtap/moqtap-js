@@ -1,4 +1,4 @@
-import type { Trace } from './types.js';
+import type { Trace } from "./types.js";
 
 /**
  * Serialize a trace to human-readable JSON.
@@ -9,13 +9,19 @@ import type { Trace } from './types.js';
  * (`writeMoqtrace` / `readMoqtrace`).
  */
 export function traceToJSON(trace: Trace): string {
-  return JSON.stringify(trace, (_key, value) => {
-    if (typeof value === 'bigint') {
-      return `0x${value.toString(16)}`;
-    }
-    if (value instanceof Uint8Array) {
-      return Array.from(value).map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-    return value;
-  }, 2);
+  return JSON.stringify(
+    trace,
+    (_key, value) => {
+      if (typeof value === "bigint") {
+        return `0x${value.toString(16)}`;
+      }
+      if (value instanceof Uint8Array) {
+        return Array.from(value)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      }
+      return value;
+    },
+    2,
+  );
 }

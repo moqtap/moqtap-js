@@ -38,7 +38,7 @@ export const MESSAGE_TYPE_IDS = {
 export const MESSAGE_ID_TO_TYPE = new Map<bigint, string>();
 for (const [name, id] of Object.entries(MESSAGE_TYPE_IDS)) {
   // For duplicate IDs, control stream messages take priority in the reverse map
-  if (!MESSAGE_ID_TO_TYPE.has(id) || name !== 'stream_header_subgroup') {
+  if (!MESSAGE_ID_TO_TYPE.has(id) || name !== "stream_header_subgroup") {
     MESSAGE_ID_TO_TYPE.set(id, name);
   }
 }

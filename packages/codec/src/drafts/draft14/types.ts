@@ -3,9 +3,9 @@
 
 // Parameter types for draft-14
 export interface UnknownParam {
-  readonly id: string;       // e.g. "0x21"
+  readonly id: string; // e.g. "0x21"
   readonly length: number;
-  readonly raw_hex: string;  // e.g. "deadbeef"
+  readonly raw_hex: string; // e.g. "deadbeef"
 }
 
 export interface Draft14Params {
@@ -17,36 +17,36 @@ export interface Draft14Params {
 
 // Draft-14 message type tag union
 export type Draft14MessageType =
-  | 'client_setup'
-  | 'server_setup'
-  | 'subscribe'
-  | 'subscribe_ok'
-  | 'subscribe_update'
-  | 'subscribe_error'
-  | 'unsubscribe'
-  | 'publish'
-  | 'publish_ok'
-  | 'publish_error'
-  | 'publish_done'
-  | 'publish_namespace'
-  | 'publish_namespace_ok'
-  | 'publish_namespace_error'
-  | 'publish_namespace_done'
-  | 'publish_namespace_cancel'
-  | 'subscribe_namespace'
-  | 'subscribe_namespace_ok'
-  | 'subscribe_namespace_error'
-  | 'unsubscribe_namespace'
-  | 'fetch'
-  | 'fetch_ok'
-  | 'fetch_error'
-  | 'fetch_cancel'
-  | 'track_status'
-  | 'track_status_ok'
-  | 'track_status_error'
-  | 'goaway'
-  | 'max_request_id'
-  | 'requests_blocked';
+  | "client_setup"
+  | "server_setup"
+  | "subscribe"
+  | "subscribe_ok"
+  | "subscribe_update"
+  | "subscribe_error"
+  | "unsubscribe"
+  | "publish"
+  | "publish_ok"
+  | "publish_error"
+  | "publish_done"
+  | "publish_namespace"
+  | "publish_namespace_ok"
+  | "publish_namespace_error"
+  | "publish_namespace_done"
+  | "publish_namespace_cancel"
+  | "subscribe_namespace"
+  | "subscribe_namespace_ok"
+  | "subscribe_namespace_error"
+  | "unsubscribe_namespace"
+  | "fetch"
+  | "fetch_ok"
+  | "fetch_error"
+  | "fetch_cancel"
+  | "track_status"
+  | "track_status_ok"
+  | "track_status_error"
+  | "goaway"
+  | "max_request_id"
+  | "requests_blocked";
 
 // Base
 export interface Draft14BaseMessage {
@@ -55,20 +55,20 @@ export interface Draft14BaseMessage {
 
 // Setup
 export interface Draft14ClientSetup extends Draft14BaseMessage {
-  readonly type: 'client_setup';
+  readonly type: "client_setup";
   readonly supported_versions: bigint[];
   readonly parameters: Draft14Params;
 }
 
 export interface Draft14ServerSetup extends Draft14BaseMessage {
-  readonly type: 'server_setup';
+  readonly type: "server_setup";
   readonly selected_version: bigint;
   readonly parameters: Draft14Params;
 }
 
 // Subscribe
 export interface Draft14Subscribe extends Draft14BaseMessage {
-  readonly type: 'subscribe';
+  readonly type: "subscribe";
   readonly request_id: bigint;
   readonly track_namespace: string[];
   readonly track_name: string;
@@ -83,7 +83,7 @@ export interface Draft14Subscribe extends Draft14BaseMessage {
 }
 
 export interface Draft14SubscribeOk extends Draft14BaseMessage {
-  readonly type: 'subscribe_ok';
+  readonly type: "subscribe_ok";
   readonly request_id: bigint;
   readonly track_alias: bigint;
   readonly expires: bigint;
@@ -95,7 +95,7 @@ export interface Draft14SubscribeOk extends Draft14BaseMessage {
 }
 
 export interface Draft14SubscribeUpdate extends Draft14BaseMessage {
-  readonly type: 'subscribe_update';
+  readonly type: "subscribe_update";
   readonly request_id: bigint;
   readonly start_group: bigint;
   readonly start_object: bigint;
@@ -106,20 +106,20 @@ export interface Draft14SubscribeUpdate extends Draft14BaseMessage {
 }
 
 export interface Draft14SubscribeError extends Draft14BaseMessage {
-  readonly type: 'subscribe_error';
+  readonly type: "subscribe_error";
   readonly request_id: bigint;
   readonly error_code: bigint;
   readonly reason_phrase: string;
 }
 
 export interface Draft14Unsubscribe extends Draft14BaseMessage {
-  readonly type: 'unsubscribe';
+  readonly type: "unsubscribe";
   readonly request_id: bigint;
 }
 
 // Publish
 export interface Draft14Publish extends Draft14BaseMessage {
-  readonly type: 'publish';
+  readonly type: "publish";
   readonly request_id: bigint;
   readonly track_namespace: string[];
   readonly track_name: string;
@@ -128,7 +128,7 @@ export interface Draft14Publish extends Draft14BaseMessage {
 }
 
 export interface Draft14PublishOk extends Draft14BaseMessage {
-  readonly type: 'publish_ok';
+  readonly type: "publish_ok";
   readonly request_id: bigint;
   readonly track_alias: bigint;
   readonly forward: bigint;
@@ -136,14 +136,14 @@ export interface Draft14PublishOk extends Draft14BaseMessage {
 }
 
 export interface Draft14PublishError extends Draft14BaseMessage {
-  readonly type: 'publish_error';
+  readonly type: "publish_error";
   readonly request_id: bigint;
   readonly error_code: bigint;
   readonly reason_phrase: string;
 }
 
 export interface Draft14PublishDone extends Draft14BaseMessage {
-  readonly type: 'publish_done';
+  readonly type: "publish_done";
   readonly request_id: bigint;
   readonly status_code: bigint;
   readonly reason_phrase: string;
@@ -151,65 +151,65 @@ export interface Draft14PublishDone extends Draft14BaseMessage {
 
 // Namespace
 export interface Draft14PublishNamespace extends Draft14BaseMessage {
-  readonly type: 'publish_namespace';
+  readonly type: "publish_namespace";
   readonly request_id: bigint;
   readonly track_namespace: string[];
   readonly parameters: Draft14Params;
 }
 
 export interface Draft14PublishNamespaceOk extends Draft14BaseMessage {
-  readonly type: 'publish_namespace_ok';
+  readonly type: "publish_namespace_ok";
   readonly request_id: bigint;
   readonly parameters: Draft14Params;
 }
 
 export interface Draft14PublishNamespaceError extends Draft14BaseMessage {
-  readonly type: 'publish_namespace_error';
+  readonly type: "publish_namespace_error";
   readonly request_id: bigint;
   readonly error_code: bigint;
   readonly reason_phrase: string;
 }
 
 export interface Draft14PublishNamespaceDone extends Draft14BaseMessage {
-  readonly type: 'publish_namespace_done';
+  readonly type: "publish_namespace_done";
   readonly request_id: bigint;
   readonly status_code: bigint;
   readonly reason_phrase: string;
 }
 
 export interface Draft14PublishNamespaceCancel extends Draft14BaseMessage {
-  readonly type: 'publish_namespace_cancel';
+  readonly type: "publish_namespace_cancel";
   readonly request_id: bigint;
 }
 
 export interface Draft14SubscribeNamespace extends Draft14BaseMessage {
-  readonly type: 'subscribe_namespace';
+  readonly type: "subscribe_namespace";
   readonly request_id: bigint;
   readonly namespace_prefix: string[];
   readonly parameters: Draft14Params;
 }
 
 export interface Draft14SubscribeNamespaceOk extends Draft14BaseMessage {
-  readonly type: 'subscribe_namespace_ok';
+  readonly type: "subscribe_namespace_ok";
   readonly request_id: bigint;
   readonly parameters: Draft14Params;
 }
 
 export interface Draft14SubscribeNamespaceError extends Draft14BaseMessage {
-  readonly type: 'subscribe_namespace_error';
+  readonly type: "subscribe_namespace_error";
   readonly request_id: bigint;
   readonly error_code: bigint;
   readonly reason_phrase: string;
 }
 
 export interface Draft14UnsubscribeNamespace extends Draft14BaseMessage {
-  readonly type: 'unsubscribe_namespace';
+  readonly type: "unsubscribe_namespace";
   readonly request_id: bigint;
 }
 
 // Fetch
 export interface Draft14Fetch extends Draft14BaseMessage {
-  readonly type: 'fetch';
+  readonly type: "fetch";
   readonly request_id: bigint;
   readonly track_namespace: string[];
   readonly track_name: string;
@@ -220,7 +220,7 @@ export interface Draft14Fetch extends Draft14BaseMessage {
 }
 
 export interface Draft14FetchOk extends Draft14BaseMessage {
-  readonly type: 'fetch_ok';
+  readonly type: "fetch_ok";
   readonly request_id: bigint;
   readonly track_alias: bigint;
   readonly end_of_track: bigint;
@@ -228,20 +228,20 @@ export interface Draft14FetchOk extends Draft14BaseMessage {
 }
 
 export interface Draft14FetchError extends Draft14BaseMessage {
-  readonly type: 'fetch_error';
+  readonly type: "fetch_error";
   readonly request_id: bigint;
   readonly error_code: bigint;
   readonly reason_phrase: string;
 }
 
 export interface Draft14FetchCancel extends Draft14BaseMessage {
-  readonly type: 'fetch_cancel';
+  readonly type: "fetch_cancel";
   readonly request_id: bigint;
 }
 
 // Track Status
 export interface Draft14TrackStatus extends Draft14BaseMessage {
-  readonly type: 'track_status';
+  readonly type: "track_status";
   readonly request_id: bigint;
   readonly track_namespace: string[];
   readonly track_name: string;
@@ -249,7 +249,7 @@ export interface Draft14TrackStatus extends Draft14BaseMessage {
 }
 
 export interface Draft14TrackStatusOk extends Draft14BaseMessage {
-  readonly type: 'track_status_ok';
+  readonly type: "track_status_ok";
   readonly request_id: bigint;
   readonly status_code: bigint;
   readonly largest_group?: bigint;
@@ -258,7 +258,7 @@ export interface Draft14TrackStatusOk extends Draft14BaseMessage {
 }
 
 export interface Draft14TrackStatusError extends Draft14BaseMessage {
-  readonly type: 'track_status_error';
+  readonly type: "track_status_error";
   readonly request_id: bigint;
   readonly error_code: bigint;
   readonly reason_phrase: string;
@@ -266,17 +266,17 @@ export interface Draft14TrackStatusError extends Draft14BaseMessage {
 
 // Session Control
 export interface Draft14GoAway extends Draft14BaseMessage {
-  readonly type: 'goaway';
+  readonly type: "goaway";
   readonly new_session_uri: string;
 }
 
 export interface Draft14MaxRequestId extends Draft14BaseMessage {
-  readonly type: 'max_request_id';
+  readonly type: "max_request_id";
   readonly request_id: bigint;
 }
 
 export interface Draft14RequestsBlocked extends Draft14BaseMessage {
-  readonly type: 'requests_blocked';
+  readonly type: "requests_blocked";
   readonly request_id: bigint;
 }
 
@@ -315,14 +315,14 @@ export type Draft14Message =
 
 // Data stream types (no type+length wrapper)
 export interface ObjectPayload {
-  readonly type: 'object';
+  readonly type: "object";
   readonly objectId: bigint;
   readonly payloadLength: number;
   readonly payload: Uint8Array;
 }
 
 export interface SubgroupStream {
-  readonly type: 'subgroup';
+  readonly type: "subgroup";
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly subgroupId: bigint;
@@ -331,7 +331,7 @@ export interface SubgroupStream {
 }
 
 export interface DatagramObject {
-  readonly type: 'datagram';
+  readonly type: "datagram";
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly objectId: bigint;
@@ -340,7 +340,7 @@ export interface DatagramObject {
 }
 
 export interface FetchStream {
-  readonly type: 'fetch';
+  readonly type: "fetch";
   readonly subscribeRequestId: bigint;
   readonly objects: ObjectPayload[];
 }
@@ -349,7 +349,7 @@ export type Draft14DataStream = SubgroupStream | DatagramObject | FetchStream;
 
 // Streaming data stream decoder types
 export interface SubgroupStreamHeader {
-  readonly type: 'subgroup_header';
+  readonly type: "subgroup_header";
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly subgroupId: bigint;
@@ -357,7 +357,7 @@ export interface SubgroupStreamHeader {
 }
 
 export interface FetchStreamHeader {
-  readonly type: 'fetch_header';
+  readonly type: "fetch_header";
   readonly subscribeRequestId: bigint;
 }
 

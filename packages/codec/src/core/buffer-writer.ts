@@ -40,7 +40,7 @@ export class BufferWriter {
 
   writeVarInt(value: number | bigint): void {
     const v = BigInt(value);
-    if (v < 0n) throw new Error('VarInt value must be non-negative');
+    if (v < 0n) throw new Error("VarInt value must be non-negative");
 
     if (v < 0x40n) {
       this.ensureCapacity(1);
@@ -59,7 +59,7 @@ export class BufferWriter {
       this.view.setBigUint64(this.pos, v | 0xc000000000000000n);
       this.pos += 8;
     } else {
-      throw new Error('VarInt value exceeds 62-bit range');
+      throw new Error("VarInt value exceeds 62-bit range");
     }
   }
 

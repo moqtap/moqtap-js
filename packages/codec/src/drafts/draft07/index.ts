@@ -1,59 +1,58 @@
-export { encodeVarInt, decodeVarInt } from './varint.js';
-export { createDraft07Codec } from './codec.js';
-export { encodeParameters, decodeParameters } from './parameters.js';
-export { MESSAGE_TYPE_IDS, MESSAGE_ID_TO_TYPE } from './messages.js';
-export {
-  CONTROL_MESSAGES,
-  DATA_MESSAGES,
-  CLIENT_ONLY_MESSAGES,
-  SERVER_ONLY_MESSAGES,
-  getLegalOutgoing,
-  getLegalIncoming,
-} from './rules.js';
-
 // Re-export types consumers need
 export type {
-  MoqtMessage,
-  DecodeResult,
-  DecodeErrorCode,
-  ClientSetup,
-  ServerSetup,
-  Subscribe,
-  SubscribeOk,
-  SubscribeError,
-  SubscribeDone,
-  Unsubscribe,
   Announce,
-  AnnounceOk,
-  AnnounceError,
   AnnounceCancel,
-  Unannounce,
-  TrackStatusRequest,
-  TrackStatus,
-  ObjectStream,
+  AnnounceError,
+  AnnounceOk,
+  ClientSetup,
+  DecodeErrorCode,
+  DecodeResult,
+  Fetch,
+  FetchCancel,
+  FetchError,
+  FetchOk,
+  FilterType,
+  GoAway,
+  GroupOrderValue,
+  MaxSubscribeId,
+  MoqtMessage,
+  MoqtMessageType,
   ObjectDatagram,
-  StreamHeaderTrack,
+  ObjectStream,
+  ServerSetup,
   StreamHeaderGroup,
   StreamHeaderSubgroup,
-  GoAway,
+  StreamHeaderTrack,
+  Subscribe,
   SubscribeAnnounces,
-  SubscribeAnnouncesOk,
   SubscribeAnnouncesError,
-  Fetch,
-  FetchOk,
-  FetchError,
-  FetchCancel,
+  SubscribeAnnouncesOk,
+  SubscribeDone,
+  SubscribeError,
+  SubscribeOk,
   SubscribeUpdate,
+  TrackStatus,
+  TrackStatusRequest,
+  Unannounce,
+  Unsubscribe,
   UnsubscribeAnnounces,
-  MaxSubscribeId,
-  FilterType,
-  GroupOrderValue,
-  MoqtMessageType,
-} from '../../core/types.js';
-export { DecodeError } from '../../core/types.js';
+} from "../../core/types.js";
+export { DecodeError } from "../../core/types.js";
+export { createDraft07Codec } from "./codec.js";
+export { MESSAGE_ID_TO_TYPE, MESSAGE_TYPE_IDS } from "./messages.js";
+export { decodeParameters, encodeParameters } from "./parameters.js";
+export {
+  CLIENT_ONLY_MESSAGES,
+  CONTROL_MESSAGES,
+  DATA_MESSAGES,
+  getLegalIncoming,
+  getLegalOutgoing,
+  SERVER_ONLY_MESSAGES,
+} from "./rules.js";
+export { decodeVarInt, encodeVarInt } from "./varint.js";
 
-import { createDraft07Codec } from './codec.js';
-import type { DecodeResult, MoqtMessage } from '../../core/types.js';
+import type { DecodeResult, MoqtMessage } from "../../core/types.js";
+import { createDraft07Codec } from "./codec.js";
 
 const defaultCodec = createDraft07Codec();
 

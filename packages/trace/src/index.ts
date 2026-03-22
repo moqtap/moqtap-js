@@ -1,33 +1,32 @@
 // Binary .moqtrace format
+
+export type { MoqtraceWriter } from "./binary.js";
 export {
-  writeMoqtrace,
+  createMoqtraceWriter,
   readMoqtrace,
   readMoqtraceHeader,
-  createMoqtraceWriter,
-} from './binary.js';
-export type { MoqtraceWriter } from './binary.js';
-
-// Recorder
-export { createRecorder } from './recorder.js';
-export type { TraceRecorder } from './recorder.js';
-
+  writeMoqtrace,
+} from "./binary.js";
 // JSON (convenience)
-export { traceToJSON } from './json.js';
+export { traceToJSON } from "./json.js";
+export type { TraceRecorder } from "./recorder.js";
+// Recorder
+export { createRecorder } from "./recorder.js";
 
 // Types
 export type {
-  Trace,
-  TraceHeader,
-  TraceEvent,
+  AnnotationEvent,
   ControlMessageEvent,
-  StreamOpenedEvent,
-  StreamClosedEvent,
+  DetailLevel,
   ObjectHeaderEvent,
   ObjectPayloadEvent,
-  StateChangeEvent,
-  TraceErrorEvent,
-  AnnotationEvent,
-  DetailLevel,
   Perspective,
   RecorderOptions,
-} from './types.js';
+  StateChangeEvent,
+  StreamClosedEvent,
+  StreamOpenedEvent,
+  Trace,
+  TraceErrorEvent,
+  TraceEvent,
+  TraceHeader,
+} from "./types.js";

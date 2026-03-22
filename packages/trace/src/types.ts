@@ -1,5 +1,5 @@
-export type DetailLevel = 'control' | 'headers' | 'headers+sizes' | 'headers+data' | 'full';
-export type Perspective = 'client' | 'server' | 'observer';
+export type DetailLevel = "control" | "headers" | "headers+sizes" | "headers+data" | "full";
+export type Perspective = "client" | "server" | "observer";
 
 export interface TraceHeader {
   readonly protocol: string;
@@ -20,7 +20,7 @@ interface BaseEvent {
 }
 
 export interface ControlMessageEvent extends BaseEvent {
-  readonly type: 'control';
+  readonly type: "control";
   readonly direction: 0 | 1;
   readonly messageType: number;
   readonly message: Record<string, unknown>;
@@ -28,20 +28,20 @@ export interface ControlMessageEvent extends BaseEvent {
 }
 
 export interface StreamOpenedEvent extends BaseEvent {
-  readonly type: 'stream-opened';
+  readonly type: "stream-opened";
   readonly streamId: bigint;
   readonly direction: 0 | 1;
   readonly streamType: 0 | 1 | 2;
 }
 
 export interface StreamClosedEvent extends BaseEvent {
-  readonly type: 'stream-closed';
+  readonly type: "stream-closed";
   readonly streamId: bigint;
   readonly errorCode: number;
 }
 
 export interface ObjectHeaderEvent extends BaseEvent {
-  readonly type: 'object-header';
+  readonly type: "object-header";
   readonly streamId: bigint;
   readonly groupId: bigint;
   readonly objectId: bigint;
@@ -50,7 +50,7 @@ export interface ObjectHeaderEvent extends BaseEvent {
 }
 
 export interface ObjectPayloadEvent extends BaseEvent {
-  readonly type: 'object-payload';
+  readonly type: "object-payload";
   readonly streamId: bigint;
   readonly groupId: bigint;
   readonly objectId: bigint;
@@ -59,19 +59,19 @@ export interface ObjectPayloadEvent extends BaseEvent {
 }
 
 export interface StateChangeEvent extends BaseEvent {
-  readonly type: 'state-change';
+  readonly type: "state-change";
   readonly from: string;
   readonly to: string;
 }
 
 export interface TraceErrorEvent extends BaseEvent {
-  readonly type: 'error';
+  readonly type: "error";
   readonly errorCode: number;
   readonly reason: string;
 }
 
 export interface AnnotationEvent extends BaseEvent {
-  readonly type: 'annotation';
+  readonly type: "annotation";
   readonly label: string;
   readonly data: unknown;
 }

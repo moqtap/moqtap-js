@@ -1,7 +1,4 @@
 {
   "files": [],
-  "references": [
-    { "path": "packages/codec" },
-    { "path": "packages/trace" }
-  ]
+  "references": [{ "path": "packages/codec" }, { "path": "packages/trace" }]
 }

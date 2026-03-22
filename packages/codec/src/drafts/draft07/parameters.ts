@@ -1,5 +1,5 @@
-import { BufferReader } from '../../core/buffer-reader.js';
-import { BufferWriter } from '../../core/buffer-writer.js';
+import type { BufferReader } from "../../core/buffer-reader.js";
+import { BufferWriter } from "../../core/buffer-writer.js";
 
 export function encodeParameters(params: Map<bigint, Uint8Array>): Uint8Array {
   const writer = new BufferWriter();

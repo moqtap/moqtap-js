@@ -2,12 +2,12 @@
  * Test helpers for converting between test vector JSON and codec types.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { createRequire } from 'node:module';
+import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 
 const require_ = createRequire(import.meta.url);
-const VECTORS_BASE = dirname(require_.resolve('@moqtap/test-vectors/manifest'));
+const VECTORS_BASE = dirname(require_.resolve("@moqtap/test-vectors/manifest"));
 
 /**
  * Load all test vector JSON files from a directory inside @moqtap/test-vectors.
@@ -16,11 +16,11 @@ const VECTORS_BASE = dirname(require_.resolve('@moqtap/test-vectors/manifest'));
 export function loadVectorDir(subpath: string): { file: string; data: TestVectorFile }[] {
   const dir = resolve(VECTORS_BASE, subpath);
   return readdirSync(dir)
-    .filter((f: string) => f.endsWith('.json'))
+    .filter((f: string) => f.endsWith(".json"))
     .sort()
     .map((f: string) => ({
       file: f,
-      data: JSON.parse(readFileSync(resolve(dir, f), 'utf-8')) as TestVectorFile,
+      data: JSON.parse(readFileSync(resolve(dir, f), "utf-8")) as TestVectorFile,
     }));
 }
 
@@ -35,9 +35,9 @@ export function hexToBytes(hex: string): Uint8Array {
 
 /** Convert a Uint8Array to a hex string */
 export function bytesToHex(bytes: Uint8Array): string {
-  let hex = '';
+  let hex = "";
   for (let i = 0; i < bytes.byteLength; i++) {
-    hex += (bytes[i] as number).toString(16).padStart(2, '0');
+    hex += (bytes[i] as number).toString(16).padStart(2, "0");
   }
   return hex;
 }
@@ -69,21 +69,21 @@ export function normalizeDecoded(msg: Record<string, unknown>): Record<string, u
 
   for (const [key, value] of Object.entries(msg)) {
     // Skip the internal `type` discriminator — test vectors don't include it
-    if (key === 'type') continue;
+    if (key === "type") continue;
 
-    if (typeof value === 'bigint') {
+    if (typeof value === "bigint") {
       result[key] = value.toString();
     } else if (Array.isArray(value)) {
-      result[key] = value.map(item => {
-        if (typeof item === 'bigint') return item.toString();
-        if (typeof item === 'object' && item !== null) {
+      result[key] = value.map((item) => {
+        if (typeof item === "bigint") return item.toString();
+        if (typeof item === "object" && item !== null) {
           return normalizeDecoded(item as Record<string, unknown>);
         }
         return item;
       });
     } else if (value instanceof Uint8Array) {
       result[key] = bytesToHex(value);
-    } else if (typeof value === 'object' && value !== null) {
+    } else if (typeof value === "object" && value !== null) {
       result[key] = normalizeDecoded(value as Record<string, unknown>);
     } else {
       result[key] = value;
@@ -102,15 +102,15 @@ export function normalizeParams(params: Record<string, unknown>): Record<string,
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(params)) {
-    if (typeof value === 'bigint') {
+    if (typeof value === "bigint") {
       result[key] = value.toString();
-    } else if (key === 'unknown' && Array.isArray(value)) {
-      result[key] = value.map(u => {
+    } else if (key === "unknown" && Array.isArray(value)) {
+      result[key] = value.map((u) => {
         const item = u as Record<string, unknown>;
         return {
-          id: item['id'],
-          length: String(item['length']),
-          raw_hex: item['raw_hex'],
+          id: item.id,
+          length: String(item.length),
+          raw_hex: item.raw_hex,
         };
       });
     } else {

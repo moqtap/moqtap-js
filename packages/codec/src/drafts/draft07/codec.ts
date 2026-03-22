@@ -1,46 +1,46 @@
-import { BufferReader } from '../../core/buffer-reader.js';
-import { BufferWriter } from '../../core/buffer-writer.js';
-import { DecodeError } from '../../core/types.js';
+import { BufferReader } from "../../core/buffer-reader.js";
+import { BufferWriter } from "../../core/buffer-writer.js";
 import type {
+  Announce,
+  AnnounceCancel,
+  AnnounceError,
+  AnnounceOk,
+  ClientSetup,
   Codec,
   DecodeResult,
+  Fetch,
+  FetchCancel,
+  FetchError,
+  FetchOk,
   FilterType,
+  GoAway,
   GroupOrderValue,
+  MaxSubscribeId,
   MoqtMessage,
   MoqtMessageType,
-  ClientSetup,
-  ServerSetup,
-  Subscribe,
-  SubscribeOk,
-  SubscribeError,
-  SubscribeDone,
-  SubscribeUpdate,
-  Unsubscribe,
-  Announce,
-  AnnounceOk,
-  AnnounceError,
-  AnnounceCancel,
-  Unannounce,
-  TrackStatusRequest,
-  TrackStatus,
-  ObjectStream,
   ObjectDatagram,
-  StreamHeaderTrack,
+  ObjectStream,
+  ServerSetup,
   StreamHeaderGroup,
   StreamHeaderSubgroup,
-  GoAway,
+  StreamHeaderTrack,
+  Subscribe,
   SubscribeAnnounces,
-  SubscribeAnnouncesOk,
   SubscribeAnnouncesError,
+  SubscribeAnnouncesOk,
+  SubscribeDone,
+  SubscribeError,
+  SubscribeOk,
+  SubscribeUpdate,
+  TrackStatus,
+  TrackStatusRequest,
+  Unannounce,
+  Unsubscribe,
   UnsubscribeAnnounces,
-  MaxSubscribeId,
-  Fetch,
-  FetchOk,
-  FetchError,
-  FetchCancel,
-} from '../../core/types.js';
-import { MESSAGE_TYPE_IDS } from './messages.js';
-import { encodeVarInt, decodeVarInt } from './varint.js';
+} from "../../core/types.js";
+import { DecodeError } from "../../core/types.js";
+import { MESSAGE_TYPE_IDS } from "./messages.js";
+import { decodeVarInt, encodeVarInt } from "./varint.js";
 
 // --- FilterType mapping ---
 
@@ -52,10 +52,10 @@ const FILTER_TYPE_TO_WIRE: Record<FilterType, bigint> = {
 };
 
 const WIRE_TO_FILTER_TYPE: Map<bigint, FilterType> = new Map([
-  [1n, 'latest_group'],
-  [2n, 'latest_object'],
-  [3n, 'absolute_start'],
-  [4n, 'absolute_range'],
+  [1n, "latest_group"],
+  [2n, "latest_object"],
+  [3n, "absolute_start"],
+  [4n, "absolute_range"],
 ]);
 
 // --- GroupOrderValue mapping ---
@@ -67,9 +67,9 @@ const GROUP_ORDER_TO_WIRE: Record<GroupOrderValue, number> = {
 };
 
 const WIRE_TO_GROUP_ORDER: Map<number, GroupOrderValue> = new Map([
-  [0, 'original'],
-  [1, 'ascending'],
-  [2, 'descending'],
+  [0, "original"],
+  [1, "ascending"],
+  [2, "descending"],
 ]);
 
 // --- Encode helpers ---
@@ -83,7 +83,11 @@ function readGroupOrder(reader: BufferReader): GroupOrderValue {
   const wire = reader.readUint8();
   const value = WIRE_TO_GROUP_ORDER.get(wire);
   if (value === undefined) {
-    throw new DecodeError('CONSTRAINT_VIOLATION', `Invalid group order value: ${wire}`, reader.offset - 1);
+    throw new DecodeError(
+      "CONSTRAINT_VIOLATION",
+      `Invalid group order value: ${wire}`,
+      reader.offset - 1,
+    );
   }
   return value;
 }
@@ -101,7 +105,11 @@ const DATA_STREAM_TYPE_IDS: ReadonlySet<bigint> = new Set([
 // --- Control message type (excludes data stream types) ---
 type ControlMessageType = Exclude<
   MoqtMessageType,
-  'object_stream' | 'object_datagram' | 'stream_header_track' | 'stream_header_group' | 'stream_header_subgroup'
+  | "object_stream"
+  | "object_datagram"
+  | "stream_header_track"
+  | "stream_header_group"
+  | "stream_header_subgroup"
 >;
 
 // --- Encode functions for each message type (payload only, no type ID) ---
@@ -127,11 +135,11 @@ function encodeSubscribe(msg: Subscribe, writer: BufferWriter): void {
   writer.writeUint8(msg.subscriberPriority);
   writeGroupOrder(writer, msg.groupOrder);
   writer.writeVarInt(FILTER_TYPE_TO_WIRE[msg.filterType]);
-  if (msg.filterType === 'absolute_start' || msg.filterType === 'absolute_range') {
+  if (msg.filterType === "absolute_start" || msg.filterType === "absolute_range") {
     writer.writeVarInt(msg.startGroup!);
     writer.writeVarInt(msg.startObject!);
   }
-  if (msg.filterType === 'absolute_range') {
+  if (msg.filterType === "absolute_range") {
     writer.writeVarInt(msg.endGroup!);
     writer.writeVarInt(msg.endObject!);
   }
@@ -356,7 +364,10 @@ const controlEncoders: Record<ControlMessageType, (msg: never, writer: BufferWri
   goaway: encodeGoAway as (msg: never, writer: BufferWriter) => void,
   subscribe_announces: encodeSubscribeAnnounces as (msg: never, writer: BufferWriter) => void,
   subscribe_announces_ok: encodeSubscribeAnnouncesOk as (msg: never, writer: BufferWriter) => void,
-  subscribe_announces_error: encodeSubscribeAnnouncesError as (msg: never, writer: BufferWriter) => void,
+  subscribe_announces_error: encodeSubscribeAnnouncesError as (
+    msg: never,
+    writer: BufferWriter,
+  ) => void,
   unsubscribe_announces: encodeUnsubscribeAnnounces as (msg: never, writer: BufferWriter) => void,
   max_subscribe_id: encodeMaxSubscribeId as (msg: never, writer: BufferWriter) => void,
   fetch: encodeFetch as (msg: never, writer: BufferWriter) => void,
@@ -366,7 +377,9 @@ const controlEncoders: Record<ControlMessageType, (msg: never, writer: BufferWri
 };
 
 // Data stream encoders (write type + fields directly, no length framing)
-const dataStreamEncoders: Partial<Record<MoqtMessageType, (msg: never, writer: BufferWriter) => void>> = {
+const dataStreamEncoders: Partial<
+  Record<MoqtMessageType, (msg: never, writer: BufferWriter) => void>
+> = {
   object_stream: encodeObjectStream as (msg: never, writer: BufferWriter) => void,
   object_datagram: encodeObjectDatagram as (msg: never, writer: BufferWriter) => void,
   stream_header_track: encodeStreamHeaderTrack as (msg: never, writer: BufferWriter) => void,
@@ -379,20 +392,24 @@ const dataStreamEncoders: Partial<Record<MoqtMessageType, (msg: never, writer: B
 function decodeClientSetup(reader: BufferReader): ClientSetup {
   const numVersions = reader.readVarInt();
   if (numVersions === 0n) {
-    throw new DecodeError('CONSTRAINT_VIOLATION', 'supported_versions must not be empty', reader.offset);
+    throw new DecodeError(
+      "CONSTRAINT_VIOLATION",
+      "supported_versions must not be empty",
+      reader.offset,
+    );
   }
   const supportedVersions: bigint[] = [];
   for (let i = 0n; i < numVersions; i++) {
     supportedVersions.push(reader.readVarInt());
   }
   const parameters = reader.readParameters();
-  return { type: 'client_setup', supportedVersions, parameters };
+  return { type: "client_setup", supportedVersions, parameters };
 }
 
 function decodeServerSetup(reader: BufferReader): ServerSetup {
   const selectedVersion = reader.readVarInt();
   const parameters = reader.readParameters();
-  return { type: 'server_setup', selectedVersion, parameters };
+  return { type: "server_setup", selectedVersion, parameters };
 }
 
 function decodeSubscribe(reader: BufferReader): Subscribe {
@@ -405,11 +422,15 @@ function decodeSubscribe(reader: BufferReader): Subscribe {
   const filterTypeWire = reader.readVarInt();
   const filterType = WIRE_TO_FILTER_TYPE.get(filterTypeWire);
   if (filterType === undefined) {
-    throw new DecodeError('CONSTRAINT_VIOLATION', `Invalid filter type: ${filterTypeWire}`, reader.offset);
+    throw new DecodeError(
+      "CONSTRAINT_VIOLATION",
+      `Invalid filter type: ${filterTypeWire}`,
+      reader.offset,
+    );
   }
 
   const base = {
-    type: 'subscribe' as const,
+    type: "subscribe" as const,
     subscribeId,
     trackAlias,
     trackNamespace,
@@ -420,13 +441,13 @@ function decodeSubscribe(reader: BufferReader): Subscribe {
     parameters: undefined as unknown as Map<bigint, Uint8Array>,
   };
 
-  if (filterType === 'absolute_start') {
+  if (filterType === "absolute_start") {
     const startGroup = reader.readVarInt();
     const startObject = reader.readVarInt();
     base.parameters = reader.readParameters();
     return { ...base, startGroup, startObject };
   }
-  if (filterType === 'absolute_range') {
+  if (filterType === "absolute_range") {
     const startGroup = reader.readVarInt();
     const startObject = reader.readVarInt();
     const endGroup = reader.readVarInt();
@@ -450,11 +471,27 @@ function decodeSubscribeOk(reader: BufferReader): SubscribeOk {
     const largestGroupId = reader.readVarInt();
     const largestObjectId = reader.readVarInt();
     const parameters = reader.readParameters();
-    return { type: 'subscribe_ok' as const, subscribeId, expires, groupOrder, contentExists, largestGroupId, largestObjectId, parameters };
+    return {
+      type: "subscribe_ok" as const,
+      subscribeId,
+      expires,
+      groupOrder,
+      contentExists,
+      largestGroupId,
+      largestObjectId,
+      parameters,
+    };
   }
 
   const parameters = reader.readParameters();
-  return { type: 'subscribe_ok' as const, subscribeId, expires, groupOrder, contentExists, parameters };
+  return {
+    type: "subscribe_ok" as const,
+    subscribeId,
+    expires,
+    groupOrder,
+    contentExists,
+    parameters,
+  };
 }
 
 function decodeSubscribeError(reader: BufferReader): SubscribeError {
@@ -462,7 +499,7 @@ function decodeSubscribeError(reader: BufferReader): SubscribeError {
   const errorCode = reader.readVarInt();
   const reasonPhrase = reader.readString();
   const trackAlias = reader.readVarInt();
-  return { type: 'subscribe_error', subscribeId, errorCode, reasonPhrase, trackAlias };
+  return { type: "subscribe_error", subscribeId, errorCode, reasonPhrase, trackAlias };
 }
 
 function decodeSubscribeDone(reader: BufferReader): SubscribeDone {
@@ -475,10 +512,18 @@ function decodeSubscribeDone(reader: BufferReader): SubscribeDone {
   if (contentExists) {
     const finalGroupId = reader.readVarInt();
     const finalObjectId = reader.readVarInt();
-    return { type: 'subscribe_done' as const, subscribeId, statusCode, reasonPhrase, contentExists, finalGroupId, finalObjectId };
+    return {
+      type: "subscribe_done" as const,
+      subscribeId,
+      statusCode,
+      reasonPhrase,
+      contentExists,
+      finalGroupId,
+      finalObjectId,
+    };
   }
 
-  return { type: 'subscribe_done' as const, subscribeId, statusCode, reasonPhrase, contentExists };
+  return { type: "subscribe_done" as const, subscribeId, statusCode, reasonPhrase, contentExists };
 }
 
 function decodeSubscribeUpdate(reader: BufferReader): SubscribeUpdate {
@@ -489,48 +534,57 @@ function decodeSubscribeUpdate(reader: BufferReader): SubscribeUpdate {
   const endObject = reader.readVarInt();
   const subscriberPriority = reader.readUint8();
   const parameters = reader.readParameters();
-  return { type: 'subscribe_update', subscribeId, startGroup, startObject, endGroup, endObject, subscriberPriority, parameters };
+  return {
+    type: "subscribe_update",
+    subscribeId,
+    startGroup,
+    startObject,
+    endGroup,
+    endObject,
+    subscriberPriority,
+    parameters,
+  };
 }
 
 function decodeUnsubscribe(reader: BufferReader): Unsubscribe {
   const subscribeId = reader.readVarInt();
-  return { type: 'unsubscribe', subscribeId };
+  return { type: "unsubscribe", subscribeId };
 }
 
 function decodeAnnounce(reader: BufferReader): Announce {
   const trackNamespace = reader.readTuple();
   const parameters = reader.readParameters();
-  return { type: 'announce', trackNamespace, parameters };
+  return { type: "announce", trackNamespace, parameters };
 }
 
 function decodeAnnounceOk(reader: BufferReader): AnnounceOk {
   const trackNamespace = reader.readTuple();
-  return { type: 'announce_ok', trackNamespace };
+  return { type: "announce_ok", trackNamespace };
 }
 
 function decodeAnnounceError(reader: BufferReader): AnnounceError {
   const trackNamespace = reader.readTuple();
   const errorCode = reader.readVarInt();
   const reasonPhrase = reader.readString();
-  return { type: 'announce_error', trackNamespace, errorCode, reasonPhrase };
+  return { type: "announce_error", trackNamespace, errorCode, reasonPhrase };
 }
 
 function decodeAnnounceCancel(reader: BufferReader): AnnounceCancel {
   const trackNamespace = reader.readTuple();
   const errorCode = reader.readVarInt();
   const reasonPhrase = reader.readString();
-  return { type: 'announce_cancel', trackNamespace, errorCode, reasonPhrase };
+  return { type: "announce_cancel", trackNamespace, errorCode, reasonPhrase };
 }
 
 function decodeUnannounce(reader: BufferReader): Unannounce {
   const trackNamespace = reader.readTuple();
-  return { type: 'unannounce', trackNamespace };
+  return { type: "unannounce", trackNamespace };
 }
 
 function decodeTrackStatusRequest(reader: BufferReader): TrackStatusRequest {
   const trackNamespace = reader.readTuple();
   const trackName = reader.readString();
-  return { type: 'track_status_request', trackNamespace, trackName };
+  return { type: "track_status_request", trackNamespace, trackName };
 }
 
 function decodeTrackStatus(reader: BufferReader): TrackStatus {
@@ -539,40 +593,40 @@ function decodeTrackStatus(reader: BufferReader): TrackStatus {
   const statusCode = reader.readVarInt();
   const lastGroupId = reader.readVarInt();
   const lastObjectId = reader.readVarInt();
-  return { type: 'track_status', trackNamespace, trackName, statusCode, lastGroupId, lastObjectId };
+  return { type: "track_status", trackNamespace, trackName, statusCode, lastGroupId, lastObjectId };
 }
 
 function decodeGoAway(reader: BufferReader): GoAway {
   const newSessionUri = reader.readString();
-  return { type: 'goaway', newSessionUri };
+  return { type: "goaway", newSessionUri };
 }
 
 function decodeSubscribeAnnounces(reader: BufferReader): SubscribeAnnounces {
   const trackNamespace = reader.readTuple();
   const parameters = reader.readParameters();
-  return { type: 'subscribe_announces', trackNamespace, parameters };
+  return { type: "subscribe_announces", trackNamespace, parameters };
 }
 
 function decodeSubscribeAnnouncesOk(reader: BufferReader): SubscribeAnnouncesOk {
   const trackNamespace = reader.readTuple();
-  return { type: 'subscribe_announces_ok', trackNamespace };
+  return { type: "subscribe_announces_ok", trackNamespace };
 }
 
 function decodeSubscribeAnnouncesError(reader: BufferReader): SubscribeAnnouncesError {
   const trackNamespace = reader.readTuple();
   const errorCode = reader.readVarInt();
   const reasonPhrase = reader.readString();
-  return { type: 'subscribe_announces_error', trackNamespace, errorCode, reasonPhrase };
+  return { type: "subscribe_announces_error", trackNamespace, errorCode, reasonPhrase };
 }
 
 function decodeUnsubscribeAnnounces(reader: BufferReader): UnsubscribeAnnounces {
   const trackNamespace = reader.readTuple();
-  return { type: 'unsubscribe_announces', trackNamespace };
+  return { type: "unsubscribe_announces", trackNamespace };
 }
 
 function decodeMaxSubscribeId(reader: BufferReader): MaxSubscribeId {
   const subscribeId = reader.readVarInt();
-  return { type: 'max_subscribe_id', subscribeId };
+  return { type: "max_subscribe_id", subscribeId };
 }
 
 function decodeFetch(reader: BufferReader): Fetch {
@@ -586,7 +640,19 @@ function decodeFetch(reader: BufferReader): Fetch {
   const endGroup = reader.readVarInt();
   const endObject = reader.readVarInt();
   const parameters = reader.readParameters();
-  return { type: 'fetch' as const, subscribeId, trackNamespace, trackName, subscriberPriority, groupOrder, startGroup, startObject, endGroup, endObject, parameters };
+  return {
+    type: "fetch" as const,
+    subscribeId,
+    trackNamespace,
+    trackName,
+    subscriberPriority,
+    groupOrder,
+    startGroup,
+    startObject,
+    endGroup,
+    endObject,
+    parameters,
+  };
 }
 
 function decodeFetchOk(reader: BufferReader): FetchOk {
@@ -597,19 +663,27 @@ function decodeFetchOk(reader: BufferReader): FetchOk {
   const largestGroupId = reader.readVarInt();
   const largestObjectId = reader.readVarInt();
   const parameters = reader.readParameters();
-  return { type: 'fetch_ok' as const, subscribeId, groupOrder, endOfTrack, largestGroupId, largestObjectId, parameters };
+  return {
+    type: "fetch_ok" as const,
+    subscribeId,
+    groupOrder,
+    endOfTrack,
+    largestGroupId,
+    largestObjectId,
+    parameters,
+  };
 }
 
 function decodeFetchError(reader: BufferReader): FetchError {
   const subscribeId = reader.readVarInt();
   const errorCode = reader.readVarInt();
   const reasonPhrase = reader.readString();
-  return { type: 'fetch_error', subscribeId, errorCode, reasonPhrase };
+  return { type: "fetch_error", subscribeId, errorCode, reasonPhrase };
 }
 
 function decodeFetchCancel(reader: BufferReader): FetchCancel {
   const subscribeId = reader.readVarInt();
-  return { type: 'fetch_cancel', subscribeId };
+  return { type: "fetch_cancel", subscribeId };
 }
 
 function decodeObjectStream(reader: BufferReader): ObjectStream {
@@ -620,7 +694,15 @@ function decodeObjectStream(reader: BufferReader): ObjectStream {
   const publisherPriority = reader.readUint8();
   const objectStatusRaw = Number(reader.readVarInt());
   const payload = reader.readBytes(reader.remaining);
-  const base = { type: 'object_stream' as const, subscribeId, trackAlias, groupId, objectId, publisherPriority, payload };
+  const base = {
+    type: "object_stream" as const,
+    subscribeId,
+    trackAlias,
+    groupId,
+    objectId,
+    publisherPriority,
+    payload,
+  };
   if (objectStatusRaw !== 0) {
     return { ...base, objectStatus: objectStatusRaw };
   }
@@ -635,7 +717,15 @@ function decodeObjectDatagram(reader: BufferReader): ObjectDatagram {
   const publisherPriority = reader.readUint8();
   const objectStatusRaw = Number(reader.readVarInt());
   const payload = reader.readBytes(reader.remaining);
-  const base = { type: 'object_datagram' as const, subscribeId, trackAlias, groupId, objectId, publisherPriority, payload };
+  const base = {
+    type: "object_datagram" as const,
+    subscribeId,
+    trackAlias,
+    groupId,
+    objectId,
+    publisherPriority,
+    payload,
+  };
   if (objectStatusRaw !== 0) {
     return { ...base, objectStatus: objectStatusRaw };
   }
@@ -646,7 +736,7 @@ function decodeStreamHeaderTrack(reader: BufferReader): StreamHeaderTrack {
   const subscribeId = reader.readVarInt();
   const trackAlias = reader.readVarInt();
   const publisherPriority = reader.readUint8();
-  return { type: 'stream_header_track', subscribeId, trackAlias, publisherPriority };
+  return { type: "stream_header_track", subscribeId, trackAlias, publisherPriority };
 }
 
 function decodeStreamHeaderGroup(reader: BufferReader): StreamHeaderGroup {
@@ -654,7 +744,7 @@ function decodeStreamHeaderGroup(reader: BufferReader): StreamHeaderGroup {
   const trackAlias = reader.readVarInt();
   const groupId = reader.readVarInt();
   const publisherPriority = reader.readUint8();
-  return { type: 'stream_header_group', subscribeId, trackAlias, groupId, publisherPriority };
+  return { type: "stream_header_group", subscribeId, trackAlias, groupId, publisherPriority };
 }
 
 function decodeStreamHeaderSubgroup(reader: BufferReader): StreamHeaderSubgroup {
@@ -663,7 +753,14 @@ function decodeStreamHeaderSubgroup(reader: BufferReader): StreamHeaderSubgroup 
   const groupId = reader.readVarInt();
   const subgroupId = reader.readVarInt();
   const publisherPriority = reader.readUint8();
-  return { type: 'stream_header_subgroup', subscribeId, trackAlias, groupId, subgroupId, publisherPriority };
+  return {
+    type: "stream_header_subgroup",
+    subscribeId,
+    trackAlias,
+    groupId,
+    subgroupId,
+    publisherPriority,
+  };
 }
 
 // --- Decode dispatch by wire type ID (control messages only) ---
@@ -777,7 +874,11 @@ function decodeMessageImpl(bytes: Uint8Array): DecodeResult<MoqtMessage> {
       if (!decoder) {
         return {
           ok: false,
-          error: new DecodeError('UNKNOWN_MESSAGE_TYPE', `Unknown data stream type ID: 0x${typeId.toString(16)}`, 0),
+          error: new DecodeError(
+            "UNKNOWN_MESSAGE_TYPE",
+            `Unknown data stream type ID: 0x${typeId.toString(16)}`,
+            0,
+          ),
         };
       }
       const message = decoder(reader);
@@ -786,12 +887,16 @@ function decodeMessageImpl(bytes: Uint8Array): DecodeResult<MoqtMessage> {
 
     // Control message: read length, then decode payload from bounded sub-reader
     const payloadLength = Number(reader.readVarInt());
-    const headerBytes = reader.offset; // bytes consumed by type + length
+    const _headerBytes = reader.offset; // bytes consumed by type + length
 
     if (reader.remaining < payloadLength) {
       return {
         ok: false,
-        error: new DecodeError('UNEXPECTED_END', `Not enough bytes for payload: need ${payloadLength}, have ${reader.remaining}`, reader.offset),
+        error: new DecodeError(
+          "UNEXPECTED_END",
+          `Not enough bytes for payload: need ${payloadLength}, have ${reader.remaining}`,
+          reader.offset,
+        ),
       };
     }
 
@@ -802,7 +907,11 @@ function decodeMessageImpl(bytes: Uint8Array): DecodeResult<MoqtMessage> {
     if (!decoder) {
       return {
         ok: false,
-        error: new DecodeError('UNKNOWN_MESSAGE_TYPE', `Unknown message type ID: 0x${typeId.toString(16)}`, 0),
+        error: new DecodeError(
+          "UNKNOWN_MESSAGE_TYPE",
+          `Unknown message type ID: 0x${typeId.toString(16)}`,
+          0,
+        ),
       };
     }
 
@@ -832,7 +941,7 @@ function createStreamDecoderImpl(): TransformStream<Uint8Array, MoqtMessage> {
       while (buffer.length > 0) {
         const result = decodeMessageImpl(buffer);
         if (!result.ok) {
-          if (result.error.code === 'UNEXPECTED_END') {
+          if (result.error.code === "UNEXPECTED_END") {
             // Need more data -- wait for next chunk
             break;
           }
@@ -850,7 +959,7 @@ function createStreamDecoderImpl(): TransformStream<Uint8Array, MoqtMessage> {
       // If there is remaining data in the buffer, it is a truncated message
       if (buffer.length > 0) {
         controller.error(
-          new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete message data', 0),
+          new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
         );
       }
     },
@@ -861,7 +970,7 @@ function createStreamDecoderImpl(): TransformStream<Uint8Array, MoqtMessage> {
 
 export function createDraft07Codec(): Codec {
   return {
-    draft: 'draft-ietf-moq-transport-07',
+    draft: "draft-ietf-moq-transport-07",
     encodeMessage: encodeMessageImpl,
     decodeMessage: decodeMessageImpl,
     encodeVarInt,

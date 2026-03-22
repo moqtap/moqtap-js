@@ -1,63 +1,63 @@
-import { BufferReader } from '../../core/buffer-reader.js';
-import { BufferWriter } from '../../core/buffer-writer.js';
-import { DecodeError } from '../../core/types.js';
-import type { BaseCodec, DecodeResult } from '../../core/types.js';
-import type {
-  Draft14Message,
-  Draft14Params,
-  UnknownParam,
-  Draft14DataStream,
-  ObjectPayload,
-  SubgroupStream,
-  DatagramObject,
-  FetchStream,
-  SubgroupStreamHeader,
-  FetchStreamHeader,
-  DataStreamEvent,
-} from './types.js';
+import { BufferReader } from "../../core/buffer-reader.js";
+import { BufferWriter } from "../../core/buffer-writer.js";
+import type { BaseCodec, DecodeResult } from "../../core/types.js";
+import { DecodeError } from "../../core/types.js";
 import {
+  MESSAGE_ID_MAP,
   MSG_CLIENT_SETUP,
-  MSG_SERVER_SETUP,
-  MSG_SUBSCRIBE,
-  MSG_SUBSCRIBE_OK,
-  MSG_SUBSCRIBE_UPDATE,
-  MSG_SUBSCRIBE_ERROR,
-  MSG_UNSUBSCRIBE,
-  MSG_PUBLISH,
-  MSG_PUBLISH_OK,
-  MSG_PUBLISH_ERROR,
-  MSG_PUBLISH_DONE,
-  MSG_PUBLISH_NAMESPACE,
-  MSG_PUBLISH_NAMESPACE_OK,
-  MSG_PUBLISH_NAMESPACE_ERROR,
-  MSG_PUBLISH_NAMESPACE_DONE,
-  MSG_PUBLISH_NAMESPACE_CANCEL,
-  MSG_SUBSCRIBE_NAMESPACE,
-  MSG_SUBSCRIBE_NAMESPACE_OK,
-  MSG_SUBSCRIBE_NAMESPACE_ERROR,
-  MSG_UNSUBSCRIBE_NAMESPACE,
   MSG_FETCH,
-  MSG_FETCH_OK,
-  MSG_FETCH_ERROR,
   MSG_FETCH_CANCEL,
-  MSG_TRACK_STATUS,
-  MSG_TRACK_STATUS_OK,
-  MSG_TRACK_STATUS_ERROR,
+  MSG_FETCH_ERROR,
+  MSG_FETCH_OK,
   MSG_GOAWAY,
   MSG_MAX_REQUEST_ID,
+  MSG_PUBLISH,
+  MSG_PUBLISH_DONE,
+  MSG_PUBLISH_ERROR,
+  MSG_PUBLISH_NAMESPACE,
+  MSG_PUBLISH_NAMESPACE_CANCEL,
+  MSG_PUBLISH_NAMESPACE_DONE,
+  MSG_PUBLISH_NAMESPACE_ERROR,
+  MSG_PUBLISH_NAMESPACE_OK,
+  MSG_PUBLISH_OK,
   MSG_REQUESTS_BLOCKED,
-  MESSAGE_ID_MAP,
-  PARAM_ROLE,
-  PARAM_PATH,
+  MSG_SERVER_SETUP,
+  MSG_SUBSCRIBE,
+  MSG_SUBSCRIBE_ERROR,
+  MSG_SUBSCRIBE_NAMESPACE,
+  MSG_SUBSCRIBE_NAMESPACE_ERROR,
+  MSG_SUBSCRIBE_NAMESPACE_OK,
+  MSG_SUBSCRIBE_OK,
+  MSG_SUBSCRIBE_UPDATE,
+  MSG_TRACK_STATUS,
+  MSG_TRACK_STATUS_ERROR,
+  MSG_TRACK_STATUS_OK,
+  MSG_UNSUBSCRIBE,
+  MSG_UNSUBSCRIBE_NAMESPACE,
   PARAM_MAX_REQUEST_ID,
-} from './messages.js';
+  PARAM_PATH,
+  PARAM_ROLE,
+} from "./messages.js";
+import type {
+  DatagramObject,
+  DataStreamEvent,
+  Draft14DataStream,
+  Draft14Message,
+  Draft14Params,
+  FetchStream,
+  FetchStreamHeader,
+  ObjectPayload,
+  SubgroupStream,
+  SubgroupStreamHeader,
+  UnknownParam,
+} from "./types.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function bytesToHex(bytes: Uint8Array): string {
-  let hex = '';
+  let hex = "";
   for (let i = 0; i < bytes.byteLength; i++) {
-    hex += (bytes[i] as number).toString(16).padStart(2, '0');
+    hex += (bytes[i] as number).toString(16).padStart(2, "0");
   }
   return hex;
 }
@@ -135,7 +135,7 @@ function decodeParams(reader: BufferReader): Draft14Params {
         tmpWriter.writeVarInt(value);
         const raw = tmpWriter.finish();
         unknown.push({
-          id: '0x' + paramType.toString(16),
+          id: `0x${paramType.toString(16)}`,
           length: raw.byteLength,
           raw_hex: bytesToHex(raw),
         });
@@ -148,7 +148,7 @@ function decodeParams(reader: BufferReader): Draft14Params {
         result.path = new TextDecoder().decode(bytes);
       } else {
         unknown.push({
-          id: '0x' + paramType.toString(16),
+          id: `0x${paramType.toString(16)}`,
           length,
           raw_hex: bytesToHex(bytes),
         });
@@ -165,7 +165,10 @@ function decodeParams(reader: BufferReader): Draft14Params {
 
 // ─── Payload Encoders ──────────────────────────────────────────────────────────
 
-function encodeClientSetupPayload(msg: Draft14Message & { type: 'client_setup' }, w: BufferWriter): void {
+function encodeClientSetupPayload(
+  msg: Draft14Message & { type: "client_setup" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.supported_versions.length);
   for (const v of msg.supported_versions) {
     w.writeVarInt(v);
@@ -173,12 +176,18 @@ function encodeClientSetupPayload(msg: Draft14Message & { type: 'client_setup' }
   encodeParams(msg.parameters, w);
 }
 
-function encodeServerSetupPayload(msg: Draft14Message & { type: 'server_setup' }, w: BufferWriter): void {
+function encodeServerSetupPayload(
+  msg: Draft14Message & { type: "server_setup" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.selected_version);
   encodeParams(msg.parameters, w);
 }
 
-function encodeSubscribePayload(msg: Draft14Message & { type: 'subscribe' }, w: BufferWriter): void {
+function encodeSubscribePayload(
+  msg: Draft14Message & { type: "subscribe" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeTuple(msg.track_namespace);
   w.writeString(msg.track_name);
@@ -197,7 +206,10 @@ function encodeSubscribePayload(msg: Draft14Message & { type: 'subscribe' }, w: 
   encodeParams(msg.parameters, w);
 }
 
-function encodeSubscribeOkPayload(msg: Draft14Message & { type: 'subscribe_ok' }, w: BufferWriter): void {
+function encodeSubscribeOkPayload(
+  msg: Draft14Message & { type: "subscribe_ok" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.track_alias);
   w.writeVarInt(msg.expires);
@@ -210,7 +222,10 @@ function encodeSubscribeOkPayload(msg: Draft14Message & { type: 'subscribe_ok' }
   encodeParams(msg.parameters, w);
 }
 
-function encodeSubscribeUpdatePayload(msg: Draft14Message & { type: 'subscribe_update' }, w: BufferWriter): void {
+function encodeSubscribeUpdatePayload(
+  msg: Draft14Message & { type: "subscribe_update" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.start_group);
   w.writeVarInt(msg.start_object);
@@ -220,17 +235,23 @@ function encodeSubscribeUpdatePayload(msg: Draft14Message & { type: 'subscribe_u
   encodeParams(msg.parameters, w);
 }
 
-function encodeSubscribeErrorPayload(msg: Draft14Message & { type: 'subscribe_error' }, w: BufferWriter): void {
+function encodeSubscribeErrorPayload(
+  msg: Draft14Message & { type: "subscribe_error" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.error_code);
   w.writeString(msg.reason_phrase);
 }
 
-function encodeUnsubscribePayload(msg: Draft14Message & { type: 'unsubscribe' }, w: BufferWriter): void {
+function encodeUnsubscribePayload(
+  msg: Draft14Message & { type: "unsubscribe" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
 }
 
-function encodePublishPayload(msg: Draft14Message & { type: 'publish' }, w: BufferWriter): void {
+function encodePublishPayload(msg: Draft14Message & { type: "publish" }, w: BufferWriter): void {
   w.writeVarInt(msg.request_id);
   w.writeTuple(msg.track_namespace);
   w.writeString(msg.track_name);
@@ -238,74 +259,110 @@ function encodePublishPayload(msg: Draft14Message & { type: 'publish' }, w: Buff
   encodeParams(msg.parameters, w);
 }
 
-function encodePublishOkPayload(msg: Draft14Message & { type: 'publish_ok' }, w: BufferWriter): void {
+function encodePublishOkPayload(
+  msg: Draft14Message & { type: "publish_ok" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.track_alias);
   w.writeVarInt(msg.forward);
   encodeParams(msg.parameters, w);
 }
 
-function encodePublishErrorPayload(msg: Draft14Message & { type: 'publish_error' }, w: BufferWriter): void {
+function encodePublishErrorPayload(
+  msg: Draft14Message & { type: "publish_error" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.error_code);
   w.writeString(msg.reason_phrase);
 }
 
-function encodePublishDonePayload(msg: Draft14Message & { type: 'publish_done' }, w: BufferWriter): void {
+function encodePublishDonePayload(
+  msg: Draft14Message & { type: "publish_done" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.status_code);
   w.writeString(msg.reason_phrase);
 }
 
-function encodePublishNamespacePayload(msg: Draft14Message & { type: 'publish_namespace' }, w: BufferWriter): void {
+function encodePublishNamespacePayload(
+  msg: Draft14Message & { type: "publish_namespace" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeTuple(msg.track_namespace);
   encodeParams(msg.parameters, w);
 }
 
-function encodePublishNamespaceOkPayload(msg: Draft14Message & { type: 'publish_namespace_ok' }, w: BufferWriter): void {
+function encodePublishNamespaceOkPayload(
+  msg: Draft14Message & { type: "publish_namespace_ok" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   encodeParams(msg.parameters, w);
 }
 
-function encodePublishNamespaceErrorPayload(msg: Draft14Message & { type: 'publish_namespace_error' }, w: BufferWriter): void {
+function encodePublishNamespaceErrorPayload(
+  msg: Draft14Message & { type: "publish_namespace_error" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.error_code);
   w.writeString(msg.reason_phrase);
 }
 
-function encodePublishNamespaceDonePayload(msg: Draft14Message & { type: 'publish_namespace_done' }, w: BufferWriter): void {
+function encodePublishNamespaceDonePayload(
+  msg: Draft14Message & { type: "publish_namespace_done" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.status_code);
   w.writeString(msg.reason_phrase);
 }
 
-function encodePublishNamespaceCancelPayload(msg: Draft14Message & { type: 'publish_namespace_cancel' }, w: BufferWriter): void {
+function encodePublishNamespaceCancelPayload(
+  msg: Draft14Message & { type: "publish_namespace_cancel" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
 }
 
-function encodeSubscribeNamespacePayload(msg: Draft14Message & { type: 'subscribe_namespace' }, w: BufferWriter): void {
+function encodeSubscribeNamespacePayload(
+  msg: Draft14Message & { type: "subscribe_namespace" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeTuple(msg.namespace_prefix);
   encodeParams(msg.parameters, w);
 }
 
-function encodeSubscribeNamespaceOkPayload(msg: Draft14Message & { type: 'subscribe_namespace_ok' }, w: BufferWriter): void {
+function encodeSubscribeNamespaceOkPayload(
+  msg: Draft14Message & { type: "subscribe_namespace_ok" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   encodeParams(msg.parameters, w);
 }
 
-function encodeSubscribeNamespaceErrorPayload(msg: Draft14Message & { type: 'subscribe_namespace_error' }, w: BufferWriter): void {
+function encodeSubscribeNamespaceErrorPayload(
+  msg: Draft14Message & { type: "subscribe_namespace_error" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.error_code);
   w.writeString(msg.reason_phrase);
 }
 
-function encodeUnsubscribeNamespacePayload(msg: Draft14Message & { type: 'unsubscribe_namespace' }, w: BufferWriter): void {
+function encodeUnsubscribeNamespacePayload(
+  msg: Draft14Message & { type: "unsubscribe_namespace" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
 }
 
-function encodeFetchPayload(msg: Draft14Message & { type: 'fetch' }, w: BufferWriter): void {
+function encodeFetchPayload(msg: Draft14Message & { type: "fetch" }, w: BufferWriter): void {
   w.writeVarInt(msg.request_id);
   w.writeTuple(msg.track_namespace);
   w.writeString(msg.track_name);
@@ -315,31 +372,43 @@ function encodeFetchPayload(msg: Draft14Message & { type: 'fetch' }, w: BufferWr
   encodeParams(msg.parameters, w);
 }
 
-function encodeFetchOkPayload(msg: Draft14Message & { type: 'fetch_ok' }, w: BufferWriter): void {
+function encodeFetchOkPayload(msg: Draft14Message & { type: "fetch_ok" }, w: BufferWriter): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.track_alias);
   w.writeVarInt(msg.end_of_track);
   encodeParams(msg.parameters, w);
 }
 
-function encodeFetchErrorPayload(msg: Draft14Message & { type: 'fetch_error' }, w: BufferWriter): void {
+function encodeFetchErrorPayload(
+  msg: Draft14Message & { type: "fetch_error" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.error_code);
   w.writeString(msg.reason_phrase);
 }
 
-function encodeFetchCancelPayload(msg: Draft14Message & { type: 'fetch_cancel' }, w: BufferWriter): void {
+function encodeFetchCancelPayload(
+  msg: Draft14Message & { type: "fetch_cancel" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
 }
 
-function encodeTrackStatusPayload(msg: Draft14Message & { type: 'track_status' }, w: BufferWriter): void {
+function encodeTrackStatusPayload(
+  msg: Draft14Message & { type: "track_status" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeTuple(msg.track_namespace);
   w.writeString(msg.track_name);
   encodeParams(msg.parameters, w);
 }
 
-function encodeTrackStatusOkPayload(msg: Draft14Message & { type: 'track_status_ok' }, w: BufferWriter): void {
+function encodeTrackStatusOkPayload(
+  msg: Draft14Message & { type: "track_status_ok" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.status_code);
   const sc = Number(msg.status_code);
@@ -350,21 +419,30 @@ function encodeTrackStatusOkPayload(msg: Draft14Message & { type: 'track_status_
   encodeParams(msg.parameters, w);
 }
 
-function encodeTrackStatusErrorPayload(msg: Draft14Message & { type: 'track_status_error' }, w: BufferWriter): void {
+function encodeTrackStatusErrorPayload(
+  msg: Draft14Message & { type: "track_status_error" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
   w.writeVarInt(msg.error_code);
   w.writeString(msg.reason_phrase);
 }
 
-function encodeGoAwayPayload(msg: Draft14Message & { type: 'goaway' }, w: BufferWriter): void {
+function encodeGoAwayPayload(msg: Draft14Message & { type: "goaway" }, w: BufferWriter): void {
   w.writeString(msg.new_session_uri);
 }
 
-function encodeMaxRequestIdPayload(msg: Draft14Message & { type: 'max_request_id' }, w: BufferWriter): void {
+function encodeMaxRequestIdPayload(
+  msg: Draft14Message & { type: "max_request_id" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
 }
 
-function encodeRequestsBlockedPayload(msg: Draft14Message & { type: 'requests_blocked' }, w: BufferWriter): void {
+function encodeRequestsBlockedPayload(
+  msg: Draft14Message & { type: "requests_blocked" },
+  w: BufferWriter,
+): void {
   w.writeVarInt(msg.request_id);
 }
 
@@ -373,20 +451,24 @@ function encodeRequestsBlockedPayload(msg: Draft14Message & { type: 'requests_bl
 function decodeClientSetupPayload(r: BufferReader): Draft14Message {
   const numVersions = Number(r.readVarInt());
   if (numVersions === 0) {
-    throw new DecodeError('CONSTRAINT_VIOLATION', 'CLIENT_SETUP must offer at least one version', r.offset);
+    throw new DecodeError(
+      "CONSTRAINT_VIOLATION",
+      "CLIENT_SETUP must offer at least one version",
+      r.offset,
+    );
   }
   const supported_versions: bigint[] = [];
   for (let i = 0; i < numVersions; i++) {
     supported_versions.push(r.readVarInt());
   }
   const parameters = decodeParams(r);
-  return { type: 'client_setup', supported_versions, parameters };
+  return { type: "client_setup", supported_versions, parameters };
 }
 
 function decodeServerSetupPayload(r: BufferReader): Draft14Message {
   const selected_version = r.readVarInt();
   const parameters = decodeParams(r);
-  return { type: 'server_setup', selected_version, parameters };
+  return { type: "server_setup", selected_version, parameters };
 }
 
 function decodeSubscribePayload(r: BufferReader): Draft14Message {
@@ -400,7 +482,7 @@ function decodeSubscribePayload(r: BufferReader): Draft14Message {
   const ft = Number(filter_type);
 
   if (ft < 1 || ft > 4) {
-    throw new DecodeError('CONSTRAINT_VIOLATION', `Invalid filter_type: ${ft}`, r.offset);
+    throw new DecodeError("CONSTRAINT_VIOLATION", `Invalid filter_type: ${ft}`, r.offset);
   }
 
   let start_group: bigint | undefined;
@@ -417,8 +499,8 @@ function decodeSubscribePayload(r: BufferReader): Draft14Message {
 
   const parameters = decodeParams(r);
 
-  const msg: Draft14Message & { type: 'subscribe' } = {
-    type: 'subscribe',
+  const msg: Draft14Message & { type: "subscribe" } = {
+    type: "subscribe",
     request_id,
     track_namespace,
     track_name,
@@ -454,7 +536,7 @@ function decodeSubscribeOkPayload(r: BufferReader): Draft14Message {
   const parameters = decodeParams(r);
 
   const msg: Draft14Message = {
-    type: 'subscribe_ok',
+    type: "subscribe_ok",
     request_id,
     track_alias,
     expires,
@@ -476,7 +558,7 @@ function decodeSubscribeUpdatePayload(r: BufferReader): Draft14Message {
   const forward = r.readVarInt();
   const parameters = decodeParams(r);
   return {
-    type: 'subscribe_update',
+    type: "subscribe_update",
     request_id,
     start_group,
     start_object,
@@ -491,12 +573,12 @@ function decodeSubscribeErrorPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const error_code = r.readVarInt();
   const reason_phrase = r.readString();
-  return { type: 'subscribe_error', request_id, error_code, reason_phrase };
+  return { type: "subscribe_error", request_id, error_code, reason_phrase };
 }
 
 function decodeUnsubscribePayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
-  return { type: 'unsubscribe', request_id };
+  return { type: "unsubscribe", request_id };
 }
 
 function decodePublishPayload(r: BufferReader): Draft14Message {
@@ -505,7 +587,7 @@ function decodePublishPayload(r: BufferReader): Draft14Message {
   const track_name = r.readString();
   const forward = r.readVarInt();
   const parameters = decodeParams(r);
-  return { type: 'publish', request_id, track_namespace, track_name, forward, parameters };
+  return { type: "publish", request_id, track_namespace, track_name, forward, parameters };
 }
 
 function decodePublishOkPayload(r: BufferReader): Draft14Message {
@@ -513,78 +595,78 @@ function decodePublishOkPayload(r: BufferReader): Draft14Message {
   const track_alias = r.readVarInt();
   const forward = r.readVarInt();
   const parameters = decodeParams(r);
-  return { type: 'publish_ok', request_id, track_alias, forward, parameters };
+  return { type: "publish_ok", request_id, track_alias, forward, parameters };
 }
 
 function decodePublishErrorPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const error_code = r.readVarInt();
   const reason_phrase = r.readString();
-  return { type: 'publish_error', request_id, error_code, reason_phrase };
+  return { type: "publish_error", request_id, error_code, reason_phrase };
 }
 
 function decodePublishDonePayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const status_code = r.readVarInt();
   const reason_phrase = r.readString();
-  return { type: 'publish_done', request_id, status_code, reason_phrase };
+  return { type: "publish_done", request_id, status_code, reason_phrase };
 }
 
 function decodePublishNamespacePayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const track_namespace = r.readTuple();
   const parameters = decodeParams(r);
-  return { type: 'publish_namespace', request_id, track_namespace, parameters };
+  return { type: "publish_namespace", request_id, track_namespace, parameters };
 }
 
 function decodePublishNamespaceOkPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const parameters = decodeParams(r);
-  return { type: 'publish_namespace_ok', request_id, parameters };
+  return { type: "publish_namespace_ok", request_id, parameters };
 }
 
 function decodePublishNamespaceErrorPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const error_code = r.readVarInt();
   const reason_phrase = r.readString();
-  return { type: 'publish_namespace_error', request_id, error_code, reason_phrase };
+  return { type: "publish_namespace_error", request_id, error_code, reason_phrase };
 }
 
 function decodePublishNamespaceDonePayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const status_code = r.readVarInt();
   const reason_phrase = r.readString();
-  return { type: 'publish_namespace_done', request_id, status_code, reason_phrase };
+  return { type: "publish_namespace_done", request_id, status_code, reason_phrase };
 }
 
 function decodePublishNamespaceCancelPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
-  return { type: 'publish_namespace_cancel', request_id };
+  return { type: "publish_namespace_cancel", request_id };
 }
 
 function decodeSubscribeNamespacePayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const namespace_prefix = r.readTuple();
   const parameters = decodeParams(r);
-  return { type: 'subscribe_namespace', request_id, namespace_prefix, parameters };
+  return { type: "subscribe_namespace", request_id, namespace_prefix, parameters };
 }
 
 function decodeSubscribeNamespaceOkPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const parameters = decodeParams(r);
-  return { type: 'subscribe_namespace_ok', request_id, parameters };
+  return { type: "subscribe_namespace_ok", request_id, parameters };
 }
 
 function decodeSubscribeNamespaceErrorPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const error_code = r.readVarInt();
   const reason_phrase = r.readString();
-  return { type: 'subscribe_namespace_error', request_id, error_code, reason_phrase };
+  return { type: "subscribe_namespace_error", request_id, error_code, reason_phrase };
 }
 
 function decodeUnsubscribeNamespacePayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
-  return { type: 'unsubscribe_namespace', request_id };
+  return { type: "unsubscribe_namespace", request_id };
 }
 
 function decodeFetchPayload(r: BufferReader): Draft14Message {
@@ -595,7 +677,16 @@ function decodeFetchPayload(r: BufferReader): Draft14Message {
   const start_object = r.readVarInt();
   const end_group = r.readVarInt();
   const parameters = decodeParams(r);
-  return { type: 'fetch', request_id, track_namespace, track_name, start_group, start_object, end_group, parameters };
+  return {
+    type: "fetch",
+    request_id,
+    track_namespace,
+    track_name,
+    start_group,
+    start_object,
+    end_group,
+    parameters,
+  };
 }
 
 function decodeFetchOkPayload(r: BufferReader): Draft14Message {
@@ -603,19 +694,19 @@ function decodeFetchOkPayload(r: BufferReader): Draft14Message {
   const track_alias = r.readVarInt();
   const end_of_track = r.readVarInt();
   const parameters = decodeParams(r);
-  return { type: 'fetch_ok', request_id, track_alias, end_of_track, parameters };
+  return { type: "fetch_ok", request_id, track_alias, end_of_track, parameters };
 }
 
 function decodeFetchErrorPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const error_code = r.readVarInt();
   const reason_phrase = r.readString();
-  return { type: 'fetch_error', request_id, error_code, reason_phrase };
+  return { type: "fetch_error", request_id, error_code, reason_phrase };
 }
 
 function decodeFetchCancelPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
-  return { type: 'fetch_cancel', request_id };
+  return { type: "fetch_cancel", request_id };
 }
 
 function decodeTrackStatusPayload(r: BufferReader): Draft14Message {
@@ -623,7 +714,7 @@ function decodeTrackStatusPayload(r: BufferReader): Draft14Message {
   const track_namespace = r.readTuple();
   const track_name = r.readString();
   const parameters = decodeParams(r);
-  return { type: 'track_status', request_id, track_namespace, track_name, parameters };
+  return { type: "track_status", request_id, track_namespace, track_name, parameters };
 }
 
 function decodeTrackStatusOkPayload(r: BufferReader): Draft14Message {
@@ -642,7 +733,7 @@ function decodeTrackStatusOkPayload(r: BufferReader): Draft14Message {
   const parameters = decodeParams(r);
 
   return {
-    type: 'track_status_ok',
+    type: "track_status_ok",
     request_id,
     status_code,
     parameters,
@@ -654,22 +745,22 @@ function decodeTrackStatusErrorPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
   const error_code = r.readVarInt();
   const reason_phrase = r.readString();
-  return { type: 'track_status_error', request_id, error_code, reason_phrase };
+  return { type: "track_status_error", request_id, error_code, reason_phrase };
 }
 
 function decodeGoAwayPayload(r: BufferReader): Draft14Message {
   const new_session_uri = r.readString();
-  return { type: 'goaway', new_session_uri };
+  return { type: "goaway", new_session_uri };
 }
 
 function decodeMaxRequestIdPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
-  return { type: 'max_request_id', request_id };
+  return { type: "max_request_id", request_id };
 }
 
 function decodeRequestsBlockedPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt();
-  return { type: 'requests_blocked', request_id };
+  return { type: "requests_blocked", request_id };
 }
 
 // ─── Payload dispatch tables ───────────────────────────────────────────────────
@@ -739,36 +830,66 @@ export function encodeMessage(message: Draft14Message): Uint8Array {
 
 function encodePayload(msg: Draft14Message, w: BufferWriter): void {
   switch (msg.type) {
-    case 'client_setup': return encodeClientSetupPayload(msg, w);
-    case 'server_setup': return encodeServerSetupPayload(msg, w);
-    case 'subscribe': return encodeSubscribePayload(msg, w);
-    case 'subscribe_ok': return encodeSubscribeOkPayload(msg, w);
-    case 'subscribe_update': return encodeSubscribeUpdatePayload(msg, w);
-    case 'subscribe_error': return encodeSubscribeErrorPayload(msg, w);
-    case 'unsubscribe': return encodeUnsubscribePayload(msg, w);
-    case 'publish': return encodePublishPayload(msg, w);
-    case 'publish_ok': return encodePublishOkPayload(msg, w);
-    case 'publish_error': return encodePublishErrorPayload(msg, w);
-    case 'publish_done': return encodePublishDonePayload(msg, w);
-    case 'publish_namespace': return encodePublishNamespacePayload(msg, w);
-    case 'publish_namespace_ok': return encodePublishNamespaceOkPayload(msg, w);
-    case 'publish_namespace_error': return encodePublishNamespaceErrorPayload(msg, w);
-    case 'publish_namespace_done': return encodePublishNamespaceDonePayload(msg, w);
-    case 'publish_namespace_cancel': return encodePublishNamespaceCancelPayload(msg, w);
-    case 'subscribe_namespace': return encodeSubscribeNamespacePayload(msg, w);
-    case 'subscribe_namespace_ok': return encodeSubscribeNamespaceOkPayload(msg, w);
-    case 'subscribe_namespace_error': return encodeSubscribeNamespaceErrorPayload(msg, w);
-    case 'unsubscribe_namespace': return encodeUnsubscribeNamespacePayload(msg, w);
-    case 'fetch': return encodeFetchPayload(msg, w);
-    case 'fetch_ok': return encodeFetchOkPayload(msg, w);
-    case 'fetch_error': return encodeFetchErrorPayload(msg, w);
-    case 'fetch_cancel': return encodeFetchCancelPayload(msg, w);
-    case 'track_status': return encodeTrackStatusPayload(msg, w);
-    case 'track_status_ok': return encodeTrackStatusOkPayload(msg, w);
-    case 'track_status_error': return encodeTrackStatusErrorPayload(msg, w);
-    case 'goaway': return encodeGoAwayPayload(msg, w);
-    case 'max_request_id': return encodeMaxRequestIdPayload(msg, w);
-    case 'requests_blocked': return encodeRequestsBlockedPayload(msg, w);
+    case "client_setup":
+      return encodeClientSetupPayload(msg, w);
+    case "server_setup":
+      return encodeServerSetupPayload(msg, w);
+    case "subscribe":
+      return encodeSubscribePayload(msg, w);
+    case "subscribe_ok":
+      return encodeSubscribeOkPayload(msg, w);
+    case "subscribe_update":
+      return encodeSubscribeUpdatePayload(msg, w);
+    case "subscribe_error":
+      return encodeSubscribeErrorPayload(msg, w);
+    case "unsubscribe":
+      return encodeUnsubscribePayload(msg, w);
+    case "publish":
+      return encodePublishPayload(msg, w);
+    case "publish_ok":
+      return encodePublishOkPayload(msg, w);
+    case "publish_error":
+      return encodePublishErrorPayload(msg, w);
+    case "publish_done":
+      return encodePublishDonePayload(msg, w);
+    case "publish_namespace":
+      return encodePublishNamespacePayload(msg, w);
+    case "publish_namespace_ok":
+      return encodePublishNamespaceOkPayload(msg, w);
+    case "publish_namespace_error":
+      return encodePublishNamespaceErrorPayload(msg, w);
+    case "publish_namespace_done":
+      return encodePublishNamespaceDonePayload(msg, w);
+    case "publish_namespace_cancel":
+      return encodePublishNamespaceCancelPayload(msg, w);
+    case "subscribe_namespace":
+      return encodeSubscribeNamespacePayload(msg, w);
+    case "subscribe_namespace_ok":
+      return encodeSubscribeNamespaceOkPayload(msg, w);
+    case "subscribe_namespace_error":
+      return encodeSubscribeNamespaceErrorPayload(msg, w);
+    case "unsubscribe_namespace":
+      return encodeUnsubscribeNamespacePayload(msg, w);
+    case "fetch":
+      return encodeFetchPayload(msg, w);
+    case "fetch_ok":
+      return encodeFetchOkPayload(msg, w);
+    case "fetch_error":
+      return encodeFetchErrorPayload(msg, w);
+    case "fetch_cancel":
+      return encodeFetchCancelPayload(msg, w);
+    case "track_status":
+      return encodeTrackStatusPayload(msg, w);
+    case "track_status_ok":
+      return encodeTrackStatusOkPayload(msg, w);
+    case "track_status_error":
+      return encodeTrackStatusErrorPayload(msg, w);
+    case "goaway":
+      return encodeGoAwayPayload(msg, w);
+    case "max_request_id":
+      return encodeMaxRequestIdPayload(msg, w);
+    case "requests_blocked":
+      return encodeRequestsBlockedPayload(msg, w);
     default: {
       const _exhaustive: never = msg;
       throw new Error(`Unhandled message type: ${(_exhaustive as Draft14Message).type}`);
@@ -797,7 +918,11 @@ export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft14Message> {
     if (!decoder) {
       return {
         ok: false,
-        error: new DecodeError('UNKNOWN_MESSAGE_TYPE', `Unknown message type ID: 0x${typeId.toString(16)}`, 0),
+        error: new DecodeError(
+          "UNKNOWN_MESSAGE_TYPE",
+          `Unknown message type ID: 0x${typeId.toString(16)}`,
+          0,
+        ),
       };
     }
 
@@ -867,7 +992,14 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
     const r = new BufferReader(bytes);
     const streamType = r.readVarInt();
     if (streamType !== 0n) {
-      return { ok: false, error: new DecodeError('CONSTRAINT_VIOLATION', `Expected subgroup stream type 0, got ${streamType}`, 0) };
+      return {
+        ok: false,
+        error: new DecodeError(
+          "CONSTRAINT_VIOLATION",
+          `Expected subgroup stream type 0, got ${streamType}`,
+          0,
+        ),
+      };
     }
     const trackAlias = r.readVarInt();
     const groupId = r.readVarInt();
@@ -878,11 +1010,11 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
       const objectId = r.readVarInt();
       const payloadLength = Number(r.readVarInt());
       const payload = r.readBytes(payloadLength);
-      objects.push({ type: 'object', objectId, payloadLength, payload });
+      objects.push({ type: "object", objectId, payloadLength, payload });
     }
     return {
       ok: true,
-      value: { type: 'subgroup', trackAlias, groupId, subgroupId, publisherPriority, objects },
+      value: { type: "subgroup", trackAlias, groupId, subgroupId, publisherPriority, objects },
       bytesRead: r.offset,
     };
   } catch (e) {
@@ -904,7 +1036,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     const payload = r.readBytes(payloadLength);
     return {
       ok: true,
-      value: { type: 'datagram', trackAlias, groupId, objectId, payloadLength, payload },
+      value: { type: "datagram", trackAlias, groupId, objectId, payloadLength, payload },
       bytesRead: r.offset,
     };
   } catch (e) {
@@ -921,7 +1053,14 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
     const r = new BufferReader(bytes);
     const streamType = r.readVarInt();
     if (streamType !== 2n) {
-      return { ok: false, error: new DecodeError('CONSTRAINT_VIOLATION', `Expected fetch stream type 2, got ${streamType}`, 0) };
+      return {
+        ok: false,
+        error: new DecodeError(
+          "CONSTRAINT_VIOLATION",
+          `Expected fetch stream type 2, got ${streamType}`,
+          0,
+        ),
+      };
     }
     const subscribeRequestId = r.readVarInt();
     const objects: ObjectPayload[] = [];
@@ -929,11 +1068,11 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
       const objectId = r.readVarInt();
       const payloadLength = Number(r.readVarInt());
       const payload = r.readBytes(payloadLength);
-      objects.push({ type: 'object', objectId, payloadLength, payload });
+      objects.push({ type: "object", objectId, payloadLength, payload });
     }
     return {
       ok: true,
-      value: { type: 'fetch', subscribeRequestId, objects },
+      value: { type: "fetch", subscribeRequestId, objects },
       bytesRead: r.offset,
     };
   } catch (e) {
@@ -946,15 +1085,15 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
  * Decode a data stream, dispatching by stream type.
  */
 export function decodeDataStream(
-  streamType: 'subgroup' | 'datagram' | 'fetch',
+  streamType: "subgroup" | "datagram" | "fetch",
   bytes: Uint8Array,
 ): DecodeResult<Draft14DataStream> {
   switch (streamType) {
-    case 'subgroup':
+    case "subgroup":
       return decodeSubgroupStream(bytes);
-    case 'datagram':
+    case "datagram":
       return decodeDatagram(bytes);
-    case 'fetch':
+    case "fetch":
       return decodeFetchStream(bytes);
     default: {
       const _exhaustive: never = streamType;
@@ -985,7 +1124,7 @@ export function createStreamDecoder(): TransformStream<Uint8Array, Draft14Messag
       while (buffer.length > 0) {
         const result = decodeMessage(buffer);
         if (!result.ok) {
-          if (result.error.code === 'UNEXPECTED_END') {
+          if (result.error.code === "UNEXPECTED_END") {
             // Need more data -- wait for next chunk
             break;
           }
@@ -1003,7 +1142,7 @@ export function createStreamDecoder(): TransformStream<Uint8Array, Draft14Messag
       // If there is remaining data in the buffer, it is a truncated message
       if (buffer.length > 0) {
         controller.error(
-          new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete message data', 0),
+          new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
         );
       }
     },
@@ -1018,7 +1157,10 @@ export function createStreamDecoder(): TransformStream<Uint8Array, Draft14Messag
  *   varint(0x00) + varint(trackAlias) + varint(groupId) + varint(subgroupId)
  *   + uint8(publisherPriority) + [varint(objectId) + varint(payloadLength) + bytes(payload)]*
  */
-export function createSubgroupStreamDecoder(): TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload> {
+export function createSubgroupStreamDecoder(): TransformStream<
+  Uint8Array,
+  SubgroupStreamHeader | ObjectPayload
+> {
   let buffer = new Uint8Array(0);
   let headerEmitted = false;
 
@@ -1036,7 +1178,11 @@ export function createSubgroupStreamDecoder(): TransformStream<Uint8Array, Subgr
           const streamType = r.readVarInt();
           if (streamType !== 0n) {
             controller.error(
-              new DecodeError('CONSTRAINT_VIOLATION', `Expected subgroup stream type 0, got ${streamType}`, 0),
+              new DecodeError(
+                "CONSTRAINT_VIOLATION",
+                `Expected subgroup stream type 0, got ${streamType}`,
+                0,
+              ),
             );
             return;
           }
@@ -1046,7 +1192,7 @@ export function createSubgroupStreamDecoder(): TransformStream<Uint8Array, Subgr
           const publisherPriority = r.readUint8();
 
           controller.enqueue({
-            type: 'subgroup_header',
+            type: "subgroup_header",
             trackAlias,
             groupId,
             subgroupId,
@@ -1055,7 +1201,7 @@ export function createSubgroupStreamDecoder(): TransformStream<Uint8Array, Subgr
           headerEmitted = true;
           buffer = buffer.slice(r.offset);
         } catch (e) {
-          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             return; // Need more data
           }
           controller.error(e);
@@ -1070,10 +1216,10 @@ export function createSubgroupStreamDecoder(): TransformStream<Uint8Array, Subgr
           const objectId = r.readVarInt();
           const payloadLength = Number(r.readVarInt());
           const payload = r.readBytes(payloadLength);
-          controller.enqueue({ type: 'object', objectId, payloadLength, payload });
+          controller.enqueue({ type: "object", objectId, payloadLength, payload });
           buffer = buffer.slice(r.offset);
         } catch (e) {
-          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             break; // Need more data
           }
           controller.error(e);
@@ -1084,9 +1230,7 @@ export function createSubgroupStreamDecoder(): TransformStream<Uint8Array, Subgr
 
     flush(controller) {
       if (buffer.length > 0) {
-        controller.error(
-          new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete data', 0),
-        );
+        controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
       }
     },
   });
@@ -1100,7 +1244,10 @@ export function createSubgroupStreamDecoder(): TransformStream<Uint8Array, Subgr
  *   varint(0x02) + varint(subscribeRequestId)
  *   + [varint(objectId) + varint(payloadLength) + bytes(payload)]*
  */
-export function createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload> {
+export function createFetchStreamDecoder(): TransformStream<
+  Uint8Array,
+  FetchStreamHeader | ObjectPayload
+> {
   let buffer = new Uint8Array(0);
   let headerEmitted = false;
 
@@ -1118,20 +1265,24 @@ export function createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStr
           const streamType = r.readVarInt();
           if (streamType !== 2n) {
             controller.error(
-              new DecodeError('CONSTRAINT_VIOLATION', `Expected fetch stream type 2, got ${streamType}`, 0),
+              new DecodeError(
+                "CONSTRAINT_VIOLATION",
+                `Expected fetch stream type 2, got ${streamType}`,
+                0,
+              ),
             );
             return;
           }
           const subscribeRequestId = r.readVarInt();
 
           controller.enqueue({
-            type: 'fetch_header',
+            type: "fetch_header",
             subscribeRequestId,
           });
           headerEmitted = true;
           buffer = buffer.slice(r.offset);
         } catch (e) {
-          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             return; // Need more data
           }
           controller.error(e);
@@ -1146,10 +1297,10 @@ export function createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStr
           const objectId = r.readVarInt();
           const payloadLength = Number(r.readVarInt());
           const payload = r.readBytes(payloadLength);
-          controller.enqueue({ type: 'object', objectId, payloadLength, payload });
+          controller.enqueue({ type: "object", objectId, payloadLength, payload });
           buffer = buffer.slice(r.offset);
         } catch (e) {
-          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             break; // Need more data
           }
           controller.error(e);
@@ -1160,9 +1311,7 @@ export function createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStr
 
     flush(controller) {
       if (buffer.length > 0) {
-        controller.error(
-          new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete data', 0),
-        );
+        controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
       }
     },
   });
@@ -1175,7 +1324,7 @@ export function createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStr
  */
 export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent> {
   let buffer = new Uint8Array(0);
-  let detectedType: 'subgroup' | 'fetch' | null = null;
+  let detectedType: "subgroup" | "fetch" | null = null;
   let headerEmitted = false;
 
   // We peek the stream type then create the appropriate inner decoder,
@@ -1195,18 +1344,18 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
           const r = new BufferReader(buffer);
           const streamType = r.readVarInt();
           if (streamType === 0n) {
-            detectedType = 'subgroup';
+            detectedType = "subgroup";
           } else if (streamType === 2n) {
-            detectedType = 'fetch';
+            detectedType = "fetch";
           } else {
             controller.error(
-              new DecodeError('CONSTRAINT_VIOLATION', `Unknown data stream type: ${streamType}`, 0),
+              new DecodeError("CONSTRAINT_VIOLATION", `Unknown data stream type: ${streamType}`, 0),
             );
             return;
           }
           // Do NOT advance buffer - the inner header parser expects the stream type
         } catch (e) {
-          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             return; // Need more data
           }
           controller.error(e);
@@ -1214,7 +1363,7 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
         }
       }
 
-      if (detectedType === 'subgroup') {
+      if (detectedType === "subgroup") {
         // Parse subgroup header if not yet emitted
         if (!headerEmitted) {
           try {
@@ -1225,7 +1374,7 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
             const subgroupId = r.readVarInt();
             const publisherPriority = r.readUint8();
             controller.enqueue({
-              type: 'subgroup_header',
+              type: "subgroup_header",
               trackAlias,
               groupId,
               subgroupId,
@@ -1234,7 +1383,7 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
             headerEmitted = true;
             buffer = buffer.slice(r.offset);
           } catch (e) {
-            if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+            if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
               return;
             }
             controller.error(e);
@@ -1249,13 +1398,13 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
             r.readVarInt(); // stream type (0x02)
             const subscribeRequestId = r.readVarInt();
             controller.enqueue({
-              type: 'fetch_header',
+              type: "fetch_header",
               subscribeRequestId,
             });
             headerEmitted = true;
             buffer = buffer.slice(r.offset);
           } catch (e) {
-            if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+            if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
               return;
             }
             controller.error(e);
@@ -1271,10 +1420,10 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
           const objectId = r.readVarInt();
           const payloadLength = Number(r.readVarInt());
           const payload = r.readBytes(payloadLength);
-          controller.enqueue({ type: 'object', objectId, payloadLength, payload });
+          controller.enqueue({ type: "object", objectId, payloadLength, payload });
           buffer = buffer.slice(r.offset);
         } catch (e) {
-          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             break;
           }
           controller.error(e);
@@ -1285,9 +1434,7 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
 
     flush(controller) {
       if (buffer.length > 0) {
-        controller.error(
-          new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete data', 0),
-        );
+        controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
       }
     },
   });
@@ -1296,14 +1443,17 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
 // ─── Codec Factory ─────────────────────────────────────────────────────────────
 
 export interface Draft14Codec extends BaseCodec<Draft14Message> {
-  readonly draft: 'draft-ietf-moq-transport-14';
+  readonly draft: "draft-ietf-moq-transport-14";
   encodeSubgroupStream(stream: SubgroupStream): Uint8Array;
   encodeDatagram(dg: DatagramObject): Uint8Array;
   encodeFetchStream(stream: FetchStream): Uint8Array;
   decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>;
   decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject>;
   decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>;
-  decodeDataStream(streamType: 'subgroup' | 'datagram' | 'fetch', bytes: Uint8Array): DecodeResult<Draft14DataStream>;
+  decodeDataStream(
+    streamType: "subgroup" | "datagram" | "fetch",
+    bytes: Uint8Array,
+  ): DecodeResult<Draft14DataStream>;
   createStreamDecoder(): TransformStream<Uint8Array, Draft14Message>;
   createSubgroupStreamDecoder(): TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>;
   createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>;
@@ -1312,7 +1462,7 @@ export interface Draft14Codec extends BaseCodec<Draft14Message> {
 
 export function createDraft14Codec(): Draft14Codec {
   return {
-    draft: 'draft-ietf-moq-transport-14',
+    draft: "draft-ietf-moq-transport-14",
     encodeMessage,
     decodeMessage,
     encodeSubgroupStream,

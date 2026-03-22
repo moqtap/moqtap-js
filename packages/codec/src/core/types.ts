@@ -1,39 +1,39 @@
 // Draft identifiers
-export type Draft = 'draft-ietf-moq-transport-07' | 'draft-ietf-moq-transport-14';
-export type DraftShorthand = '07' | '14';
+export type Draft = "draft-ietf-moq-transport-07" | "draft-ietf-moq-transport-14";
+export type DraftShorthand = "07" | "14";
 
 // All MoQT message type tags
 export type MoqtMessageType =
-  | 'client_setup'
-  | 'server_setup'
-  | 'subscribe'
-  | 'subscribe_ok'
-  | 'subscribe_error'
-  | 'subscribe_done'
-  | 'subscribe_update'
-  | 'unsubscribe'
-  | 'announce'
-  | 'announce_ok'
-  | 'announce_error'
-  | 'announce_cancel'
-  | 'unannounce'
-  | 'track_status_request'
-  | 'track_status'
-  | 'object_stream'
-  | 'object_datagram'
-  | 'stream_header_track'
-  | 'stream_header_group'
-  | 'stream_header_subgroup'
-  | 'goaway'
-  | 'subscribe_announces'
-  | 'subscribe_announces_ok'
-  | 'subscribe_announces_error'
-  | 'unsubscribe_announces'
-  | 'max_subscribe_id'
-  | 'fetch'
-  | 'fetch_ok'
-  | 'fetch_error'
-  | 'fetch_cancel';
+  | "client_setup"
+  | "server_setup"
+  | "subscribe"
+  | "subscribe_ok"
+  | "subscribe_error"
+  | "subscribe_done"
+  | "subscribe_update"
+  | "unsubscribe"
+  | "announce"
+  | "announce_ok"
+  | "announce_error"
+  | "announce_cancel"
+  | "unannounce"
+  | "track_status_request"
+  | "track_status"
+  | "object_stream"
+  | "object_datagram"
+  | "stream_header_track"
+  | "stream_header_group"
+  | "stream_header_subgroup"
+  | "goaway"
+  | "subscribe_announces"
+  | "subscribe_announces_ok"
+  | "subscribe_announces_error"
+  | "unsubscribe_announces"
+  | "max_subscribe_id"
+  | "fetch"
+  | "fetch_ok"
+  | "fetch_error"
+  | "fetch_cancel";
 
 // Base message interface
 export interface BaseMessage {
@@ -42,20 +42,20 @@ export interface BaseMessage {
 
 // Setup messages
 export interface ClientSetup extends BaseMessage {
-  readonly type: 'client_setup';
+  readonly type: "client_setup";
   readonly supportedVersions: bigint[];
   readonly parameters: Map<bigint, Uint8Array>;
 }
 
 export interface ServerSetup extends BaseMessage {
-  readonly type: 'server_setup';
+  readonly type: "server_setup";
   readonly selectedVersion: bigint;
   readonly parameters: Map<bigint, Uint8Array>;
 }
 
 // Subscribe messages
 export interface Subscribe extends BaseMessage {
-  readonly type: 'subscribe';
+  readonly type: "subscribe";
   readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly trackNamespace: string[];
@@ -70,10 +70,10 @@ export interface Subscribe extends BaseMessage {
   readonly parameters: Map<bigint, Uint8Array>;
 }
 
-export type FilterType = 'latest_group' | 'latest_object' | 'absolute_start' | 'absolute_range';
+export type FilterType = "latest_group" | "latest_object" | "absolute_start" | "absolute_range";
 
 export interface SubscribeOk extends BaseMessage {
-  readonly type: 'subscribe_ok';
+  readonly type: "subscribe_ok";
   readonly subscribeId: bigint;
   readonly expires: bigint;
   readonly groupOrder: GroupOrderValue;
@@ -83,10 +83,10 @@ export interface SubscribeOk extends BaseMessage {
   readonly parameters: Map<bigint, Uint8Array>;
 }
 
-export type GroupOrderValue = 'ascending' | 'descending' | 'original';
+export type GroupOrderValue = "ascending" | "descending" | "original";
 
 export interface SubscribeError extends BaseMessage {
-  readonly type: 'subscribe_error';
+  readonly type: "subscribe_error";
   readonly subscribeId: bigint;
   readonly errorCode: bigint;
   readonly reasonPhrase: string;
@@ -94,7 +94,7 @@ export interface SubscribeError extends BaseMessage {
 }
 
 export interface SubscribeDone extends BaseMessage {
-  readonly type: 'subscribe_done';
+  readonly type: "subscribe_done";
   readonly subscribeId: bigint;
   readonly statusCode: bigint;
   readonly reasonPhrase: string;
@@ -104,7 +104,7 @@ export interface SubscribeDone extends BaseMessage {
 }
 
 export interface SubscribeUpdate extends BaseMessage {
-  readonly type: 'subscribe_update';
+  readonly type: "subscribe_update";
   readonly subscribeId: bigint;
   readonly startGroup: bigint;
   readonly startObject: bigint;
@@ -115,50 +115,50 @@ export interface SubscribeUpdate extends BaseMessage {
 }
 
 export interface Unsubscribe extends BaseMessage {
-  readonly type: 'unsubscribe';
+  readonly type: "unsubscribe";
   readonly subscribeId: bigint;
 }
 
 // Announce messages
 export interface Announce extends BaseMessage {
-  readonly type: 'announce';
+  readonly type: "announce";
   readonly trackNamespace: string[];
   readonly parameters: Map<bigint, Uint8Array>;
 }
 
 export interface AnnounceOk extends BaseMessage {
-  readonly type: 'announce_ok';
+  readonly type: "announce_ok";
   readonly trackNamespace: string[];
 }
 
 export interface AnnounceError extends BaseMessage {
-  readonly type: 'announce_error';
+  readonly type: "announce_error";
   readonly trackNamespace: string[];
   readonly errorCode: bigint;
   readonly reasonPhrase: string;
 }
 
 export interface AnnounceCancel extends BaseMessage {
-  readonly type: 'announce_cancel';
+  readonly type: "announce_cancel";
   readonly trackNamespace: string[];
   readonly errorCode: bigint;
   readonly reasonPhrase: string;
 }
 
 export interface Unannounce extends BaseMessage {
-  readonly type: 'unannounce';
+  readonly type: "unannounce";
   readonly trackNamespace: string[];
 }
 
 // Track status
 export interface TrackStatusRequest extends BaseMessage {
-  readonly type: 'track_status_request';
+  readonly type: "track_status_request";
   readonly trackNamespace: string[];
   readonly trackName: string;
 }
 
 export interface TrackStatus extends BaseMessage {
-  readonly type: 'track_status';
+  readonly type: "track_status";
   readonly trackNamespace: string[];
   readonly trackName: string;
   readonly statusCode: bigint;
@@ -168,7 +168,7 @@ export interface TrackStatus extends BaseMessage {
 
 // Object/stream messages
 export interface ObjectStream extends BaseMessage {
-  readonly type: 'object_stream';
+  readonly type: "object_stream";
   readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
@@ -179,7 +179,7 @@ export interface ObjectStream extends BaseMessage {
 }
 
 export interface ObjectDatagram extends BaseMessage {
-  readonly type: 'object_datagram';
+  readonly type: "object_datagram";
   readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
@@ -190,14 +190,14 @@ export interface ObjectDatagram extends BaseMessage {
 }
 
 export interface StreamHeaderTrack extends BaseMessage {
-  readonly type: 'stream_header_track';
+  readonly type: "stream_header_track";
   readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly publisherPriority: number;
 }
 
 export interface StreamHeaderGroup extends BaseMessage {
-  readonly type: 'stream_header_group';
+  readonly type: "stream_header_group";
   readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
@@ -205,7 +205,7 @@ export interface StreamHeaderGroup extends BaseMessage {
 }
 
 export interface StreamHeaderSubgroup extends BaseMessage {
-  readonly type: 'stream_header_subgroup';
+  readonly type: "stream_header_subgroup";
   readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
@@ -215,24 +215,24 @@ export interface StreamHeaderSubgroup extends BaseMessage {
 
 // GoAway
 export interface GoAway extends BaseMessage {
-  readonly type: 'goaway';
+  readonly type: "goaway";
   readonly newSessionUri: string;
 }
 
 // Subscribe Announces
 export interface SubscribeAnnounces extends BaseMessage {
-  readonly type: 'subscribe_announces';
+  readonly type: "subscribe_announces";
   readonly trackNamespace: string[];
   readonly parameters: Map<bigint, Uint8Array>;
 }
 
 export interface SubscribeAnnouncesOk extends BaseMessage {
-  readonly type: 'subscribe_announces_ok';
+  readonly type: "subscribe_announces_ok";
   readonly trackNamespace: string[];
 }
 
 export interface SubscribeAnnouncesError extends BaseMessage {
-  readonly type: 'subscribe_announces_error';
+  readonly type: "subscribe_announces_error";
   readonly trackNamespace: string[];
   readonly errorCode: bigint;
   readonly reasonPhrase: string;
@@ -240,19 +240,19 @@ export interface SubscribeAnnouncesError extends BaseMessage {
 
 // Unsubscribe Announces
 export interface UnsubscribeAnnounces extends BaseMessage {
-  readonly type: 'unsubscribe_announces';
+  readonly type: "unsubscribe_announces";
   readonly trackNamespace: string[];
 }
 
 // Max Subscribe ID
 export interface MaxSubscribeId extends BaseMessage {
-  readonly type: 'max_subscribe_id';
+  readonly type: "max_subscribe_id";
   readonly subscribeId: bigint;
 }
 
 // Fetch
 export interface Fetch extends BaseMessage {
-  readonly type: 'fetch';
+  readonly type: "fetch";
   readonly subscribeId: bigint;
   readonly trackNamespace: string[];
   readonly trackName: string;
@@ -266,7 +266,7 @@ export interface Fetch extends BaseMessage {
 }
 
 export interface FetchOk extends BaseMessage {
-  readonly type: 'fetch_ok';
+  readonly type: "fetch_ok";
   readonly subscribeId: bigint;
   readonly groupOrder: GroupOrderValue;
   readonly endOfTrack: boolean;
@@ -276,14 +276,14 @@ export interface FetchOk extends BaseMessage {
 }
 
 export interface FetchError extends BaseMessage {
-  readonly type: 'fetch_error';
+  readonly type: "fetch_error";
   readonly subscribeId: bigint;
   readonly errorCode: bigint;
   readonly reasonPhrase: string;
 }
 
 export interface FetchCancel extends BaseMessage {
-  readonly type: 'fetch_cancel';
+  readonly type: "fetch_cancel";
   readonly subscribeId: bigint;
 }
 
@@ -344,11 +344,11 @@ export type DecodeResult<T> =
   | { ok: false; error: DecodeError };
 
 export type DecodeErrorCode =
-  | 'UNEXPECTED_END'
-  | 'INVALID_VARINT'
-  | 'UNKNOWN_MESSAGE_TYPE'
-  | 'INVALID_PARAMETER'
-  | 'CONSTRAINT_VIOLATION';
+  | "UNEXPECTED_END"
+  | "INVALID_VARINT"
+  | "UNKNOWN_MESSAGE_TYPE"
+  | "INVALID_PARAMETER"
+  | "CONSTRAINT_VIOLATION";
 
 export class DecodeError extends Error {
   readonly code: DecodeErrorCode;
@@ -356,7 +356,7 @@ export class DecodeError extends Error {
 
   constructor(code: DecodeErrorCode, message: string, offset: number) {
     super(message);
-    this.name = 'DecodeError';
+    this.name = "DecodeError";
     this.code = code;
     this.offset = offset;
   }

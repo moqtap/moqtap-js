@@ -1,37 +1,31 @@
-import { encode, decode, decodeMultiple } from 'cbor-x';
-import type {
-  Trace,
-  TraceHeader,
-  TraceEvent,
-  DetailLevel,
-  Perspective,
-} from './types.js';
+import { decode, decodeMultiple, encode } from "cbor-x";
+import type { DetailLevel, Perspective, Trace, TraceEvent, TraceHeader } from "./types.js";
 
 const MAGIC = new Uint8Array([0x4d, 0x4f, 0x51, 0x54, 0x52, 0x41, 0x43, 0x45]); // "MOQTRACE"
 const FORMAT_VERSION = 1;
 const PREAMBLE_SIZE = 16; // 8 magic + 4 version + 4 header length
 
 // Event type string ↔ integer mapping
-const EVENT_TYPE_TO_INT: Record<TraceEvent['type'], number> = {
-  'control': 0,
-  'stream-opened': 1,
-  'stream-closed': 2,
-  'object-header': 3,
-  'object-payload': 4,
-  'state-change': 5,
-  'error': 6,
-  'annotation': 7,
+const EVENT_TYPE_TO_INT: Record<TraceEvent["type"], number> = {
+  control: 0,
+  "stream-opened": 1,
+  "stream-closed": 2,
+  "object-header": 3,
+  "object-payload": 4,
+  "state-change": 5,
+  error: 6,
+  annotation: 7,
 };
 
-const INT_TO_EVENT_TYPE: Record<number, TraceEvent['type']> = {
-  0: 'control',
-  1: 'stream-opened',
-  2: 'stream-closed',
-  3: 'object-header',
-  4: 'object-payload',
-  5: 'state-change',
-  6: 'error',
-  7: 'annotation',
+const INT_TO_EVENT_TYPE: Record<number, TraceEvent["type"]> = {
+  0: "control",
+  1: "stream-opened",
+  2: "stream-closed",
+  3: "object-header",
+  4: "object-payload",
+  5: "state-change",
+  6: "error",
+  7: "annotation",
 };
 
 // --- Header serialization ---
@@ -77,25 +71,25 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
   };
 
   switch (event.type) {
-    case 'control': {
+    case "control": {
       base.d = event.direction;
       base.mt = event.messageType;
       base.msg = event.message;
       if (event.raw != null) base.raw = event.raw;
       break;
     }
-    case 'stream-opened': {
+    case "stream-opened": {
       base.sid = event.streamId;
       base.d = event.direction;
       base.st = event.streamType;
       break;
     }
-    case 'stream-closed': {
+    case "stream-closed": {
       base.sid = event.streamId;
       base.ec = event.errorCode;
       break;
     }
-    case 'object-header': {
+    case "object-header": {
       base.sid = event.streamId;
       base.g = event.groupId;
       base.o = event.objectId;
@@ -103,7 +97,7 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
       base.os = event.objectStatus;
       break;
     }
-    case 'object-payload': {
+    case "object-payload": {
       base.sid = event.streamId;
       base.g = event.groupId;
       base.o = event.objectId;
@@ -111,17 +105,17 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
       if (event.payload != null) base.pl = event.payload;
       break;
     }
-    case 'state-change': {
+    case "state-change": {
       base.from = event.from;
       base.to = event.to;
       break;
     }
-    case 'error': {
+    case "error": {
       base.ec = event.errorCode;
       base.reason = event.reason;
       break;
     }
-    case 'annotation': {
+    case "annotation": {
       base.label = event.label;
       if (event.data !== undefined) base.data = event.data;
       break;
@@ -136,7 +130,7 @@ function cborToEvent(obj: Record<string, unknown>): TraceEvent {
   if (eventType == null) {
     // Unknown event type — skip per spec (return annotation as fallback)
     return {
-      type: 'annotation',
+      type: "annotation",
       seq: Number(obj.n ?? 0),
       timestamp: Number(obj.t ?? 0),
       label: `unknown-event-${obj.e}`,
@@ -148,9 +142,9 @@ function cborToEvent(obj: Record<string, unknown>): TraceEvent {
   const timestamp = Number(obj.t ?? 0);
 
   switch (eventType) {
-    case 'control':
+    case "control":
       return {
-        type: 'control' as const,
+        type: "control" as const,
         seq,
         timestamp,
         direction: obj.d as 0 | 1,
@@ -159,9 +153,9 @@ function cborToEvent(obj: Record<string, unknown>): TraceEvent {
         ...(obj.raw != null ? { raw: obj.raw as Uint8Array } : {}),
       };
 
-    case 'stream-opened':
+    case "stream-opened":
       return {
-        type: 'stream-opened' as const,
+        type: "stream-opened" as const,
         seq,
         timestamp,
         streamId: BigInt(obj.sid as bigint | number),
@@ -169,18 +163,18 @@ function cborToEvent(obj: Record<string, unknown>): TraceEvent {
         streamType: obj.st as 0 | 1 | 2,
       };
 
-    case 'stream-closed':
+    case "stream-closed":
       return {
-        type: 'stream-closed' as const,
+        type: "stream-closed" as const,
         seq,
         timestamp,
         streamId: BigInt(obj.sid as bigint | number),
         errorCode: Number(obj.ec ?? 0),
       };
 
-    case 'object-header':
+    case "object-header":
       return {
-        type: 'object-header' as const,
+        type: "object-header" as const,
         seq,
         timestamp,
         streamId: BigInt(obj.sid as bigint | number),
@@ -190,9 +184,9 @@ function cborToEvent(obj: Record<string, unknown>): TraceEvent {
         objectStatus: Number(obj.os ?? 0),
       };
 
-    case 'object-payload':
+    case "object-payload":
       return {
-        type: 'object-payload' as const,
+        type: "object-payload" as const,
         seq,
         timestamp,
         streamId: BigInt(obj.sid as bigint | number),
@@ -202,30 +196,30 @@ function cborToEvent(obj: Record<string, unknown>): TraceEvent {
         ...(obj.pl != null ? { payload: obj.pl as Uint8Array } : {}),
       };
 
-    case 'state-change':
+    case "state-change":
       return {
-        type: 'state-change' as const,
+        type: "state-change" as const,
         seq,
         timestamp,
         from: obj.from as string,
         to: obj.to as string,
       };
 
-    case 'error':
+    case "error":
       return {
-        type: 'error' as const,
+        type: "error" as const,
         seq,
         timestamp,
         errorCode: Number(obj.ec ?? 0),
-        reason: (obj.reason ?? '') as string,
+        reason: (obj.reason ?? "") as string,
       };
 
-    case 'annotation':
+    case "annotation":
       return {
-        type: 'annotation' as const,
+        type: "annotation" as const,
         seq,
         timestamp,
-        label: (obj.label ?? '') as string,
+        label: (obj.label ?? "") as string,
         data: obj.data,
       };
   }
@@ -245,12 +239,12 @@ function writePreamble(headerCbor: Uint8Array): Uint8Array {
 
 function validatePreamble(bytes: Uint8Array): { version: number; headerLength: number } {
   if (bytes.length < PREAMBLE_SIZE) {
-    throw new Error('File too short: expected at least 16 bytes');
+    throw new Error("File too short: expected at least 16 bytes");
   }
 
   for (let i = 0; i < 8; i++) {
     if (bytes[i] !== MAGIC[i]) {
-      throw new Error('Invalid magic bytes: not a .moqtrace file');
+      throw new Error("Invalid magic bytes: not a .moqtrace file");
     }
   }
 
@@ -262,7 +256,7 @@ function validatePreamble(bytes: Uint8Array): { version: number; headerLength: n
 
   const headerLength = view.getUint32(12, true);
   if (PREAMBLE_SIZE + headerLength > bytes.length) {
-    throw new Error('File truncated: header extends beyond file');
+    throw new Error("File truncated: header extends beyond file");
   }
 
   return { version, headerLength };

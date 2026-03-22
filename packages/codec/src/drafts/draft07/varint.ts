@@ -1,7 +1,7 @@
-import { BufferReader } from '../../core/buffer-reader.js';
-import { BufferWriter } from '../../core/buffer-writer.js';
-import { DecodeError } from '../../core/types.js';
-import type { DecodeResult } from '../../core/types.js';
+import { BufferReader } from "../../core/buffer-reader.js";
+import { BufferWriter } from "../../core/buffer-writer.js";
+import type { DecodeResult } from "../../core/types.js";
+import { DecodeError } from "../../core/types.js";
 
 export function encodeVarInt(value: number | bigint): Uint8Array {
   const writer = new BufferWriter(8);

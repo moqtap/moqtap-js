@@ -1,10 +1,13 @@
-import { DecodeError } from './types.js';
+import { DecodeError } from "./types.js";
 
 export class BufferReader {
   private readonly view: DataView;
   private pos: number;
 
-  constructor(readonly buffer: Uint8Array, offset = 0) {
+  constructor(
+    readonly buffer: Uint8Array,
+    offset = 0,
+  ) {
     this.view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
     this.pos = offset;
   }
@@ -19,7 +22,7 @@ export class BufferReader {
 
   readUint8(): number {
     if (this.remaining < 1) {
-      throw new DecodeError('UNEXPECTED_END', 'Not enough bytes to read uint8', this.pos);
+      throw new DecodeError("UNEXPECTED_END", "Not enough bytes to read uint8", this.pos);
     }
     const value = this.view.getUint8(this.pos);
     this.pos += 1;
@@ -28,7 +31,11 @@ export class BufferReader {
 
   readBytes(length: number): Uint8Array {
     if (this.remaining < length) {
-      throw new DecodeError('UNEXPECTED_END', `Not enough bytes: need ${length}, have ${this.remaining}`, this.pos);
+      throw new DecodeError(
+        "UNEXPECTED_END",
+        `Not enough bytes: need ${length}, have ${this.remaining}`,
+        this.pos,
+      );
     }
     const slice = this.buffer.slice(this.pos, this.pos + length);
     this.pos += length;
@@ -37,7 +44,7 @@ export class BufferReader {
 
   readVarInt(): bigint {
     if (this.remaining < 1) {
-      throw new DecodeError('UNEXPECTED_END', 'Not enough bytes for varint', this.pos);
+      throw new DecodeError("UNEXPECTED_END", "Not enough bytes for varint", this.pos);
     }
     const first = this.view.getUint8(this.pos);
     const prefix = first >> 6;
@@ -52,26 +59,26 @@ export class BufferReader {
       case 1:
         length = 2;
         if (this.remaining < 2) {
-          throw new DecodeError('UNEXPECTED_END', 'Not enough bytes for 2-byte varint', this.pos);
+          throw new DecodeError("UNEXPECTED_END", "Not enough bytes for 2-byte varint", this.pos);
         }
         value = BigInt(this.view.getUint16(this.pos) & 0x3fff);
         break;
       case 2:
         length = 4;
         if (this.remaining < 4) {
-          throw new DecodeError('UNEXPECTED_END', 'Not enough bytes for 4-byte varint', this.pos);
+          throw new DecodeError("UNEXPECTED_END", "Not enough bytes for 4-byte varint", this.pos);
         }
         value = BigInt(this.view.getUint32(this.pos)) & 0x3fffffffn;
         break;
       case 3:
         length = 8;
         if (this.remaining < 8) {
-          throw new DecodeError('UNEXPECTED_END', 'Not enough bytes for 8-byte varint', this.pos);
+          throw new DecodeError("UNEXPECTED_END", "Not enough bytes for 8-byte varint", this.pos);
         }
         value = this.view.getBigUint64(this.pos) & 0x3fffffffffffffffn;
         break;
       default:
-        throw new DecodeError('INVALID_VARINT', 'Invalid varint prefix', this.pos);
+        throw new DecodeError("INVALID_VARINT", "Invalid varint prefix", this.pos);
     }
 
     this.pos += length;

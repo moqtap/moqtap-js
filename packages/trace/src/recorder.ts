@@ -1,12 +1,6 @@
-import type { MoqtMessage } from '@moqtap/codec';
-import type { SessionState } from '@moqtap/codec/session';
-import type {
-  Trace,
-  TraceHeader,
-  TraceEvent,
-  RecorderOptions,
-  DetailLevel,
-} from './types.js';
+import type { MoqtMessage } from "@moqtap/codec";
+import type { SessionState } from "@moqtap/codec/session";
+import type { DetailLevel, RecorderOptions, Trace, TraceEvent, TraceHeader } from "./types.js";
 
 export interface TraceRecorder {
   /** Wrap a SessionState to auto-record control messages and state changes. */
@@ -23,14 +17,20 @@ export interface TraceRecorder {
 
   /** Record an object header event. Ignored below 'headers' detail level. */
   recordObjectHeader(
-    streamId: bigint, groupId: bigint, objectId: bigint,
-    publisherPriority: number, objectStatus: number,
+    streamId: bigint,
+    groupId: bigint,
+    objectId: bigint,
+    publisherPriority: number,
+    objectStatus: number,
   ): void;
 
   /** Record an object payload event. Ignored below 'headers+sizes' detail level. */
   recordObjectPayload(
-    streamId: bigint, groupId: bigint, objectId: bigint,
-    size: number, payload?: Uint8Array,
+    streamId: bigint,
+    groupId: bigint,
+    objectId: bigint,
+    size: number,
+    payload?: Uint8Array,
   ): void;
 
   /** Record a protocol error. */
@@ -47,11 +47,11 @@ export interface TraceRecorder {
 }
 
 const DETAIL_RANK: Record<DetailLevel, number> = {
-  'control': 0,
-  'headers': 1,
-  'headers+sizes': 2,
-  'headers+data': 3,
-  'full': 4,
+  control: 0,
+  headers: 1,
+  "headers+sizes": 2,
+  "headers+data": 3,
+  full: 4,
 };
 
 export function createRecorder(options: RecorderOptions): TraceRecorder {
@@ -80,19 +80,31 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
 
   function wrapSession(session: SessionState): SessionState {
     return {
-      get phase() { return session.phase; },
-      get role() { return session.role; },
-      get subscriptions() { return session.subscriptions; },
-      get announces() { return session.announces; },
-      get legalOutgoing() { return session.legalOutgoing; },
-      get legalIncoming() { return session.legalIncoming; },
+      get phase() {
+        return session.phase;
+      },
+      get role() {
+        return session.role;
+      },
+      get subscriptions() {
+        return session.subscriptions;
+      },
+      get announces() {
+        return session.announces;
+      },
+      get legalOutgoing() {
+        return session.legalOutgoing;
+      },
+      get legalIncoming() {
+        return session.legalIncoming;
+      },
 
       receive(message: MoqtMessage) {
         const prevPhase = session.phase;
         const result = session.receive(message);
 
         addEvent({
-          type: 'control',
+          type: "control",
           seq: nextSeq(),
           timestamp: clock(),
           direction: 1, // rx
@@ -102,7 +114,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
 
         if (result.ok && result.phase !== prevPhase) {
           addEvent({
-            type: 'state-change',
+            type: "state-change",
             seq: nextSeq(),
             timestamp: clock(),
             from: prevPhase,
@@ -122,7 +134,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
         const result = session.send(message);
 
         addEvent({
-          type: 'control',
+          type: "control",
           seq: nextSeq(),
           timestamp: clock(),
           direction: 0, // tx
@@ -132,7 +144,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
 
         if (result.ok && result.phase !== prevPhase) {
           addEvent({
-            type: 'state-change',
+            type: "state-change",
             seq: nextSeq(),
             timestamp: clock(),
             from: prevPhase,
@@ -155,9 +167,9 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
     record: addEvent,
 
     recordStreamOpened(streamId, direction, streamType) {
-      if (detailRank < DETAIL_RANK['headers']) return;
+      if (detailRank < DETAIL_RANK.headers) return;
       addEvent({
-        type: 'stream-opened',
+        type: "stream-opened",
         seq: nextSeq(),
         timestamp: clock(),
         streamId,
@@ -167,9 +179,9 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
     },
 
     recordStreamClosed(streamId, errorCode = 0) {
-      if (detailRank < DETAIL_RANK['headers']) return;
+      if (detailRank < DETAIL_RANK.headers) return;
       addEvent({
-        type: 'stream-closed',
+        type: "stream-closed",
         seq: nextSeq(),
         timestamp: clock(),
         streamId,
@@ -178,9 +190,9 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
     },
 
     recordObjectHeader(streamId, groupId, objectId, publisherPriority, objectStatus) {
-      if (detailRank < DETAIL_RANK['headers']) return;
+      if (detailRank < DETAIL_RANK.headers) return;
       addEvent({
-        type: 'object-header',
+        type: "object-header",
         seq: nextSeq(),
         timestamp: clock(),
         streamId,
@@ -192,23 +204,23 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
     },
 
     recordObjectPayload(streamId, groupId, objectId, size, payload) {
-      if (detailRank < DETAIL_RANK['headers+sizes']) return;
+      if (detailRank < DETAIL_RANK["headers+sizes"]) return;
       const event: TraceEvent = {
-        type: 'object-payload',
+        type: "object-payload",
         seq: nextSeq(),
         timestamp: clock(),
         streamId,
         groupId,
         objectId,
         size,
-        ...(detailRank >= DETAIL_RANK['headers+data'] && payload != null ? { payload } : {}),
+        ...(detailRank >= DETAIL_RANK["headers+data"] && payload != null ? { payload } : {}),
       };
       addEvent(event);
     },
 
     recordError(errorCode, reason) {
       addEvent({
-        type: 'error',
+        type: "error",
         seq: nextSeq(),
         timestamp: clock(),
         errorCode,
@@ -218,7 +230,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
 
     annotate(label, data) {
       addEvent({
-        type: 'annotation',
+        type: "annotation",
         seq: nextSeq(),
         timestamp: clock(),
         label,
@@ -242,6 +254,8 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
       return { header, events: [...events] };
     },
 
-    get recording() { return _recording; },
+    get recording() {
+      return _recording;
+    },
   };
 }
