@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/trace",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MoQT session trace format — record, serialize, and analyze .moqtrace files",
   "type": "module",
   "license": "MIT",
@@ -32,7 +32,7 @@
     ".": {
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
+      "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     }
   },
