@@ -1,6 +1,28 @@
 // Draft identifiers
-export type Draft = "draft-ietf-moq-transport-07" | "draft-ietf-moq-transport-14";
-export type DraftShorthand = "07" | "14";
+export type Draft =
+  | "draft-ietf-moq-transport-07"
+  | "draft-ietf-moq-transport-08"
+  | "draft-ietf-moq-transport-09"
+  | "draft-ietf-moq-transport-10"
+  | "draft-ietf-moq-transport-11"
+  | "draft-ietf-moq-transport-12"
+  | "draft-ietf-moq-transport-13"
+  | "draft-ietf-moq-transport-14"
+  | "draft-ietf-moq-transport-15"
+  | "draft-ietf-moq-transport-16"
+  | "draft-ietf-moq-transport-17";
+export type DraftShorthand =
+  | "07"
+  | "08"
+  | "09"
+  | "10"
+  | "11"
+  | "12"
+  | "13"
+  | "14"
+  | "15"
+  | "16"
+  | "17";
 
 // All MoQT message type tags
 export type MoqtMessageType =
@@ -169,7 +191,6 @@ export interface TrackStatus extends BaseMessage {
 // Object/stream messages
 export interface ObjectStream extends BaseMessage {
   readonly type: "object_stream";
-  readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly objectId: bigint;
@@ -180,7 +201,6 @@ export interface ObjectStream extends BaseMessage {
 
 export interface ObjectDatagram extends BaseMessage {
   readonly type: "object_datagram";
-  readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly objectId: bigint;
@@ -191,14 +211,12 @@ export interface ObjectDatagram extends BaseMessage {
 
 export interface StreamHeaderTrack extends BaseMessage {
   readonly type: "stream_header_track";
-  readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly publisherPriority: number;
 }
 
 export interface StreamHeaderGroup extends BaseMessage {
   readonly type: "stream_header_group";
-  readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly publisherPriority: number;
@@ -206,7 +224,6 @@ export interface StreamHeaderGroup extends BaseMessage {
 
 export interface StreamHeaderSubgroup extends BaseMessage {
   readonly type: "stream_header_subgroup";
-  readonly subscribeId: bigint;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly subgroupId: bigint;

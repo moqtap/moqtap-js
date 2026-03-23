@@ -288,46 +288,45 @@ function encodeFetchCancel(msg: FetchCancel, writer: BufferWriter): void {
 }
 
 // Data stream encoders (no type+length framing)
+function encodeObjectPayload(
+  msg: { objectStatus?: number; payload: Uint8Array },
+  writer: BufferWriter,
+): void {
+  if (msg.payload.byteLength === 0) {
+    writer.writeVarInt(0); // payloadLength = 0 signals objectStatus follows
+    writer.writeVarInt(msg.objectStatus ?? 0);
+  } else {
+    writer.writeVarInt(msg.payload.byteLength);
+    writer.writeBytes(msg.payload);
+  }
+}
+
 function encodeObjectStream(msg: ObjectStream, writer: BufferWriter): void {
   writer.writeVarInt(MESSAGE_TYPE_IDS.object_stream);
-  writer.writeVarInt(msg.subscribeId);
   writer.writeVarInt(msg.trackAlias);
   writer.writeVarInt(msg.groupId);
   writer.writeVarInt(msg.objectId);
   writer.writeUint8(msg.publisherPriority);
-  if (msg.objectStatus !== undefined) {
-    writer.writeVarInt(msg.objectStatus);
-  } else {
-    writer.writeVarInt(0);
-  }
-  writer.writeBytes(msg.payload);
+  encodeObjectPayload(msg, writer);
 }
 
 function encodeObjectDatagram(msg: ObjectDatagram, writer: BufferWriter): void {
   writer.writeVarInt(MESSAGE_TYPE_IDS.object_datagram);
-  writer.writeVarInt(msg.subscribeId);
   writer.writeVarInt(msg.trackAlias);
   writer.writeVarInt(msg.groupId);
   writer.writeVarInt(msg.objectId);
   writer.writeUint8(msg.publisherPriority);
-  if (msg.objectStatus !== undefined) {
-    writer.writeVarInt(msg.objectStatus);
-  } else {
-    writer.writeVarInt(0);
-  }
-  writer.writeBytes(msg.payload);
+  encodeObjectPayload(msg, writer);
 }
 
 function encodeStreamHeaderTrack(msg: StreamHeaderTrack, writer: BufferWriter): void {
   writer.writeVarInt(MESSAGE_TYPE_IDS.stream_header_track);
-  writer.writeVarInt(msg.subscribeId);
   writer.writeVarInt(msg.trackAlias);
   writer.writeUint8(msg.publisherPriority);
 }
 
 function encodeStreamHeaderGroup(msg: StreamHeaderGroup, writer: BufferWriter): void {
   writer.writeVarInt(MESSAGE_TYPE_IDS.stream_header_group);
-  writer.writeVarInt(msg.subscribeId);
   writer.writeVarInt(msg.trackAlias);
   writer.writeVarInt(msg.groupId);
   writer.writeUint8(msg.publisherPriority);
@@ -335,7 +334,6 @@ function encodeStreamHeaderGroup(msg: StreamHeaderGroup, writer: BufferWriter): 
 
 function encodeStreamHeaderSubgroup(msg: StreamHeaderSubgroup, writer: BufferWriter): void {
   writer.writeVarInt(MESSAGE_TYPE_IDS.stream_header_subgroup);
-  writer.writeVarInt(msg.subscribeId);
   writer.writeVarInt(msg.trackAlias);
   writer.writeVarInt(msg.groupId);
   writer.writeVarInt(msg.subgroupId);
@@ -687,75 +685,85 @@ function decodeFetchCancel(reader: BufferReader): FetchCancel {
 }
 
 function decodeObjectStream(reader: BufferReader): ObjectStream {
-  const subscribeId = reader.readVarInt();
   const trackAlias = reader.readVarInt();
   const groupId = reader.readVarInt();
   const objectId = reader.readVarInt();
   const publisherPriority = reader.readUint8();
-  const objectStatusRaw = Number(reader.readVarInt());
-  const payload = reader.readBytes(reader.remaining);
-  const base = {
+  const payloadLength = Number(reader.readVarInt());
+  if (payloadLength === 0) {
+    // Object Status follows when payload length is 0
+    const objectStatus = reader.remaining > 0 ? Number(reader.readVarInt()) : 0;
+    return {
+      type: "object_stream" as const,
+      trackAlias,
+      groupId,
+      objectId,
+      publisherPriority,
+      objectStatus,
+      payload: new Uint8Array(0),
+    };
+  }
+  const payload = reader.readBytes(payloadLength);
+  return {
     type: "object_stream" as const,
-    subscribeId,
     trackAlias,
     groupId,
     objectId,
     publisherPriority,
     payload,
   };
-  if (objectStatusRaw !== 0) {
-    return { ...base, objectStatus: objectStatusRaw };
-  }
-  return base;
 }
 
 function decodeObjectDatagram(reader: BufferReader): ObjectDatagram {
-  const subscribeId = reader.readVarInt();
   const trackAlias = reader.readVarInt();
   const groupId = reader.readVarInt();
   const objectId = reader.readVarInt();
   const publisherPriority = reader.readUint8();
-  const objectStatusRaw = Number(reader.readVarInt());
-  const payload = reader.readBytes(reader.remaining);
-  const base = {
+  const payloadLength = Number(reader.readVarInt());
+  if (payloadLength === 0) {
+    // Object Status follows when payload length is 0
+    const objectStatus = reader.remaining > 0 ? Number(reader.readVarInt()) : 0;
+    return {
+      type: "object_datagram" as const,
+      trackAlias,
+      groupId,
+      objectId,
+      publisherPriority,
+      objectStatus,
+      payload: new Uint8Array(0),
+    };
+  }
+  const payload = reader.readBytes(payloadLength);
+  return {
     type: "object_datagram" as const,
-    subscribeId,
     trackAlias,
     groupId,
     objectId,
     publisherPriority,
     payload,
   };
-  if (objectStatusRaw !== 0) {
-    return { ...base, objectStatus: objectStatusRaw };
-  }
-  return base;
 }
 
 function decodeStreamHeaderTrack(reader: BufferReader): StreamHeaderTrack {
-  const subscribeId = reader.readVarInt();
   const trackAlias = reader.readVarInt();
   const publisherPriority = reader.readUint8();
-  return { type: "stream_header_track", subscribeId, trackAlias, publisherPriority };
+  return { type: "stream_header_track", trackAlias, publisherPriority };
 }
 
 function decodeStreamHeaderGroup(reader: BufferReader): StreamHeaderGroup {
-  const subscribeId = reader.readVarInt();
   const trackAlias = reader.readVarInt();
   const groupId = reader.readVarInt();
   const publisherPriority = reader.readUint8();
-  return { type: "stream_header_group", subscribeId, trackAlias, groupId, publisherPriority };
+  return { type: "stream_header_group", trackAlias, groupId, publisherPriority };
 }
 
 function decodeStreamHeaderSubgroup(reader: BufferReader): StreamHeaderSubgroup {
-  const subscribeId = reader.readVarInt();
   const trackAlias = reader.readVarInt();
   const groupId = reader.readVarInt();
   const subgroupId = reader.readVarInt();
   const publisherPriority = reader.readUint8();
   return {
     type: "stream_header_subgroup",
-    subscribeId,
     trackAlias,
     groupId,
     subgroupId,

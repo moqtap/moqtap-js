@@ -64,3 +64,5 @@ coverage
 .eslintcache
 
 .claude/*.local.*
+
+samples/

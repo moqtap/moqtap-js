@@ -2,9 +2,9 @@
 
 MoQT (Media over QUIC Transport) wire-format codec and session state machine for JavaScript/TypeScript.
 
-- Multi-draft support (draft-07, draft-14)
+- Multi-draft support (drafts 07 through 17)
 - Stateless encode/decode of all MoQT control messages and data streams
-- Protocol session state machine with FSM-based validation
+- Protocol session state machine with FSM-based validation per draft
 - Zero runtime dependencies
 - Works in Node.js, Bun, and browsers
 - Full TypeScript types with discriminated unions
@@ -43,19 +43,28 @@ Or use the factory if your application supports multiple drafts:
 ```typescript
 import { createCodec } from '@moqtap/codec';
 
-const codec = createCodec({ draft: '07' }); // or '14'
+const codec = createCodec({ draft: '17' }); // '07' through '17'
 ```
 
 ## Subpath Exports
+
+Each draft is available as a subpath import with its own codec and session state machine:
 
 | Import path | Description |
 |---|---|
 | `@moqtap/codec` | Factory + shared types (`createCodec({ draft })`) |
 | `@moqtap/codec/draft7` | Draft-07 codec |
+| `@moqtap/codec/draft8` | Draft-08 codec |
+| `@moqtap/codec/draft9` | Draft-09 codec |
+| `@moqtap/codec/draft10` | Draft-10 codec |
+| `@moqtap/codec/draft11` | Draft-11 codec |
+| `@moqtap/codec/draft12` | Draft-12 codec |
+| `@moqtap/codec/draft13` | Draft-13 codec |
 | `@moqtap/codec/draft14` | Draft-14 codec |
-| `@moqtap/codec/session` | Session state machine factory |
-| `@moqtap/codec/draft7/session` | Draft-07 session |
-| `@moqtap/codec/draft14/session` | Draft-14 session |
+| `@moqtap/codec/draft15` | Draft-15 codec |
+| `@moqtap/codec/draft16` | Draft-16 codec |
+| `@moqtap/codec/draft17` | Draft-17 codec |
+| `@moqtap/codec/draft{N}/session` | Session state machine for draft N |
 
 > **Note:** A default (versionless) codec will be available once the MoQT specification reaches RFC status. Until then, always specify a draft version.
 
@@ -64,13 +73,8 @@ const codec = createCodec({ draft: '07' }); // or '14'
 For applications targeting a single draft version:
 
 ```typescript
-// Draft-07
-import { createDraft07Codec } from '@moqtap/codec/draft7';
-import { createDraft07SessionState } from '@moqtap/codec/draft7/session';
-
-// Draft-14
-import { createDraft14Codec } from '@moqtap/codec/draft14';
-import { createDraft14SessionState } from '@moqtap/codec/draft14/session';
+import { createDraft17Codec } from '@moqtap/codec/draft17';
+import { createDraft17SessionState } from '@moqtap/codec/draft17/session';
 ```
 
 ## Session State Machine
@@ -78,11 +82,11 @@ import { createDraft14SessionState } from '@moqtap/codec/draft14/session';
 Validate protocol message sequences without transport coupling:
 
 ```typescript
-import { createDraft07SessionState } from '@moqtap/codec/draft7/session';
-import { createDraft07Codec } from '@moqtap/codec/draft7';
+import { createDraft17SessionState } from '@moqtap/codec/draft17/session';
+import { createDraft17Codec } from '@moqtap/codec/draft17';
 
-const codec = createDraft07Codec();
-const session = createDraft07SessionState({ codec, role: 'client' });
+const codec = createDraft17Codec();
+const session = createDraft17SessionState({ codec, role: 'client' });
 
 const result = session.receive(incomingMessage);
 if (!result.ok) {
