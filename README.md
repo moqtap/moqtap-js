@@ -11,9 +11,9 @@ JavaScript/TypeScript implementation of [MoQT (Media over QUIC Transport)](https
 
 ## Features
 
-- **Multi-draft support** — draft-07 and draft-14
+- **Multi-draft support** — drafts 07 through 17
 - **Stateless codec** — encode/decode all MoQT control messages and data stream headers
-- **Session state machine** — FSM-based protocol validation
+- **Session state machine** — FSM-based protocol validation per draft
 - **Trace recording** — capture sessions with configurable detail levels
 - **Cross-runtime** — works in Node.js, Bun, Deno, and browsers
 - **Zero dependencies** — codec has no runtime dependencies
@@ -25,9 +25,9 @@ npm install @moqtap/codec
 ```
 
 ```typescript
-import { createDraft14Codec } from '@moqtap/codec/draft14';
+import { createCodec } from '@moqtap/codec';
 
-const codec = createDraft14Codec();
+const codec = createCodec({ draft: '17' });
 
 // Decode
 const result = codec.decodeMessage(bytes);
@@ -37,10 +37,16 @@ if (result.ok) {
 
 // Encode
 const encoded = codec.encodeMessage({
-  type: 'client_setup',
-  supportedVersions: [0xff00000en],
-  parameters: new Map(),
+  type: 'setup',
+  parameters: { max_request_id: 100n },
 });
+```
+
+Or use draft-scoped imports for full type inference:
+
+```typescript
+import { createDraft14Codec } from '@moqtap/codec/draft14';
+const codec = createDraft14Codec();
 ```
 
 See each package's README for full API documentation.

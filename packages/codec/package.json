@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/codec",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "MoQT wire-format codec and session state machine — multi-draft, zero dependencies",
   "type": "module",
   "license": "MIT",
@@ -41,6 +41,78 @@
       "import": "./dist/draft7.js",
       "require": "./dist/draft7.cjs"
     },
+    "./draft8": {
+      "bun": "./src/drafts/draft08/index.ts",
+      "types": "./dist/draft8.d.ts",
+      "import": "./dist/draft8.js",
+      "require": "./dist/draft8.cjs"
+    },
+    "./draft8/session": {
+      "bun": "./src/drafts/draft08/session.ts",
+      "types": "./dist/draft8-session.d.ts",
+      "import": "./dist/draft8-session.js",
+      "require": "./dist/draft8-session.cjs"
+    },
+    "./draft9": {
+      "bun": "./src/drafts/draft09/index.ts",
+      "types": "./dist/draft9.d.ts",
+      "import": "./dist/draft9.js",
+      "require": "./dist/draft9.cjs"
+    },
+    "./draft9/session": {
+      "bun": "./src/drafts/draft09/session.ts",
+      "types": "./dist/draft9-session.d.ts",
+      "import": "./dist/draft9-session.js",
+      "require": "./dist/draft9-session.cjs"
+    },
+    "./draft10": {
+      "bun": "./src/drafts/draft10/index.ts",
+      "types": "./dist/draft10.d.ts",
+      "import": "./dist/draft10.js",
+      "require": "./dist/draft10.cjs"
+    },
+    "./draft10/session": {
+      "bun": "./src/drafts/draft10/session.ts",
+      "types": "./dist/draft10-session.d.ts",
+      "import": "./dist/draft10-session.js",
+      "require": "./dist/draft10-session.cjs"
+    },
+    "./draft11": {
+      "bun": "./src/drafts/draft11/index.ts",
+      "types": "./dist/draft11.d.ts",
+      "import": "./dist/draft11.js",
+      "require": "./dist/draft11.cjs"
+    },
+    "./draft11/session": {
+      "bun": "./src/drafts/draft11/session.ts",
+      "types": "./dist/draft11-session.d.ts",
+      "import": "./dist/draft11-session.js",
+      "require": "./dist/draft11-session.cjs"
+    },
+    "./draft12": {
+      "bun": "./src/drafts/draft12/index.ts",
+      "types": "./dist/draft12.d.ts",
+      "import": "./dist/draft12.js",
+      "require": "./dist/draft12.cjs"
+    },
+    "./draft12/session": {
+      "bun": "./src/drafts/draft12/session.ts",
+      "types": "./dist/draft12-session.d.ts",
+      "import": "./dist/draft12-session.js",
+      "require": "./dist/draft12-session.cjs"
+    },
+    "./draft13": {
+      "bun": "./src/drafts/draft13/index.ts",
+      "types": "./dist/draft13.d.ts",
+      "import": "./dist/draft13.js",
+      "require": "./dist/draft13.cjs"
+    },
+    "./draft13/session": {
+      "bun": "./src/drafts/draft13/session.ts",
+      "types": "./dist/draft13-session.d.ts",
+      "import": "./dist/draft13-session.js",
+      "require": "./dist/draft13-session.cjs"
+    },
     "./draft14": {
       "bun": "./src/drafts/draft14/index.ts",
       "types": "./dist/draft14.d.ts",
@@ -64,6 +136,42 @@
       "types": "./dist/draft14-session.d.ts",
       "import": "./dist/draft14-session.js",
       "require": "./dist/draft14-session.cjs"
+    },
+    "./draft15": {
+      "bun": "./src/drafts/draft15/index.ts",
+      "types": "./dist/draft15.d.ts",
+      "import": "./dist/draft15.js",
+      "require": "./dist/draft15.cjs"
+    },
+    "./draft15/session": {
+      "bun": "./src/drafts/draft15/session.ts",
+      "types": "./dist/draft15-session.d.ts",
+      "import": "./dist/draft15-session.js",
+      "require": "./dist/draft15-session.cjs"
+    },
+    "./draft16": {
+      "bun": "./src/drafts/draft16/index.ts",
+      "types": "./dist/draft16.d.ts",
+      "import": "./dist/draft16.js",
+      "require": "./dist/draft16.cjs"
+    },
+    "./draft16/session": {
+      "bun": "./src/drafts/draft16/session.ts",
+      "types": "./dist/draft16-session.d.ts",
+      "import": "./dist/draft16-session.js",
+      "require": "./dist/draft16-session.cjs"
+    },
+    "./draft17": {
+      "bun": "./src/drafts/draft17/index.ts",
+      "types": "./dist/draft17.d.ts",
+      "import": "./dist/draft17.js",
+      "require": "./dist/draft17.cjs"
+    },
+    "./draft17/session": {
+      "bun": "./src/drafts/draft17/session.ts",
+      "types": "./dist/draft17-session.d.ts",
+      "import": "./dist/draft17-session.js",
+      "require": "./dist/draft17-session.cjs"
     }
   },
   "files": [
@@ -76,7 +184,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@moqtap/test-vectors": "^0.1.0",
+    "@moqtap/test-vectors": "^0.6.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.0.0"

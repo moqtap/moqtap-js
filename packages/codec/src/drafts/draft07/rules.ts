@@ -46,7 +46,6 @@ export const CLIENT_ONLY_MESSAGES: ReadonlySet<MoqtMessageType> = new Set([
   "unannounce",
   "subscribe_announces",
   "unsubscribe_announces",
-  "max_subscribe_id",
   "fetch",
   "fetch_cancel",
   "track_status_request",
@@ -67,6 +66,7 @@ export const SERVER_ONLY_MESSAGES: ReadonlySet<MoqtMessageType> = new Set([
   "fetch_ok",
   "fetch_error",
   "track_status",
+  "goaway",
 ]);
 
 // Messages legal in each session phase -- for outbound validation
@@ -81,8 +81,6 @@ export function getLegalOutgoing(phase: string, role: "client" | "server"): Set<
       if (role === "server") legal.add("server_setup");
       break;
     case "ready": {
-      // Both roles can send goaway
-      legal.add("goaway");
       const roleMessages = role === "client" ? CLIENT_ONLY_MESSAGES : SERVER_ONLY_MESSAGES;
       for (const msg of roleMessages) {
         if (msg !== "client_setup" && msg !== "server_setup") {

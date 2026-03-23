@@ -22,21 +22,21 @@ npm install @moqtap/trace @moqtap/codec
 
 ```typescript
 import { createRecorder, writeMoqtrace } from '@moqtap/trace';
-import { createDraft14SessionState } from '@moqtap/codec/draft14/session';
+import { createDraft17SessionState } from '@moqtap/codec/draft17/session';
 
 const recorder = createRecorder({
-  protocol: 'moq-transport-14',
+  protocol: 'moq-transport-17',
   perspective: 'client',
   detail: 'control',
 });
 
 // Wrap a session to auto-capture control messages and state transitions
-const session = createDraft14SessionState({ codec: { draft: 'draft-ietf-moq-transport-14' }, role: 'client' });
+const session = createDraft17SessionState({ codec: { draft: 'draft-ietf-moq-transport-17' }, role: 'client' });
 const traced = recorder.wrapSession(session);
 
 // Use `traced` instead of `session` — all send/receive calls are recorded
-traced.send(clientSetupMessage);
-traced.receive(serverSetupMessage);
+traced.send(setupMessage);
+traced.receive(setupMessage);
 
 // Manually record events the session layer doesn't see
 recorder.recordStreamOpened(4n, 0, 0); // outgoing subgroup stream
@@ -54,7 +54,7 @@ import { readMoqtrace, readMoqtraceHeader } from '@moqtap/trace';
 
 // Quick metadata peek (no event parsing)
 const header = readMoqtraceHeader(bytes);
-console.log(header.protocol);   // "moq-transport-14"
+console.log(header.protocol);   // "moq-transport-17"
 console.log(header.perspective); // "client"
 console.log(header.detail);     // "control"
 

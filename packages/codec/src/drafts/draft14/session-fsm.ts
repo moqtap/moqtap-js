@@ -202,7 +202,37 @@ export class Draft14SessionFSM {
       case "fetch_cancel":
         return this.handleFetchCancel(message, direction, sideEffects);
 
-      // Publish namespace, subscribe namespace, track status, and other ready-phase messages
+      // Publish namespace lifecycle
+      case "publish_namespace":
+        return this.handlePublishNamespace(message, sideEffects);
+      case "publish_namespace_ok":
+        return this.handlePublishNamespaceOk(message, sideEffects);
+      case "publish_namespace_error":
+        return this.handlePublishNamespaceError(message, sideEffects);
+      case "publish_namespace_done":
+        return this.handlePublishNamespaceDone(message, sideEffects);
+      case "publish_namespace_cancel":
+        return this.handlePublishNamespaceCancel(message, sideEffects);
+
+      // Subscribe namespace lifecycle
+      case "subscribe_namespace":
+        return this.handleSubscribeNamespace(message, sideEffects);
+      case "subscribe_namespace_ok":
+        return this.handleSubscribeNamespaceOk(message, sideEffects);
+      case "subscribe_namespace_error":
+        return this.handleSubscribeNamespaceError(message, sideEffects);
+      case "unsubscribe_namespace":
+        return this.handleUnsubscribeNamespace(message, sideEffects);
+
+      // Track status lifecycle
+      case "track_status":
+        return this.handleTrackStatus(message, sideEffects);
+      case "track_status_ok":
+        return this.handleTrackStatusOk(message, sideEffects);
+      case "track_status_error":
+        return this.handleTrackStatusError(message, sideEffects);
+
+      // Other ready-phase messages
       default:
         return this.handleReadyPhaseMessage(message);
     }
@@ -771,6 +801,157 @@ export class Draft14SessionFSM {
 
     this._fetches.set(cancel.request_id, { ...existing, phase: "cancelled" });
     sideEffects.push({ type: "fetch-ended", requestId: cancel.request_id, reason: "cancelled" });
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  // ─── Publish namespace lifecycle ──────────────────────────────────────────────
+
+  private handlePublishNamespace(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const pn = message as import("./types.js").Draft14PublishNamespace;
+    const dupErr = this.checkDuplicateRequestId(pn.request_id, message.type);
+    if (dupErr) return { ok: false, violation: dupErr };
+    this._requestIds.add(pn.request_id);
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handlePublishNamespaceOk(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const ok = message as import("./types.js").Draft14PublishNamespaceOk;
+    const idErr = this.checkKnownRequestId(ok.request_id, message.type);
+    if (idErr) return { ok: false, violation: idErr };
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handlePublishNamespaceError(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const pnErr = message as import("./types.js").Draft14PublishNamespaceError;
+    const idErr = this.checkKnownRequestId(pnErr.request_id, message.type);
+    if (idErr) return { ok: false, violation: idErr };
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handlePublishNamespaceDone(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const done = message as import("./types.js").Draft14PublishNamespaceDone;
+    const idErr = this.checkKnownRequestId(done.request_id, message.type);
+    if (idErr) return { ok: false, violation: idErr };
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handlePublishNamespaceCancel(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const cancel = message as import("./types.js").Draft14PublishNamespaceCancel;
+    const idErr = this.checkKnownRequestId(cancel.request_id, message.type);
+    if (idErr) return { ok: false, violation: idErr };
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  // ─── Subscribe namespace lifecycle ──────────────────────────────────────────────
+
+  private handleSubscribeNamespace(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const sn = message as import("./types.js").Draft14SubscribeNamespace;
+    const dupErr = this.checkDuplicateRequestId(sn.request_id, message.type);
+    if (dupErr) return { ok: false, violation: dupErr };
+    this._requestIds.add(sn.request_id);
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handleSubscribeNamespaceOk(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const ok = message as import("./types.js").Draft14SubscribeNamespaceOk;
+    const idErr = this.checkKnownRequestId(ok.request_id, message.type);
+    if (idErr) return { ok: false, violation: idErr };
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handleSubscribeNamespaceError(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const snErr = message as import("./types.js").Draft14SubscribeNamespaceError;
+    const idErr = this.checkKnownRequestId(snErr.request_id, message.type);
+    if (idErr) return { ok: false, violation: idErr };
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handleUnsubscribeNamespace(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    // unsubscribe_namespace has no request_id — namespace-based
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  // ─── Track status lifecycle ──────────────────────────────────────────────────
+
+  private handleTrackStatus(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const ts = message as import("./types.js").Draft14TrackStatus;
+    const dupErr = this.checkDuplicateRequestId(ts.request_id, message.type);
+    if (dupErr) return { ok: false, violation: dupErr };
+    this._requestIds.add(ts.request_id);
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handleTrackStatusOk(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const ok = message as import("./types.js").Draft14TrackStatusOk;
+    const idErr = this.checkKnownRequestId(ok.request_id, message.type);
+    if (idErr) return { ok: false, violation: idErr };
+    return { ok: true, phase: this._phase, sideEffects };
+  }
+
+  private handleTrackStatusError(
+    message: Draft14Message,
+    sideEffects: SideEffect[],
+  ): TransitionResult<Draft14MessageType> {
+    const err = this.requireReady(message.type);
+    if (err) return { ok: false, violation: err };
+    const tsErr = message as import("./types.js").Draft14TrackStatusError;
+    const idErr = this.checkKnownRequestId(tsErr.request_id, message.type);
+    if (idErr) return { ok: false, violation: idErr };
     return { ok: true, phase: this._phase, sideEffects };
   }
 
