@@ -1,3 +1,4 @@
+import { bytesToHex, hexToBytes } from "../../core/hex.js";
 import { BufferReader } from "../../core/buffer-reader.js";
 import { BufferWriter } from "../../core/buffer-writer.js";
 import type { BaseCodec, DecodeResult } from "../../core/types.js";
@@ -44,33 +45,12 @@ import type {
   Draft09Message,
   Draft09Params,
   Draft09SetupParams,
-  FetchObjectPayload,
   FetchStream,
   JoiningFetch,
-  ObjectPayload,
   StandaloneFetch,
   SubgroupStream,
   UnknownParam,
 } from "./types.js";
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-function bytesToHex(bytes: Uint8Array): string {
-  let hex = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    hex += (bytes[i] as number).toString(16).padStart(2, "0");
-  }
-  return hex;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return bytes;
-}
-
 // ─── Setup Parameter Encoding/Decoding (all type+length+value) ──────────────
 
 function encodeSetupParams(params: Draft09SetupParams, w: BufferWriter): void {
@@ -869,307 +849,28 @@ export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft09Message> {
   }
 }
 
-// ─── Data Stream Encoding/Decoding ─────────────────────────────────────────────
-
-const SUBGROUP_STREAM_TYPE = 0x04n;
-const DATAGRAM_TYPE = 0x01n;
-const DATAGRAM_STATUS_TYPE = 0x02n;
-const FETCH_STREAM_TYPE = 0x05n;
-
-export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
-  const w = new BufferWriter();
-  w.writeVarInt(SUBGROUP_STREAM_TYPE);
-  w.writeVarInt(stream.trackAlias);
-  w.writeVarInt(stream.groupId);
-  w.writeVarInt(stream.subgroupId);
-  w.writeUint8(stream.publisherPriority);
-  for (const obj of stream.objects) {
-    w.writeVarInt(obj.objectId);
-    // extension_headers_length (0 = no extensions)
-    w.writeVarInt(0n);
-    w.writeVarInt(obj.payloadLength);
-    if (obj.payloadLength === 0 && obj.status !== undefined) {
-      w.writeVarInt(obj.status);
-    } else {
-      w.writeBytes(obj.payload);
-    }
-  }
-  return w.finish();
-}
-
-export function encodeDatagram(dg: DatagramObject): Uint8Array {
-  const w = new BufferWriter();
-  w.writeVarInt(DATAGRAM_TYPE);
-  w.writeVarInt(dg.trackAlias);
-  w.writeVarInt(dg.groupId);
-  w.writeVarInt(dg.objectId);
-  w.writeUint8(dg.publisherPriority);
-  // extension_headers_length (0 = no extensions)
-  w.writeVarInt(0n);
-  // remaining bytes = payload (no payload_length field in draft-09)
-  w.writeBytes(dg.payload);
-  return w.finish();
-}
-
-export function encodeDatagramStatus(dg: DatagramStatusObject): Uint8Array {
-  const w = new BufferWriter();
-  w.writeVarInt(DATAGRAM_STATUS_TYPE);
-  w.writeVarInt(dg.trackAlias);
-  w.writeVarInt(dg.groupId);
-  w.writeVarInt(dg.objectId);
-  w.writeUint8(dg.publisherPriority);
-  // extension_headers_length (0 = no extensions)
-  w.writeVarInt(0n);
-  w.writeVarInt(dg.objectStatus);
-  return w.finish();
-}
-
-export function encodeFetchStream(stream: FetchStream): Uint8Array {
-  const w = new BufferWriter();
-  w.writeVarInt(FETCH_STREAM_TYPE);
-  w.writeVarInt(stream.subscribeId);
-  for (const obj of stream.objects) {
-    w.writeVarInt(obj.groupId);
-    w.writeVarInt(obj.subgroupId);
-    w.writeVarInt(obj.objectId);
-    w.writeUint8(obj.publisherPriority);
-    // extension_headers_length (0 = no extensions)
-    w.writeVarInt(0n);
-    w.writeVarInt(obj.payloadLength);
-    if (obj.payloadLength === 0 && obj.status !== undefined) {
-      w.writeVarInt(obj.status);
-    } else {
-      w.writeBytes(obj.payload);
-    }
-  }
-  return w.finish();
-}
-
-export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream> {
-  try {
-    const r = new BufferReader(bytes);
-    const streamType = Number(r.readVarInt());
-    if (streamType !== 0x04) {
-      return {
-        ok: false,
-        error: new DecodeError(
-          "CONSTRAINT_VIOLATION",
-          `Expected subgroup type 0x04, got 0x${streamType.toString(16)}`,
-          0,
-        ),
-      };
-    }
-    const trackAlias = r.readVarInt();
-    const groupId = r.readVarInt();
-    const subgroupId = r.readVarInt();
-    const publisherPriority = r.readUint8();
-    const objects: ObjectPayload[] = [];
-    while (r.remaining > 0) {
-      const objectId = r.readVarInt();
-      // extension_headers_length: skip all extension header bytes at once
-      const extensionHeadersLength = r.readVarInt();
-      if (extensionHeadersLength > 0n) {
-        r.readBytes(Number(extensionHeadersLength));
-      }
-      const payloadLength = Number(r.readVarInt());
-      let payload: Uint8Array;
-      let status: bigint | undefined;
-      if (payloadLength === 0) {
-        status = r.readVarInt();
-        payload = new Uint8Array(0);
-      } else {
-        payload = r.readBytes(payloadLength);
-      }
-      const obj: ObjectPayload = {
-        type: "object",
-        objectId,
-        extensionHeadersLength,
-        payloadLength,
-        payload,
-      };
-      if (status !== undefined) (obj as unknown as Record<string, unknown>).status = status;
-      objects.push(obj);
-    }
-    return {
-      ok: true,
-      value: {
-        type: "subgroup",
-        streamTypeId: 0x04,
-        trackAlias,
-        groupId,
-        subgroupId,
-        publisherPriority,
-        objects,
-      },
-      bytesRead: r.offset,
-    };
-  } catch (e) {
-    if (e instanceof DecodeError) return { ok: false, error: e };
-    throw e;
-  }
-}
-
-export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> {
-  try {
-    const r = new BufferReader(bytes);
-    const streamType = Number(r.readVarInt());
-    if (streamType !== 0x01) {
-      return {
-        ok: false,
-        error: new DecodeError(
-          "CONSTRAINT_VIOLATION",
-          `Expected datagram type 0x01, got 0x${streamType.toString(16)}`,
-          0,
-        ),
-      };
-    }
-    const trackAlias = r.readVarInt();
-    const groupId = r.readVarInt();
-    const objectId = r.readVarInt();
-    const publisherPriority = r.readUint8();
-    const extensionHeadersLength = r.readVarInt();
-    if (extensionHeadersLength > 0n) {
-      r.readBytes(Number(extensionHeadersLength));
-    }
-    // remaining bytes ARE the payload (no payload_length in draft-09)
-    const payload = r.remaining > 0 ? r.readBytes(r.remaining) : new Uint8Array(0);
-    return {
-      ok: true,
-      value: {
-        type: "datagram",
-        streamTypeId: 0x01,
-        trackAlias,
-        groupId,
-        objectId,
-        publisherPriority,
-        extensionHeadersLength,
-        payload,
-      },
-      bytesRead: r.offset,
-    };
-  } catch (e) {
-    if (e instanceof DecodeError) return { ok: false, error: e };
-    throw e;
-  }
-}
-
-export function decodeDatagramStatus(bytes: Uint8Array): DecodeResult<DatagramStatusObject> {
-  try {
-    const r = new BufferReader(bytes);
-    const streamType = Number(r.readVarInt());
-    if (streamType !== 0x02) {
-      return {
-        ok: false,
-        error: new DecodeError(
-          "CONSTRAINT_VIOLATION",
-          `Expected datagram_status type 0x02, got 0x${streamType.toString(16)}`,
-          0,
-        ),
-      };
-    }
-    const trackAlias = r.readVarInt();
-    const groupId = r.readVarInt();
-    const objectId = r.readVarInt();
-    const publisherPriority = r.readUint8();
-    const extensionHeadersLength = r.readVarInt();
-    if (extensionHeadersLength > 0n) {
-      r.readBytes(Number(extensionHeadersLength));
-    }
-    const objectStatus = r.readVarInt();
-    return {
-      ok: true,
-      value: {
-        type: "datagram_status",
-        streamTypeId: 0x02,
-        trackAlias,
-        groupId,
-        objectId,
-        publisherPriority,
-        extensionHeadersLength,
-        objectStatus,
-      },
-      bytesRead: r.offset,
-    };
-  } catch (e) {
-    if (e instanceof DecodeError) return { ok: false, error: e };
-    throw e;
-  }
-}
-
-export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> {
-  try {
-    const r = new BufferReader(bytes);
-    const streamType = r.readVarInt();
-    if (streamType !== FETCH_STREAM_TYPE) {
-      return {
-        ok: false,
-        error: new DecodeError(
-          "CONSTRAINT_VIOLATION",
-          `Expected fetch type 0x05, got 0x${streamType.toString(16)}`,
-          0,
-        ),
-      };
-    }
-    const subscribeId = r.readVarInt();
-    const objects: FetchObjectPayload[] = [];
-    while (r.remaining > 0) {
-      const groupId = r.readVarInt();
-      const subgroupId = r.readVarInt();
-      const objectId = r.readVarInt();
-      const publisherPriority = r.readUint8();
-      // extension_headers_length: skip all extension header bytes at once
-      const extensionHeadersLength = r.readVarInt();
-      if (extensionHeadersLength > 0n) {
-        r.readBytes(Number(extensionHeadersLength));
-      }
-      const payloadLength = Number(r.readVarInt());
-      let payload: Uint8Array;
-      let status: bigint | undefined;
-      if (payloadLength === 0) {
-        status = r.readVarInt();
-        payload = new Uint8Array(0);
-      } else {
-        payload = r.readBytes(payloadLength);
-      }
-      const obj: FetchObjectPayload = {
-        type: "object",
-        groupId,
-        subgroupId,
-        objectId,
-        publisherPriority,
-        extensionHeadersLength,
-        payloadLength,
-        payload,
-      };
-      if (status !== undefined) (obj as unknown as Record<string, unknown>).status = status;
-      objects.push(obj);
-    }
-    return { ok: true, value: { type: "fetch", subscribeId, objects }, bytesRead: r.offset };
-  } catch (e) {
-    if (e instanceof DecodeError) return { ok: false, error: e };
-    throw e;
-  }
-}
-
-export function decodeDataStream(
-  streamType: "subgroup" | "datagram" | "datagram_status" | "fetch",
-  bytes: Uint8Array,
-): DecodeResult<Draft09DataStream> {
-  switch (streamType) {
-    case "subgroup":
-      return decodeSubgroupStream(bytes);
-    case "datagram":
-      return decodeDatagram(bytes);
-    case "datagram_status":
-      return decodeDatagramStatus(bytes);
-    case "fetch":
-      return decodeFetchStream(bytes);
-    default: {
-      const _: never = streamType;
-      throw new Error(`Unknown: ${_}`);
-    }
-  }
-}
+export {
+  decodeDataStream,
+  decodeDatagram,
+  decodeDatagramStatus,
+  decodeFetchStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeDatagramStatus,
+  encodeFetchStream,
+  encodeSubgroupStream,
+} from "./data-streams.js";
+import {
+  decodeDataStream,
+  decodeDatagram,
+  decodeDatagramStatus,
+  decodeFetchStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeDatagramStatus,
+  encodeFetchStream,
+  encodeSubgroupStream,
+} from "./data-streams.js";
 
 export function createStreamDecoder(): TransformStream<Uint8Array, Draft09Message> {
   let buffer = new Uint8Array(0);

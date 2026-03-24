@@ -316,13 +316,18 @@ export type Draft14Message =
 // Data stream types (no type+length wrapper)
 export interface ObjectPayload {
   readonly type: "object";
+  readonly byteOffset: number;
+  readonly payloadByteOffset: number;
   readonly objectId: bigint;
   readonly payloadLength: number;
   readonly payload: Uint8Array;
+  readonly status?: bigint;
+  readonly extensionData: Uint8Array;
 }
 
 export interface SubgroupStream {
   readonly type: "subgroup";
+  readonly headerType: number; // stream type byte (0x10-0x1D)
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly subgroupId: bigint;
@@ -332,17 +337,27 @@ export interface SubgroupStream {
 
 export interface DatagramObject {
   readonly type: "datagram";
+  readonly datagramType: number; // wire type (0x00-0x07, 0x20-0x21)
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly objectId: bigint;
+  readonly publisherPriority: number;
+  readonly endOfGroup?: boolean;
+  readonly objectStatus?: bigint;
   readonly payloadLength: number;
   readonly payload: Uint8Array;
 }
 
+export interface FetchObjectPayload extends ObjectPayload {
+  readonly groupId: bigint;
+  readonly subgroupId: bigint;
+  readonly publisherPriority: number;
+}
+
 export interface FetchStream {
   readonly type: "fetch";
-  readonly subscribeRequestId: bigint;
-  readonly objects: ObjectPayload[];
+  readonly requestId: bigint;
+  readonly objects: FetchObjectPayload[];
 }
 
 export type Draft14DataStream = SubgroupStream | DatagramObject | FetchStream;
@@ -350,6 +365,7 @@ export type Draft14DataStream = SubgroupStream | DatagramObject | FetchStream;
 // Streaming data stream decoder types
 export interface SubgroupStreamHeader {
   readonly type: "subgroup_header";
+  readonly headerType: number;
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly subgroupId: bigint;
@@ -358,7 +374,7 @@ export interface SubgroupStreamHeader {
 
 export interface FetchStreamHeader {
   readonly type: "fetch_header";
-  readonly subscribeRequestId: bigint;
+  readonly requestId: bigint;
 }
 
 export type DataStreamHeader = SubgroupStreamHeader | FetchStreamHeader;

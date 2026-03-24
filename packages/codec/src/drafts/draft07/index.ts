@@ -18,11 +18,8 @@ export type {
   MoqtMessage,
   MoqtMessageType,
   ObjectDatagram,
-  ObjectStream,
   ServerSetup,
-  StreamHeaderGroup,
   StreamHeaderSubgroup,
-  StreamHeaderTrack,
   Subscribe,
   SubscribeAnnounces,
   SubscribeAnnouncesError,
@@ -38,7 +35,16 @@ export type {
   UnsubscribeAnnounces,
 } from "../../core/types.js";
 export { DecodeError } from "../../core/types.js";
-export { createDraft07Codec } from "./codec.js";
+export type { Draft07Codec } from "./codec.js";
+export {
+  createDraft07Codec,
+  decodeDatagram,
+  decodeFetchStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  encodeSubgroupStream,
+} from "./codec.js";
 export { MESSAGE_ID_TO_TYPE, MESSAGE_TYPE_IDS } from "./messages.js";
 export { decodeParameters, encodeParameters } from "./parameters.js";
 export {
@@ -50,8 +56,22 @@ export {
   SERVER_ONLY_MESSAGES,
 } from "./rules.js";
 export { decodeVarInt, encodeVarInt } from "./varint.js";
+export type {
+  DatagramObject as Draft07DatagramObject,
+  DataStreamEvent,
+  DataStreamHeader,
+  Draft07DataStream,
+  FetchObjectPayload,
+  FetchStream,
+  FetchStreamHeader,
+  ObjectPayload,
+  SubgroupStream,
+  SubgroupStreamHeader,
+} from "./types.js";
 
 import type { DecodeResult, MoqtMessage } from "../../core/types.js";
+import type { FetchStream, SubgroupStream } from "./types.js";
+import type { DatagramObject } from "./types.js";
 import { createDraft07Codec } from "./codec.js";
 
 const defaultCodec = createDraft07Codec();

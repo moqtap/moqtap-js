@@ -1,3 +1,4 @@
+import { bytesToHex, hexToBytes } from "../../core/hex.js";
 import { BufferReader } from "../../core/buffer-reader.js";
 import { BufferWriter } from "../../core/buffer-writer.js";
 import type { BaseCodec, DecodeResult } from "../../core/types.js";
@@ -44,6 +45,7 @@ import type {
   Draft14DataStream,
   Draft14Message,
   Draft14Params,
+  FetchObjectPayload,
   FetchStream,
   FetchStreamHeader,
   ObjectPayload,
@@ -51,25 +53,6 @@ import type {
   SubgroupStreamHeader,
   UnknownParam,
 } from "./types.js";
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-function bytesToHex(bytes: Uint8Array): string {
-  let hex = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    hex += (bytes[i] as number).toString(16).padStart(2, "0");
-  }
-  return hex;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return bytes;
-}
-
 // ─── Parameter Encoding/Decoding ───────────────────────────────────────────────
 
 function encodeParams(params: Draft14Params, writer: BufferWriter): void {
@@ -936,171 +919,33 @@ export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft14Message> {
   }
 }
 
-// ─── Data Stream Encoding/Decoding ─────────────────────────────────────────────
+// ─── Data Stream Re-exports ───────────────────────────────────────────────────
 
-/**
- * Encode a subgroup stream header + objects.
- */
-export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
-  const w = new BufferWriter();
-  w.writeVarInt(0n); // stream type: subgroup
-  w.writeVarInt(stream.trackAlias);
-  w.writeVarInt(stream.groupId);
-  w.writeVarInt(stream.subgroupId);
-  w.writeUint8(stream.publisherPriority);
-  for (const obj of stream.objects) {
-    w.writeVarInt(obj.objectId);
-    w.writeVarInt(obj.payloadLength);
-    w.writeBytes(obj.payload);
-  }
-  return w.finish();
-}
+import {
+  encodeSubgroupStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  decodeDatagram,
+  encodeFetchStream,
+  decodeFetchStream,
+  decodeDataStream,
+  createSubgroupStreamDecoder,
+  createFetchStreamDecoder,
+  createDataStreamDecoder,
+} from "./data-streams.js";
 
-/**
- * Encode a datagram object.
- */
-export function encodeDatagram(dg: DatagramObject): Uint8Array {
-  const w = new BufferWriter();
-  w.writeVarInt(dg.trackAlias);
-  w.writeVarInt(dg.groupId);
-  w.writeVarInt(dg.objectId);
-  w.writeVarInt(dg.payloadLength);
-  w.writeBytes(dg.payload);
-  return w.finish();
-}
-
-/**
- * Encode a fetch stream header + objects.
- */
-export function encodeFetchStream(stream: FetchStream): Uint8Array {
-  const w = new BufferWriter();
-  w.writeVarInt(2n); // stream type: fetch
-  w.writeVarInt(stream.subscribeRequestId);
-  for (const obj of stream.objects) {
-    w.writeVarInt(obj.objectId);
-    w.writeVarInt(obj.payloadLength);
-    w.writeBytes(obj.payload);
-  }
-  return w.finish();
-}
-
-/**
- * Decode a subgroup data stream from raw bytes.
- */
-export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream> {
-  try {
-    const r = new BufferReader(bytes);
-    const streamType = r.readVarInt();
-    if (streamType !== 0n) {
-      return {
-        ok: false,
-        error: new DecodeError(
-          "CONSTRAINT_VIOLATION",
-          `Expected subgroup stream type 0, got ${streamType}`,
-          0,
-        ),
-      };
-    }
-    const trackAlias = r.readVarInt();
-    const groupId = r.readVarInt();
-    const subgroupId = r.readVarInt();
-    const publisherPriority = r.readUint8();
-    const objects: ObjectPayload[] = [];
-    while (r.remaining > 0) {
-      const objectId = r.readVarInt();
-      const payloadLength = Number(r.readVarInt());
-      const payload = r.readBytes(payloadLength);
-      objects.push({ type: "object", objectId, payloadLength, payload });
-    }
-    return {
-      ok: true,
-      value: { type: "subgroup", trackAlias, groupId, subgroupId, publisherPriority, objects },
-      bytesRead: r.offset,
-    };
-  } catch (e) {
-    if (e instanceof DecodeError) return { ok: false, error: e };
-    throw e;
-  }
-}
-
-/**
- * Decode a datagram object from raw bytes.
- */
-export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> {
-  try {
-    const r = new BufferReader(bytes);
-    const trackAlias = r.readVarInt();
-    const groupId = r.readVarInt();
-    const objectId = r.readVarInt();
-    const payloadLength = Number(r.readVarInt());
-    const payload = r.readBytes(payloadLength);
-    return {
-      ok: true,
-      value: { type: "datagram", trackAlias, groupId, objectId, payloadLength, payload },
-      bytesRead: r.offset,
-    };
-  } catch (e) {
-    if (e instanceof DecodeError) return { ok: false, error: e };
-    throw e;
-  }
-}
-
-/**
- * Decode a fetch data stream from raw bytes.
- */
-export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> {
-  try {
-    const r = new BufferReader(bytes);
-    const streamType = r.readVarInt();
-    if (streamType !== 2n) {
-      return {
-        ok: false,
-        error: new DecodeError(
-          "CONSTRAINT_VIOLATION",
-          `Expected fetch stream type 2, got ${streamType}`,
-          0,
-        ),
-      };
-    }
-    const subscribeRequestId = r.readVarInt();
-    const objects: ObjectPayload[] = [];
-    while (r.remaining > 0) {
-      const objectId = r.readVarInt();
-      const payloadLength = Number(r.readVarInt());
-      const payload = r.readBytes(payloadLength);
-      objects.push({ type: "object", objectId, payloadLength, payload });
-    }
-    return {
-      ok: true,
-      value: { type: "fetch", subscribeRequestId, objects },
-      bytesRead: r.offset,
-    };
-  } catch (e) {
-    if (e instanceof DecodeError) return { ok: false, error: e };
-    throw e;
-  }
-}
-
-/**
- * Decode a data stream, dispatching by stream type.
- */
-export function decodeDataStream(
-  streamType: "subgroup" | "datagram" | "fetch",
-  bytes: Uint8Array,
-): DecodeResult<Draft14DataStream> {
-  switch (streamType) {
-    case "subgroup":
-      return decodeSubgroupStream(bytes);
-    case "datagram":
-      return decodeDatagram(bytes);
-    case "fetch":
-      return decodeFetchStream(bytes);
-    default: {
-      const _exhaustive: never = streamType;
-      throw new Error(`Unknown stream type: ${_exhaustive}`);
-    }
-  }
-}
+export {
+  encodeSubgroupStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  decodeDatagram,
+  encodeFetchStream,
+  decodeFetchStream,
+  decodeDataStream,
+  createSubgroupStreamDecoder,
+  createFetchStreamDecoder,
+  createDataStreamDecoder,
+};
 
 // ─── Stream Decoders ───────────────────────────────────────────────────────────
 
@@ -1144,297 +989,6 @@ export function createStreamDecoder(): TransformStream<Uint8Array, Draft14Messag
         controller.error(
           new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
         );
-      }
-    },
-  });
-}
-
-/**
- * Create a TransformStream that decodes a subgroup data stream.
- * First emits a SubgroupStreamHeader, then emits ObjectPayload events.
- *
- * Subgroup stream framing:
- *   varint(0x00) + varint(trackAlias) + varint(groupId) + varint(subgroupId)
- *   + uint8(publisherPriority) + [varint(objectId) + varint(payloadLength) + bytes(payload)]*
- */
-export function createSubgroupStreamDecoder(): TransformStream<
-  Uint8Array,
-  SubgroupStreamHeader | ObjectPayload
-> {
-  let buffer = new Uint8Array(0);
-  let headerEmitted = false;
-
-  return new TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>({
-    transform(chunk, controller) {
-      const newBuffer = new Uint8Array(buffer.length + chunk.length);
-      newBuffer.set(buffer, 0);
-      newBuffer.set(chunk, buffer.length);
-      buffer = newBuffer;
-
-      // First, parse the header if not yet emitted
-      if (!headerEmitted) {
-        try {
-          const r = new BufferReader(buffer);
-          const streamType = r.readVarInt();
-          if (streamType !== 0n) {
-            controller.error(
-              new DecodeError(
-                "CONSTRAINT_VIOLATION",
-                `Expected subgroup stream type 0, got ${streamType}`,
-                0,
-              ),
-            );
-            return;
-          }
-          const trackAlias = r.readVarInt();
-          const groupId = r.readVarInt();
-          const subgroupId = r.readVarInt();
-          const publisherPriority = r.readUint8();
-
-          controller.enqueue({
-            type: "subgroup_header",
-            trackAlias,
-            groupId,
-            subgroupId,
-            publisherPriority,
-          });
-          headerEmitted = true;
-          buffer = buffer.slice(r.offset);
-        } catch (e) {
-          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
-            return; // Need more data
-          }
-          controller.error(e);
-          return;
-        }
-      }
-
-      // Parse objects
-      while (buffer.length > 0) {
-        try {
-          const r = new BufferReader(buffer);
-          const objectId = r.readVarInt();
-          const payloadLength = Number(r.readVarInt());
-          const payload = r.readBytes(payloadLength);
-          controller.enqueue({ type: "object", objectId, payloadLength, payload });
-          buffer = buffer.slice(r.offset);
-        } catch (e) {
-          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
-            break; // Need more data
-          }
-          controller.error(e);
-          return;
-        }
-      }
-    },
-
-    flush(controller) {
-      if (buffer.length > 0) {
-        controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
-      }
-    },
-  });
-}
-
-/**
- * Create a TransformStream that decodes a fetch data stream.
- * First emits a FetchStreamHeader, then emits ObjectPayload events.
- *
- * Fetch stream framing:
- *   varint(0x02) + varint(subscribeRequestId)
- *   + [varint(objectId) + varint(payloadLength) + bytes(payload)]*
- */
-export function createFetchStreamDecoder(): TransformStream<
-  Uint8Array,
-  FetchStreamHeader | ObjectPayload
-> {
-  let buffer = new Uint8Array(0);
-  let headerEmitted = false;
-
-  return new TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>({
-    transform(chunk, controller) {
-      const newBuffer = new Uint8Array(buffer.length + chunk.length);
-      newBuffer.set(buffer, 0);
-      newBuffer.set(chunk, buffer.length);
-      buffer = newBuffer;
-
-      // First, parse the header if not yet emitted
-      if (!headerEmitted) {
-        try {
-          const r = new BufferReader(buffer);
-          const streamType = r.readVarInt();
-          if (streamType !== 2n) {
-            controller.error(
-              new DecodeError(
-                "CONSTRAINT_VIOLATION",
-                `Expected fetch stream type 2, got ${streamType}`,
-                0,
-              ),
-            );
-            return;
-          }
-          const subscribeRequestId = r.readVarInt();
-
-          controller.enqueue({
-            type: "fetch_header",
-            subscribeRequestId,
-          });
-          headerEmitted = true;
-          buffer = buffer.slice(r.offset);
-        } catch (e) {
-          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
-            return; // Need more data
-          }
-          controller.error(e);
-          return;
-        }
-      }
-
-      // Parse objects
-      while (buffer.length > 0) {
-        try {
-          const r = new BufferReader(buffer);
-          const objectId = r.readVarInt();
-          const payloadLength = Number(r.readVarInt());
-          const payload = r.readBytes(payloadLength);
-          controller.enqueue({ type: "object", objectId, payloadLength, payload });
-          buffer = buffer.slice(r.offset);
-        } catch (e) {
-          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
-            break; // Need more data
-          }
-          controller.error(e);
-          return;
-        }
-      }
-    },
-
-    flush(controller) {
-      if (buffer.length > 0) {
-        controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
-      }
-    },
-  });
-}
-
-/**
- * Create a unified auto-detecting data stream decoder.
- * Reads the stream type varint from the first bytes, then delegates to
- * the appropriate decoder (subgroup or fetch).
- */
-export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent> {
-  let buffer = new Uint8Array(0);
-  let detectedType: "subgroup" | "fetch" | null = null;
-  let headerEmitted = false;
-
-  // We peek the stream type then create the appropriate inner decoder,
-  // forwarding all remaining data through it.  To avoid complexity of
-  // piping inner TransformStreams we just inline the same logic.
-
-  return new TransformStream<Uint8Array, DataStreamEvent>({
-    transform(chunk, controller) {
-      const newBuffer = new Uint8Array(buffer.length + chunk.length);
-      newBuffer.set(buffer, 0);
-      newBuffer.set(chunk, buffer.length);
-      buffer = newBuffer;
-
-      // Detect stream type if not yet done
-      if (detectedType === null) {
-        try {
-          const r = new BufferReader(buffer);
-          const streamType = r.readVarInt();
-          if (streamType === 0n) {
-            detectedType = "subgroup";
-          } else if (streamType === 2n) {
-            detectedType = "fetch";
-          } else {
-            controller.error(
-              new DecodeError("CONSTRAINT_VIOLATION", `Unknown data stream type: ${streamType}`, 0),
-            );
-            return;
-          }
-          // Do NOT advance buffer - the inner header parser expects the stream type
-        } catch (e) {
-          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
-            return; // Need more data
-          }
-          controller.error(e);
-          return;
-        }
-      }
-
-      if (detectedType === "subgroup") {
-        // Parse subgroup header if not yet emitted
-        if (!headerEmitted) {
-          try {
-            const r = new BufferReader(buffer);
-            r.readVarInt(); // stream type (0x00)
-            const trackAlias = r.readVarInt();
-            const groupId = r.readVarInt();
-            const subgroupId = r.readVarInt();
-            const publisherPriority = r.readUint8();
-            controller.enqueue({
-              type: "subgroup_header",
-              trackAlias,
-              groupId,
-              subgroupId,
-              publisherPriority,
-            });
-            headerEmitted = true;
-            buffer = buffer.slice(r.offset);
-          } catch (e) {
-            if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
-              return;
-            }
-            controller.error(e);
-            return;
-          }
-        }
-      } else {
-        // Parse fetch header if not yet emitted
-        if (!headerEmitted) {
-          try {
-            const r = new BufferReader(buffer);
-            r.readVarInt(); // stream type (0x02)
-            const subscribeRequestId = r.readVarInt();
-            controller.enqueue({
-              type: "fetch_header",
-              subscribeRequestId,
-            });
-            headerEmitted = true;
-            buffer = buffer.slice(r.offset);
-          } catch (e) {
-            if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
-              return;
-            }
-            controller.error(e);
-            return;
-          }
-        }
-      }
-
-      // Parse objects
-      while (buffer.length > 0) {
-        try {
-          const r = new BufferReader(buffer);
-          const objectId = r.readVarInt();
-          const payloadLength = Number(r.readVarInt());
-          const payload = r.readBytes(payloadLength);
-          controller.enqueue({ type: "object", objectId, payloadLength, payload });
-          buffer = buffer.slice(r.offset);
-        } catch (e) {
-          if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
-            break;
-          }
-          controller.error(e);
-          return;
-        }
-      }
-    },
-
-    flush(controller) {
-      if (buffer.length > 0) {
-        controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
       }
     },
   });

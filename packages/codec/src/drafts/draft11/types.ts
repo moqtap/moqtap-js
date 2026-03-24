@@ -310,7 +310,10 @@ export type Draft11Message =
 // Data stream types
 export interface ObjectPayload {
   readonly type: "object";
+  readonly byteOffset: number;
+  readonly payloadByteOffset: number;
   readonly objectId: bigint;
+  readonly extensionData: Uint8Array;
   readonly payloadLength: number;
   readonly status?: bigint;
   readonly payload: Uint8Array;
@@ -318,7 +321,7 @@ export interface ObjectPayload {
 
 export interface SubgroupStream {
   readonly type: "subgroup";
-  readonly streamTypeId: number; // 0x08 or 0x0C
+  readonly streamTypeId: number; // 0x08-0x0D
   readonly trackAlias: bigint;
   readonly groupId: bigint;
   readonly subgroupId: bigint;
@@ -340,11 +343,14 @@ export interface DatagramObject {
 
 export interface FetchObjectPayload {
   readonly type: "object";
+  readonly byteOffset: number;
+  readonly payloadByteOffset: number;
   readonly groupId: bigint;
   readonly subgroupId: bigint;
   readonly objectId: bigint;
   readonly publisherPriority: number;
   readonly extensionHeadersLength: bigint;
+  readonly extensionData: Uint8Array;
   readonly payloadLength: number;
   readonly payload: Uint8Array;
 }

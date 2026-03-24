@@ -26,12 +26,10 @@ export const MESSAGE_TYPE_IDS = {
   fetch_error: 0x19n,
   client_setup: 0x40n,
   server_setup: 0x41n,
-  // Data stream messages
-  object_stream: 0x00n,
+  // Data stream messages (Section 7, Table 5)
   object_datagram: 0x01n,
-  stream_header_track: 0x50n,
-  stream_header_group: 0x51n,
   stream_header_subgroup: 0x04n, // Note: same ID as subscribe_ok but used on data streams, context disambiguates
+  fetch_header: 0x05n, // Note: same ID as subscribe_error but used on data streams, context disambiguates
 } as const;
 
 // Reverse map: wire ID -> message type name

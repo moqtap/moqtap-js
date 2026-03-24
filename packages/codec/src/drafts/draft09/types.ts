@@ -295,8 +295,11 @@ export type Draft09Message =
 // Data stream types
 export interface ObjectPayload {
   readonly type: "object";
+  readonly byteOffset: number;
+  readonly payloadByteOffset: number;
   readonly objectId: bigint;
   readonly extensionHeadersLength: bigint;
+  readonly extensionData: Uint8Array;
   readonly payloadLength: number;
   readonly status?: bigint;
   readonly payload: Uint8Array;
@@ -320,6 +323,7 @@ export interface DatagramObject {
   readonly objectId: bigint;
   readonly publisherPriority: number;
   readonly extensionHeadersLength: bigint;
+  readonly extensionData: Uint8Array;
   readonly payload: Uint8Array;
 }
 
@@ -331,16 +335,20 @@ export interface DatagramStatusObject {
   readonly objectId: bigint;
   readonly publisherPriority: number;
   readonly extensionHeadersLength: bigint;
+  readonly extensionData: Uint8Array;
   readonly objectStatus: bigint;
 }
 
 export interface FetchObjectPayload {
   readonly type: "object";
+  readonly byteOffset: number;
+  readonly payloadByteOffset: number;
   readonly groupId: bigint;
   readonly subgroupId: bigint;
   readonly objectId: bigint;
   readonly publisherPriority: number;
   readonly extensionHeadersLength: bigint;
+  readonly extensionData: Uint8Array;
   readonly payloadLength: number;
   readonly status?: bigint;
   readonly payload: Uint8Array;

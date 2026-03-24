@@ -248,9 +248,12 @@ export type Draft17Message =
 // Data stream types (same as draft-16)
 export interface ObjectPayload {
   readonly type: "object";
+  readonly byteOffset: number;
+  readonly payloadByteOffset: number;
   readonly objectId: bigint;
   readonly payloadLength: number;
   readonly status?: bigint;
+  readonly extensionData: Uint8Array;
   readonly payload: Uint8Array;
 }
 

@@ -29,10 +29,7 @@ export const CONTROL_MESSAGES: ReadonlySet<MoqtMessageType> = new Set([
 ]);
 
 export const DATA_MESSAGES: ReadonlySet<MoqtMessageType> = new Set([
-  "object_stream",
   "object_datagram",
-  "stream_header_track",
-  "stream_header_group",
   "stream_header_subgroup",
 ]);
 

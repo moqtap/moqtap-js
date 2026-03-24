@@ -150,8 +150,8 @@ function assertDataStreamMatch(
       const eo = expectedObjects[i]!;
       expect(String(ao.objectId)).toBe(String(eo.object_id));
       expect(String(ao.payloadLength)).toBe(String(eo.payload_length));
-      if (eo.status !== undefined) {
-        expect(String(ao.status)).toBe(String(eo.status));
+      if (eo.object_status !== undefined) {
+        expect(String(ao.status)).toBe(String(eo.object_status));
       }
       if (eo.serialization_flags !== undefined) {
         expect(`0x${(ao.serializationFlags as number).toString(16).padStart(2, "0")}`).toBe(
@@ -167,7 +167,9 @@ function assertDataStreamMatch(
       if (eo.publisher_priority !== undefined) {
         expect(String(ao.publisherPriority)).toBe(String(eo.publisher_priority));
       }
-      expect(bytesToHex(ao.payload as Uint8Array)).toBe(eo.payload_hex);
+      if (eo.payload_hex !== undefined) {
+        expect(bytesToHex(ao.payload as Uint8Array)).toBe(eo.payload_hex);
+      }
     }
   }
 }

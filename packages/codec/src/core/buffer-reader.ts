@@ -29,7 +29,7 @@ export class BufferReader {
     return value;
   }
 
-  readBytes(length: number): Uint8Array {
+  readBytes(length: number): Uint8Array<ArrayBuffer> {
     if (this.remaining < length) {
       throw new DecodeError(
         "UNEXPECTED_END",

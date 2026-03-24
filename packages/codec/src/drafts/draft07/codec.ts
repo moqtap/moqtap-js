@@ -19,11 +19,8 @@ import type {
   MoqtMessage,
   MoqtMessageType,
   ObjectDatagram,
-  ObjectStream,
   ServerSetup,
-  StreamHeaderGroup,
   StreamHeaderSubgroup,
-  StreamHeaderTrack,
   Subscribe,
   SubscribeAnnounces,
   SubscribeAnnouncesError,
@@ -39,6 +36,11 @@ import type {
   UnsubscribeAnnounces,
 } from "../../core/types.js";
 import { DecodeError } from "../../core/types.js";
+import type {
+  DatagramObject as Draft07DatagramObject,
+  FetchStream,
+  SubgroupStream,
+} from "./types.js";
 import { MESSAGE_TYPE_IDS } from "./messages.js";
 import { decodeVarInt, encodeVarInt } from "./varint.js";
 
@@ -94,12 +96,10 @@ function readGroupOrder(reader: BufferReader): GroupOrderValue {
 
 // Data stream type IDs that NEVER appear as control messages.
 // Note: 0x04 (stream_header_subgroup) excluded — shares ID with subscribe_ok.
-// Callers must use dataStreamDecoders directly for stream_header_subgroup.
+// Note: 0x05 (fetch_header) excluded — shares ID with subscribe_error.
+// Callers must use decodeSubgroupStream/decodeFetchStream directly.
 const DATA_STREAM_TYPE_IDS: ReadonlySet<bigint> = new Set([
-  MESSAGE_TYPE_IDS.object_stream,
   MESSAGE_TYPE_IDS.object_datagram,
-  MESSAGE_TYPE_IDS.stream_header_track,
-  MESSAGE_TYPE_IDS.stream_header_group,
 ]);
 
 // --- Control message type (excludes data stream types) ---
@@ -111,6 +111,7 @@ type ControlMessageType = Exclude<
   | "stream_header_group"
   | "stream_header_subgroup"
 >;
+
 
 // --- Encode functions for each message type (payload only, no type ID) ---
 
@@ -301,15 +302,6 @@ function encodeObjectPayload(
   }
 }
 
-function encodeObjectStream(msg: ObjectStream, writer: BufferWriter): void {
-  writer.writeVarInt(MESSAGE_TYPE_IDS.object_stream);
-  writer.writeVarInt(msg.trackAlias);
-  writer.writeVarInt(msg.groupId);
-  writer.writeVarInt(msg.objectId);
-  writer.writeUint8(msg.publisherPriority);
-  encodeObjectPayload(msg, writer);
-}
-
 function encodeObjectDatagram(msg: ObjectDatagram, writer: BufferWriter): void {
   writer.writeVarInt(MESSAGE_TYPE_IDS.object_datagram);
   writer.writeVarInt(msg.trackAlias);
@@ -317,27 +309,6 @@ function encodeObjectDatagram(msg: ObjectDatagram, writer: BufferWriter): void {
   writer.writeVarInt(msg.objectId);
   writer.writeUint8(msg.publisherPriority);
   encodeObjectPayload(msg, writer);
-}
-
-function encodeStreamHeaderTrack(msg: StreamHeaderTrack, writer: BufferWriter): void {
-  writer.writeVarInt(MESSAGE_TYPE_IDS.stream_header_track);
-  writer.writeVarInt(msg.trackAlias);
-  writer.writeUint8(msg.publisherPriority);
-}
-
-function encodeStreamHeaderGroup(msg: StreamHeaderGroup, writer: BufferWriter): void {
-  writer.writeVarInt(MESSAGE_TYPE_IDS.stream_header_group);
-  writer.writeVarInt(msg.trackAlias);
-  writer.writeVarInt(msg.groupId);
-  writer.writeUint8(msg.publisherPriority);
-}
-
-function encodeStreamHeaderSubgroup(msg: StreamHeaderSubgroup, writer: BufferWriter): void {
-  writer.writeVarInt(MESSAGE_TYPE_IDS.stream_header_subgroup);
-  writer.writeVarInt(msg.trackAlias);
-  writer.writeVarInt(msg.groupId);
-  writer.writeVarInt(msg.subgroupId);
-  writer.writeUint8(msg.publisherPriority);
 }
 
 // --- Encode dispatch ---
@@ -378,11 +349,7 @@ const controlEncoders: Record<ControlMessageType, (msg: never, writer: BufferWri
 const dataStreamEncoders: Partial<
   Record<MoqtMessageType, (msg: never, writer: BufferWriter) => void>
 > = {
-  object_stream: encodeObjectStream as (msg: never, writer: BufferWriter) => void,
   object_datagram: encodeObjectDatagram as (msg: never, writer: BufferWriter) => void,
-  stream_header_track: encodeStreamHeaderTrack as (msg: never, writer: BufferWriter) => void,
-  stream_header_group: encodeStreamHeaderGroup as (msg: never, writer: BufferWriter) => void,
-  stream_header_subgroup: encodeStreamHeaderSubgroup as (msg: never, writer: BufferWriter) => void,
 };
 
 // --- Decode functions for each message type ---
@@ -684,36 +651,6 @@ function decodeFetchCancel(reader: BufferReader): FetchCancel {
   return { type: "fetch_cancel", subscribeId };
 }
 
-function decodeObjectStream(reader: BufferReader): ObjectStream {
-  const trackAlias = reader.readVarInt();
-  const groupId = reader.readVarInt();
-  const objectId = reader.readVarInt();
-  const publisherPriority = reader.readUint8();
-  const payloadLength = Number(reader.readVarInt());
-  if (payloadLength === 0) {
-    // Object Status follows when payload length is 0
-    const objectStatus = reader.remaining > 0 ? Number(reader.readVarInt()) : 0;
-    return {
-      type: "object_stream" as const,
-      trackAlias,
-      groupId,
-      objectId,
-      publisherPriority,
-      objectStatus,
-      payload: new Uint8Array(0),
-    };
-  }
-  const payload = reader.readBytes(payloadLength);
-  return {
-    type: "object_stream" as const,
-    trackAlias,
-    groupId,
-    objectId,
-    publisherPriority,
-    payload,
-  };
-}
-
 function decodeObjectDatagram(reader: BufferReader): ObjectDatagram {
   const trackAlias = reader.readVarInt();
   const groupId = reader.readVarInt();
@@ -744,32 +681,6 @@ function decodeObjectDatagram(reader: BufferReader): ObjectDatagram {
   };
 }
 
-function decodeStreamHeaderTrack(reader: BufferReader): StreamHeaderTrack {
-  const trackAlias = reader.readVarInt();
-  const publisherPriority = reader.readUint8();
-  return { type: "stream_header_track", trackAlias, publisherPriority };
-}
-
-function decodeStreamHeaderGroup(reader: BufferReader): StreamHeaderGroup {
-  const trackAlias = reader.readVarInt();
-  const groupId = reader.readVarInt();
-  const publisherPriority = reader.readUint8();
-  return { type: "stream_header_group", trackAlias, groupId, publisherPriority };
-}
-
-function decodeStreamHeaderSubgroup(reader: BufferReader): StreamHeaderSubgroup {
-  const trackAlias = reader.readVarInt();
-  const groupId = reader.readVarInt();
-  const subgroupId = reader.readVarInt();
-  const publisherPriority = reader.readUint8();
-  return {
-    type: "stream_header_subgroup",
-    trackAlias,
-    groupId,
-    subgroupId,
-    publisherPriority,
-  };
-}
 
 // --- Decode dispatch by wire type ID (control messages only) ---
 
@@ -805,11 +716,7 @@ const controlDecoders = new Map<bigint, Decoder>([
 
 // Data stream decoders keyed by wire ID (for disambiguation)
 const dataStreamDecoders = new Map<bigint, Decoder>([
-  [MESSAGE_TYPE_IDS.object_stream, decodeObjectStream],
   [MESSAGE_TYPE_IDS.object_datagram, decodeObjectDatagram],
-  [MESSAGE_TYPE_IDS.stream_header_track, decodeStreamHeaderTrack],
-  [MESSAGE_TYPE_IDS.stream_header_group, decodeStreamHeaderGroup],
-  [MESSAGE_TYPE_IDS.stream_header_subgroup, decodeStreamHeaderSubgroup],
 ]);
 
 // --- Message type to wire ID mapping ---
@@ -974,9 +881,38 @@ function createStreamDecoderImpl(): TransformStream<Uint8Array, MoqtMessage> {
   });
 }
 
+// ─── Data stream encode/decode (re-exported from data-streams.ts) ─────────────
+
+export {
+  encodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  decodeSubgroupStream,
+  decodeDatagram,
+  decodeFetchStream,
+} from "./data-streams.js";
+
+import {
+  encodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  decodeSubgroupStream,
+  decodeDatagram,
+  decodeFetchStream,
+} from "./data-streams.js";
+
 // --- Factory ---
 
-export function createDraft07Codec(): Codec {
+export interface Draft07Codec extends Codec {
+  encodeSubgroupStream(stream: SubgroupStream): Uint8Array;
+  decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>;
+  encodeDatagram(dg: Draft07DatagramObject): Uint8Array;
+  decodeDatagram(bytes: Uint8Array): DecodeResult<Draft07DatagramObject>;
+  encodeFetchStream(stream: FetchStream): Uint8Array;
+  decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>;
+}
+
+export function createDraft07Codec(): Draft07Codec {
   return {
     draft: "draft-ietf-moq-transport-07",
     encodeMessage: encodeMessageImpl,
@@ -984,6 +920,12 @@ export function createDraft07Codec(): Codec {
     encodeVarInt,
     decodeVarInt,
     createStreamDecoder: createStreamDecoderImpl,
+    encodeSubgroupStream,
+    decodeSubgroupStream,
+    encodeDatagram,
+    decodeDatagram,
+    encodeFetchStream,
+    decodeFetchStream,
   };
 }
 
