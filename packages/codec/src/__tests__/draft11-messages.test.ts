@@ -6,26 +6,11 @@ const codec = createDraft11Codec();
 
 const vectorEntries = loadVectorDir("transport/draft11/codec/messages");
 
-// Known test-vector bugs in @moqtap/test-vectors@0.3.0:
-// - subscribe vectors with single-element namespace have a duplicated track_alias byte
-// - announce multi-namespace-with-auth has wrong payload length (0x20 vs 0x1e)
-const KNOWN_VECTOR_BUGS = new Set([
-  "subscribe:filter-next-group-start",
-  "subscribe:filter-absolute-start",
-  "subscribe:filter-absolute-range",
-  "subscribe:with-auth-param",
-  "subscribe:not-forwarded",
-  "announce:multi-namespace-with-auth",
-]);
-
 for (const { file, data: vectorFile } of vectorEntries) {
   const messageType = vectorFile.message_type;
 
   describe(`draft-11 ${messageType} (${file})`, () => {
     for (const vector of vectorFile.vectors) {
-      const vectorKey = `${messageType}:${vector.id}`;
-      const skipBug = KNOWN_VECTOR_BUGS.has(vectorKey);
-
       describe(`[${vector.id}] ${vector.description}`, () => {
         const bytes = hexToBytes(vector.hex);
 
@@ -35,7 +20,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
             expect(result.ok).toBe(false);
           });
         } else if (vector.decoded) {
-          it.skipIf(skipBug)("should decode correctly", () => {
+          it("should decode correctly", () => {
             const result = codec.decodeMessage(bytes);
             expect(result.ok).toBe(true);
             if (!result.ok) return;
@@ -48,7 +33,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
 
           // Only test re-encode for canonical vectors (canonical defaults to true)
           if (vector.canonical !== false) {
-            it.skipIf(skipBug)("should re-encode to same bytes", () => {
+            it("should re-encode to same bytes", () => {
               const result = codec.decodeMessage(bytes);
               if (!result.ok) {
                 expect.fail("decode failed, cannot test re-encode");

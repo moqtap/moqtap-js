@@ -184,7 +184,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@moqtap/test-vectors": "^0.7.1",
+    "@moqtap/test-vectors": "^0.7.2",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.0.0"

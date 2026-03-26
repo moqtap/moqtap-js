@@ -6,10 +6,6 @@ const codec = createDraft09Codec();
 
 const vectorEntries = loadVectorDir("transport/draft09/codec/messages");
 
-// Known vector bugs: draft-09 "with-auth-param" subscribe uses filter_type=1
-// which was removed in draft-09 (LatestGroup no longer valid)
-const KNOWN_VECTOR_BUGS = new Set(["with-auth-param"]);
-
 for (const { file, data: vectorFile } of vectorEntries) {
   const messageType = vectorFile.message_type;
 
@@ -17,14 +13,6 @@ for (const { file, data: vectorFile } of vectorEntries) {
     for (const vector of vectorFile.vectors) {
       describe(`[${vector.id}] ${vector.description}`, () => {
         const bytes = hexToBytes(vector.hex);
-
-        if (KNOWN_VECTOR_BUGS.has(vector.id)) {
-          it("should fail to decode (known vector bug: uses removed filter_type=1)", () => {
-            const result = codec.decodeMessage(bytes);
-            expect(result.ok).toBe(false);
-          });
-          return; // skip normal test for this vector
-        }
 
         if (vector.error) {
           it("should fail to decode", () => {
