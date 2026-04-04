@@ -3,6 +3,9 @@
   "configVersion": 1,
   "workspaces": {
     "": {
+      "dependencies": {
+        "@moqtap/test-vectors": "^0.7.3",
+      },
       "devDependencies": {
         "@biomejs/biome": "^2.0.0",
         "@moqtap/codec": "workspace:*",
@@ -15,7 +18,7 @@
       "name": "@moqtap/codec",
       "version": "0.2.1",
       "devDependencies": {
-        "@moqtap/test-vectors": "^0.7.2",
+        "@moqtap/test-vectors": "^0.7.3",
         "tsup": "^8.0.0",
         "typescript": "^5.5.0",
         "vitest": "^3.0.0",
@@ -131,7 +134,7 @@
 
     "@moqtap/codec": ["@moqtap/codec@workspace:packages/codec"],
 
-    "@moqtap/test-vectors": ["@moqtap/test-vectors@0.7.2", "", {}, "sha512-a4jGI5+bp7725SaVLnvhHMzXrNgfHHP787yTP5u7fZ7vdFCDrMYXveR04FPM1kg00lYDOIMTLv4DFLO95iLE7g=="],
+    "@moqtap/test-vectors": ["@moqtap/test-vectors@0.7.3", "", {}, "sha512-DgaffqzjO7U8rCsYLT2J7IR903IgpeapUK2wLvJSZdtlKSQ47ixv6a52gfxGkzym6b/hdSY7fPQJpqzOYpfB4Q=="],
 
     "@moqtap/trace": ["@moqtap/trace@workspace:packages/trace"],
 

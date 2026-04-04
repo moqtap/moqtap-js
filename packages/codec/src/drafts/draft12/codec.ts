@@ -38,7 +38,6 @@ import {
   PARAM_DELIVERY_TIMEOUT,
   SETUP_PARAM_MAX_REQUEST_ID,
   SETUP_PARAM_PATH,
-  VARINT_FRAMED_MESSAGES,
 } from "./messages.js";
 import type {
   DatagramObject,
@@ -936,17 +935,11 @@ export function encodeMessage(message: Draft12Message): Uint8Array {
   const writer = new BufferWriter();
   writer.writeVarInt(typeId);
 
-  if (VARINT_FRAMED_MESSAGES.has(typeId)) {
-    // PUBLISH family: varint length framing
-    writer.writeVarInt(payload.byteLength);
-  } else {
-    // All other messages: uint16 BE length framing
-    if (payload.byteLength > 0xffff) {
-      throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`);
-    }
-    writer.writeUint8((payload.byteLength >> 8) & 0xff);
-    writer.writeUint8(payload.byteLength & 0xff);
+  if (payload.byteLength > 0xffff) {
+    throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`);
   }
+  writer.writeUint8((payload.byteLength >> 8) & 0xff);
+  writer.writeUint8(payload.byteLength & 0xff);
 
   writer.writeBytes(payload);
   return writer.finish();
@@ -1027,16 +1020,10 @@ export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft12Message> {
     const reader = new BufferReader(bytes);
     const typeId = reader.readVarInt();
 
-    let payloadLength: number;
-    if (VARINT_FRAMED_MESSAGES.has(typeId)) {
-      // PUBLISH family: varint length framing
-      payloadLength = Number(reader.readVarInt());
-    } else {
-      // All other messages: uint16 BE length framing
-      const lenHi = reader.readUint8();
-      const lenLo = reader.readUint8();
-      payloadLength = (lenHi << 8) | lenLo;
-    }
+    // Read 16-bit big-endian payload length
+    const lenHi = reader.readUint8();
+    const lenLo = reader.readUint8();
+    const payloadLength = (lenHi << 8) | lenLo;
 
     const payloadBytes = reader.readBytes(payloadLength);
     const payloadReader = new BufferReader(payloadBytes);

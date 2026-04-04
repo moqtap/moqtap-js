@@ -804,10 +804,15 @@ export function encodeMessage(message: Draft11Message): Uint8Array {
   encodePayload(message, payloadWriter);
   const payload = payloadWriter.finish();
 
-  // Draft-11 uses varint framing (not uint16 BE like draft-14/15)
+  if (payload.byteLength > 0xffff) {
+    throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`);
+  }
+
+  // Write framed message: type(varint) + length(uint16 BE) + payload
   const writer = new BufferWriter();
   writer.writeVarInt(typeId);
-  writer.writeVarInt(payload.byteLength);
+  writer.writeUint8((payload.byteLength >> 8) & 0xff);
+  writer.writeUint8(payload.byteLength & 0xff);
   writer.writeBytes(payload);
   return writer.finish();
 }
@@ -874,13 +879,18 @@ function encodePayload(msg: Draft11Message, w: BufferWriter): void {
 }
 
 /**
- * Decode a draft-11 control message from bytes (type + varint length + payload).
+ * Decode a draft-11 control message from bytes (type + uint16 length + payload).
  */
 export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft11Message> {
   try {
     const reader = new BufferReader(bytes);
     const typeId = reader.readVarInt();
-    const payloadLength = Number(reader.readVarInt());
+
+    // Read 16-bit big-endian payload length
+    const lenHi = reader.readUint8();
+    const lenLo = reader.readUint8();
+    const payloadLength = (lenHi << 8) | lenLo;
+
     const payloadBytes = reader.readBytes(payloadLength);
     const payloadReader = new BufferReader(payloadBytes);
 
