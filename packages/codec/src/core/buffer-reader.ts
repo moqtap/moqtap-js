@@ -1,5 +1,7 @@
 import { DecodeError } from "./types.js";
 
+const textDecoder = /* @__PURE__ */ new TextDecoder();
+
 export class BufferReader {
   private readonly view: DataView;
   private pos: number;
@@ -40,6 +42,20 @@ export class BufferReader {
     const slice = this.buffer.slice(this.pos, this.pos + length);
     this.pos += length;
     return slice;
+  }
+
+  /** Zero-copy read: returns a view into the underlying buffer. */
+  readBytesView(length: number): Uint8Array<ArrayBuffer> {
+    if (this.remaining < length) {
+      throw new DecodeError(
+        "UNEXPECTED_END",
+        `Not enough bytes: need ${length}, have ${this.remaining}`,
+        this.pos,
+      );
+    }
+    const view = this.buffer.subarray(this.pos, this.pos + length);
+    this.pos += length;
+    return view as Uint8Array<ArrayBuffer>;
   }
 
   readVarInt(): bigint {
@@ -87,8 +103,8 @@ export class BufferReader {
 
   readString(): string {
     const length = Number(this.readVarInt());
-    const bytes = this.readBytes(length);
-    return new TextDecoder().decode(bytes);
+    const bytes = this.readBytesView(length);
+    return textDecoder.decode(bytes);
   }
 
   readTuple(): string[] {

@@ -53,6 +53,10 @@ import type {
   SubgroupStreamHeader,
   UnknownParam,
 } from "./types.js";
+
+const textEncoder = /* @__PURE__ */ new TextEncoder();
+const textDecoder = /* @__PURE__ */ new TextDecoder();
+
 // ─── Setup Parameter Encoding/Decoding ──────────────────────────────────────────
 
 function encodeSetupParams(params: Draft16SetupParams, writer: BufferWriter): void {
@@ -69,7 +73,7 @@ function encodeSetupParams(params: Draft16SetupParams, writer: BufferWriter): vo
   // PATH (0x01) - odd, length-prefixed bytes
   if (params.path !== undefined) {
     writer.writeVarInt(SETUP_PARAM_PATH);
-    const encoded = new TextEncoder().encode(params.path);
+    const encoded = textEncoder.encode(params.path);
     writer.writeVarInt(encoded.byteLength);
     writer.writeBytes(encoded);
   }
@@ -89,7 +93,7 @@ function encodeSetupParams(params: Draft16SetupParams, writer: BufferWriter): vo
   // AUTHORITY (0x05) - odd, length-prefixed bytes
   if (params.authority !== undefined) {
     writer.writeVarInt(SETUP_PARAM_AUTHORITY);
-    const encoded = new TextEncoder().encode(params.authority);
+    const encoded = textEncoder.encode(params.authority);
     writer.writeVarInt(encoded.byteLength);
     writer.writeBytes(encoded);
   }
@@ -97,7 +101,7 @@ function encodeSetupParams(params: Draft16SetupParams, writer: BufferWriter): vo
   // MOQT_IMPLEMENTATION (0x07) - odd, length-prefixed bytes
   if (params.moqt_implementation !== undefined) {
     writer.writeVarInt(SETUP_PARAM_MOQT_IMPLEMENTATION);
-    const encoded = new TextEncoder().encode(params.moqt_implementation);
+    const encoded = textEncoder.encode(params.moqt_implementation);
     writer.writeVarInt(encoded.byteLength);
     writer.writeBytes(encoded);
   }
@@ -149,11 +153,11 @@ function decodeSetupParams(reader: BufferReader): Draft16SetupParams {
       const length = Number(reader.readVarInt());
       const bytes = reader.readBytes(length);
       if (paramType === SETUP_PARAM_PATH) {
-        result.path = new TextDecoder().decode(bytes);
+        result.path = textDecoder.decode(bytes);
       } else if (paramType === SETUP_PARAM_AUTHORITY) {
-        result.authority = new TextDecoder().decode(bytes);
+        result.authority = textDecoder.decode(bytes);
       } else if (paramType === SETUP_PARAM_MOQT_IMPLEMENTATION) {
-        result.moqt_implementation = new TextDecoder().decode(bytes);
+        result.moqt_implementation = textDecoder.decode(bytes);
       } else {
         unknown.push({
           id: `0x${paramType.toString(16)}`,
@@ -767,13 +771,13 @@ export function encodeMessage(message: Draft16Message): Uint8Array {
 
   const payloadWriter = new BufferWriter();
   encodePayload(message, payloadWriter);
-  const payload = payloadWriter.finish();
+  const payload = payloadWriter.finishView();
 
   if (payload.byteLength > 0xffff) {
     throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`);
   }
 
-  const writer = new BufferWriter();
+  const writer = new BufferWriter(payload.byteLength + 16);
   writer.writeVarInt(typeId);
   writer.writeUint8((payload.byteLength >> 8) & 0xff);
   writer.writeUint8(payload.byteLength & 0xff);
@@ -885,16 +889,21 @@ export { encodeSubgroupStream, decodeSubgroupStream, encodeDatagram, decodeDatag
 
 export function createStreamDecoder(): TransformStream<Uint8Array, Draft16Message> {
   let buffer = new Uint8Array(0);
+  let offset = 0;
 
   return new TransformStream<Uint8Array, Draft16Message>({
     transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
       buffer = newBuffer;
 
-      while (buffer.length > 0) {
-        const result = decodeMessage(buffer);
+      while (offset < buffer.length) {
+        const result = decodeMessage(buffer.subarray(offset));
         if (!result.ok) {
           if (result.error.code === "UNEXPECTED_END") {
             break;
@@ -903,12 +912,12 @@ export function createStreamDecoder(): TransformStream<Uint8Array, Draft16Messag
           return;
         }
         controller.enqueue(result.value);
-        buffer = buffer.slice(result.bytesRead);
+        offset += result.bytesRead;
       }
     },
 
     flush(controller) {
-      if (buffer.length > 0) {
+      if (offset < buffer.length) {
         controller.error(
           new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
         );

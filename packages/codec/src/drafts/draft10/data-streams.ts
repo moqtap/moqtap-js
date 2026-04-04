@@ -112,7 +112,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
       const extensionHeadersLength = r.readVarInt();
       const extensionData =
         extensionHeadersLength > 0n
-          ? r.readBytes(Number(extensionHeadersLength))
+          ? r.readBytesView(Number(extensionHeadersLength))
           : new Uint8Array(0);
       const payloadLength = Number(r.readVarInt());
       let payload: Uint8Array;
@@ -124,7 +124,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
         payload = new Uint8Array(0);
       } else {
         payloadByteOffset = r.offset;
-        payload = r.readBytes(payloadLength);
+        payload = r.readBytesView(payloadLength);
       }
       const obj: ObjectPayload = {
         type: "object",
@@ -179,10 +179,10 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     const extensionHeadersLength = r.readVarInt();
     const extensionData =
       extensionHeadersLength > 0n
-        ? r.readBytes(Number(extensionHeadersLength))
+        ? r.readBytesView(Number(extensionHeadersLength))
         : new Uint8Array(0);
     // remaining bytes ARE the payload (no payload_length in draft-10)
-    const payload = r.remaining > 0 ? r.readBytes(r.remaining) : new Uint8Array(0);
+    const payload = r.remaining > 0 ? r.readBytesView(r.remaining) : new Uint8Array(0);
     return {
       ok: true,
       value: {
@@ -225,7 +225,7 @@ export function decodeDatagramStatus(bytes: Uint8Array): DecodeResult<DatagramSt
     const extensionHeadersLength = r.readVarInt();
     const extensionData =
       extensionHeadersLength > 0n
-        ? r.readBytes(Number(extensionHeadersLength))
+        ? r.readBytesView(Number(extensionHeadersLength))
         : new Uint8Array(0);
     const objectStatus = r.readVarInt();
     return {
@@ -274,7 +274,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
       const extensionHeadersLength = r.readVarInt();
       const extensionData =
         extensionHeadersLength > 0n
-          ? r.readBytes(Number(extensionHeadersLength))
+          ? r.readBytesView(Number(extensionHeadersLength))
           : new Uint8Array(0);
       const payloadLength = Number(r.readVarInt());
       let payload: Uint8Array;
@@ -286,7 +286,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
         payload = new Uint8Array(0);
       } else {
         payloadByteOffset = r.offset;
-        payload = r.readBytes(payloadLength);
+        payload = r.readBytesView(payloadLength);
       }
       const obj: FetchObjectPayload = {
         type: "object",

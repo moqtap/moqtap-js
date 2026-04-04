@@ -47,6 +47,10 @@ import type {
   SubgroupStreamHeader,
   UnknownParam,
 } from "./types.js";
+
+const textEncoder = /* @__PURE__ */ new TextEncoder();
+const textDecoder = /* @__PURE__ */ new TextDecoder();
+
 // ─── Setup Options Encoding/Decoding (KVP, no count prefix) ─────────────────
 
 function encodeSetupOptions(opts: Draft17SetupOptions, writer: BufferWriter): void {
@@ -57,7 +61,7 @@ function encodeSetupOptions(opts: Draft17SetupOptions, writer: BufferWriter): vo
     entries.push({
       type: SETUP_OPT_PATH,
       encode: (w) => {
-        const encoded = new TextEncoder().encode(opts.path!);
+        const encoded = textEncoder.encode(opts.path!);
         w.writeVarInt(BigInt(encoded.byteLength));
         w.writeBytes(encoded);
       },
@@ -73,7 +77,7 @@ function encodeSetupOptions(opts: Draft17SetupOptions, writer: BufferWriter): vo
     entries.push({
       type: SETUP_OPT_AUTHORITY,
       encode: (w) => {
-        const encoded = new TextEncoder().encode(opts.authority!);
+        const encoded = textEncoder.encode(opts.authority!);
         w.writeVarInt(BigInt(encoded.byteLength));
         w.writeBytes(encoded);
       },
@@ -83,7 +87,7 @@ function encodeSetupOptions(opts: Draft17SetupOptions, writer: BufferWriter): vo
     entries.push({
       type: SETUP_OPT_MOQT_IMPLEMENTATION,
       encode: (w) => {
-        const encoded = new TextEncoder().encode(opts.moqt_implementation!);
+        const encoded = textEncoder.encode(opts.moqt_implementation!);
         w.writeVarInt(BigInt(encoded.byteLength));
         w.writeBytes(encoded);
       },
@@ -149,11 +153,11 @@ function decodeSetupOptions(reader: BufferReader, payloadEnd: number): Draft17Se
       const length = Number(reader.readVarInt());
       const bytes = reader.readBytes(length);
       if (optType === SETUP_OPT_PATH) {
-        result.path = new TextDecoder().decode(bytes);
+        result.path = textDecoder.decode(bytes);
       } else if (optType === SETUP_OPT_AUTHORITY) {
-        result.authority = new TextDecoder().decode(bytes);
+        result.authority = textDecoder.decode(bytes);
       } else if (optType === SETUP_OPT_MOQT_IMPLEMENTATION) {
-        result.moqt_implementation = new TextDecoder().decode(bytes);
+        result.moqt_implementation = textDecoder.decode(bytes);
       } else {
         unknown.push({ id: `0x${optType.toString(16)}`, length, raw_hex: bytesToHex(bytes) });
       }
@@ -746,13 +750,13 @@ export function encodeMessage(message: Draft17Message): Uint8Array {
 
   const payloadWriter = new BufferWriter();
   encodePayload(message, payloadWriter);
-  const payload = payloadWriter.finish();
+  const payload = payloadWriter.finishView();
 
   if (payload.byteLength > 0xffff) {
     throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`);
   }
 
-  const writer = new BufferWriter();
+  const writer = new BufferWriter(payload.byteLength + 16);
   writer.writeVarInt(typeId);
   writer.writeUint8((payload.byteLength >> 8) & 0xff);
   writer.writeUint8(payload.byteLength & 0xff);
@@ -890,16 +894,21 @@ export { encodeSubgroupStream, decodeSubgroupStream, encodeDatagram, decodeDatag
 
 export function createStreamDecoder(): TransformStream<Uint8Array, Draft17Message> {
   let buffer = new Uint8Array(0);
+  let offset = 0;
 
   return new TransformStream<Uint8Array, Draft17Message>({
     transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
       buffer = newBuffer;
 
-      while (buffer.length > 0) {
-        const result = decodeMessage(buffer);
+      while (offset < buffer.length) {
+        const result = decodeMessage(buffer.subarray(offset));
         if (!result.ok) {
           if (result.error.code === "UNEXPECTED_END") {
             break;
@@ -908,12 +917,12 @@ export function createStreamDecoder(): TransformStream<Uint8Array, Draft17Messag
           return;
         }
         controller.enqueue(result.value);
-        buffer = buffer.slice(result.bytesRead);
+        offset += result.bytesRead;
       }
     },
 
     flush(controller) {
-      if (buffer.length > 0) {
+      if (offset < buffer.length) {
         controller.error(
           new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
         );

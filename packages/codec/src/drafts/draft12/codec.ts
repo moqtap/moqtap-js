@@ -55,6 +55,10 @@ import type {
   SubgroupStream,
   UnknownParam,
 } from "./types.js";
+
+const textEncoder = /* @__PURE__ */ new TextEncoder();
+const textDecoder = /* @__PURE__ */ new TextDecoder();
+
 // ─── Setup Parameter Encoding/Decoding (even/odd convention) ────────────────────
 
 function encodeSetupParams(params: Draft12SetupParams, w: BufferWriter): void {
@@ -67,7 +71,7 @@ function encodeSetupParams(params: Draft12SetupParams, w: BufferWriter): void {
 
   if (params.path !== undefined) {
     w.writeVarInt(SETUP_PARAM_PATH);
-    const encoded = new TextEncoder().encode(params.path);
+    const encoded = textEncoder.encode(params.path);
     w.writeVarInt(encoded.byteLength);
     w.writeBytes(encoded);
   }
@@ -117,7 +121,7 @@ function decodeSetupParams(r: BufferReader): Draft12SetupParams {
       const length = Number(r.readVarInt());
       const bytes = r.readBytes(length);
       if (paramType === SETUP_PARAM_PATH) {
-        result.path = new TextDecoder().decode(bytes);
+        result.path = textDecoder.decode(bytes);
       } else {
         unknown.push({ id: `0x${paramType.toString(16)}`, length, raw_hex: bytesToHex(bytes) });
       }
@@ -144,7 +148,7 @@ function encodeParams(params: Draft12Params, w: BufferWriter): void {
     const tmpW = new BufferWriter(64);
     tmpW.writeVarInt(at.alias_type);
     tmpW.writeVarInt(at.token_type);
-    const tokenBytes = new TextEncoder().encode(at.token_value);
+    const tokenBytes = textEncoder.encode(at.token_value);
     tmpW.writeBytes(tokenBytes);
     const raw = tmpW.finish();
     w.writeVarInt(raw.byteLength);
@@ -210,7 +214,7 @@ function decodeParams(r: BufferReader): Draft12Params {
         result.authorization_token = {
           alias_type,
           token_type,
-          token_value: new TextDecoder().decode(tokenBytes),
+          token_value: textDecoder.decode(tokenBytes),
         };
       } else if (paramType === PARAM_DELIVERY_TIMEOUT) {
         const blob = r.readBytes(length);
@@ -930,9 +934,9 @@ export function encodeMessage(message: Draft12Message): Uint8Array {
 
   const payloadWriter = new BufferWriter();
   encodePayload(message, payloadWriter);
-  const payload = payloadWriter.finish();
+  const payload = payloadWriter.finishView();
 
-  const writer = new BufferWriter();
+  const writer = new BufferWriter(payload.byteLength + 16);
   writer.writeVarInt(typeId);
 
   if (payload.byteLength > 0xffff) {
@@ -1055,25 +1059,30 @@ import { encodeSubgroupStream, encodeDatagram, encodeFetchStream, decodeSubgroup
 
 export function createStreamDecoder(): TransformStream<Uint8Array, Draft12Message> {
   let buffer = new Uint8Array(0);
+  let offset = 0;
   return new TransformStream<Uint8Array, Draft12Message>({
     transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
       buffer = newBuffer;
-      while (buffer.length > 0) {
-        const result = decodeMessage(buffer);
+      while (offset < buffer.length) {
+        const result = decodeMessage(buffer.subarray(offset));
         if (!result.ok) {
           if (result.error.code === "UNEXPECTED_END") break;
           controller.error(result.error);
           return;
         }
         controller.enqueue(result.value);
-        buffer = buffer.slice(result.bytesRead);
+        offset += result.bytesRead;
       }
     },
     flush(controller) {
-      if (buffer.length > 0)
+      if (offset < buffer.length)
         controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
     },
   });

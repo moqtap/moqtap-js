@@ -51,6 +51,10 @@ import type {
   SubgroupStream,
   UnknownParam,
 } from "./types.js";
+
+const textEncoder = /* @__PURE__ */ new TextEncoder();
+const textDecoder = /* @__PURE__ */ new TextDecoder();
+
 // ─── Setup Parameter Encoding/Decoding (all type+length+value) ──────────────
 
 function encodeSetupParams(params: Draft09SetupParams, w: BufferWriter): void {
@@ -63,7 +67,7 @@ function encodeSetupParams(params: Draft09SetupParams, w: BufferWriter): void {
 
   if (params.path !== undefined) {
     w.writeVarInt(SETUP_PARAM_PATH);
-    const encoded = new TextEncoder().encode(params.path);
+    const encoded = textEncoder.encode(params.path);
     w.writeVarInt(encoded.byteLength);
     w.writeBytes(encoded);
   }
@@ -96,7 +100,7 @@ function decodeSetupParams(r: BufferReader): Draft09SetupParams {
 
     if (paramType === SETUP_PARAM_PATH) {
       const bytes = r.readBytes(length);
-      result.path = new TextDecoder().decode(bytes);
+      result.path = textDecoder.decode(bytes);
     } else if (paramType === SETUP_PARAM_MAX_SUBSCRIBE_ID) {
       const blob = r.readBytes(length);
       const tmpReader = new BufferReader(blob);
@@ -122,7 +126,7 @@ function encodeParams(params: Draft09Params, w: BufferWriter): void {
 
   if (params.authorization_info !== undefined) {
     w.writeVarInt(PARAM_AUTHORIZATION_INFO);
-    const encoded = new TextEncoder().encode(params.authorization_info);
+    const encoded = textEncoder.encode(params.authorization_info);
     w.writeVarInt(encoded.byteLength);
     w.writeBytes(encoded);
   }
@@ -163,7 +167,7 @@ function decodeParams(r: BufferReader): Draft09Params {
 
     if (paramType === PARAM_AUTHORIZATION_INFO) {
       const bytes = r.readBytes(length);
-      result.authorization_info = new TextDecoder().decode(bytes);
+      result.authorization_info = textDecoder.decode(bytes);
     } else if (paramType === PARAM_DELIVERY_TIMEOUT) {
       const blob = r.readBytes(length);
       const tmpReader = new BufferReader(blob);
@@ -751,9 +755,9 @@ export function encodeMessage(message: Draft09Message): Uint8Array {
 
   const payloadWriter = new BufferWriter();
   encodePayload(message, payloadWriter);
-  const payload = payloadWriter.finish();
+  const payload = payloadWriter.finishView();
 
-  const writer = new BufferWriter();
+  const writer = new BufferWriter(payload.byteLength + 16);
   writer.writeVarInt(typeId);
   writer.writeVarInt(payload.byteLength);
   writer.writeBytes(payload);
@@ -874,25 +878,30 @@ import {
 
 export function createStreamDecoder(): TransformStream<Uint8Array, Draft09Message> {
   let buffer = new Uint8Array(0);
+  let offset = 0;
   return new TransformStream<Uint8Array, Draft09Message>({
     transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
       buffer = newBuffer;
-      while (buffer.length > 0) {
-        const result = decodeMessage(buffer);
+      while (offset < buffer.length) {
+        const result = decodeMessage(buffer.subarray(offset));
         if (!result.ok) {
           if (result.error.code === "UNEXPECTED_END") break;
           controller.error(result.error);
           return;
         }
         controller.enqueue(result.value);
-        buffer = buffer.slice(result.bytesRead);
+        offset += result.bytesRead;
       }
     },
     flush(controller) {
-      if (buffer.length > 0)
+      if (offset < buffer.length)
         controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
     },
   });

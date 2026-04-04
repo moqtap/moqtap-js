@@ -53,6 +53,10 @@ import type {
   SubgroupStreamHeader,
   UnknownParam,
 } from "./types.js";
+
+const textEncoder = /* @__PURE__ */ new TextEncoder();
+const textDecoder = /* @__PURE__ */ new TextDecoder();
+
 // ─── Parameter Encoding/Decoding ───────────────────────────────────────────────
 
 function encodeParams(params: Draft14Params, writer: BufferWriter): void {
@@ -74,7 +78,7 @@ function encodeParams(params: Draft14Params, writer: BufferWriter): void {
   // PATH (0x01) - odd, length-prefixed bytes
   if (params.path !== undefined) {
     writer.writeVarInt(PARAM_PATH);
-    const encoded = new TextEncoder().encode(params.path);
+    const encoded = textEncoder.encode(params.path);
     writer.writeVarInt(encoded.byteLength);
     writer.writeBytes(encoded);
   }
@@ -128,7 +132,7 @@ function decodeParams(reader: BufferReader): Draft14Params {
       const length = Number(reader.readVarInt());
       const bytes = reader.readBytes(length);
       if (paramType === PARAM_PATH) {
-        result.path = new TextDecoder().decode(bytes);
+        result.path = textDecoder.decode(bytes);
       } else {
         unknown.push({
           id: `0x${paramType.toString(16)}`,
@@ -795,14 +799,14 @@ export function encodeMessage(message: Draft14Message): Uint8Array {
   // Encode payload into a separate buffer
   const payloadWriter = new BufferWriter();
   encodePayload(message, payloadWriter);
-  const payload = payloadWriter.finish();
+  const payload = payloadWriter.finishView();
 
   if (payload.byteLength > 0xffff) {
     throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`);
   }
 
   // Write framed message: type(varint) + length(uint16 BE) + payload
-  const writer = new BufferWriter();
+  const writer = new BufferWriter(payload.byteLength + 16);
   writer.writeVarInt(typeId);
   writer.writeUint8((payload.byteLength >> 8) & 0xff);
   writer.writeUint8(payload.byteLength & 0xff);
@@ -956,18 +960,23 @@ export {
  */
 export function createStreamDecoder(): TransformStream<Uint8Array, Draft14Message> {
   let buffer = new Uint8Array(0);
+  let offset = 0;
 
   return new TransformStream<Uint8Array, Draft14Message>({
     transform(chunk, controller) {
-      // Accumulate incoming data
+      // Compact before accumulating new data
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
       buffer = newBuffer;
 
       // Try to decode messages from the buffer
-      while (buffer.length > 0) {
-        const result = decodeMessage(buffer);
+      while (offset < buffer.length) {
+        const result = decodeMessage(buffer.subarray(offset));
         if (!result.ok) {
           if (result.error.code === "UNEXPECTED_END") {
             // Need more data -- wait for next chunk
@@ -978,14 +987,14 @@ export function createStreamDecoder(): TransformStream<Uint8Array, Draft14Messag
           return;
         }
         controller.enqueue(result.value);
-        // Advance the buffer past the consumed bytes
-        buffer = buffer.slice(result.bytesRead);
+        // Advance offset past the consumed bytes
+        offset += result.bytesRead;
       }
     },
 
     flush(controller) {
       // If there is remaining data in the buffer, it is a truncated message
-      if (buffer.length > 0) {
+      if (offset < buffer.length) {
         controller.error(
           new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
         );

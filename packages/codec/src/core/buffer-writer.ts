@@ -1,3 +1,5 @@
+const textEncoder = /* @__PURE__ */ new TextEncoder();
+
 export class BufferWriter {
   private buffer: Uint8Array;
   private view: DataView;
@@ -64,7 +66,7 @@ export class BufferWriter {
   }
 
   writeString(str: string): void {
-    const encoded = new TextEncoder().encode(str);
+    const encoded = textEncoder.encode(str);
     this.writeVarInt(encoded.byteLength);
     this.writeBytes(encoded);
   }
@@ -85,7 +87,14 @@ export class BufferWriter {
     }
   }
 
+  /** Returns an owned copy of the written bytes. */
   finish(): Uint8Array {
+    if (this.pos === this.buffer.byteLength) return this.buffer;
     return this.buffer.slice(0, this.pos);
+  }
+
+  /** Returns a zero-copy view of the written bytes. Valid only until the next write. */
+  finishView(): Uint8Array {
+    return this.buffer.subarray(0, this.pos);
   }
 }

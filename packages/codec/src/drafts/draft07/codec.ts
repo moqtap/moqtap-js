@@ -670,7 +670,7 @@ function decodeObjectDatagram(reader: BufferReader): ObjectDatagram {
       payload: new Uint8Array(0),
     };
   }
-  const payload = reader.readBytes(payloadLength);
+  const payload = reader.readBytesView(payloadLength);
   return {
     type: "object_datagram" as const,
     trackAlias,
@@ -768,10 +768,10 @@ function encodeMessageImpl(message: MoqtMessage): Uint8Array {
   // Encode payload first
   const payloadWriter = new BufferWriter();
   controlEncoder(message as never, payloadWriter);
-  const payload = payloadWriter.finish();
+  const payload = payloadWriter.finishView();
 
   // Write type + length + payload
-  const frameWriter = new BufferWriter();
+  const frameWriter = new BufferWriter(payload.byteLength + 16);
   frameWriter.writeVarInt(MESSAGE_TYPE_TO_WIRE[message.type as ControlMessageType]);
   frameWriter.writeVarInt(payload.byteLength);
   frameWriter.writeBytes(payload);
@@ -843,18 +843,23 @@ function decodeMessageImpl(bytes: Uint8Array): DecodeResult<MoqtMessage> {
 
 function createStreamDecoderImpl(): TransformStream<Uint8Array, MoqtMessage> {
   let buffer = new Uint8Array(0);
+  let offset = 0;
 
   return new TransformStream<Uint8Array, MoqtMessage>({
     transform(chunk, controller) {
-      // Accumulate incoming data
+      // Compact before accumulating new data
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
       buffer = newBuffer;
 
       // Try to decode messages from the buffer
-      while (buffer.length > 0) {
-        const result = decodeMessageImpl(buffer);
+      while (offset < buffer.length) {
+        const result = decodeMessageImpl(buffer.subarray(offset));
         if (!result.ok) {
           if (result.error.code === "UNEXPECTED_END") {
             // Need more data -- wait for next chunk
@@ -865,14 +870,14 @@ function createStreamDecoderImpl(): TransformStream<Uint8Array, MoqtMessage> {
           return;
         }
         controller.enqueue(result.value);
-        // Advance the buffer past the consumed bytes
-        buffer = buffer.slice(result.bytesRead);
+        // Advance offset past the consumed bytes
+        offset += result.bytesRead;
       }
     },
 
     flush(controller) {
       // If there is remaining data in the buffer, it is a truncated message
-      if (buffer.length > 0) {
+      if (offset < buffer.length) {
         controller.error(
           new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
         );

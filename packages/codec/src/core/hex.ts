@@ -1,10 +1,14 @@
+const HEX_TABLE = /* @__PURE__ */ Array.from({ length: 256 }, (_, i) =>
+  i.toString(16).padStart(2, "0"),
+);
+
 /** Convert a Uint8Array to a lowercase hex string. */
 export function bytesToHex(bytes: Uint8Array): string {
-  let hex = "";
+  const parts = new Array<string>(bytes.byteLength);
   for (let i = 0; i < bytes.byteLength; i++) {
-    hex += (bytes[i] as number).toString(16).padStart(2, "0");
+    parts[i] = HEX_TABLE[bytes[i]!]!;
   }
-  return hex;
+  return parts.join("");
 }
 
 /** Convert a hex string to a Uint8Array. */

@@ -122,7 +122,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
           r.readVarInt(); // even: single varint value
         } else {
           const extLen = Number(r.readVarInt());
-          if (extLen > 0) r.readBytes(extLen); // odd: length-prefixed
+          if (extLen > 0) r.readBytesView(extLen); // odd: length-prefixed
         }
       }
       const extensionData = r.buffer.slice(extStart, r.offset);
@@ -136,7 +136,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
         payload = new Uint8Array(0);
       } else {
         payloadByteOffset = r.offset;
-        payload = r.readBytes(payloadLength);
+        payload = r.readBytesView(payloadLength);
       }
       const obj: ObjectPayload = {
         type: "object",
@@ -197,7 +197,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
         r.readVarInt(); // even: single varint value
       } else {
         const extLen = Number(r.readVarInt());
-        if (extLen > 0) r.readBytes(extLen); // odd: length-prefixed
+        if (extLen > 0) r.readBytesView(extLen); // odd: length-prefixed
       }
     }
     const extensionData = r.buffer.slice(extStart, r.offset);
@@ -208,7 +208,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
       objectStatus = r.readVarInt();
       payload = new Uint8Array(0);
     } else {
-      payload = r.readBytes(payloadLength);
+      payload = r.readBytesView(payloadLength);
     }
     const result: DatagramObject = {
       type: "datagram",
@@ -299,7 +299,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
           r.readVarInt(); // even: single varint value
         } else {
           const extLen = Number(r.readVarInt());
-          if (extLen > 0) r.readBytes(extLen); // odd: length-prefixed
+          if (extLen > 0) r.readBytesView(extLen); // odd: length-prefixed
         }
       }
       const extensionData = r.buffer.slice(extStart, r.offset);
@@ -313,7 +313,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
         payload = new Uint8Array(0);
       } else {
         payloadByteOffset = r.offset;
-        payload = r.readBytes(payloadLength);
+        payload = r.readBytesView(payloadLength);
       }
       const obj: FetchObjectPayload = {
         type: "object",

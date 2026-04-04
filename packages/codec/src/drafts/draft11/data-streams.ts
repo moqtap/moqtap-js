@@ -108,7 +108,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
       let extensionData = new Uint8Array(0);
       if (extensionsPresent) {
         const extLen = Number(r.readVarInt());
-        extensionData = extLen > 0 ? r.readBytes(extLen) : new Uint8Array(0);
+        extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0);
       }
       const payloadLength = Number(r.readVarInt());
       let payload: Uint8Array;
@@ -120,7 +120,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
         payload = new Uint8Array(0);
       } else {
         payloadByteOffset = r.offset;
-        payload = r.readBytes(payloadLength);
+        payload = r.readBytesView(payloadLength);
       }
       const obj: ObjectPayload = { type: "object", byteOffset, payloadByteOffset, objectId, extensionData, payloadLength, payload };
       if (status !== undefined) (obj as unknown as Record<string, unknown>).status = status;
@@ -169,7 +169,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
       objectStatus = r.readVarInt();
       payload = new Uint8Array(0);
     } else {
-      payload = r.readBytes(r.remaining);
+      payload = r.readBytesView(r.remaining);
     }
     const result: DatagramObject = {
       type: "datagram",
@@ -213,7 +213,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
       const objectId = r.readVarInt();
       const publisherPriority = r.readUint8();
       const extensionHeadersLength = r.readVarInt();
-      const extensionData = extensionHeadersLength > 0n ? r.readBytes(Number(extensionHeadersLength)) : new Uint8Array(0);
+      const extensionData = extensionHeadersLength > 0n ? r.readBytesView(Number(extensionHeadersLength)) : new Uint8Array(0);
       const payloadLength = Number(r.readVarInt());
       let payload: Uint8Array;
       let objectStatus: bigint | undefined;
@@ -224,7 +224,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
         payload = new Uint8Array(0);
       } else {
         payloadByteOffset = r.offset;
-        payload = r.readBytes(payloadLength);
+        payload = r.readBytesView(payloadLength);
       }
       const obj: FetchObjectPayload = {
         type: "object",

@@ -168,7 +168,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
       let extensionData = new Uint8Array(0);
       if (extensionsPresent) {
         const extLen = Number(r.readVarInt());
-        extensionData = extLen > 0 ? r.readBytes(extLen) : new Uint8Array(0);
+        extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0);
       }
       const payloadLength = Number(r.readVarInt());
       let payload: Uint8Array;
@@ -180,7 +180,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
         payload = new Uint8Array(0);
       } else {
         payloadByteOffset = r.offset;
-        payload = r.readBytes(payloadLength);
+        payload = r.readBytesView(payloadLength);
       }
       const obj: ObjectPayload = { type: "object", byteOffset, payloadByteOffset, objectId, payloadLength, payload, extensionData };
       if (status !== undefined) (obj as unknown as Record<string, unknown>).status = status;
@@ -235,7 +235,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
       objectStatus = r.readVarInt();
       payload = new Uint8Array(0);
     } else {
-      payload = r.readBytes(r.remaining);
+      payload = r.readBytesView(r.remaining);
     }
     const payloadLength = payload.byteLength;
 
@@ -314,7 +314,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
         objectId = r.readVarInt();
         payloadLength = Number(r.readVarInt());
         payloadByteOffset = r.offset;
-        payload = payloadLength > 0 ? r.readBytes(payloadLength) : new Uint8Array(0);
+        payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0);
       } else {
         const subgroupEncoding = flags & 0x03;
         const objectIdPresent = (flags & 0x04) !== 0;
@@ -396,13 +396,13 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
         if (extensionsPresent) {
           const extLen = Number(r.readVarInt());
           if (extLen > 0) {
-            extensionData = r.readBytes(extLen);
+            extensionData = r.readBytesView(extLen);
           }
         }
 
         payloadLength = Number(r.readVarInt());
         payloadByteOffset = r.offset;
-        payload = payloadLength > 0 ? r.readBytes(payloadLength) : new Uint8Array(0);
+        payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0);
       }
 
       const obj: FetchObjectPayload = {
@@ -462,6 +462,7 @@ export function createSubgroupStreamDecoder(): TransformStream<
   SubgroupStreamHeader | ObjectPayload
 > {
   let buffer = new Uint8Array(0);
+  let offset = 0;
   let headerEmitted = false;
   let prevObjectId = -1n;
   let firstObject = true;
@@ -470,6 +471,10 @@ export function createSubgroupStreamDecoder(): TransformStream<
 
   return new TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>({
     transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
@@ -477,7 +482,7 @@ export function createSubgroupStreamDecoder(): TransformStream<
 
       if (!headerEmitted) {
         try {
-          const r = new BufferReader(buffer);
+          const r = new BufferReader(buffer.subarray(offset));
           const streamType = Number(r.readVarInt());
 
           if (
@@ -522,7 +527,7 @@ export function createSubgroupStreamDecoder(): TransformStream<
             publisherPriority,
           });
           headerEmitted = true;
-          buffer = buffer.slice(r.offset);
+          offset += r.offset;
         } catch (e) {
           if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             return;
@@ -532,9 +537,9 @@ export function createSubgroupStreamDecoder(): TransformStream<
         }
       }
 
-      while (buffer.length > 0) {
+      while (offset < buffer.length) {
         try {
-          const r = new BufferReader(buffer);
+          const r = new BufferReader(buffer.subarray(offset));
           const delta = r.readVarInt();
           let objectId: bigint;
           if (firstObject) {
@@ -546,13 +551,13 @@ export function createSubgroupStreamDecoder(): TransformStream<
           let extensionData = new Uint8Array(0);
           if (_extensionsPresent) {
             const extLen = Number(r.readVarInt());
-            extensionData = extLen > 0 ? r.readBytes(extLen) : new Uint8Array(0);
+            extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0);
           }
           const payloadLength = Number(r.readVarInt());
           const payloadByteOffset = r.offset;
-          const payload = payloadLength > 0 ? r.readBytes(payloadLength) : new Uint8Array(0);
+          const payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0);
           controller.enqueue({ type: "object", objectId, payloadLength, payload, extensionData, byteOffset: 0, payloadByteOffset });
-          buffer = buffer.slice(r.offset);
+          offset += r.offset;
           prevObjectId = objectId;
         } catch (e) {
           if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
@@ -565,7 +570,7 @@ export function createSubgroupStreamDecoder(): TransformStream<
     },
 
     flush(controller) {
-      if (buffer.length > 0) {
+      if (offset < buffer.length) {
         controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
       }
     },
@@ -577,10 +582,15 @@ export function createFetchStreamDecoder(): TransformStream<
   FetchStreamHeader | ObjectPayload
 > {
   let buffer = new Uint8Array(0);
+  let offset = 0;
   let headerEmitted = false;
 
   return new TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>({
     transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
@@ -588,7 +598,7 @@ export function createFetchStreamDecoder(): TransformStream<
 
       if (!headerEmitted) {
         try {
-          const r = new BufferReader(buffer);
+          const r = new BufferReader(buffer.subarray(offset));
           const streamType = r.readVarInt();
           if (streamType !== FETCH_STREAM_TYPE) {
             controller.error(
@@ -603,7 +613,7 @@ export function createFetchStreamDecoder(): TransformStream<
           const requestId = r.readVarInt();
           controller.enqueue({ type: "fetch_header", requestId });
           headerEmitted = true;
-          buffer = buffer.slice(r.offset);
+          offset += r.offset;
         } catch (e) {
           if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             return;
@@ -613,9 +623,9 @@ export function createFetchStreamDecoder(): TransformStream<
         }
       }
 
-      while (buffer.length > 0) {
+      while (offset < buffer.length) {
         try {
-          const r = new BufferReader(buffer);
+          const r = new BufferReader(buffer.subarray(offset));
           const flags = Number(r.readVarInt());
           const objectIdPresent = (flags & 0x04) !== 0;
           const groupIdPresent = (flags & 0x08) !== 0;
@@ -631,13 +641,13 @@ export function createFetchStreamDecoder(): TransformStream<
           let extensionData = new Uint8Array(0);
           if (extensionsPresent) {
             const extLen = Number(r.readVarInt());
-            extensionData = extLen > 0 ? r.readBytes(extLen) : new Uint8Array(0);
+            extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0);
           }
           const payloadLength = Number(r.readVarInt());
           const payloadByteOffset = r.offset;
-          const payload = payloadLength > 0 ? r.readBytes(payloadLength) : new Uint8Array(0);
+          const payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0);
           controller.enqueue({ type: "object", objectId, payloadLength, payload, extensionData, byteOffset: 0, payloadByteOffset });
-          buffer = buffer.slice(r.offset);
+          offset += r.offset;
         } catch (e) {
           if (e instanceof DecodeError && e.code === "UNEXPECTED_END") {
             break;
@@ -649,7 +659,7 @@ export function createFetchStreamDecoder(): TransformStream<
     },
 
     flush(controller) {
-      if (buffer.length > 0) {
+      if (offset < buffer.length) {
         controller.error(new DecodeError("UNEXPECTED_END", "Stream ended with incomplete data", 0));
       }
     },
@@ -658,18 +668,23 @@ export function createFetchStreamDecoder(): TransformStream<
 
 export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent> {
   let buffer = new Uint8Array(0);
+  let offset = 0;
   let inner: TransformStream<Uint8Array, DataStreamEvent> | null = null;
 
   return new TransformStream<Uint8Array, DataStreamEvent>({
     transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset);
+        offset = 0;
+      }
       const newBuffer = new Uint8Array(buffer.length + chunk.length);
       newBuffer.set(buffer, 0);
       newBuffer.set(chunk, buffer.length);
       buffer = newBuffer;
 
       if (inner === null) {
-        if (buffer.length === 0) return;
-        const firstByte = buffer[0]!;
+        if (offset >= buffer.length) return;
+        const firstByte = buffer[offset]!;
 
         if ((firstByte >= 0x10 && firstByte <= 0x1d) || (firstByte >= 0x30 && firstByte <= 0x3d)) {
           const decoder = createSubgroupStreamDecoder();
@@ -691,15 +706,16 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
     },
 
     flush(controller) {
-      if (buffer.length === 0) return;
+      if (offset >= buffer.length) return;
+      const view = buffer.subarray(offset);
 
-      const firstByte = buffer[0]!;
+      const firstByte = view[0]!;
       let result: DecodeResult<Draft17DataStream>;
 
       if ((firstByte >= 0x10 && firstByte <= 0x1d) || (firstByte >= 0x30 && firstByte <= 0x3d)) {
-        result = decodeSubgroupStream(buffer);
+        result = decodeSubgroupStream(view);
       } else if (firstByte === 0x05) {
-        result = decodeFetchStream(buffer);
+        result = decodeFetchStream(view);
       } else {
         controller.error(
           new DecodeError(
