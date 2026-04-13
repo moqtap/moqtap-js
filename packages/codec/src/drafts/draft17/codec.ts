@@ -1,8 +1,8 @@
-import { bytesToHex, hexToBytes } from "../../core/hex.js";
-import { BufferReader } from "../../core/buffer-reader.js";
-import { BufferWriter } from "../../core/buffer-writer.js";
-import type { BaseCodec, DecodeResult } from "../../core/types.js";
-import { DecodeError } from "../../core/types.js";
+import { BufferReader } from '../../core/buffer-reader.js'
+import { BufferWriter } from '../../core/buffer-writer.js'
+import { bytesToHex, hexToBytes } from '../../core/hex.js'
+import type { BaseCodec, DecodeResult } from '../../core/types.js'
+import { DecodeError } from '../../core/types.js'
 import {
   MESSAGE_ID_MAP,
   MSG_FETCH,
@@ -24,11 +24,13 @@ import {
   MSG_SUBSCRIBE_OK,
   MSG_TRACK_STATUS,
   SETUP_OPT_AUTHORITY,
+  SETUP_OPT_AUTHORIZATION_TOKEN,
   SETUP_OPT_MAX_AUTH_TOKEN_CACHE_SIZE,
   SETUP_OPT_MOQT_IMPLEMENTATION,
   SETUP_OPT_PATH,
-} from "./messages.js";
+} from './messages.js'
 import type {
+  AuthorizationToken,
   DatagramObject,
   DataStreamEvent,
   Draft17DataStream,
@@ -37,7 +39,6 @@ import type {
   Draft17Params,
   Draft17SetupOptions,
   Draft17TrackProperties,
-  FetchObjectPayload,
   FetchStream,
   FetchStreamHeader,
   JoiningFetch,
@@ -46,546 +47,746 @@ import type {
   SubgroupStream,
   SubgroupStreamHeader,
   UnknownParam,
-} from "./types.js";
+} from './types.js'
 
-const textEncoder = /* @__PURE__ */ new TextEncoder();
-const textDecoder = /* @__PURE__ */ new TextDecoder();
+const textEncoder = /* @__PURE__ */ new TextEncoder()
+const textDecoder = /* @__PURE__ */ new TextDecoder()
 
 // ─── Setup Options Encoding/Decoding (KVP, no count prefix) ─────────────────
 
 function encodeSetupOptions(opts: Draft17SetupOptions, writer: BufferWriter): void {
   // Collect all options sorted by type ID
-  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = [];
+  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
 
   if (opts.path !== undefined) {
     entries.push({
       type: SETUP_OPT_PATH,
       encode: (w) => {
-        const encoded = textEncoder.encode(opts.path!);
-        w.writeVarInt(BigInt(encoded.byteLength));
-        w.writeBytes(encoded);
+        const encoded = textEncoder.encode(opts.path!)
+        w.writeVarInt(BigInt(encoded.byteLength))
+        w.writeBytes(encoded)
       },
-    });
+    })
+  }
+  if (opts.authorization_token !== undefined) {
+    entries.push({
+      type: SETUP_OPT_AUTHORIZATION_TOKEN,
+      encode: (w) => {
+        const tmpW = new BufferWriter(64)
+        encodeAuthorizationToken(opts.authorization_token!, tmpW)
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
   }
   if (opts.max_auth_token_cache_size !== undefined) {
     entries.push({
       type: SETUP_OPT_MAX_AUTH_TOKEN_CACHE_SIZE,
       encode: (w) => w.writeVarInt(opts.max_auth_token_cache_size!),
-    });
+    })
   }
   if (opts.authority !== undefined) {
     entries.push({
       type: SETUP_OPT_AUTHORITY,
       encode: (w) => {
-        const encoded = textEncoder.encode(opts.authority!);
-        w.writeVarInt(BigInt(encoded.byteLength));
-        w.writeBytes(encoded);
+        const encoded = textEncoder.encode(opts.authority!)
+        w.writeVarInt(BigInt(encoded.byteLength))
+        w.writeBytes(encoded)
       },
-    });
+    })
   }
   if (opts.moqt_implementation !== undefined) {
     entries.push({
       type: SETUP_OPT_MOQT_IMPLEMENTATION,
       encode: (w) => {
-        const encoded = textEncoder.encode(opts.moqt_implementation!);
-        w.writeVarInt(BigInt(encoded.byteLength));
-        w.writeBytes(encoded);
+        const encoded = textEncoder.encode(opts.moqt_implementation!)
+        w.writeVarInt(BigInt(encoded.byteLength))
+        w.writeBytes(encoded)
       },
-    });
+    })
   }
   if (opts.unknown) {
     for (const u of opts.unknown) {
-      const id = BigInt(u.id);
+      const id = BigInt(u.id)
       entries.push({
         type: id,
         encode: (w) => {
           if (id % 2n === 0n) {
-            const raw = hexToBytes(u.raw_hex);
-            const tmpReader = new BufferReader(raw);
-            w.writeVarInt(tmpReader.readVarInt());
+            const raw = hexToBytes(u.raw_hex)
+            const tmpReader = new BufferReader(raw)
+            w.writeVarInt(tmpReader.readVarInt())
           } else {
-            const raw = hexToBytes(u.raw_hex);
-            w.writeVarInt(BigInt(raw.byteLength));
-            w.writeBytes(raw);
+            const raw = hexToBytes(u.raw_hex)
+            w.writeVarInt(BigInt(raw.byteLength))
+            w.writeBytes(raw)
           }
         },
-      });
+      })
     }
   }
 
   // Sort by type (ascending) and write with delta encoding
-  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0));
-  let prevType = 0n;
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
+  let prevType = 0n
   for (const entry of entries) {
-    writer.writeVarInt(entry.type - prevType);
-    entry.encode(writer);
-    prevType = entry.type;
+    writer.writeVarInt(entry.type - prevType)
+    entry.encode(writer)
+    prevType = entry.type
   }
 }
 
 function decodeSetupOptions(reader: BufferReader, payloadEnd: number): Draft17SetupOptions {
-  const result: Draft17SetupOptions = {};
-  const unknown: UnknownParam[] = [];
-  let prevType = 0n;
+  const result: Draft17SetupOptions = {}
+  const unknown: UnknownParam[] = []
+  let prevType = 0n
 
   while (reader.offset < payloadEnd) {
-    const delta = reader.readVarInt();
-    const optType = prevType + delta;
-    prevType = optType;
+    const delta = reader.readVarInt()
+    const optType = prevType + delta
+    prevType = optType
 
     if (optType % 2n === 0n) {
       // Even: single varint value
-      const value = reader.readVarInt();
+      const value = reader.readVarInt()
       if (optType === SETUP_OPT_MAX_AUTH_TOKEN_CACHE_SIZE) {
-        result.max_auth_token_cache_size = value;
+        result.max_auth_token_cache_size = value
       } else {
-        const tmpWriter = new BufferWriter(16);
-        tmpWriter.writeVarInt(value);
-        const raw = tmpWriter.finish();
+        const tmpWriter = new BufferWriter(16)
+        tmpWriter.writeVarInt(value)
+        const raw = tmpWriter.finish()
         unknown.push({
           id: `0x${optType.toString(16)}`,
           length: raw.byteLength,
           raw_hex: bytesToHex(raw),
-        });
+        })
       }
     } else {
       // Odd: length-prefixed bytes
-      const length = Number(reader.readVarInt());
-      const bytes = reader.readBytes(length);
+      const length = Number(reader.readVarInt())
+      const bytes = reader.readBytes(length)
       if (optType === SETUP_OPT_PATH) {
-        result.path = textDecoder.decode(bytes);
+        result.path = textDecoder.decode(bytes)
+      } else if (optType === SETUP_OPT_AUTHORIZATION_TOKEN) {
+        result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
       } else if (optType === SETUP_OPT_AUTHORITY) {
-        result.authority = textDecoder.decode(bytes);
+        result.authority = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_MOQT_IMPLEMENTATION) {
-        result.moqt_implementation = textDecoder.decode(bytes);
+        result.moqt_implementation = textDecoder.decode(bytes)
       } else {
-        unknown.push({ id: `0x${optType.toString(16)}`, length, raw_hex: bytesToHex(bytes) });
+        unknown.push({
+          id: `0x${optType.toString(16)}`,
+          length,
+          raw_hex: bytesToHex(bytes),
+        })
       }
     }
   }
 
-  if (unknown.length > 0) result.unknown = unknown;
-  return result;
+  if (unknown.length > 0) result.unknown = unknown
+  return result
+}
+
+// ─── Authorization Token Encoding/Decoding ────────────────────────────────────
+
+function encodeAuthorizationToken(token: AuthorizationToken, w: BufferWriter): void {
+  const aliasType = Number(token.alias_type)
+  w.writeVarInt(token.alias_type)
+  if (aliasType === 0 || aliasType === 1 || aliasType === 2) {
+    // DELETE, REGISTER, USE_ALIAS: token_alias present
+    w.writeVarInt(token.token_alias ?? 0n)
+  }
+  if (aliasType === 1 || aliasType === 3) {
+    // REGISTER, USE_VALUE: token_type + token_value present
+    w.writeVarInt(token.token_type ?? 0n)
+    const encoded = textEncoder.encode(token.token_value ?? '')
+    w.writeVarInt(BigInt(encoded.byteLength))
+    w.writeBytes(encoded)
+  }
+}
+
+function decodeAuthorizationToken(r: BufferReader): AuthorizationToken {
+  const alias_type = r.readVarInt()
+  const aliasType = Number(alias_type)
+  const result: AuthorizationToken = { alias_type }
+
+  if (aliasType === 0 || aliasType === 1 || aliasType === 2) {
+    ;(result as { token_alias: bigint }).token_alias = r.readVarInt()
+  }
+  if (aliasType === 1 || aliasType === 3) {
+    ;(result as { token_type: bigint }).token_type = r.readVarInt()
+    const len = Number(r.readVarInt())
+    const bytes = r.readBytes(len)
+    ;(result as { token_value: string }).token_value = textDecoder.decode(bytes)
+  }
+
+  return result
 }
 
 // ─── Message Parameter Encoding/Decoding (delta types, count prefix) ─────────
 
-const PARAM_EXPIRES = 0x08n;
-const PARAM_LARGEST_OBJECT = 0x09n;
-const PARAM_SUBSCRIBER_PRIORITY = 0x20n;
-const PARAM_SUBSCRIPTION_FILTER = 0x21n;
-const PARAM_GROUP_ORDER = 0x22n;
+const PARAM_DELIVERY_TIMEOUT = 0x02n
+const PARAM_AUTHORIZATION_TOKEN = 0x03n
+const PARAM_RENDEZVOUS_TIMEOUT = 0x04n
+const PARAM_EXPIRES = 0x08n
+const PARAM_LARGEST_OBJECT = 0x09n
+const PARAM_FORWARD = 0x10n
+const PARAM_SUBSCRIBER_PRIORITY = 0x20n
+const PARAM_SUBSCRIPTION_FILTER = 0x21n
+const PARAM_GROUP_ORDER = 0x22n
+const PARAM_NEW_GROUP_REQUEST = 0x32n
 
 function encodeParams(params: Draft17Params, writer: BufferWriter): void {
   // Collect and sort params by type
-  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = [];
+  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
 
+  if (params.delivery_timeout !== undefined) {
+    entries.push({
+      type: PARAM_DELIVERY_TIMEOUT,
+      encode: (w) => w.writeVarInt(params.delivery_timeout!),
+    })
+  }
+  if (params.authorization_token !== undefined) {
+    entries.push({
+      type: PARAM_AUTHORIZATION_TOKEN,
+      encode: (w) => {
+        const tmpW = new BufferWriter(64)
+        encodeAuthorizationToken(params.authorization_token!, tmpW)
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
+  }
+  if (params.rendezvous_timeout !== undefined) {
+    entries.push({
+      type: PARAM_RENDEZVOUS_TIMEOUT,
+      encode: (w) => w.writeVarInt(params.rendezvous_timeout!),
+    })
+  }
   if (params.expires !== undefined) {
-    entries.push({ type: PARAM_EXPIRES, encode: (w) => w.writeVarInt(params.expires!) });
+    entries.push({
+      type: PARAM_EXPIRES,
+      encode: (w) => w.writeVarInt(params.expires!),
+    })
   }
   if (params.largest_object !== undefined) {
     entries.push({
       type: PARAM_LARGEST_OBJECT,
       encode: (w) => {
-        w.writeVarInt(params.largest_object!.group);
-        w.writeVarInt(params.largest_object!.object);
+        w.writeVarInt(params.largest_object!.group)
+        w.writeVarInt(params.largest_object!.object)
       },
-    });
+    })
+  }
+  if (params.forward !== undefined) {
+    entries.push({
+      type: PARAM_FORWARD,
+      encode: (w) => w.writeVarInt(params.forward!),
+    })
   }
   if (params.subscriber_priority !== undefined) {
     entries.push({
       type: PARAM_SUBSCRIBER_PRIORITY,
       encode: (w) => w.writeUint8(Number(params.subscriber_priority!)),
-    });
+    })
   }
   if (params.subscription_filter !== undefined) {
     entries.push({
       type: PARAM_SUBSCRIPTION_FILTER,
       encode: (w) => {
-        const f = params.subscription_filter!;
-        const tmpW = new BufferWriter(32);
-        tmpW.writeVarInt(f.filter_type);
+        const f = params.subscription_filter!
+        const tmpW = new BufferWriter(32)
+        tmpW.writeVarInt(f.filter_type)
         if (f.filter_type === 3n || f.filter_type === 4n) {
-          tmpW.writeVarInt(f.start_group!);
-          tmpW.writeVarInt(f.start_object!);
+          tmpW.writeVarInt(f.start_group!)
+          tmpW.writeVarInt(f.start_object!)
         }
         if (f.filter_type === 4n) {
-          tmpW.writeVarInt(f.end_group!);
+          tmpW.writeVarInt(f.end_group!)
         }
-        const raw = tmpW.finish();
-        w.writeVarInt(BigInt(raw.byteLength));
-        w.writeBytes(raw);
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
       },
-    });
+    })
   }
   if (params.group_order !== undefined) {
     entries.push({
       type: PARAM_GROUP_ORDER,
       encode: (w) => w.writeUint8(Number(params.group_order!)),
-    });
+    })
+  }
+  if (params.new_group_request !== undefined) {
+    entries.push({
+      type: PARAM_NEW_GROUP_REQUEST,
+      encode: (w) => w.writeVarInt(params.new_group_request!),
+    })
   }
 
   // Unknown params
   if (params.unknown) {
     for (const u of params.unknown) {
-      const id = BigInt(u.id);
+      const id = BigInt(u.id)
       entries.push({
         type: id,
         encode: (w) => {
-          const raw = hexToBytes(u.raw_hex);
+          const raw = hexToBytes(u.raw_hex)
           // For unknown params, we store raw bytes and re-emit them
-          w.writeBytes(raw);
+          w.writeBytes(raw)
         },
-      });
+      })
     }
   }
 
-  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0));
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
 
-  writer.writeVarInt(BigInt(entries.length));
-  let prevType = 0n;
+  writer.writeVarInt(BigInt(entries.length))
+  let prevType = 0n
   for (const entry of entries) {
-    writer.writeVarInt(entry.type - prevType);
-    entry.encode(writer);
-    prevType = entry.type;
+    writer.writeVarInt(entry.type - prevType)
+    entry.encode(writer)
+    prevType = entry.type
   }
 }
 
 function decodeParams(reader: BufferReader): Draft17Params {
-  const count = Number(reader.readVarInt());
-  const result: Draft17Params = {};
-  const unknown: UnknownParam[] = [];
-  let prevType = 0n;
+  const count = Number(reader.readVarInt())
+  const result: Draft17Params = {}
+  const unknown: UnknownParam[] = []
+  let prevType = 0n
 
   for (let i = 0; i < count; i++) {
-    const delta = reader.readVarInt();
-    const paramType = prevType + delta;
-    prevType = paramType;
+    const delta = reader.readVarInt()
+    const paramType = prevType + delta
+    prevType = paramType
 
-    if (paramType === PARAM_EXPIRES) {
-      result.expires = reader.readVarInt();
+    if (paramType === PARAM_DELIVERY_TIMEOUT) {
+      result.delivery_timeout = reader.readVarInt()
+    } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
+      const length = Number(reader.readVarInt())
+      const bytes = reader.readBytes(length)
+      result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
+    } else if (paramType === PARAM_RENDEZVOUS_TIMEOUT) {
+      result.rendezvous_timeout = reader.readVarInt()
+    } else if (paramType === PARAM_EXPIRES) {
+      result.expires = reader.readVarInt()
     } else if (paramType === PARAM_LARGEST_OBJECT) {
       // Location: 2 bare varints (not length-prefixed)
-      const group = reader.readVarInt();
-      const object = reader.readVarInt();
-      result.largest_object = { group, object };
+      const group = reader.readVarInt()
+      const object = reader.readVarInt()
+      result.largest_object = { group, object }
     } else if (paramType === PARAM_SUBSCRIBER_PRIORITY) {
       // uint8: single raw byte
-      result.subscriber_priority = BigInt(reader.readUint8());
+      result.subscriber_priority = BigInt(reader.readUint8())
     } else if (paramType === PARAM_SUBSCRIPTION_FILTER) {
       // Length-prefixed
-      const length = Number(reader.readVarInt());
-      const startOff = reader.offset;
-      const filter_type = reader.readVarInt();
+      const length = Number(reader.readVarInt())
+      const startOff = reader.offset
+      const filter_type = reader.readVarInt()
       const filter: {
-        filter_type: bigint;
-        start_group?: bigint;
-        start_object?: bigint;
-        end_group?: bigint;
-      } = { filter_type };
+        filter_type: bigint
+        start_group?: bigint
+        start_object?: bigint
+        end_group?: bigint
+      } = { filter_type }
       if (filter_type === 3n || filter_type === 4n) {
-        filter.start_group = reader.readVarInt();
-        filter.start_object = reader.readVarInt();
+        filter.start_group = reader.readVarInt()
+        filter.start_object = reader.readVarInt()
       }
       if (filter_type === 4n) {
-        filter.end_group = reader.readVarInt();
+        filter.end_group = reader.readVarInt()
       }
-      const consumed = reader.offset - startOff;
-      if (consumed < length) reader.readBytes(length - consumed);
-      result.subscription_filter = filter;
+      const consumed = reader.offset - startOff
+      if (consumed < length) reader.readBytes(length - consumed)
+      result.subscription_filter = filter
+    } else if (paramType === PARAM_FORWARD) {
+      result.forward = reader.readVarInt()
     } else if (paramType === PARAM_GROUP_ORDER) {
       // uint8: single raw byte
-      result.group_order = BigInt(reader.readUint8());
+      result.group_order = BigInt(reader.readUint8())
+    } else if (paramType === PARAM_NEW_GROUP_REQUEST) {
+      result.new_group_request = reader.readVarInt()
     } else {
       // Unknown parameter — we don't know the encoding, protocol violation per spec
       // But for robustness, attempt even/odd heuristic
       if (paramType % 2n === 0n) {
-        const value = reader.readVarInt();
-        const tmpWriter = new BufferWriter(16);
-        tmpWriter.writeVarInt(value);
-        const raw = tmpWriter.finish();
+        const value = reader.readVarInt()
+        const tmpWriter = new BufferWriter(16)
+        tmpWriter.writeVarInt(value)
+        const raw = tmpWriter.finish()
         unknown.push({
           id: `0x${paramType.toString(16)}`,
           length: raw.byteLength,
           raw_hex: bytesToHex(raw),
-        });
+        })
       } else {
-        const length = Number(reader.readVarInt());
-        const bytes = reader.readBytes(length);
-        unknown.push({ id: `0x${paramType.toString(16)}`, length, raw_hex: bytesToHex(bytes) });
+        const length = Number(reader.readVarInt())
+        const bytes = reader.readBytes(length)
+        unknown.push({
+          id: `0x${paramType.toString(16)}`,
+          length,
+          raw_hex: bytesToHex(bytes),
+        })
       }
     }
   }
 
-  if (unknown.length > 0) result.unknown = unknown;
-  return result;
+  if (unknown.length > 0) result.unknown = unknown
+  return result
 }
 
 // ─── Track Properties Encoding/Decoding (KVP, no count prefix) ──────────────
 
+const TPROP_DELIVERY_TIMEOUT = 0x02n
+const TPROP_MAX_CACHE_DURATION = 0x04n
+const TPROP_IMMUTABLE_PROPERTIES = 0x0bn
+const TPROP_DEFAULT_PUBLISHER_PRIORITY = 0x0en
+const TPROP_DEFAULT_PUBLISHER_GROUP_ORDER = 0x22n
+const TPROP_DYNAMIC_GROUPS = 0x30n
+
 function encodeTrackProperties(props: Draft17TrackProperties, writer: BufferWriter): void {
-  if (!props.unknown || props.unknown.length === 0) return;
+  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
 
-  const entries = props.unknown.map((u) => ({ type: BigInt(u.id), raw: u }));
-  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0));
+  if (props.delivery_timeout !== undefined) {
+    entries.push({
+      type: TPROP_DELIVERY_TIMEOUT,
+      encode: (w) => w.writeVarInt(props.delivery_timeout!),
+    })
+  }
+  if (props.max_cache_duration !== undefined) {
+    entries.push({
+      type: TPROP_MAX_CACHE_DURATION,
+      encode: (w) => w.writeVarInt(props.max_cache_duration!),
+    })
+  }
+  if (props.immutable_properties !== undefined) {
+    entries.push({
+      type: TPROP_IMMUTABLE_PROPERTIES,
+      encode: (w) => {
+        const raw = hexToBytes(props.immutable_properties!)
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
+  }
+  if (props.default_publisher_priority !== undefined) {
+    entries.push({
+      type: TPROP_DEFAULT_PUBLISHER_PRIORITY,
+      encode: (w) => w.writeVarInt(props.default_publisher_priority!),
+    })
+  }
+  if (props.default_publisher_group_order !== undefined) {
+    entries.push({
+      type: TPROP_DEFAULT_PUBLISHER_GROUP_ORDER,
+      encode: (w) => w.writeVarInt(props.default_publisher_group_order!),
+    })
+  }
+  if (props.dynamic_groups !== undefined) {
+    entries.push({
+      type: TPROP_DYNAMIC_GROUPS,
+      encode: (w) => w.writeVarInt(props.dynamic_groups!),
+    })
+  }
 
-  let prevType = 0n;
-  for (const entry of entries) {
-    writer.writeVarInt(entry.type - prevType);
-    if (entry.type % 2n === 0n) {
-      const raw = hexToBytes(entry.raw.raw_hex);
-      const tmpReader = new BufferReader(raw);
-      writer.writeVarInt(tmpReader.readVarInt());
-    } else {
-      const raw = hexToBytes(entry.raw.raw_hex);
-      writer.writeVarInt(BigInt(raw.byteLength));
-      writer.writeBytes(raw);
+  if (props.unknown) {
+    for (const u of props.unknown) {
+      const id = BigInt(u.id)
+      entries.push({
+        type: id,
+        encode: (w) => {
+          if (id % 2n === 0n) {
+            const raw = hexToBytes(u.raw_hex)
+            const tmpReader = new BufferReader(raw)
+            w.writeVarInt(tmpReader.readVarInt())
+          } else {
+            const raw = hexToBytes(u.raw_hex)
+            w.writeVarInt(BigInt(raw.byteLength))
+            w.writeBytes(raw)
+          }
+        },
+      })
     }
-    prevType = entry.type;
+  }
+
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
+
+  let prevType = 0n
+  for (const entry of entries) {
+    writer.writeVarInt(entry.type - prevType)
+    entry.encode(writer)
+    prevType = entry.type
   }
 }
 
 function decodeTrackProperties(reader: BufferReader, payloadEnd: number): Draft17TrackProperties {
-  const result: Draft17TrackProperties = {};
-  const unknown: UnknownParam[] = [];
-  let prevType = 0n;
+  const result: Draft17TrackProperties = {}
+  const unknown: UnknownParam[] = []
+  let prevType = 0n
 
   while (reader.offset < payloadEnd) {
-    const delta = reader.readVarInt();
-    const propType = prevType + delta;
-    prevType = propType;
+    const delta = reader.readVarInt()
+    const propType = prevType + delta
+    prevType = propType
 
     if (propType % 2n === 0n) {
-      const value = reader.readVarInt();
-      const tmpWriter = new BufferWriter(16);
-      tmpWriter.writeVarInt(value);
-      const raw = tmpWriter.finish();
-      unknown.push({
-        id: `0x${propType.toString(16)}`,
-        length: raw.byteLength,
-        raw_hex: bytesToHex(raw),
-      });
+      // Even: single varint value
+      const value = reader.readVarInt()
+      if (propType === TPROP_DELIVERY_TIMEOUT) {
+        result.delivery_timeout = value
+      } else if (propType === TPROP_MAX_CACHE_DURATION) {
+        result.max_cache_duration = value
+      } else if (propType === TPROP_DEFAULT_PUBLISHER_PRIORITY) {
+        result.default_publisher_priority = value
+      } else if (propType === TPROP_DEFAULT_PUBLISHER_GROUP_ORDER) {
+        result.default_publisher_group_order = value
+      } else if (propType === TPROP_DYNAMIC_GROUPS) {
+        result.dynamic_groups = value
+      } else {
+        const tmpWriter = new BufferWriter(16)
+        tmpWriter.writeVarInt(value)
+        const raw = tmpWriter.finish()
+        unknown.push({
+          id: `0x${propType.toString(16)}`,
+          length: raw.byteLength,
+          raw_hex: bytesToHex(raw),
+        })
+      }
     } else {
-      const length = Number(reader.readVarInt());
-      const bytes = reader.readBytes(length);
-      unknown.push({ id: `0x${propType.toString(16)}`, length, raw_hex: bytesToHex(bytes) });
+      // Odd: length-prefixed bytes
+      const length = Number(reader.readVarInt())
+      const bytes = reader.readBytes(length)
+      if (propType === TPROP_IMMUTABLE_PROPERTIES) {
+        result.immutable_properties = bytesToHex(bytes)
+      } else {
+        unknown.push({
+          id: `0x${propType.toString(16)}`,
+          length,
+          raw_hex: bytesToHex(bytes),
+        })
+      }
     }
   }
 
-  if (unknown.length > 0) result.unknown = unknown;
-  return result;
+  if (unknown.length > 0) result.unknown = unknown
+  return result
 }
 
 // ─── Payload Encoders ──────────────────────────────────────────────────────────
 
-function encodeSetupPayload(msg: Draft17Message & { type: "setup" }, w: BufferWriter): void {
-  encodeSetupOptions(msg.options, w);
+function encodeSetupPayload(msg: Draft17Message & { type: 'setup' }, w: BufferWriter): void {
+  encodeSetupOptions(msg.options, w)
 }
 
 function encodeSubscribePayload(
-  msg: Draft17Message & { type: "subscribe" },
+  msg: Draft17Message & { type: 'subscribe' },
   w: BufferWriter,
 ): void {
-  w.writeVarInt(msg.request_id);
-  w.writeVarInt(msg.required_request_id_delta);
-  w.writeTuple(msg.track_namespace);
-  w.writeString(msg.track_name);
-  encodeParams(msg.parameters, w);
+  w.writeVarInt(msg.request_id)
+  w.writeVarInt(msg.required_request_id_delta)
+  w.writeTuple(msg.track_namespace)
+  w.writeString(msg.track_name)
+  encodeParams(msg.parameters, w)
 }
 
 function encodeSubscribeOkPayload(
-  msg: Draft17Message & { type: "subscribe_ok" },
+  msg: Draft17Message & { type: 'subscribe_ok' },
   w: BufferWriter,
 ): void {
-  w.writeVarInt(msg.track_alias);
-  encodeParams(msg.parameters, w);
-  encodeTrackProperties(msg.track_properties, w);
+  w.writeVarInt(msg.track_alias)
+  encodeParams(msg.parameters, w)
+  encodeTrackProperties(msg.track_properties, w)
 }
 
 function encodeRequestUpdatePayload(
-  msg: Draft17Message & { type: "request_update" },
+  msg: Draft17Message & { type: 'request_update' },
   w: BufferWriter,
 ): void {
-  w.writeVarInt(msg.request_id);
-  w.writeVarInt(msg.required_request_id_delta);
-  encodeParams(msg.parameters, w);
+  w.writeVarInt(msg.request_id)
+  w.writeVarInt(msg.required_request_id_delta)
+  encodeParams(msg.parameters, w)
 }
 
-function encodePublishPayload(msg: Draft17Message & { type: "publish" }, w: BufferWriter): void {
-  w.writeVarInt(msg.request_id);
-  w.writeVarInt(msg.required_request_id_delta);
-  w.writeTuple(msg.track_namespace);
-  w.writeString(msg.track_name);
-  w.writeVarInt(msg.track_alias);
-  encodeParams(msg.parameters, w);
-  encodeTrackProperties(msg.track_properties, w);
+function encodePublishPayload(msg: Draft17Message & { type: 'publish' }, w: BufferWriter): void {
+  w.writeVarInt(msg.request_id)
+  w.writeVarInt(msg.required_request_id_delta)
+  w.writeTuple(msg.track_namespace)
+  w.writeString(msg.track_name)
+  w.writeVarInt(msg.track_alias)
+  encodeParams(msg.parameters, w)
+  encodeTrackProperties(msg.track_properties, w)
 }
 
 function encodePublishOkPayload(
-  msg: Draft17Message & { type: "publish_ok" },
+  msg: Draft17Message & { type: 'publish_ok' },
   w: BufferWriter,
 ): void {
-  encodeParams(msg.parameters, w);
+  encodeParams(msg.parameters, w)
 }
 
 function encodePublishDonePayload(
-  msg: Draft17Message & { type: "publish_done" },
+  msg: Draft17Message & { type: 'publish_done' },
   w: BufferWriter,
 ): void {
-  w.writeVarInt(msg.status_code);
-  w.writeVarInt(msg.stream_count);
-  w.writeString(msg.reason_phrase);
+  w.writeVarInt(msg.status_code)
+  w.writeVarInt(msg.stream_count)
+  w.writeString(msg.reason_phrase)
 }
 
 function encodePublishNamespacePayload(
-  msg: Draft17Message & { type: "publish_namespace" },
+  msg: Draft17Message & { type: 'publish_namespace' },
   w: BufferWriter,
 ): void {
-  w.writeVarInt(msg.request_id);
-  w.writeVarInt(msg.required_request_id_delta);
-  w.writeTuple(msg.track_namespace);
-  encodeParams(msg.parameters, w);
+  w.writeVarInt(msg.request_id)
+  w.writeVarInt(msg.required_request_id_delta)
+  w.writeTuple(msg.track_namespace)
+  encodeParams(msg.parameters, w)
 }
 
 function encodeNamespacePayload(
-  msg: Draft17Message & { type: "namespace" },
+  msg: Draft17Message & { type: 'namespace' },
   w: BufferWriter,
 ): void {
-  w.writeTuple(msg.namespace_suffix);
+  w.writeTuple(msg.namespace_suffix)
 }
 
 function encodeNamespaceDonePayload(
-  msg: Draft17Message & { type: "namespace_done" },
+  msg: Draft17Message & { type: 'namespace_done' },
   w: BufferWriter,
 ): void {
-  w.writeTuple(msg.namespace_suffix);
+  w.writeTuple(msg.namespace_suffix)
 }
 
 function encodeSubscribeNamespacePayload(
-  msg: Draft17Message & { type: "subscribe_namespace" },
+  msg: Draft17Message & { type: 'subscribe_namespace' },
   w: BufferWriter,
 ): void {
-  w.writeVarInt(msg.request_id);
-  w.writeVarInt(msg.required_request_id_delta);
-  w.writeTuple(msg.namespace_prefix);
-  w.writeVarInt(msg.subscribe_options);
-  encodeParams(msg.parameters, w);
+  w.writeVarInt(msg.request_id)
+  w.writeVarInt(msg.required_request_id_delta)
+  w.writeTuple(msg.namespace_prefix)
+  w.writeVarInt(msg.subscribe_options)
+  encodeParams(msg.parameters, w)
 }
 
 function encodePublishBlockedPayload(
-  msg: Draft17Message & { type: "publish_blocked" },
+  msg: Draft17Message & { type: 'publish_blocked' },
   w: BufferWriter,
 ): void {
-  w.writeTuple(msg.namespace_suffix);
-  w.writeString(msg.track_name);
+  w.writeTuple(msg.namespace_suffix)
+  w.writeString(msg.track_name)
 }
 
-function encodeFetchPayload(msg: Draft17Message & { type: "fetch" }, w: BufferWriter): void {
-  w.writeVarInt(msg.request_id);
-  w.writeVarInt(msg.required_request_id_delta);
-  w.writeVarInt(msg.fetch_type);
-  const ft = Number(msg.fetch_type);
+function encodeFetchPayload(msg: Draft17Message & { type: 'fetch' }, w: BufferWriter): void {
+  w.writeVarInt(msg.request_id)
+  w.writeVarInt(msg.required_request_id_delta)
+  w.writeVarInt(msg.fetch_type)
+  const ft = Number(msg.fetch_type)
   if (ft === 1 && msg.standalone) {
-    w.writeTuple(msg.standalone.track_namespace);
-    w.writeString(msg.standalone.track_name);
-    w.writeVarInt(msg.standalone.start_group);
-    w.writeVarInt(msg.standalone.start_object);
-    w.writeVarInt(msg.standalone.end_group);
-    w.writeVarInt(msg.standalone.end_object);
+    w.writeTuple(msg.standalone.track_namespace)
+    w.writeString(msg.standalone.track_name)
+    w.writeVarInt(msg.standalone.start_group)
+    w.writeVarInt(msg.standalone.start_object)
+    w.writeVarInt(msg.standalone.end_group)
+    w.writeVarInt(msg.standalone.end_object)
   } else if ((ft === 2 || ft === 3) && msg.joining) {
-    w.writeVarInt(msg.joining.joining_request_id);
-    w.writeVarInt(msg.joining.joining_start);
+    w.writeVarInt(msg.joining.joining_request_id)
+    w.writeVarInt(msg.joining.joining_start)
   }
-  encodeParams(msg.parameters, w);
+  encodeParams(msg.parameters, w)
 }
 
-function encodeFetchOkPayload(msg: Draft17Message & { type: "fetch_ok" }, w: BufferWriter): void {
-  w.writeUint8(msg.end_of_track);
-  w.writeVarInt(msg.end_group);
-  w.writeVarInt(msg.end_object);
-  encodeParams(msg.parameters, w);
-  encodeTrackProperties(msg.track_properties, w);
+function encodeFetchOkPayload(msg: Draft17Message & { type: 'fetch_ok' }, w: BufferWriter): void {
+  w.writeUint8(msg.end_of_track)
+  w.writeVarInt(msg.end_group)
+  w.writeVarInt(msg.end_object)
+  encodeParams(msg.parameters, w)
+  encodeTrackProperties(msg.track_properties, w)
 }
 
 function encodeTrackStatusPayload(
-  msg: Draft17Message & { type: "track_status" },
+  msg: Draft17Message & { type: 'track_status' },
   w: BufferWriter,
 ): void {
-  w.writeVarInt(msg.request_id);
-  w.writeVarInt(msg.required_request_id_delta);
-  w.writeTuple(msg.track_namespace);
-  w.writeString(msg.track_name);
-  encodeParams(msg.parameters, w);
+  w.writeVarInt(msg.request_id)
+  w.writeVarInt(msg.required_request_id_delta)
+  w.writeTuple(msg.track_namespace)
+  w.writeString(msg.track_name)
+  encodeParams(msg.parameters, w)
 }
 
 function encodeRequestOkPayload(
-  msg: Draft17Message & { type: "request_ok" },
+  msg: Draft17Message & { type: 'request_ok' },
   w: BufferWriter,
 ): void {
-  encodeParams(msg.parameters, w);
+  encodeParams(msg.parameters, w)
 }
 
 function encodeRequestErrorPayload(
-  msg: Draft17Message & { type: "request_error" },
+  msg: Draft17Message & { type: 'request_error' },
   w: BufferWriter,
 ): void {
-  w.writeVarInt(msg.error_code);
-  w.writeVarInt(msg.retry_interval);
-  w.writeString(msg.reason_phrase);
+  w.writeVarInt(msg.error_code)
+  w.writeVarInt(msg.retry_interval)
+  w.writeString(msg.reason_phrase)
 }
 
-function encodeGoAwayPayload(msg: Draft17Message & { type: "goaway" }, w: BufferWriter): void {
-  w.writeString(msg.new_session_uri);
-  w.writeVarInt(msg.timeout);
+function encodeGoAwayPayload(msg: Draft17Message & { type: 'goaway' }, w: BufferWriter): void {
+  w.writeString(msg.new_session_uri)
+  w.writeVarInt(msg.timeout)
 }
 
 // ─── Payload Decoders ──────────────────────────────────────────────────────────
 
 function decodeSetupPayload(r: BufferReader, payloadEnd: number): Draft17Message {
-  const options = decodeSetupOptions(r, payloadEnd);
-  return { type: "setup", options };
+  const options = decodeSetupOptions(r, payloadEnd)
+  return { type: 'setup', options }
 }
 
 function decodeSubscribePayload(r: BufferReader): Draft17Message {
-  const request_id = r.readVarInt();
-  const required_request_id_delta = r.readVarInt();
-  const track_namespace = r.readTuple();
-  const track_name = r.readString();
-  const parameters = decodeParams(r);
+  const request_id = r.readVarInt()
+  const required_request_id_delta = r.readVarInt()
+  const track_namespace = r.readTuple()
+  const track_name = r.readString()
+  const parameters = decodeParams(r)
   return {
-    type: "subscribe",
+    type: 'subscribe',
     request_id,
     required_request_id_delta,
     track_namespace,
     track_name,
     parameters,
-  };
+  }
 }
 
 function decodeSubscribeOkPayload(r: BufferReader, payloadEnd: number): Draft17Message {
-  const track_alias = r.readVarInt();
-  const parameters = decodeParams(r);
-  const track_properties = decodeTrackProperties(r, payloadEnd);
-  return { type: "subscribe_ok", track_alias, parameters, track_properties };
+  const track_alias = r.readVarInt()
+  const parameters = decodeParams(r)
+  const track_properties = decodeTrackProperties(r, payloadEnd)
+  return { type: 'subscribe_ok', track_alias, parameters, track_properties }
 }
 
 function decodeRequestUpdatePayload(r: BufferReader): Draft17Message {
-  const request_id = r.readVarInt();
-  const required_request_id_delta = r.readVarInt();
-  const parameters = decodeParams(r);
-  return { type: "request_update", request_id, required_request_id_delta, parameters };
+  const request_id = r.readVarInt()
+  const required_request_id_delta = r.readVarInt()
+  const parameters = decodeParams(r)
+  return {
+    type: 'request_update',
+    request_id,
+    required_request_id_delta,
+    parameters,
+  }
 }
 
 function decodePublishPayload(r: BufferReader, payloadEnd: number): Draft17Message {
-  const request_id = r.readVarInt();
-  const required_request_id_delta = r.readVarInt();
-  const track_namespace = r.readTuple();
-  const track_name = r.readString();
-  const track_alias = r.readVarInt();
-  const parameters = decodeParams(r);
-  const track_properties = decodeTrackProperties(r, payloadEnd);
+  const request_id = r.readVarInt()
+  const required_request_id_delta = r.readVarInt()
+  const track_namespace = r.readTuple()
+  const track_name = r.readString()
+  const track_alias = r.readVarInt()
+  const parameters = decodeParams(r)
+  const track_properties = decodeTrackProperties(r, payloadEnd)
   return {
-    type: "publish",
+    type: 'publish',
     request_id,
     required_request_id_delta,
     track_namespace,
@@ -593,148 +794,162 @@ function decodePublishPayload(r: BufferReader, payloadEnd: number): Draft17Messa
     track_alias,
     parameters,
     track_properties,
-  };
+  }
 }
 
 function decodePublishOkPayload(r: BufferReader): Draft17Message {
-  const parameters = decodeParams(r);
-  return { type: "publish_ok", parameters };
+  const parameters = decodeParams(r)
+  return { type: 'publish_ok', parameters }
 }
 
 function decodePublishDonePayload(r: BufferReader): Draft17Message {
-  const status_code = r.readVarInt();
-  const stream_count = r.readVarInt();
-  const reason_phrase = r.readString();
-  return { type: "publish_done", status_code, stream_count, reason_phrase };
+  const status_code = r.readVarInt()
+  const stream_count = r.readVarInt()
+  const reason_phrase = r.readString()
+  return { type: 'publish_done', status_code, stream_count, reason_phrase }
 }
 
 function decodePublishNamespacePayload(r: BufferReader): Draft17Message {
-  const request_id = r.readVarInt();
-  const required_request_id_delta = r.readVarInt();
-  const track_namespace = r.readTuple();
-  const parameters = decodeParams(r);
+  const request_id = r.readVarInt()
+  const required_request_id_delta = r.readVarInt()
+  const track_namespace = r.readTuple()
+  const parameters = decodeParams(r)
   return {
-    type: "publish_namespace",
+    type: 'publish_namespace',
     request_id,
     required_request_id_delta,
     track_namespace,
     parameters,
-  };
+  }
 }
 
 function decodeNamespacePayload(r: BufferReader): Draft17Message {
-  const namespace_suffix = r.readTuple();
-  return { type: "namespace", namespace_suffix };
+  const namespace_suffix = r.readTuple()
+  return { type: 'namespace', namespace_suffix }
 }
 
 function decodeNamespaceDonePayload(r: BufferReader): Draft17Message {
-  const namespace_suffix = r.readTuple();
-  return { type: "namespace_done", namespace_suffix };
+  const namespace_suffix = r.readTuple()
+  return { type: 'namespace_done', namespace_suffix }
 }
 
 function decodeSubscribeNamespacePayload(r: BufferReader): Draft17Message {
-  const request_id = r.readVarInt();
-  const required_request_id_delta = r.readVarInt();
-  const namespace_prefix = r.readTuple();
-  const subscribe_options = r.readVarInt();
-  const parameters = decodeParams(r);
+  const request_id = r.readVarInt()
+  const required_request_id_delta = r.readVarInt()
+  const namespace_prefix = r.readTuple()
+  const subscribe_options = r.readVarInt()
+  const parameters = decodeParams(r)
   return {
-    type: "subscribe_namespace",
+    type: 'subscribe_namespace',
     request_id,
     required_request_id_delta,
     namespace_prefix,
     subscribe_options,
     parameters,
-  };
+  }
 }
 
 function decodePublishBlockedPayload(r: BufferReader): Draft17Message {
-  const namespace_suffix = r.readTuple();
-  const track_name = r.readString();
-  return { type: "publish_blocked", namespace_suffix, track_name };
+  const namespace_suffix = r.readTuple()
+  const track_name = r.readString()
+  return { type: 'publish_blocked', namespace_suffix, track_name }
 }
 
 function decodeFetchPayload(r: BufferReader): Draft17Message {
-  const request_id = r.readVarInt();
-  const required_request_id_delta = r.readVarInt();
-  const fetch_type = r.readVarInt();
-  const ft = Number(fetch_type);
+  const request_id = r.readVarInt()
+  const required_request_id_delta = r.readVarInt()
+  const fetch_type = r.readVarInt()
+  const ft = Number(fetch_type)
 
   if (ft < 1 || ft > 3) {
-    throw new DecodeError("CONSTRAINT_VIOLATION", `Invalid fetch_type: ${ft}`, r.offset);
+    throw new DecodeError('CONSTRAINT_VIOLATION', `Invalid fetch_type: ${ft}`, r.offset)
   }
 
-  let standalone: StandaloneFetch | undefined;
-  let joining: JoiningFetch | undefined;
+  let standalone: StandaloneFetch | undefined
+  let joining: JoiningFetch | undefined
 
   if (ft === 1) {
-    const track_namespace = r.readTuple();
-    const track_name = r.readString();
-    const start_group = r.readVarInt();
-    const start_object = r.readVarInt();
-    const end_group = r.readVarInt();
-    const end_object = r.readVarInt();
-    standalone = { track_namespace, track_name, start_group, start_object, end_group, end_object };
+    const track_namespace = r.readTuple()
+    const track_name = r.readString()
+    const start_group = r.readVarInt()
+    const start_object = r.readVarInt()
+    const end_group = r.readVarInt()
+    const end_object = r.readVarInt()
+    standalone = {
+      track_namespace,
+      track_name,
+      start_group,
+      start_object,
+      end_group,
+      end_object,
+    }
   } else {
-    const joining_request_id = r.readVarInt();
-    const joining_start = r.readVarInt();
-    joining = { joining_request_id, joining_start };
+    const joining_request_id = r.readVarInt()
+    const joining_start = r.readVarInt()
+    joining = { joining_request_id, joining_start }
   }
 
-  const parameters = decodeParams(r);
+  const parameters = decodeParams(r)
 
   return {
-    type: "fetch",
+    type: 'fetch',
     request_id,
     required_request_id_delta,
     fetch_type,
     standalone,
     joining,
     parameters,
-  } as Draft17Fetch;
+  } as Draft17Fetch
 }
 
 function decodeFetchOkPayload(r: BufferReader, payloadEnd: number): Draft17Message {
-  const end_of_track = r.readUint8();
-  const end_group = r.readVarInt();
-  const end_object = r.readVarInt();
-  const parameters = decodeParams(r);
-  const track_properties = decodeTrackProperties(r, payloadEnd);
-  return { type: "fetch_ok", end_of_track, end_group, end_object, parameters, track_properties };
+  const end_of_track = r.readUint8()
+  const end_group = r.readVarInt()
+  const end_object = r.readVarInt()
+  const parameters = decodeParams(r)
+  const track_properties = decodeTrackProperties(r, payloadEnd)
+  return {
+    type: 'fetch_ok',
+    end_of_track,
+    end_group,
+    end_object,
+    parameters,
+    track_properties,
+  }
 }
 
 function decodeTrackStatusPayload(r: BufferReader): Draft17Message {
-  const request_id = r.readVarInt();
-  const required_request_id_delta = r.readVarInt();
-  const track_namespace = r.readTuple();
-  const track_name = r.readString();
-  const parameters = decodeParams(r);
+  const request_id = r.readVarInt()
+  const required_request_id_delta = r.readVarInt()
+  const track_namespace = r.readTuple()
+  const track_name = r.readString()
+  const parameters = decodeParams(r)
   return {
-    type: "track_status",
+    type: 'track_status',
     request_id,
     required_request_id_delta,
     track_namespace,
     track_name,
     parameters,
-  };
+  }
 }
 
 function decodeRequestOkPayload(r: BufferReader): Draft17Message {
-  const parameters = decodeParams(r);
-  return { type: "request_ok", parameters };
+  const parameters = decodeParams(r)
+  return { type: 'request_ok', parameters }
 }
 
 function decodeRequestErrorPayload(r: BufferReader): Draft17Message {
-  const error_code = r.readVarInt();
-  const retry_interval = r.readVarInt();
-  const reason_phrase = r.readString();
-  return { type: "request_error", error_code, retry_interval, reason_phrase };
+  const error_code = r.readVarInt()
+  const retry_interval = r.readVarInt()
+  const reason_phrase = r.readString()
+  return { type: 'request_error', error_code, retry_interval, reason_phrase }
 }
 
 function decodeGoAwayPayload(r: BufferReader): Draft17Message {
-  const new_session_uri = r.readString();
-  const timeout = r.readVarInt();
-  return { type: "goaway", new_session_uri, timeout };
+  const new_session_uri = r.readString()
+  const timeout = r.readVarInt()
+  return { type: 'goaway', new_session_uri, timeout }
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────────
@@ -743,69 +958,69 @@ function decodeGoAwayPayload(r: BufferReader): Draft17Message {
  * Encode a draft-17 control message with type(varint) + length(uint16 BE) + payload.
  */
 export function encodeMessage(message: Draft17Message): Uint8Array {
-  const typeId = MESSAGE_ID_MAP.get(message.type);
+  const typeId = MESSAGE_ID_MAP.get(message.type)
   if (typeId === undefined) {
-    throw new Error(`Unknown message type: ${message.type}`);
+    throw new Error(`Unknown message type: ${message.type}`)
   }
 
-  const payloadWriter = new BufferWriter();
-  encodePayload(message, payloadWriter);
-  const payload = payloadWriter.finishView();
+  const payloadWriter = new BufferWriter()
+  encodePayload(message, payloadWriter)
+  const payload = payloadWriter.finishView()
 
   if (payload.byteLength > 0xffff) {
-    throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`);
+    throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`)
   }
 
-  const writer = new BufferWriter(payload.byteLength + 16);
-  writer.writeVarInt(typeId);
-  writer.writeUint8((payload.byteLength >> 8) & 0xff);
-  writer.writeUint8(payload.byteLength & 0xff);
-  writer.writeBytes(payload);
+  const writer = new BufferWriter(payload.byteLength + 16)
+  writer.writeVarInt(typeId)
+  writer.writeUint8((payload.byteLength >> 8) & 0xff)
+  writer.writeUint8(payload.byteLength & 0xff)
+  writer.writeBytes(payload)
 
-  return writer.finish();
+  return writer.finish()
 }
 
 function encodePayload(msg: Draft17Message, w: BufferWriter): void {
   switch (msg.type) {
-    case "setup":
-      return encodeSetupPayload(msg, w);
-    case "subscribe":
-      return encodeSubscribePayload(msg, w);
-    case "subscribe_ok":
-      return encodeSubscribeOkPayload(msg, w);
-    case "request_update":
-      return encodeRequestUpdatePayload(msg, w);
-    case "publish":
-      return encodePublishPayload(msg, w);
-    case "publish_ok":
-      return encodePublishOkPayload(msg, w);
-    case "publish_done":
-      return encodePublishDonePayload(msg, w);
-    case "publish_namespace":
-      return encodePublishNamespacePayload(msg, w);
-    case "namespace":
-      return encodeNamespacePayload(msg, w);
-    case "namespace_done":
-      return encodeNamespaceDonePayload(msg, w);
-    case "subscribe_namespace":
-      return encodeSubscribeNamespacePayload(msg, w);
-    case "publish_blocked":
-      return encodePublishBlockedPayload(msg, w);
-    case "fetch":
-      return encodeFetchPayload(msg, w);
-    case "fetch_ok":
-      return encodeFetchOkPayload(msg, w);
-    case "track_status":
-      return encodeTrackStatusPayload(msg, w);
-    case "request_ok":
-      return encodeRequestOkPayload(msg, w);
-    case "request_error":
-      return encodeRequestErrorPayload(msg, w);
-    case "goaway":
-      return encodeGoAwayPayload(msg, w);
+    case 'setup':
+      return encodeSetupPayload(msg, w)
+    case 'subscribe':
+      return encodeSubscribePayload(msg, w)
+    case 'subscribe_ok':
+      return encodeSubscribeOkPayload(msg, w)
+    case 'request_update':
+      return encodeRequestUpdatePayload(msg, w)
+    case 'publish':
+      return encodePublishPayload(msg, w)
+    case 'publish_ok':
+      return encodePublishOkPayload(msg, w)
+    case 'publish_done':
+      return encodePublishDonePayload(msg, w)
+    case 'publish_namespace':
+      return encodePublishNamespacePayload(msg, w)
+    case 'namespace':
+      return encodeNamespacePayload(msg, w)
+    case 'namespace_done':
+      return encodeNamespaceDonePayload(msg, w)
+    case 'subscribe_namespace':
+      return encodeSubscribeNamespacePayload(msg, w)
+    case 'publish_blocked':
+      return encodePublishBlockedPayload(msg, w)
+    case 'fetch':
+      return encodeFetchPayload(msg, w)
+    case 'fetch_ok':
+      return encodeFetchOkPayload(msg, w)
+    case 'track_status':
+      return encodeTrackStatusPayload(msg, w)
+    case 'request_ok':
+      return encodeRequestOkPayload(msg, w)
+    case 'request_error':
+      return encodeRequestErrorPayload(msg, w)
+    case 'goaway':
+      return encodeGoAwayPayload(msg, w)
     default: {
-      const _exhaustive: never = msg;
-      throw new Error(`Unhandled message type: ${(_exhaustive as Draft17Message).type}`);
+      const _exhaustive: never = msg
+      throw new Error(`Unhandled message type: ${(_exhaustive as Draft17Message).type}`)
     }
   }
 }
@@ -815,145 +1030,168 @@ function encodePayload(msg: Draft17Message, w: BufferWriter): void {
  */
 export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft17Message> {
   try {
-    const reader = new BufferReader(bytes);
-    const typeId = reader.readVarInt();
+    const reader = new BufferReader(bytes)
+    const typeId = reader.readVarInt()
 
-    const lenHi = reader.readUint8();
-    const lenLo = reader.readUint8();
-    const payloadLength = (lenHi << 8) | lenLo;
+    const lenHi = reader.readUint8()
+    const lenLo = reader.readUint8()
+    const payloadLength = (lenHi << 8) | lenLo
 
-    const payloadStart = reader.offset;
-    const _payloadEnd = payloadStart + payloadLength;
-    const payloadBytes = reader.readBytes(payloadLength);
-    const payloadReader = new BufferReader(payloadBytes);
+    const payloadStart = reader.offset
+    const _payloadEnd = payloadStart + payloadLength
+    const payloadBytes = reader.readBytes(payloadLength)
+    const payloadReader = new BufferReader(payloadBytes)
 
-    let message: Draft17Message;
+    let message: Draft17Message
 
     if (typeId === MSG_SETUP) {
-      message = decodeSetupPayload(payloadReader, payloadLength);
+      message = decodeSetupPayload(payloadReader, payloadLength)
     } else if (typeId === MSG_SUBSCRIBE) {
-      message = decodeSubscribePayload(payloadReader);
+      message = decodeSubscribePayload(payloadReader)
     } else if (typeId === MSG_SUBSCRIBE_OK) {
-      message = decodeSubscribeOkPayload(payloadReader, payloadLength);
+      message = decodeSubscribeOkPayload(payloadReader, payloadLength)
     } else if (typeId === MSG_REQUEST_UPDATE) {
-      message = decodeRequestUpdatePayload(payloadReader);
+      message = decodeRequestUpdatePayload(payloadReader)
     } else if (typeId === MSG_PUBLISH) {
-      message = decodePublishPayload(payloadReader, payloadLength);
+      message = decodePublishPayload(payloadReader, payloadLength)
     } else if (typeId === MSG_PUBLISH_OK) {
-      message = decodePublishOkPayload(payloadReader);
+      message = decodePublishOkPayload(payloadReader)
     } else if (typeId === MSG_PUBLISH_DONE) {
-      message = decodePublishDonePayload(payloadReader);
+      message = decodePublishDonePayload(payloadReader)
     } else if (typeId === MSG_PUBLISH_NAMESPACE) {
-      message = decodePublishNamespacePayload(payloadReader);
+      message = decodePublishNamespacePayload(payloadReader)
     } else if (typeId === MSG_NAMESPACE) {
-      message = decodeNamespacePayload(payloadReader);
+      message = decodeNamespacePayload(payloadReader)
     } else if (typeId === MSG_NAMESPACE_DONE) {
-      message = decodeNamespaceDonePayload(payloadReader);
+      message = decodeNamespaceDonePayload(payloadReader)
     } else if (typeId === MSG_SUBSCRIBE_NAMESPACE) {
-      message = decodeSubscribeNamespacePayload(payloadReader);
+      message = decodeSubscribeNamespacePayload(payloadReader)
     } else if (typeId === MSG_PUBLISH_BLOCKED) {
-      message = decodePublishBlockedPayload(payloadReader);
+      message = decodePublishBlockedPayload(payloadReader)
     } else if (typeId === MSG_FETCH) {
-      message = decodeFetchPayload(payloadReader);
+      message = decodeFetchPayload(payloadReader)
     } else if (typeId === MSG_FETCH_OK) {
-      message = decodeFetchOkPayload(payloadReader, payloadLength);
+      message = decodeFetchOkPayload(payloadReader, payloadLength)
     } else if (typeId === MSG_TRACK_STATUS) {
-      message = decodeTrackStatusPayload(payloadReader);
+      message = decodeTrackStatusPayload(payloadReader)
     } else if (typeId === MSG_REQUEST_OK) {
-      message = decodeRequestOkPayload(payloadReader);
+      message = decodeRequestOkPayload(payloadReader)
     } else if (typeId === MSG_REQUEST_ERROR) {
-      message = decodeRequestErrorPayload(payloadReader);
+      message = decodeRequestErrorPayload(payloadReader)
     } else if (typeId === MSG_GOAWAY) {
-      message = decodeGoAwayPayload(payloadReader);
+      message = decodeGoAwayPayload(payloadReader)
     } else {
       return {
         ok: false,
         error: new DecodeError(
-          "UNKNOWN_MESSAGE_TYPE",
+          'UNKNOWN_MESSAGE_TYPE',
           `Unknown message type ID: 0x${typeId.toString(16)}`,
           0,
         ),
-      };
+      }
     }
 
-    return { ok: true, value: message, bytesRead: reader.offset };
+    return { ok: true, value: message, bytesRead: reader.offset }
   } catch (e) {
     if (e instanceof DecodeError) {
-      return { ok: false, error: e };
+      return { ok: false, error: e }
     }
-    throw e;
+    throw e
   }
 }
 
 // ─── Data Stream Encoding/Decoding (re-exported from data-streams.ts) ───────
 
-import { encodeSubgroupStream, decodeSubgroupStream, encodeDatagram, decodeDatagram, encodeFetchStream, decodeFetchStream, decodeDataStream, createSubgroupStreamDecoder, createFetchStreamDecoder, createDataStreamDecoder } from "./data-streams.js";
-export { encodeSubgroupStream, decodeSubgroupStream, encodeDatagram, decodeDatagram, encodeFetchStream, decodeFetchStream, decodeDataStream, createSubgroupStreamDecoder, createFetchStreamDecoder, createDataStreamDecoder };
+import {
+  createDataStreamDecoder,
+  createFetchStreamDecoder,
+  createSubgroupStreamDecoder,
+  decodeDatagram,
+  decodeDataStream,
+  decodeFetchStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  encodeSubgroupStream,
+} from './data-streams.js'
+
+export {
+  createDataStreamDecoder,
+  createFetchStreamDecoder,
+  createSubgroupStreamDecoder,
+  decodeDatagram,
+  decodeDataStream,
+  decodeFetchStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  encodeSubgroupStream,
+}
 
 // ─── Stream Decoders ───────────────────────────────────────────────────────────
 
 export function createStreamDecoder(): TransformStream<Uint8Array, Draft17Message> {
-  let buffer = new Uint8Array(0);
-  let offset = 0;
+  let buffer = new Uint8Array(0)
+  let offset = 0
 
   return new TransformStream<Uint8Array, Draft17Message>({
     transform(chunk, controller) {
       if (offset > 0) {
-        buffer = buffer.subarray(offset);
-        offset = 0;
+        buffer = buffer.subarray(offset)
+        offset = 0
       }
-      const newBuffer = new Uint8Array(buffer.length + chunk.length);
-      newBuffer.set(buffer, 0);
-      newBuffer.set(chunk, buffer.length);
-      buffer = newBuffer;
+      const newBuffer = new Uint8Array(buffer.length + chunk.length)
+      newBuffer.set(buffer, 0)
+      newBuffer.set(chunk, buffer.length)
+      buffer = newBuffer
 
       while (offset < buffer.length) {
-        const result = decodeMessage(buffer.subarray(offset));
+        const result = decodeMessage(buffer.subarray(offset))
         if (!result.ok) {
-          if (result.error.code === "UNEXPECTED_END") {
-            break;
+          if (result.error.code === 'UNEXPECTED_END') {
+            break
           }
-          controller.error(result.error);
-          return;
+          controller.error(result.error)
+          return
         }
-        controller.enqueue(result.value);
-        offset += result.bytesRead;
+        controller.enqueue(result.value)
+        offset += result.bytesRead
       }
     },
 
     flush(controller) {
       if (offset < buffer.length) {
         controller.error(
-          new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
-        );
+          new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete message data', 0),
+        )
       }
     },
-  });
+  })
 }
 
 // ─── Codec Factory ─────────────────────────────────────────────────────────────
 
 export interface Draft17Codec extends BaseCodec<Draft17Message> {
-  readonly draft: "draft-ietf-moq-transport-17";
-  encodeSubgroupStream(stream: SubgroupStream): Uint8Array;
-  encodeDatagram(dg: DatagramObject): Uint8Array;
-  encodeFetchStream(stream: FetchStream): Uint8Array;
-  decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>;
-  decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject>;
-  decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>;
+  readonly draft: '17'
+  encodeSubgroupStream(stream: SubgroupStream): Uint8Array
+  encodeDatagram(dg: DatagramObject): Uint8Array
+  encodeFetchStream(stream: FetchStream): Uint8Array
+  decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>
+  decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject>
+  decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>
   decodeDataStream(
-    streamType: "subgroup" | "datagram" | "fetch",
+    streamType: 'subgroup' | 'datagram' | 'fetch',
     bytes: Uint8Array,
-  ): DecodeResult<Draft17DataStream>;
-  createStreamDecoder(): TransformStream<Uint8Array, Draft17Message>;
-  createSubgroupStreamDecoder(): TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>;
-  createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>;
-  createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent>;
+  ): DecodeResult<Draft17DataStream>
+  createStreamDecoder(): TransformStream<Uint8Array, Draft17Message>
+  createSubgroupStreamDecoder(): TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>
+  createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>
+  createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent>
 }
 
 export function createDraft17Codec(): Draft17Codec {
   return {
-    draft: "draft-ietf-moq-transport-17",
+    draft: '17',
     encodeMessage,
     decodeMessage,
     encodeSubgroupStream,
@@ -967,5 +1205,5 @@ export function createDraft17Codec(): Draft17Codec {
     createSubgroupStreamDecoder,
     createFetchStreamDecoder,
     createDataStreamDecoder,
-  };
+  }
 }

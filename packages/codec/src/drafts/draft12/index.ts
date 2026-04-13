@@ -1,4 +1,6 @@
-export type { Draft12Codec } from "./codec.js";
+export const DRAFT_VERSION = 0xff00000cn
+
+export type { Draft12Codec } from './codec.js'
 export {
   createDraft12Codec,
   createStreamDecoder,
@@ -11,7 +13,7 @@ export {
   encodeFetchStream,
   encodeMessage,
   encodeSubgroupStream,
-} from "./codec.js";
+} from './codec.js'
 export {
   MESSAGE_ID_MAP,
   MESSAGE_TYPE_MAP,
@@ -49,7 +51,7 @@ export {
   SETUP_PARAM_MAX_REQUEST_ID,
   SETUP_PARAM_PATH,
   VARINT_FRAMED_MESSAGES,
-} from "./messages.js";
+} from './messages.js'
 export {
   BIDIRECTIONAL_MESSAGES,
   CLIENT_ONLY_MESSAGES,
@@ -57,7 +59,7 @@ export {
   getLegalIncoming,
   getLegalOutgoing,
   SERVER_ONLY_MESSAGES,
-} from "./rules.js";
+} from './rules.js'
 export type {
   AnnouncePhase,
   AnnounceState,
@@ -67,16 +69,15 @@ export type {
   ProtocolViolationCode,
   SessionPhase,
   SessionState,
-  SessionStateOptions,
   SideEffect,
   SubscriptionPhase,
   SubscriptionState,
   TransitionResult,
   ValidationResult,
-} from "./session.js";
+} from './session.js'
+export { createDraft12SessionState } from './session.js'
 // Session state machine
-export { createDraft12SessionState } from "./session.js";
-export { Draft12SessionFSM } from "./session-fsm.js";
+export { Draft12SessionFSM } from './session-fsm.js'
 export type {
   AuthorizationToken,
   DatagramObject,
@@ -127,4 +128,4 @@ export type {
   SubgroupStream,
   SubgroupStreamHeader,
   UnknownParam,
-} from "./types.js";
+} from './types.js'

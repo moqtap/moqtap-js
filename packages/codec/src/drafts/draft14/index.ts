@@ -1,4 +1,6 @@
-export type { Draft14Codec } from "./codec.js";
+export const DRAFT_VERSION = 0xff00000en
+
+export type { Draft14Codec } from './codec.js'
 export {
   createDataStreamDecoder,
   createDraft14Codec,
@@ -14,7 +16,7 @@ export {
   encodeFetchStream,
   encodeMessage,
   encodeSubgroupStream,
-} from "./codec.js";
+} from './codec.js'
 export {
   MESSAGE_ID_MAP,
   MESSAGE_TYPE_MAP,
@@ -51,7 +53,7 @@ export {
   PARAM_MAX_REQUEST_ID,
   PARAM_PATH,
   PARAM_ROLE,
-} from "./messages.js";
+} from './messages.js'
 export {
   BIDIRECTIONAL_MESSAGES,
   CLIENT_ONLY_MESSAGES,
@@ -59,7 +61,7 @@ export {
   getLegalIncoming,
   getLegalOutgoing,
   SERVER_ONLY_MESSAGES,
-} from "./rules.js";
+} from './rules.js'
 export type {
   FetchPhase,
   FetchState,
@@ -69,17 +71,17 @@ export type {
   PublishState,
   SessionPhase,
   SessionState,
-  SessionStateOptions,
   SideEffect,
   SubscriptionPhase,
   SubscriptionState,
   TransitionResult,
   ValidationResult,
-} from "./session.js";
+} from './session.js'
+export { createDraft14SessionState } from './session.js'
 // Session state machine
-export { createDraft14SessionState } from "./session.js";
-export { Draft14SessionFSM } from "./session-fsm.js";
+export { Draft14SessionFSM } from './session-fsm.js'
 export type {
+  AuthorizationToken,
   DatagramObject,
   DataStreamEvent,
   DataStreamHeader,
@@ -118,10 +120,16 @@ export type {
   Draft14TrackStatusOk,
   Draft14Unsubscribe,
   Draft14UnsubscribeNamespace,
+  FetchObjectPayload,
   FetchStream,
   FetchStreamHeader,
+  FetchTypeValue,
+  FilterTypeValue,
+  GroupOrderValue,
+  Location,
   ObjectPayload,
   SubgroupStream,
   SubgroupStreamHeader,
   UnknownParam,
-} from "./types.js";
+} from './types.js'
+export { FetchType, FilterType, GroupOrder } from './types.js'

@@ -1,4 +1,6 @@
-export type { Draft16Codec } from "./codec.js";
+export const DRAFT_VERSION = 0xff000010n
+
+export type { Draft16Codec } from './codec.js'
 export {
   createDataStreamDecoder,
   createDraft16Codec,
@@ -14,7 +16,7 @@ export {
   encodeFetchStream,
   encodeMessage,
   encodeSubgroupStream,
-} from "./codec.js";
+} from './codec.js'
 export {
   MESSAGE_ID_MAP,
   MESSAGE_TYPE_MAP,
@@ -47,7 +49,7 @@ export {
   SETUP_PARAM_MAX_REQUEST_ID,
   SETUP_PARAM_MOQT_IMPLEMENTATION,
   SETUP_PARAM_PATH,
-} from "./messages.js";
+} from './messages.js'
 export {
   BIDIRECTIONAL_MESSAGES,
   CLIENT_ONLY_MESSAGES,
@@ -55,7 +57,7 @@ export {
   getLegalIncoming,
   getLegalOutgoing,
   SERVER_ONLY_MESSAGES,
-} from "./rules.js";
+} from './rules.js'
 export type {
   FetchPhase,
   FetchState,
@@ -65,16 +67,15 @@ export type {
   PublishState,
   SessionPhase,
   SessionState,
-  SessionStateOptions,
   SideEffect,
   SubscriptionPhase,
   SubscriptionState,
   TransitionResult,
   ValidationResult,
-} from "./session.js";
+} from './session.js'
+export { createDraft16SessionState } from './session.js'
 // Session state machine
-export { createDraft16SessionState } from "./session.js";
-export { Draft16SessionFSM } from "./session-fsm.js";
+export { Draft16SessionFSM } from './session-fsm.js'
 export type {
   DatagramObject,
   DataStreamEvent,
@@ -120,4 +121,4 @@ export type {
   SubgroupStreamHeader,
   SubscriptionFilter,
   UnknownParam,
-} from "./types.js";
+} from './types.js'

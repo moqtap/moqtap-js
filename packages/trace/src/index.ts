@@ -1,17 +1,17 @@
 // Binary .moqtrace format
 
-export type { MoqtraceWriter } from "./binary.js";
+export type { MoqtraceWriter } from './binary.js'
 export {
   createMoqtraceWriter,
   readMoqtrace,
   readMoqtraceHeader,
   writeMoqtrace,
-} from "./binary.js";
+} from './binary.js'
 // JSON (convenience)
-export { traceToJSON } from "./json.js";
-export type { TraceRecorder } from "./recorder.js";
+export { traceToJSON } from './json.js'
+export type { TraceRecorder } from './recorder.js'
 // Recorder
-export { createRecorder } from "./recorder.js";
+export { createRecorder } from './recorder.js'
 
 // Types
 export type {
@@ -29,4 +29,4 @@ export type {
   TraceErrorEvent,
   TraceEvent,
   TraceHeader,
-} from "./types.js";
+} from './types.js'

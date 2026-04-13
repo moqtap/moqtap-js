@@ -1,6 +1,8 @@
 // Draft-17 codec entry point
 
-export type { Draft17Codec } from "./codec.js";
+export const DRAFT_VERSION = 0xff000011n
+
+export type { Draft17Codec } from './codec.js'
 export {
   createDataStreamDecoder,
   createDraft17Codec,
@@ -16,7 +18,7 @@ export {
   encodeFetchStream,
   encodeMessage,
   encodeSubgroupStream,
-} from "./codec.js";
+} from './codec.js'
 
 export {
   MESSAGE_ID_MAP,
@@ -43,7 +45,7 @@ export {
   SETUP_OPT_MAX_AUTH_TOKEN_CACHE_SIZE,
   SETUP_OPT_MOQT_IMPLEMENTATION,
   SETUP_OPT_PATH,
-} from "./messages.js";
+} from './messages.js'
 
 export {
   BIDIRECTIONAL_MESSAGES,
@@ -52,15 +54,15 @@ export {
   getLegalIncoming,
   getLegalOutgoing,
   SERVER_ONLY_MESSAGES,
-} from "./rules.js";
+} from './rules.js'
 export type {
   ProtocolViolation,
   SessionPhase,
   SideEffect,
   TransitionResult,
   ValidationResult,
-} from "./session.js";
-export { createDraft17SessionState, Draft17SessionFSM } from "./session.js";
+} from './session.js'
+export { createDraft17SessionState, Draft17SessionFSM } from './session.js'
 
 export type {
   DatagramObject,
@@ -102,4 +104,4 @@ export type {
   SubgroupStreamHeader,
   SubscriptionFilter,
   UnknownParam,
-} from "./types.js";
+} from './types.js'

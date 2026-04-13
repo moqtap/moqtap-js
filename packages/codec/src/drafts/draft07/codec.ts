@@ -1,26 +1,63 @@
-import { BufferReader } from "../../core/buffer-reader.js";
-import { BufferWriter } from "../../core/buffer-writer.js";
+import { BufferReader } from '../../core/buffer-reader.js'
+import { BufferWriter } from '../../core/buffer-writer.js'
+import { bytesToHex, hexToBytes } from '../../core/hex.js'
+import type { BaseCodec, DecodeResult } from '../../core/types.js'
+import { DecodeError } from '../../core/types.js'
+import {
+  MESSAGE_ID_MAP,
+  MSG_ANNOUNCE,
+  MSG_ANNOUNCE_CANCEL,
+  MSG_ANNOUNCE_ERROR,
+  MSG_ANNOUNCE_OK,
+  MSG_CLIENT_SETUP,
+  MSG_FETCH,
+  MSG_FETCH_CANCEL,
+  MSG_FETCH_ERROR,
+  MSG_FETCH_OK,
+  MSG_GOAWAY,
+  MSG_MAX_SUBSCRIBE_ID,
+  MSG_OBJECT_DATAGRAM,
+  MSG_SERVER_SETUP,
+  MSG_SUBSCRIBE,
+  MSG_SUBSCRIBE_ANNOUNCES,
+  MSG_SUBSCRIBE_ANNOUNCES_ERROR,
+  MSG_SUBSCRIBE_ANNOUNCES_OK,
+  MSG_SUBSCRIBE_DONE,
+  MSG_SUBSCRIBE_ERROR,
+  MSG_SUBSCRIBE_OK,
+  MSG_SUBSCRIBE_UPDATE,
+  MSG_TRACK_STATUS,
+  MSG_TRACK_STATUS_REQUEST,
+  MSG_UNANNOUNCE,
+  MSG_UNSUBSCRIBE,
+  MSG_UNSUBSCRIBE_ANNOUNCES,
+  PARAM_AUTHORIZATION_INFO,
+  PARAM_DELIVERY_TIMEOUT,
+  PARAM_MAX_CACHE_DURATION,
+  SETUP_PARAM_MAX_SUBSCRIBE_ID,
+  SETUP_PARAM_PATH,
+  SETUP_PARAM_ROLE,
+} from './messages.js'
 import type {
   Announce,
   AnnounceCancel,
   AnnounceError,
   AnnounceOk,
   ClientSetup,
-  Codec,
-  DecodeResult,
+  DatagramObject as Draft07DatagramObject,
+  Draft07Message,
+  Draft07Params,
+  Draft07SetupParams,
   Fetch,
   FetchCancel,
   FetchError,
   FetchOk,
-  FilterType,
+  FetchStream,
   GoAway,
-  GroupOrderValue,
   MaxSubscribeId,
-  MoqtMessage,
-  MoqtMessageType,
   ObjectDatagram,
   ServerSetup,
-  StreamHeaderSubgroup,
+  SubgroupStream,
   Subscribe,
   SubscribeAnnounces,
   SubscribeAnnouncesError,
@@ -32,907 +69,990 @@ import type {
   TrackStatus,
   TrackStatusRequest,
   Unannounce,
+  UnknownParam,
   Unsubscribe,
   UnsubscribeAnnounces,
-} from "../../core/types.js";
-import { DecodeError } from "../../core/types.js";
-import type {
-  DatagramObject as Draft07DatagramObject,
-  FetchStream,
-  SubgroupStream,
-} from "./types.js";
-import { MESSAGE_TYPE_IDS } from "./messages.js";
-import { decodeVarInt, encodeVarInt } from "./varint.js";
+} from './types.js'
+import { decodeVarInt, encodeVarInt } from './varint.js'
 
-// --- FilterType mapping ---
-
-const FILTER_TYPE_TO_WIRE: Record<FilterType, bigint> = {
-  latest_group: 1n,
-  latest_object: 2n,
-  absolute_start: 3n,
-  absolute_range: 4n,
-};
-
-const WIRE_TO_FILTER_TYPE: Map<bigint, FilterType> = new Map([
-  [1n, "latest_group"],
-  [2n, "latest_object"],
-  [3n, "absolute_start"],
-  [4n, "absolute_range"],
-]);
-
-// --- GroupOrderValue mapping ---
-
-const GROUP_ORDER_TO_WIRE: Record<GroupOrderValue, number> = {
-  original: 0,
-  ascending: 1,
-  descending: 2,
-};
-
-const WIRE_TO_GROUP_ORDER: Map<number, GroupOrderValue> = new Map([
-  [0, "original"],
-  [1, "ascending"],
-  [2, "descending"],
-]);
-
-// --- Encode helpers ---
-
-function writeGroupOrder(writer: BufferWriter, value: GroupOrderValue): void {
-  const wire = GROUP_ORDER_TO_WIRE[value];
-  writer.writeUint8(wire);
-}
-
-function readGroupOrder(reader: BufferReader): GroupOrderValue {
-  const wire = reader.readUint8();
-  const value = WIRE_TO_GROUP_ORDER.get(wire);
-  if (value === undefined) {
-    throw new DecodeError(
-      "CONSTRAINT_VIOLATION",
-      `Invalid group order value: ${wire}`,
-      reader.offset - 1,
-    );
-  }
-  return value;
-}
+const textEncoder = /* @__PURE__ */ new TextEncoder()
+const textDecoder = /* @__PURE__ */ new TextDecoder()
 
 // Data stream type IDs that NEVER appear as control messages.
 // Note: 0x04 (stream_header_subgroup) excluded — shares ID with subscribe_ok.
 // Note: 0x05 (fetch_header) excluded — shares ID with subscribe_error.
 // Callers must use decodeSubgroupStream/decodeFetchStream directly.
-const DATA_STREAM_TYPE_IDS: ReadonlySet<bigint> = new Set([
-  MESSAGE_TYPE_IDS.object_datagram,
-]);
+const DATA_STREAM_TYPE_IDS: ReadonlySet<bigint> = new Set([MSG_OBJECT_DATAGRAM])
 
-// --- Control message type (excludes data stream types) ---
-type ControlMessageType = Exclude<
-  MoqtMessageType,
-  | "object_stream"
-  | "object_datagram"
-  | "stream_header_track"
-  | "stream_header_group"
-  | "stream_header_subgroup"
->;
+// ─── Setup Parameter Encoding/Decoding ────────────────────────────────────────
 
+function encodeSetupParams(params: Draft07SetupParams, w: BufferWriter): void {
+  let count = 0
+  if (params.role !== undefined) count++
+  if (params.path !== undefined) count++
+  if (params.max_subscribe_id !== undefined) count++
+  if (params.unknown) count += params.unknown.length
 
-// --- Encode functions for each message type (payload only, no type ID) ---
+  w.writeVarInt(count)
 
-function encodeClientSetup(msg: ClientSetup, writer: BufferWriter): void {
-  writer.writeVarInt(msg.supportedVersions.length);
-  for (const version of msg.supportedVersions) {
-    writer.writeVarInt(version);
+  if (params.role !== undefined) {
+    w.writeVarInt(SETUP_PARAM_ROLE)
+    const tmpW = new BufferWriter(16)
+    tmpW.writeVarInt(params.role)
+    const raw = tmpW.finish()
+    w.writeVarInt(raw.byteLength)
+    w.writeBytes(raw)
   }
-  writer.writeParameters(msg.parameters);
-}
-
-function encodeServerSetup(msg: ServerSetup, writer: BufferWriter): void {
-  writer.writeVarInt(msg.selectedVersion);
-  writer.writeParameters(msg.parameters);
-}
-
-function encodeSubscribe(msg: Subscribe, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
-  writer.writeVarInt(msg.trackAlias);
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeString(msg.trackName);
-  writer.writeUint8(msg.subscriberPriority);
-  writeGroupOrder(writer, msg.groupOrder);
-  writer.writeVarInt(FILTER_TYPE_TO_WIRE[msg.filterType]);
-  if (msg.filterType === "absolute_start" || msg.filterType === "absolute_range") {
-    writer.writeVarInt(msg.startGroup!);
-    writer.writeVarInt(msg.startObject!);
+  if (params.path !== undefined) {
+    w.writeVarInt(SETUP_PARAM_PATH)
+    const encoded = textEncoder.encode(params.path)
+    w.writeVarInt(encoded.byteLength)
+    w.writeBytes(encoded)
   }
-  if (msg.filterType === "absolute_range") {
-    writer.writeVarInt(msg.endGroup!);
-    writer.writeVarInt(msg.endObject!);
+  if (params.max_subscribe_id !== undefined) {
+    w.writeVarInt(SETUP_PARAM_MAX_SUBSCRIBE_ID)
+    const tmpW = new BufferWriter(16)
+    tmpW.writeVarInt(params.max_subscribe_id)
+    const raw = tmpW.finish()
+    w.writeVarInt(raw.byteLength)
+    w.writeBytes(raw)
   }
-  writer.writeParameters(msg.parameters);
-}
-
-function encodeSubscribeOk(msg: SubscribeOk, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
-  writer.writeVarInt(msg.expires);
-  writeGroupOrder(writer, msg.groupOrder);
-  writer.writeUint8(msg.contentExists ? 1 : 0);
-  if (msg.contentExists) {
-    writer.writeVarInt(msg.largestGroupId!);
-    writer.writeVarInt(msg.largestObjectId!);
-  }
-  writer.writeParameters(msg.parameters);
-}
-
-function encodeSubscribeError(msg: SubscribeError, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
-  writer.writeVarInt(msg.errorCode);
-  writer.writeString(msg.reasonPhrase);
-  writer.writeVarInt(msg.trackAlias);
-}
-
-function encodeSubscribeDone(msg: SubscribeDone, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
-  writer.writeVarInt(msg.statusCode);
-  writer.writeString(msg.reasonPhrase);
-  writer.writeUint8(msg.contentExists ? 1 : 0);
-  if (msg.contentExists) {
-    writer.writeVarInt(msg.finalGroupId!);
-    writer.writeVarInt(msg.finalObjectId!);
+  if (params.unknown) {
+    for (const u of params.unknown) {
+      w.writeVarInt(BigInt(u.id))
+      const raw = hexToBytes(u.raw_hex)
+      w.writeVarInt(raw.byteLength)
+      w.writeBytes(raw)
+    }
   }
 }
 
-function encodeSubscribeUpdate(msg: SubscribeUpdate, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
-  writer.writeVarInt(msg.startGroup);
-  writer.writeVarInt(msg.startObject);
-  writer.writeVarInt(msg.endGroup);
-  writer.writeVarInt(msg.endObject);
-  writer.writeUint8(msg.subscriberPriority);
-  writer.writeParameters(msg.parameters);
+function decodeSetupParams(r: BufferReader): Draft07SetupParams {
+  const count = Number(r.readVarInt())
+  const result: Draft07SetupParams = {}
+  const unknown: UnknownParam[] = []
+
+  for (let i = 0; i < count; i++) {
+    const paramType = r.readVarInt()
+    const length = Number(r.readVarInt())
+
+    if (paramType === SETUP_PARAM_ROLE) {
+      const blob = r.readBytes(length)
+      const tmpReader = new BufferReader(blob)
+      result.role = tmpReader.readVarInt()
+    } else if (paramType === SETUP_PARAM_PATH) {
+      const bytes = r.readBytes(length)
+      result.path = textDecoder.decode(bytes)
+    } else if (paramType === SETUP_PARAM_MAX_SUBSCRIBE_ID) {
+      const blob = r.readBytes(length)
+      const tmpReader = new BufferReader(blob)
+      result.max_subscribe_id = tmpReader.readVarInt()
+    } else {
+      const bytes = r.readBytes(length)
+      unknown.push({
+        id: `0x${paramType.toString(16)}`,
+        length,
+        raw_hex: bytesToHex(bytes),
+      })
+    }
+  }
+
+  if (unknown.length > 0) result.unknown = unknown
+  return result
 }
 
-function encodeUnsubscribe(msg: Unsubscribe, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
+// ─── Version-Specific Parameter Encoding/Decoding ─────────────────────────────
+
+function encodeParams(params: Draft07Params, w: BufferWriter): void {
+  let count = params.unknown ? params.unknown.length : 0
+  if (params.authorization_info !== undefined) count++
+  if (params.delivery_timeout !== undefined) count++
+  if (params.max_cache_duration !== undefined) count++
+  w.writeVarInt(count)
+
+  if (params.authorization_info !== undefined) {
+    w.writeVarInt(PARAM_AUTHORIZATION_INFO)
+    const encoded = textEncoder.encode(params.authorization_info)
+    w.writeVarInt(encoded.byteLength)
+    w.writeBytes(encoded)
+  }
+  if (params.delivery_timeout !== undefined) {
+    w.writeVarInt(PARAM_DELIVERY_TIMEOUT)
+    const tmpW = new BufferWriter(16)
+    tmpW.writeVarInt(params.delivery_timeout)
+    const raw = tmpW.finish()
+    w.writeVarInt(raw.byteLength)
+    w.writeBytes(raw)
+  }
+  if (params.max_cache_duration !== undefined) {
+    w.writeVarInt(PARAM_MAX_CACHE_DURATION)
+    const tmpW = new BufferWriter(16)
+    tmpW.writeVarInt(params.max_cache_duration)
+    const raw = tmpW.finish()
+    w.writeVarInt(raw.byteLength)
+    w.writeBytes(raw)
+  }
+  if (params.unknown) {
+    for (const u of params.unknown) {
+      w.writeVarInt(BigInt(u.id))
+      const raw = hexToBytes(u.raw_hex)
+      w.writeVarInt(raw.byteLength)
+      w.writeBytes(raw)
+    }
+  }
 }
 
-function encodeAnnounce(msg: Announce, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeParameters(msg.parameters);
+function decodeParams(r: BufferReader): Draft07Params {
+  const count = Number(r.readVarInt())
+  const result: Draft07Params = {}
+  const unknown: UnknownParam[] = []
+
+  for (let i = 0; i < count; i++) {
+    const paramType = r.readVarInt()
+    const length = Number(r.readVarInt())
+
+    if (paramType === PARAM_AUTHORIZATION_INFO) {
+      const bytes = r.readBytes(length)
+      result.authorization_info = textDecoder.decode(bytes)
+    } else if (paramType === PARAM_DELIVERY_TIMEOUT) {
+      const blob = r.readBytes(length)
+      const tmpReader = new BufferReader(blob)
+      result.delivery_timeout = tmpReader.readVarInt()
+    } else if (paramType === PARAM_MAX_CACHE_DURATION) {
+      const blob = r.readBytes(length)
+      const tmpReader = new BufferReader(blob)
+      result.max_cache_duration = tmpReader.readVarInt()
+    } else {
+      const bytes = r.readBytes(length)
+      unknown.push({
+        id: `0x${paramType.toString(16)}`,
+        length,
+        raw_hex: bytesToHex(bytes),
+      })
+    }
+  }
+
+  if (unknown.length > 0) result.unknown = unknown
+  return result
 }
 
-function encodeAnnounceOk(msg: AnnounceOk, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
+// ─── Payload Encoders ──────────────────────────────────────────────────────────
+
+function encodeClientSetupPayload(msg: ClientSetup, writer: BufferWriter): void {
+  writer.writeVarInt(msg.supported_versions.length)
+  for (const version of msg.supported_versions) {
+    writer.writeVarInt(version)
+  }
+  encodeSetupParams(msg.parameters, writer)
 }
 
-function encodeAnnounceError(msg: AnnounceError, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeVarInt(msg.errorCode);
-  writer.writeString(msg.reasonPhrase);
+function encodeServerSetupPayload(msg: ServerSetup, writer: BufferWriter): void {
+  writer.writeVarInt(msg.selected_version)
+  encodeSetupParams(msg.parameters, writer)
 }
 
-function encodeAnnounceCancel(msg: AnnounceCancel, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeVarInt(msg.errorCode);
-  writer.writeString(msg.reasonPhrase);
+function encodeSubscribePayload(msg: Subscribe, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+  writer.writeVarInt(msg.track_alias)
+  writer.writeTuple(msg.track_namespace)
+  writer.writeString(msg.track_name)
+  writer.writeUint8(msg.subscriber_priority)
+  writer.writeUint8(msg.group_order)
+  writer.writeVarInt(msg.filter_type)
+  if (msg.filter_type === 3n || msg.filter_type === 4n) {
+    writer.writeVarInt(msg.start_group!)
+    writer.writeVarInt(msg.start_object!)
+  }
+  if (msg.filter_type === 4n) {
+    writer.writeVarInt(msg.end_group!)
+    writer.writeVarInt(msg.end_object!)
+  }
+  encodeParams(msg.parameters, writer)
 }
 
-function encodeUnannounce(msg: Unannounce, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
+function encodeSubscribeOkPayload(msg: SubscribeOk, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+  writer.writeVarInt(msg.expires)
+  writer.writeUint8(msg.group_order)
+  writer.writeUint8(msg.content_exists)
+  if (msg.content_exists) {
+    writer.writeVarInt(msg.largest_group_id!)
+    writer.writeVarInt(msg.largest_object_id!)
+  }
+  encodeParams(msg.parameters, writer)
 }
 
-function encodeTrackStatusRequest(msg: TrackStatusRequest, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeString(msg.trackName);
+function encodeSubscribeErrorPayload(msg: SubscribeError, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+  writer.writeVarInt(msg.error_code)
+  writer.writeString(msg.reason_phrase)
+  writer.writeVarInt(msg.track_alias)
 }
 
-function encodeTrackStatus(msg: TrackStatus, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeString(msg.trackName);
-  writer.writeVarInt(msg.statusCode);
-  writer.writeVarInt(msg.lastGroupId);
-  writer.writeVarInt(msg.lastObjectId);
+function encodeSubscribeDonePayload(msg: SubscribeDone, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+  writer.writeVarInt(msg.status_code)
+  writer.writeString(msg.reason_phrase)
+  writer.writeUint8(msg.content_exists)
+  if (msg.content_exists) {
+    writer.writeVarInt(msg.final_group!)
+    writer.writeVarInt(msg.final_object!)
+  }
 }
 
-function encodeGoAway(msg: GoAway, writer: BufferWriter): void {
-  writer.writeString(msg.newSessionUri);
+function encodeSubscribeUpdatePayload(msg: SubscribeUpdate, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+  writer.writeVarInt(msg.start_group)
+  writer.writeVarInt(msg.start_object)
+  writer.writeVarInt(msg.end_group)
+  writer.writeVarInt(msg.end_object)
+  writer.writeUint8(msg.subscriber_priority)
+  encodeParams(msg.parameters, writer)
 }
 
-function encodeSubscribeAnnounces(msg: SubscribeAnnounces, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeParameters(msg.parameters);
+function encodeUnsubscribePayload(msg: Unsubscribe, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
 }
 
-function encodeSubscribeAnnouncesOk(msg: SubscribeAnnouncesOk, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
+function encodeAnnouncePayload(msg: Announce, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace)
+  encodeParams(msg.parameters, writer)
 }
 
-function encodeSubscribeAnnouncesError(msg: SubscribeAnnouncesError, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeVarInt(msg.errorCode);
-  writer.writeString(msg.reasonPhrase);
+function encodeAnnounceOkPayload(msg: AnnounceOk, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace)
 }
 
-function encodeUnsubscribeAnnounces(msg: UnsubscribeAnnounces, writer: BufferWriter): void {
-  writer.writeTuple(msg.trackNamespace);
+function encodeAnnounceErrorPayload(msg: AnnounceError, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace)
+  writer.writeVarInt(msg.error_code)
+  writer.writeString(msg.reason_phrase)
 }
 
-function encodeMaxSubscribeId(msg: MaxSubscribeId, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
+function encodeAnnounceCancelPayload(msg: AnnounceCancel, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace)
+  writer.writeVarInt(msg.error_code)
+  writer.writeString(msg.reason_phrase)
 }
 
-function encodeFetch(msg: Fetch, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
-  writer.writeTuple(msg.trackNamespace);
-  writer.writeString(msg.trackName);
-  writer.writeUint8(msg.subscriberPriority);
-  writeGroupOrder(writer, msg.groupOrder);
-  writer.writeVarInt(msg.startGroup);
-  writer.writeVarInt(msg.startObject);
-  writer.writeVarInt(msg.endGroup);
-  writer.writeVarInt(msg.endObject);
-  writer.writeParameters(msg.parameters);
+function encodeUnannouncePayload(msg: Unannounce, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace)
 }
 
-function encodeFetchOk(msg: FetchOk, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
-  writeGroupOrder(writer, msg.groupOrder);
-  writer.writeUint8(msg.endOfTrack ? 1 : 0);
-  writer.writeVarInt(msg.largestGroupId);
-  writer.writeVarInt(msg.largestObjectId);
-  writer.writeParameters(msg.parameters);
+function encodeTrackStatusRequestPayload(msg: TrackStatusRequest, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace)
+  writer.writeString(msg.track_name)
 }
 
-function encodeFetchError(msg: FetchError, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
-  writer.writeVarInt(msg.errorCode);
-  writer.writeString(msg.reasonPhrase);
+function encodeTrackStatusPayload(msg: TrackStatus, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace)
+  writer.writeString(msg.track_name)
+  writer.writeVarInt(msg.status_code)
+  writer.writeVarInt(msg.last_group_id)
+  writer.writeVarInt(msg.last_object_id)
 }
 
-function encodeFetchCancel(msg: FetchCancel, writer: BufferWriter): void {
-  writer.writeVarInt(msg.subscribeId);
+function encodeGoAwayPayload(msg: GoAway, writer: BufferWriter): void {
+  writer.writeString(msg.new_session_uri)
+}
+
+function encodeSubscribeAnnouncesPayload(msg: SubscribeAnnounces, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace_prefix)
+  encodeParams(msg.parameters, writer)
+}
+
+function encodeSubscribeAnnouncesOkPayload(msg: SubscribeAnnouncesOk, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace_prefix)
+}
+
+function encodeSubscribeAnnouncesErrorPayload(
+  msg: SubscribeAnnouncesError,
+  writer: BufferWriter,
+): void {
+  writer.writeTuple(msg.track_namespace_prefix)
+  writer.writeVarInt(msg.error_code)
+  writer.writeString(msg.reason_phrase)
+}
+
+function encodeUnsubscribeAnnouncesPayload(msg: UnsubscribeAnnounces, writer: BufferWriter): void {
+  writer.writeTuple(msg.track_namespace_prefix)
+}
+
+function encodeMaxSubscribeIdPayload(msg: MaxSubscribeId, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+}
+
+function encodeFetchPayload(msg: Fetch, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+  writer.writeTuple(msg.track_namespace)
+  writer.writeString(msg.track_name)
+  writer.writeUint8(msg.subscriber_priority)
+  writer.writeUint8(msg.group_order)
+  writer.writeVarInt(msg.start_group)
+  writer.writeVarInt(msg.start_object)
+  writer.writeVarInt(msg.end_group)
+  writer.writeVarInt(msg.end_object)
+  encodeParams(msg.parameters, writer)
+}
+
+function encodeFetchOkPayload(msg: FetchOk, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+  writer.writeUint8(msg.group_order)
+  writer.writeUint8(msg.end_of_track)
+  writer.writeVarInt(msg.largest_group_id)
+  writer.writeVarInt(msg.largest_object_id)
+  encodeParams(msg.parameters, writer)
+}
+
+function encodeFetchErrorPayload(msg: FetchError, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
+  writer.writeVarInt(msg.error_code)
+  writer.writeString(msg.reason_phrase)
+}
+
+function encodeFetchCancelPayload(msg: FetchCancel, writer: BufferWriter): void {
+  writer.writeVarInt(msg.subscribe_id)
 }
 
 // Data stream encoders (no type+length framing)
 function encodeObjectPayload(
-  msg: { objectStatus?: number; payload: Uint8Array },
+  msg: { object_status?: number; payload: Uint8Array },
   writer: BufferWriter,
 ): void {
   if (msg.payload.byteLength === 0) {
-    writer.writeVarInt(0); // payloadLength = 0 signals objectStatus follows
-    writer.writeVarInt(msg.objectStatus ?? 0);
+    writer.writeVarInt(0) // payloadLength = 0 signals objectStatus follows
+    writer.writeVarInt(msg.object_status ?? 0)
   } else {
-    writer.writeVarInt(msg.payload.byteLength);
-    writer.writeBytes(msg.payload);
+    writer.writeVarInt(msg.payload.byteLength)
+    writer.writeBytes(msg.payload)
   }
 }
 
 function encodeObjectDatagram(msg: ObjectDatagram, writer: BufferWriter): void {
-  writer.writeVarInt(MESSAGE_TYPE_IDS.object_datagram);
-  writer.writeVarInt(msg.trackAlias);
-  writer.writeVarInt(msg.groupId);
-  writer.writeVarInt(msg.objectId);
-  writer.writeUint8(msg.publisherPriority);
-  encodeObjectPayload(msg, writer);
+  writer.writeVarInt(MSG_OBJECT_DATAGRAM)
+  writer.writeVarInt(msg.track_alias)
+  writer.writeVarInt(msg.group_id)
+  writer.writeVarInt(msg.object_id)
+  writer.writeUint8(msg.publisher_priority)
+  encodeObjectPayload(msg, writer)
 }
 
-// --- Encode dispatch ---
+// ─── Payload encode dispatch ──────────────────────────────────────────────────
 
-// Control message encoders (payload-only, framing added by encodeMessageImpl)
-const controlEncoders: Record<ControlMessageType, (msg: never, writer: BufferWriter) => void> = {
-  client_setup: encodeClientSetup as (msg: never, writer: BufferWriter) => void,
-  server_setup: encodeServerSetup as (msg: never, writer: BufferWriter) => void,
-  subscribe: encodeSubscribe as (msg: never, writer: BufferWriter) => void,
-  subscribe_ok: encodeSubscribeOk as (msg: never, writer: BufferWriter) => void,
-  subscribe_error: encodeSubscribeError as (msg: never, writer: BufferWriter) => void,
-  subscribe_done: encodeSubscribeDone as (msg: never, writer: BufferWriter) => void,
-  subscribe_update: encodeSubscribeUpdate as (msg: never, writer: BufferWriter) => void,
-  unsubscribe: encodeUnsubscribe as (msg: never, writer: BufferWriter) => void,
-  announce: encodeAnnounce as (msg: never, writer: BufferWriter) => void,
-  announce_ok: encodeAnnounceOk as (msg: never, writer: BufferWriter) => void,
-  announce_error: encodeAnnounceError as (msg: never, writer: BufferWriter) => void,
-  announce_cancel: encodeAnnounceCancel as (msg: never, writer: BufferWriter) => void,
-  unannounce: encodeUnannounce as (msg: never, writer: BufferWriter) => void,
-  track_status_request: encodeTrackStatusRequest as (msg: never, writer: BufferWriter) => void,
-  track_status: encodeTrackStatus as (msg: never, writer: BufferWriter) => void,
-  goaway: encodeGoAway as (msg: never, writer: BufferWriter) => void,
-  subscribe_announces: encodeSubscribeAnnounces as (msg: never, writer: BufferWriter) => void,
-  subscribe_announces_ok: encodeSubscribeAnnouncesOk as (msg: never, writer: BufferWriter) => void,
-  subscribe_announces_error: encodeSubscribeAnnouncesError as (
-    msg: never,
-    writer: BufferWriter,
-  ) => void,
-  unsubscribe_announces: encodeUnsubscribeAnnounces as (msg: never, writer: BufferWriter) => void,
-  max_subscribe_id: encodeMaxSubscribeId as (msg: never, writer: BufferWriter) => void,
-  fetch: encodeFetch as (msg: never, writer: BufferWriter) => void,
-  fetch_ok: encodeFetchOk as (msg: never, writer: BufferWriter) => void,
-  fetch_error: encodeFetchError as (msg: never, writer: BufferWriter) => void,
-  fetch_cancel: encodeFetchCancel as (msg: never, writer: BufferWriter) => void,
-};
+function encodePayload(msg: Draft07Message, w: BufferWriter): void {
+  switch (msg.type) {
+    case 'client_setup':
+      return encodeClientSetupPayload(msg, w)
+    case 'server_setup':
+      return encodeServerSetupPayload(msg, w)
+    case 'subscribe':
+      return encodeSubscribePayload(msg, w)
+    case 'subscribe_ok':
+      return encodeSubscribeOkPayload(msg, w)
+    case 'subscribe_error':
+      return encodeSubscribeErrorPayload(msg, w)
+    case 'subscribe_update':
+      return encodeSubscribeUpdatePayload(msg, w)
+    case 'subscribe_done':
+      return encodeSubscribeDonePayload(msg, w)
+    case 'unsubscribe':
+      return encodeUnsubscribePayload(msg, w)
+    case 'announce':
+      return encodeAnnouncePayload(msg, w)
+    case 'announce_ok':
+      return encodeAnnounceOkPayload(msg, w)
+    case 'announce_error':
+      return encodeAnnounceErrorPayload(msg, w)
+    case 'unannounce':
+      return encodeUnannouncePayload(msg, w)
+    case 'announce_cancel':
+      return encodeAnnounceCancelPayload(msg, w)
+    case 'subscribe_announces':
+      return encodeSubscribeAnnouncesPayload(msg, w)
+    case 'subscribe_announces_ok':
+      return encodeSubscribeAnnouncesOkPayload(msg, w)
+    case 'subscribe_announces_error':
+      return encodeSubscribeAnnouncesErrorPayload(msg, w)
+    case 'unsubscribe_announces':
+      return encodeUnsubscribeAnnouncesPayload(msg, w)
+    case 'fetch':
+      return encodeFetchPayload(msg, w)
+    case 'fetch_ok':
+      return encodeFetchOkPayload(msg, w)
+    case 'fetch_error':
+      return encodeFetchErrorPayload(msg, w)
+    case 'fetch_cancel':
+      return encodeFetchCancelPayload(msg, w)
+    case 'track_status_request':
+      return encodeTrackStatusRequestPayload(msg, w)
+    case 'track_status':
+      return encodeTrackStatusPayload(msg, w)
+    case 'goaway':
+      return encodeGoAwayPayload(msg, w)
+    case 'max_subscribe_id':
+      return encodeMaxSubscribeIdPayload(msg, w)
+    default:
+      throw new Error(`Unhandled message type: ${(msg as Draft07Message).type}`)
+  }
+}
 
-// Data stream encoders (write type + fields directly, no length framing)
-const dataStreamEncoders: Partial<
-  Record<MoqtMessageType, (msg: never, writer: BufferWriter) => void>
-> = {
-  object_datagram: encodeObjectDatagram as (msg: never, writer: BufferWriter) => void,
-};
+// ─── Payload Decoders ──────────────────────────────────────────────────────────
 
-// --- Decode functions for each message type ---
-
-function decodeClientSetup(reader: BufferReader): ClientSetup {
-  const numVersions = reader.readVarInt();
+function decodeClientSetupPayload(reader: BufferReader): Draft07Message {
+  const numVersions = reader.readVarInt()
   if (numVersions === 0n) {
     throw new DecodeError(
-      "CONSTRAINT_VIOLATION",
-      "supported_versions must not be empty",
+      'CONSTRAINT_VIOLATION',
+      'supported_versions must not be empty',
       reader.offset,
-    );
+    )
   }
-  const supportedVersions: bigint[] = [];
+  const supported_versions: bigint[] = []
   for (let i = 0n; i < numVersions; i++) {
-    supportedVersions.push(reader.readVarInt());
+    supported_versions.push(reader.readVarInt())
   }
-  const parameters = reader.readParameters();
-  return { type: "client_setup", supportedVersions, parameters };
+  const parameters = decodeSetupParams(reader)
+  return { type: 'client_setup', supported_versions, parameters }
 }
 
-function decodeServerSetup(reader: BufferReader): ServerSetup {
-  const selectedVersion = reader.readVarInt();
-  const parameters = reader.readParameters();
-  return { type: "server_setup", selectedVersion, parameters };
+function decodeServerSetupPayload(reader: BufferReader): Draft07Message {
+  const selected_version = reader.readVarInt()
+  const parameters = decodeSetupParams(reader)
+  return { type: 'server_setup', selected_version, parameters }
 }
 
-function decodeSubscribe(reader: BufferReader): Subscribe {
-  const subscribeId = reader.readVarInt();
-  const trackAlias = reader.readVarInt();
-  const trackNamespace = reader.readTuple();
-  const trackName = reader.readString();
-  const subscriberPriority = reader.readUint8();
-  const groupOrder = readGroupOrder(reader);
-  const filterTypeWire = reader.readVarInt();
-  const filterType = WIRE_TO_FILTER_TYPE.get(filterTypeWire);
-  if (filterType === undefined) {
+function decodeSubscribePayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  const track_alias = reader.readVarInt()
+  const track_namespace = reader.readTuple()
+  const track_name = reader.readString()
+  const subscriber_priority = reader.readUint8()
+  const group_order = reader.readUint8()
+  const filter_type = reader.readVarInt()
+
+  if (filter_type < 1n || filter_type > 4n) {
     throw new DecodeError(
-      "CONSTRAINT_VIOLATION",
-      `Invalid filter type: ${filterTypeWire}`,
+      'CONSTRAINT_VIOLATION',
+      `Invalid filter type: ${filter_type}`,
       reader.offset,
-    );
+    )
   }
 
   const base = {
-    type: "subscribe" as const,
-    subscribeId,
-    trackAlias,
-    trackNamespace,
-    trackName,
-    subscriberPriority,
-    groupOrder,
-    filterType,
-    parameters: undefined as unknown as Map<bigint, Uint8Array>,
-  };
-
-  if (filterType === "absolute_start") {
-    const startGroup = reader.readVarInt();
-    const startObject = reader.readVarInt();
-    base.parameters = reader.readParameters();
-    return { ...base, startGroup, startObject };
-  }
-  if (filterType === "absolute_range") {
-    const startGroup = reader.readVarInt();
-    const startObject = reader.readVarInt();
-    const endGroup = reader.readVarInt();
-    const endObject = reader.readVarInt();
-    base.parameters = reader.readParameters();
-    return { ...base, startGroup, startObject, endGroup, endObject };
+    type: 'subscribe' as const,
+    subscribe_id,
+    track_alias,
+    track_namespace,
+    track_name,
+    subscriber_priority,
+    group_order,
+    filter_type,
+    parameters: undefined as unknown as Draft07Params,
   }
 
-  base.parameters = reader.readParameters();
-  return base;
+  if (filter_type === 3n) {
+    const start_group = reader.readVarInt()
+    const start_object = reader.readVarInt()
+    base.parameters = decodeParams(reader)
+    return { ...base, start_group, start_object }
+  }
+  if (filter_type === 4n) {
+    const start_group = reader.readVarInt()
+    const start_object = reader.readVarInt()
+    const end_group = reader.readVarInt()
+    const end_object = reader.readVarInt()
+    base.parameters = decodeParams(reader)
+    return { ...base, start_group, start_object, end_group, end_object }
+  }
+
+  base.parameters = decodeParams(reader)
+  return base
 }
 
-function decodeSubscribeOk(reader: BufferReader): SubscribeOk {
-  const subscribeId = reader.readVarInt();
-  const expires = reader.readVarInt();
-  const groupOrder = readGroupOrder(reader);
-  const contentExistsWire = reader.readUint8();
-  const contentExists = contentExistsWire !== 0;
+function decodeSubscribeOkPayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  const expires = reader.readVarInt()
+  const group_order = reader.readUint8()
+  const content_exists = reader.readUint8()
 
-  if (contentExists) {
-    const largestGroupId = reader.readVarInt();
-    const largestObjectId = reader.readVarInt();
-    const parameters = reader.readParameters();
+  if (content_exists) {
+    const largest_group_id = reader.readVarInt()
+    const largest_object_id = reader.readVarInt()
+    const parameters = decodeParams(reader)
     return {
-      type: "subscribe_ok" as const,
-      subscribeId,
+      type: 'subscribe_ok' as const,
+      subscribe_id,
       expires,
-      groupOrder,
-      contentExists,
-      largestGroupId,
-      largestObjectId,
+      group_order,
+      content_exists,
+      largest_group_id,
+      largest_object_id,
       parameters,
-    };
+    }
   }
 
-  const parameters = reader.readParameters();
+  const parameters = decodeParams(reader)
   return {
-    type: "subscribe_ok" as const,
-    subscribeId,
+    type: 'subscribe_ok' as const,
+    subscribe_id,
     expires,
-    groupOrder,
-    contentExists,
+    group_order,
+    content_exists,
     parameters,
-  };
+  }
 }
 
-function decodeSubscribeError(reader: BufferReader): SubscribeError {
-  const subscribeId = reader.readVarInt();
-  const errorCode = reader.readVarInt();
-  const reasonPhrase = reader.readString();
-  const trackAlias = reader.readVarInt();
-  return { type: "subscribe_error", subscribeId, errorCode, reasonPhrase, trackAlias };
+function decodeSubscribeErrorPayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  const error_code = reader.readVarInt()
+  const reason_phrase = reader.readString()
+  const track_alias = reader.readVarInt()
+  return {
+    type: 'subscribe_error',
+    subscribe_id,
+    error_code,
+    reason_phrase,
+    track_alias,
+  }
 }
 
-function decodeSubscribeDone(reader: BufferReader): SubscribeDone {
-  const subscribeId = reader.readVarInt();
-  const statusCode = reader.readVarInt();
-  const reasonPhrase = reader.readString();
-  const contentExistsWire = reader.readUint8();
-  const contentExists = contentExistsWire !== 0;
+function decodeSubscribeDonePayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  const status_code = reader.readVarInt()
+  const reason_phrase = reader.readString()
+  const content_exists = reader.readUint8()
 
-  if (contentExists) {
-    const finalGroupId = reader.readVarInt();
-    const finalObjectId = reader.readVarInt();
+  if (content_exists) {
+    const final_group = reader.readVarInt()
+    const final_object = reader.readVarInt()
     return {
-      type: "subscribe_done" as const,
-      subscribeId,
-      statusCode,
-      reasonPhrase,
-      contentExists,
-      finalGroupId,
-      finalObjectId,
-    };
+      type: 'subscribe_done' as const,
+      subscribe_id,
+      status_code,
+      reason_phrase,
+      content_exists,
+      final_group,
+      final_object,
+    }
   }
 
-  return { type: "subscribe_done" as const, subscribeId, statusCode, reasonPhrase, contentExists };
-}
-
-function decodeSubscribeUpdate(reader: BufferReader): SubscribeUpdate {
-  const subscribeId = reader.readVarInt();
-  const startGroup = reader.readVarInt();
-  const startObject = reader.readVarInt();
-  const endGroup = reader.readVarInt();
-  const endObject = reader.readVarInt();
-  const subscriberPriority = reader.readUint8();
-  const parameters = reader.readParameters();
   return {
-    type: "subscribe_update",
-    subscribeId,
-    startGroup,
-    startObject,
-    endGroup,
-    endObject,
-    subscriberPriority,
-    parameters,
-  };
+    type: 'subscribe_done' as const,
+    subscribe_id,
+    status_code,
+    reason_phrase,
+    content_exists,
+  }
 }
 
-function decodeUnsubscribe(reader: BufferReader): Unsubscribe {
-  const subscribeId = reader.readVarInt();
-  return { type: "unsubscribe", subscribeId };
-}
-
-function decodeAnnounce(reader: BufferReader): Announce {
-  const trackNamespace = reader.readTuple();
-  const parameters = reader.readParameters();
-  return { type: "announce", trackNamespace, parameters };
-}
-
-function decodeAnnounceOk(reader: BufferReader): AnnounceOk {
-  const trackNamespace = reader.readTuple();
-  return { type: "announce_ok", trackNamespace };
-}
-
-function decodeAnnounceError(reader: BufferReader): AnnounceError {
-  const trackNamespace = reader.readTuple();
-  const errorCode = reader.readVarInt();
-  const reasonPhrase = reader.readString();
-  return { type: "announce_error", trackNamespace, errorCode, reasonPhrase };
-}
-
-function decodeAnnounceCancel(reader: BufferReader): AnnounceCancel {
-  const trackNamespace = reader.readTuple();
-  const errorCode = reader.readVarInt();
-  const reasonPhrase = reader.readString();
-  return { type: "announce_cancel", trackNamespace, errorCode, reasonPhrase };
-}
-
-function decodeUnannounce(reader: BufferReader): Unannounce {
-  const trackNamespace = reader.readTuple();
-  return { type: "unannounce", trackNamespace };
-}
-
-function decodeTrackStatusRequest(reader: BufferReader): TrackStatusRequest {
-  const trackNamespace = reader.readTuple();
-  const trackName = reader.readString();
-  return { type: "track_status_request", trackNamespace, trackName };
-}
-
-function decodeTrackStatus(reader: BufferReader): TrackStatus {
-  const trackNamespace = reader.readTuple();
-  const trackName = reader.readString();
-  const statusCode = reader.readVarInt();
-  const lastGroupId = reader.readVarInt();
-  const lastObjectId = reader.readVarInt();
-  return { type: "track_status", trackNamespace, trackName, statusCode, lastGroupId, lastObjectId };
-}
-
-function decodeGoAway(reader: BufferReader): GoAway {
-  const newSessionUri = reader.readString();
-  return { type: "goaway", newSessionUri };
-}
-
-function decodeSubscribeAnnounces(reader: BufferReader): SubscribeAnnounces {
-  const trackNamespace = reader.readTuple();
-  const parameters = reader.readParameters();
-  return { type: "subscribe_announces", trackNamespace, parameters };
-}
-
-function decodeSubscribeAnnouncesOk(reader: BufferReader): SubscribeAnnouncesOk {
-  const trackNamespace = reader.readTuple();
-  return { type: "subscribe_announces_ok", trackNamespace };
-}
-
-function decodeSubscribeAnnouncesError(reader: BufferReader): SubscribeAnnouncesError {
-  const trackNamespace = reader.readTuple();
-  const errorCode = reader.readVarInt();
-  const reasonPhrase = reader.readString();
-  return { type: "subscribe_announces_error", trackNamespace, errorCode, reasonPhrase };
-}
-
-function decodeUnsubscribeAnnounces(reader: BufferReader): UnsubscribeAnnounces {
-  const trackNamespace = reader.readTuple();
-  return { type: "unsubscribe_announces", trackNamespace };
-}
-
-function decodeMaxSubscribeId(reader: BufferReader): MaxSubscribeId {
-  const subscribeId = reader.readVarInt();
-  return { type: "max_subscribe_id", subscribeId };
-}
-
-function decodeFetch(reader: BufferReader): Fetch {
-  const subscribeId = reader.readVarInt();
-  const trackNamespace = reader.readTuple();
-  const trackName = reader.readString();
-  const subscriberPriority = reader.readUint8();
-  const groupOrder = readGroupOrder(reader);
-  const startGroup = reader.readVarInt();
-  const startObject = reader.readVarInt();
-  const endGroup = reader.readVarInt();
-  const endObject = reader.readVarInt();
-  const parameters = reader.readParameters();
+function decodeSubscribeUpdatePayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  const start_group = reader.readVarInt()
+  const start_object = reader.readVarInt()
+  const end_group = reader.readVarInt()
+  const end_object = reader.readVarInt()
+  const subscriber_priority = reader.readUint8()
+  const parameters = decodeParams(reader)
   return {
-    type: "fetch" as const,
-    subscribeId,
-    trackNamespace,
-    trackName,
-    subscriberPriority,
-    groupOrder,
-    startGroup,
-    startObject,
-    endGroup,
-    endObject,
+    type: 'subscribe_update',
+    subscribe_id,
+    start_group,
+    start_object,
+    end_group,
+    end_object,
+    subscriber_priority,
     parameters,
-  };
+  }
 }
 
-function decodeFetchOk(reader: BufferReader): FetchOk {
-  const subscribeId = reader.readVarInt();
-  const groupOrder = readGroupOrder(reader);
-  const endOfTrackWire = reader.readUint8();
-  const endOfTrack = endOfTrackWire !== 0;
-  const largestGroupId = reader.readVarInt();
-  const largestObjectId = reader.readVarInt();
-  const parameters = reader.readParameters();
+function decodeUnsubscribePayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  return { type: 'unsubscribe', subscribe_id }
+}
+
+function decodeAnnouncePayload(reader: BufferReader): Draft07Message {
+  const track_namespace = reader.readTuple()
+  const parameters = decodeParams(reader)
+  return { type: 'announce', track_namespace, parameters }
+}
+
+function decodeAnnounceOkPayload(reader: BufferReader): Draft07Message {
+  const track_namespace = reader.readTuple()
+  return { type: 'announce_ok', track_namespace }
+}
+
+function decodeAnnounceErrorPayload(reader: BufferReader): Draft07Message {
+  const track_namespace = reader.readTuple()
+  const error_code = reader.readVarInt()
+  const reason_phrase = reader.readString()
+  return { type: 'announce_error', track_namespace, error_code, reason_phrase }
+}
+
+function decodeAnnounceCancelPayload(reader: BufferReader): Draft07Message {
+  const track_namespace = reader.readTuple()
+  const error_code = reader.readVarInt()
+  const reason_phrase = reader.readString()
+  return { type: 'announce_cancel', track_namespace, error_code, reason_phrase }
+}
+
+function decodeUnannouncePayload(reader: BufferReader): Draft07Message {
+  const track_namespace = reader.readTuple()
+  return { type: 'unannounce', track_namespace }
+}
+
+function decodeTrackStatusRequestPayload(reader: BufferReader): Draft07Message {
+  const track_namespace = reader.readTuple()
+  const track_name = reader.readString()
+  return { type: 'track_status_request', track_namespace, track_name }
+}
+
+function decodeTrackStatusPayload(reader: BufferReader): Draft07Message {
+  const track_namespace = reader.readTuple()
+  const track_name = reader.readString()
+  const status_code = reader.readVarInt()
+  const last_group_id = reader.readVarInt()
+  const last_object_id = reader.readVarInt()
   return {
-    type: "fetch_ok" as const,
-    subscribeId,
-    groupOrder,
-    endOfTrack,
-    largestGroupId,
-    largestObjectId,
+    type: 'track_status',
+    track_namespace,
+    track_name,
+    status_code,
+    last_group_id,
+    last_object_id,
+  }
+}
+
+function decodeGoAwayPayload(reader: BufferReader): Draft07Message {
+  const new_session_uri = reader.readString()
+  return { type: 'goaway', new_session_uri }
+}
+
+function decodeSubscribeAnnouncesPayload(reader: BufferReader): Draft07Message {
+  const track_namespace_prefix = reader.readTuple()
+  const parameters = decodeParams(reader)
+  return { type: 'subscribe_announces', track_namespace_prefix, parameters }
+}
+
+function decodeSubscribeAnnouncesOkPayload(reader: BufferReader): Draft07Message {
+  const track_namespace_prefix = reader.readTuple()
+  return { type: 'subscribe_announces_ok', track_namespace_prefix }
+}
+
+function decodeSubscribeAnnouncesErrorPayload(reader: BufferReader): Draft07Message {
+  const track_namespace_prefix = reader.readTuple()
+  const error_code = reader.readVarInt()
+  const reason_phrase = reader.readString()
+  return {
+    type: 'subscribe_announces_error',
+    track_namespace_prefix,
+    error_code,
+    reason_phrase,
+  }
+}
+
+function decodeUnsubscribeAnnouncesPayload(reader: BufferReader): Draft07Message {
+  const track_namespace_prefix = reader.readTuple()
+  return { type: 'unsubscribe_announces', track_namespace_prefix }
+}
+
+function decodeMaxSubscribeIdPayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  return { type: 'max_subscribe_id', subscribe_id }
+}
+
+function decodeFetchPayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  const track_namespace = reader.readTuple()
+  const track_name = reader.readString()
+  const subscriber_priority = reader.readUint8()
+  const group_order = reader.readUint8()
+  const start_group = reader.readVarInt()
+  const start_object = reader.readVarInt()
+  const end_group = reader.readVarInt()
+  const end_object = reader.readVarInt()
+  const parameters = decodeParams(reader)
+  return {
+    type: 'fetch' as const,
+    subscribe_id,
+    track_namespace,
+    track_name,
+    subscriber_priority,
+    group_order,
+    start_group,
+    start_object,
+    end_group,
+    end_object,
     parameters,
-  };
+  }
 }
 
-function decodeFetchError(reader: BufferReader): FetchError {
-  const subscribeId = reader.readVarInt();
-  const errorCode = reader.readVarInt();
-  const reasonPhrase = reader.readString();
-  return { type: "fetch_error", subscribeId, errorCode, reasonPhrase };
+function decodeFetchOkPayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  const group_order = reader.readUint8()
+  const end_of_track = reader.readUint8()
+  const largest_group_id = reader.readVarInt()
+  const largest_object_id = reader.readVarInt()
+  const parameters = decodeParams(reader)
+  return {
+    type: 'fetch_ok' as const,
+    subscribe_id,
+    group_order,
+    end_of_track,
+    largest_group_id,
+    largest_object_id,
+    parameters,
+  }
 }
 
-function decodeFetchCancel(reader: BufferReader): FetchCancel {
-  const subscribeId = reader.readVarInt();
-  return { type: "fetch_cancel", subscribeId };
+function decodeFetchErrorPayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  const error_code = reader.readVarInt()
+  const reason_phrase = reader.readString()
+  return { type: 'fetch_error', subscribe_id, error_code, reason_phrase }
+}
+
+function decodeFetchCancelPayload(reader: BufferReader): Draft07Message {
+  const subscribe_id = reader.readVarInt()
+  return { type: 'fetch_cancel', subscribe_id }
 }
 
 function decodeObjectDatagram(reader: BufferReader): ObjectDatagram {
-  const trackAlias = reader.readVarInt();
-  const groupId = reader.readVarInt();
-  const objectId = reader.readVarInt();
-  const publisherPriority = reader.readUint8();
-  const payloadLength = Number(reader.readVarInt());
+  const track_alias = reader.readVarInt()
+  const group_id = reader.readVarInt()
+  const object_id = reader.readVarInt()
+  const publisher_priority = reader.readUint8()
+  const payloadLength = Number(reader.readVarInt())
   if (payloadLength === 0) {
     // Object Status follows when payload length is 0
-    const objectStatus = reader.remaining > 0 ? Number(reader.readVarInt()) : 0;
+    const object_status = reader.remaining > 0 ? Number(reader.readVarInt()) : 0
     return {
-      type: "object_datagram" as const,
-      trackAlias,
-      groupId,
-      objectId,
-      publisherPriority,
-      objectStatus,
+      type: 'object_datagram' as const,
+      track_alias,
+      group_id,
+      object_id,
+      publisher_priority,
+      object_status,
       payload: new Uint8Array(0),
-    };
+    }
   }
-  const payload = reader.readBytesView(payloadLength);
+  const payload = reader.readBytesView(payloadLength)
   return {
-    type: "object_datagram" as const,
-    trackAlias,
-    groupId,
-    objectId,
-    publisherPriority,
+    type: 'object_datagram' as const,
+    track_alias,
+    group_id,
+    object_id,
+    publisher_priority,
     payload,
-  };
+  }
 }
 
+// ─── Payload dispatch tables ──────────────────────────────────────────────────
 
-// --- Decode dispatch by wire type ID (control messages only) ---
+type Decoder = (reader: BufferReader) => Draft07Message
 
-type Decoder = (reader: BufferReader) => MoqtMessage;
-
-const controlDecoders = new Map<bigint, Decoder>([
-  [MESSAGE_TYPE_IDS.client_setup, decodeClientSetup],
-  [MESSAGE_TYPE_IDS.server_setup, decodeServerSetup],
-  [MESSAGE_TYPE_IDS.subscribe, decodeSubscribe],
-  [MESSAGE_TYPE_IDS.subscribe_ok, decodeSubscribeOk],
-  [MESSAGE_TYPE_IDS.subscribe_error, decodeSubscribeError],
-  [MESSAGE_TYPE_IDS.subscribe_done, decodeSubscribeDone],
-  [MESSAGE_TYPE_IDS.subscribe_update, decodeSubscribeUpdate],
-  [MESSAGE_TYPE_IDS.unsubscribe, decodeUnsubscribe],
-  [MESSAGE_TYPE_IDS.announce, decodeAnnounce],
-  [MESSAGE_TYPE_IDS.announce_ok, decodeAnnounceOk],
-  [MESSAGE_TYPE_IDS.announce_error, decodeAnnounceError],
-  [MESSAGE_TYPE_IDS.announce_cancel, decodeAnnounceCancel],
-  [MESSAGE_TYPE_IDS.unannounce, decodeUnannounce],
-  [MESSAGE_TYPE_IDS.track_status_request, decodeTrackStatusRequest],
-  [MESSAGE_TYPE_IDS.track_status, decodeTrackStatus],
-  [MESSAGE_TYPE_IDS.goaway, decodeGoAway],
-  [MESSAGE_TYPE_IDS.subscribe_announces, decodeSubscribeAnnounces],
-  [MESSAGE_TYPE_IDS.subscribe_announces_ok, decodeSubscribeAnnouncesOk],
-  [MESSAGE_TYPE_IDS.subscribe_announces_error, decodeSubscribeAnnouncesError],
-  [MESSAGE_TYPE_IDS.unsubscribe_announces, decodeUnsubscribeAnnounces],
-  [MESSAGE_TYPE_IDS.max_subscribe_id, decodeMaxSubscribeId],
-  [MESSAGE_TYPE_IDS.fetch, decodeFetch],
-  [MESSAGE_TYPE_IDS.fetch_ok, decodeFetchOk],
-  [MESSAGE_TYPE_IDS.fetch_error, decodeFetchError],
-  [MESSAGE_TYPE_IDS.fetch_cancel, decodeFetchCancel],
-]);
+const payloadDecoders: ReadonlyMap<bigint, Decoder> = new Map([
+  [MSG_CLIENT_SETUP, decodeClientSetupPayload],
+  [MSG_SERVER_SETUP, decodeServerSetupPayload],
+  [MSG_SUBSCRIBE, decodeSubscribePayload],
+  [MSG_SUBSCRIBE_OK, decodeSubscribeOkPayload],
+  [MSG_SUBSCRIBE_ERROR, decodeSubscribeErrorPayload],
+  [MSG_SUBSCRIBE_DONE, decodeSubscribeDonePayload],
+  [MSG_SUBSCRIBE_UPDATE, decodeSubscribeUpdatePayload],
+  [MSG_UNSUBSCRIBE, decodeUnsubscribePayload],
+  [MSG_ANNOUNCE, decodeAnnouncePayload],
+  [MSG_ANNOUNCE_OK, decodeAnnounceOkPayload],
+  [MSG_ANNOUNCE_ERROR, decodeAnnounceErrorPayload],
+  [MSG_ANNOUNCE_CANCEL, decodeAnnounceCancelPayload],
+  [MSG_UNANNOUNCE, decodeUnannouncePayload],
+  [MSG_TRACK_STATUS_REQUEST, decodeTrackStatusRequestPayload],
+  [MSG_TRACK_STATUS, decodeTrackStatusPayload],
+  [MSG_GOAWAY, decodeGoAwayPayload],
+  [MSG_SUBSCRIBE_ANNOUNCES, decodeSubscribeAnnouncesPayload],
+  [MSG_SUBSCRIBE_ANNOUNCES_OK, decodeSubscribeAnnouncesOkPayload],
+  [MSG_SUBSCRIBE_ANNOUNCES_ERROR, decodeSubscribeAnnouncesErrorPayload],
+  [MSG_UNSUBSCRIBE_ANNOUNCES, decodeUnsubscribeAnnouncesPayload],
+  [MSG_MAX_SUBSCRIBE_ID, decodeMaxSubscribeIdPayload],
+  [MSG_FETCH, decodeFetchPayload],
+  [MSG_FETCH_OK, decodeFetchOkPayload],
+  [MSG_FETCH_ERROR, decodeFetchErrorPayload],
+  [MSG_FETCH_CANCEL, decodeFetchCancelPayload],
+])
 
 // Data stream decoders keyed by wire ID (for disambiguation)
-const dataStreamDecoders = new Map<bigint, Decoder>([
-  [MESSAGE_TYPE_IDS.object_datagram, decodeObjectDatagram],
-]);
+const dataStreamDecoders = new Map<bigint, Decoder>([[MSG_OBJECT_DATAGRAM, decodeObjectDatagram]])
 
-// --- Message type to wire ID mapping ---
-const MESSAGE_TYPE_TO_WIRE: Record<ControlMessageType, bigint> = {
-  client_setup: MESSAGE_TYPE_IDS.client_setup,
-  server_setup: MESSAGE_TYPE_IDS.server_setup,
-  subscribe: MESSAGE_TYPE_IDS.subscribe,
-  subscribe_ok: MESSAGE_TYPE_IDS.subscribe_ok,
-  subscribe_error: MESSAGE_TYPE_IDS.subscribe_error,
-  subscribe_done: MESSAGE_TYPE_IDS.subscribe_done,
-  subscribe_update: MESSAGE_TYPE_IDS.subscribe_update,
-  unsubscribe: MESSAGE_TYPE_IDS.unsubscribe,
-  announce: MESSAGE_TYPE_IDS.announce,
-  announce_ok: MESSAGE_TYPE_IDS.announce_ok,
-  announce_error: MESSAGE_TYPE_IDS.announce_error,
-  announce_cancel: MESSAGE_TYPE_IDS.announce_cancel,
-  unannounce: MESSAGE_TYPE_IDS.unannounce,
-  track_status_request: MESSAGE_TYPE_IDS.track_status_request,
-  track_status: MESSAGE_TYPE_IDS.track_status,
-  goaway: MESSAGE_TYPE_IDS.goaway,
-  subscribe_announces: MESSAGE_TYPE_IDS.subscribe_announces,
-  subscribe_announces_ok: MESSAGE_TYPE_IDS.subscribe_announces_ok,
-  subscribe_announces_error: MESSAGE_TYPE_IDS.subscribe_announces_error,
-  unsubscribe_announces: MESSAGE_TYPE_IDS.unsubscribe_announces,
-  max_subscribe_id: MESSAGE_TYPE_IDS.max_subscribe_id,
-  fetch: MESSAGE_TYPE_IDS.fetch,
-  fetch_ok: MESSAGE_TYPE_IDS.fetch_ok,
-  fetch_error: MESSAGE_TYPE_IDS.fetch_error,
-  fetch_cancel: MESSAGE_TYPE_IDS.fetch_cancel,
-};
+// ─── Public API ────────────────────────────────────────────────────────────────
 
-// --- Public codec API ---
-
-function encodeMessageImpl(message: MoqtMessage): Uint8Array {
+function encodeMessage(message: Draft07Message): Uint8Array {
   // Check if it's a data stream message (no type+length framing)
-  const dataEncoder = dataStreamEncoders[message.type];
-  if (dataEncoder) {
-    const writer = new BufferWriter();
-    dataEncoder(message as never, writer);
-    return writer.finish();
+  if (message.type === 'object_datagram') {
+    const writer = new BufferWriter()
+    encodeObjectDatagram(message as ObjectDatagram, writer)
+    return writer.finish()
   }
 
   // Control message: type + length + payload framing
-  const controlEncoder = controlEncoders[message.type as ControlMessageType];
-  if (!controlEncoder) {
-    throw new Error(`Unknown message type: ${message.type}`);
+  const typeId = MESSAGE_ID_MAP.get(message.type)
+  if (typeId === undefined) {
+    throw new Error(`Unknown message type: ${message.type}`)
   }
 
-  // Encode payload first
-  const payloadWriter = new BufferWriter();
-  controlEncoder(message as never, payloadWriter);
-  const payload = payloadWriter.finishView();
+  const payloadWriter = new BufferWriter()
+  encodePayload(message, payloadWriter)
+  const payload = payloadWriter.finishView()
 
-  // Write type + length + payload
-  const frameWriter = new BufferWriter(payload.byteLength + 16);
-  frameWriter.writeVarInt(MESSAGE_TYPE_TO_WIRE[message.type as ControlMessageType]);
-  frameWriter.writeVarInt(payload.byteLength);
-  frameWriter.writeBytes(payload);
-  return frameWriter.finish();
+  const writer = new BufferWriter(payload.byteLength + 16)
+  writer.writeVarInt(typeId)
+  writer.writeVarInt(payload.byteLength)
+  writer.writeBytes(payload)
+  return writer.finish()
 }
 
-function decodeMessageImpl(bytes: Uint8Array): DecodeResult<MoqtMessage> {
+function decodeMessage(bytes: Uint8Array): DecodeResult<Draft07Message> {
   try {
-    const reader = new BufferReader(bytes, 0);
-    const typeId = reader.readVarInt();
+    const reader = new BufferReader(bytes, 0)
+    const typeId = reader.readVarInt()
 
     // Check if this is a data stream type (no length framing)
     if (DATA_STREAM_TYPE_IDS.has(typeId)) {
-      const decoder = dataStreamDecoders.get(typeId);
+      const decoder = dataStreamDecoders.get(typeId)
       if (!decoder) {
         return {
           ok: false,
           error: new DecodeError(
-            "UNKNOWN_MESSAGE_TYPE",
+            'UNKNOWN_MESSAGE_TYPE',
             `Unknown data stream type ID: 0x${typeId.toString(16)}`,
             0,
           ),
-        };
+        }
       }
-      const message = decoder(reader);
-      return { ok: true, value: message, bytesRead: reader.offset };
+      const message = decoder(reader)
+      return { ok: true, value: message, bytesRead: reader.offset }
     }
 
     // Control message: read length, then decode payload from bounded sub-reader
-    const payloadLength = Number(reader.readVarInt());
-    const _headerBytes = reader.offset; // bytes consumed by type + length
+    const payloadLength = Number(reader.readVarInt())
 
     if (reader.remaining < payloadLength) {
       return {
         ok: false,
         error: new DecodeError(
-          "UNEXPECTED_END",
+          'UNEXPECTED_END',
           `Not enough bytes for payload: need ${payloadLength}, have ${reader.remaining}`,
           reader.offset,
         ),
-      };
+      }
     }
 
-    const payloadBytes = reader.readBytes(payloadLength);
-    const totalBytesRead = reader.offset;
+    const payloadBytes = reader.readBytes(payloadLength)
+    const totalBytesRead = reader.offset
 
-    const decoder = controlDecoders.get(typeId);
+    const decoder = payloadDecoders.get(typeId)
     if (!decoder) {
       return {
         ok: false,
         error: new DecodeError(
-          "UNKNOWN_MESSAGE_TYPE",
+          'UNKNOWN_MESSAGE_TYPE',
           `Unknown message type ID: 0x${typeId.toString(16)}`,
           0,
         ),
-      };
+      }
     }
 
-    const payloadReader = new BufferReader(payloadBytes, 0);
-    const message = decoder(payloadReader);
-    return { ok: true, value: message, bytesRead: totalBytesRead };
+    const payloadReader = new BufferReader(payloadBytes, 0)
+    const message = decoder(payloadReader)
+    return { ok: true, value: message, bytesRead: totalBytesRead }
   } catch (e) {
     if (e instanceof DecodeError) {
-      return { ok: false, error: e };
+      return { ok: false, error: e }
     }
-    throw e;
+    throw e
   }
 }
 
-function createStreamDecoderImpl(): TransformStream<Uint8Array, MoqtMessage> {
-  let buffer = new Uint8Array(0);
-  let offset = 0;
-
-  return new TransformStream<Uint8Array, MoqtMessage>({
-    transform(chunk, controller) {
-      // Compact before accumulating new data
-      if (offset > 0) {
-        buffer = buffer.subarray(offset);
-        offset = 0;
-      }
-      const newBuffer = new Uint8Array(buffer.length + chunk.length);
-      newBuffer.set(buffer, 0);
-      newBuffer.set(chunk, buffer.length);
-      buffer = newBuffer;
-
-      // Try to decode messages from the buffer
-      while (offset < buffer.length) {
-        const result = decodeMessageImpl(buffer.subarray(offset));
-        if (!result.ok) {
-          if (result.error.code === "UNEXPECTED_END") {
-            // Need more data -- wait for next chunk
-            break;
-          }
-          // Fatal decode error
-          controller.error(result.error);
-          return;
-        }
-        controller.enqueue(result.value);
-        // Advance offset past the consumed bytes
-        offset += result.bytesRead;
-      }
-    },
-
-    flush(controller) {
-      // If there is remaining data in the buffer, it is a truncated message
-      if (offset < buffer.length) {
-        controller.error(
-          new DecodeError("UNEXPECTED_END", "Stream ended with incomplete message data", 0),
-        );
-      }
-    },
-  });
-}
-
-// ─── Data stream encode/decode (re-exported from data-streams.ts) ─────────────
-
 export {
-  encodeSubgroupStream,
-  encodeDatagram,
-  encodeFetchStream,
-  decodeSubgroupStream,
   decodeDatagram,
   decodeFetchStream,
-} from "./data-streams.js";
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  encodeSubgroupStream,
+} from './data-streams.js'
 
 import {
-  encodeSubgroupStream,
-  encodeDatagram,
-  encodeFetchStream,
-  decodeSubgroupStream,
   decodeDatagram,
   decodeFetchStream,
-} from "./data-streams.js";
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  encodeSubgroupStream,
+} from './data-streams.js'
 
-// --- Factory ---
+export function createStreamDecoder(): TransformStream<Uint8Array, Draft07Message> {
+  let buffer = new Uint8Array(0)
+  let offset = 0
+  return new TransformStream<Uint8Array, Draft07Message>({
+    transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset)
+        offset = 0
+      }
+      const newBuffer = new Uint8Array(buffer.length + chunk.length)
+      newBuffer.set(buffer, 0)
+      newBuffer.set(chunk, buffer.length)
+      buffer = newBuffer
+      while (offset < buffer.length) {
+        const result = decodeMessage(buffer.subarray(offset))
+        if (!result.ok) {
+          if (result.error.code === 'UNEXPECTED_END') break
+          controller.error(result.error)
+          return
+        }
+        controller.enqueue(result.value)
+        offset += result.bytesRead
+      }
+    },
+    flush(controller) {
+      if (offset < buffer.length) {
+        controller.error(
+          new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete message data', 0),
+        )
+      }
+    },
+  })
+}
 
-export interface Draft07Codec extends Codec {
-  encodeSubgroupStream(stream: SubgroupStream): Uint8Array;
-  decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>;
-  encodeDatagram(dg: Draft07DatagramObject): Uint8Array;
-  decodeDatagram(bytes: Uint8Array): DecodeResult<Draft07DatagramObject>;
-  encodeFetchStream(stream: FetchStream): Uint8Array;
-  decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>;
+// ─── Codec Factory ────────────────────────────────────────────────────────────
+
+export interface Draft07Codec extends BaseCodec<Draft07Message> {
+  readonly draft: '07'
+  encodeVarInt(value: number | bigint): Uint8Array
+  decodeVarInt(bytes: Uint8Array, offset?: number): DecodeResult<bigint>
+  encodeSubgroupStream(stream: SubgroupStream): Uint8Array
+  decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>
+  encodeDatagram(dg: Draft07DatagramObject): Uint8Array
+  decodeDatagram(bytes: Uint8Array): DecodeResult<Draft07DatagramObject>
+  encodeFetchStream(stream: FetchStream): Uint8Array
+  decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>
+  createStreamDecoder(): TransformStream<Uint8Array, Draft07Message>
 }
 
 export function createDraft07Codec(): Draft07Codec {
   return {
-    draft: "draft-ietf-moq-transport-07",
-    encodeMessage: encodeMessageImpl,
-    decodeMessage: decodeMessageImpl,
+    draft: '07',
+    encodeMessage,
+    decodeMessage,
     encodeVarInt,
     decodeVarInt,
-    createStreamDecoder: createStreamDecoderImpl,
+    createStreamDecoder,
     encodeSubgroupStream,
     decodeSubgroupStream,
     encodeDatagram,
     decodeDatagram,
     encodeFetchStream,
     decodeFetchStream,
-  };
+  }
 }
 
 // Export data-stream decoder map for callers that need to disambiguate
-export { dataStreamDecoders };
+export { dataStreamDecoders }

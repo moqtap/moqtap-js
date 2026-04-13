@@ -1,4 +1,4 @@
-import { Draft17SessionFSM } from "./session-fsm.js";
+import { Draft17SessionFSM } from './session-fsm.js'
 
 export type {
   ProtocolViolation,
@@ -6,10 +6,10 @@ export type {
   SideEffect,
   TransitionResult,
   ValidationResult,
-} from "../../core/session-types.js";
+} from '../../core/session-types.js'
 
-export function createDraft17SessionState(role: "client" | "server"): Draft17SessionFSM {
-  return new Draft17SessionFSM(role);
+export function createDraft17SessionState(role: 'client' | 'server'): Draft17SessionFSM {
+  return new Draft17SessionFSM(role)
 }
 
-export { Draft17SessionFSM };
+export { Draft17SessionFSM }

@@ -1,11 +1,11 @@
-import type { SessionState, SessionStateOptions } from "../../core/session-types.js";
-import { Draft11SessionFSM } from "./session-fsm.js";
-import type { Draft11Message, Draft11MessageType } from "./types.js";
+import type { SessionState, SessionStateOptionsRole } from '../../core/session-types.js'
+import { Draft11SessionFSM } from './session-fsm.js'
+import type { Draft11Message, Draft11MessageType } from './types.js'
 
 export function createDraft11SessionState(
-  options: SessionStateOptions,
+  role: SessionStateOptionsRole,
 ): SessionState<Draft11Message, Draft11MessageType> {
-  return new Draft11SessionFSM(options.role);
+  return new Draft11SessionFSM(role)
 }
 
 export type {
@@ -17,10 +17,9 @@ export type {
   ProtocolViolationCode,
   SessionPhase,
   SessionState,
-  SessionStateOptions,
   SideEffect,
   SubscriptionPhase,
   SubscriptionState,
   TransitionResult,
   ValidationResult,
-} from "../../core/session-types.js";
+} from '../../core/session-types.js'

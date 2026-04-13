@@ -1,13 +1,13 @@
 {
   "name": "@moqtap/trace",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MoQT session trace format — record, serialize, and analyze .moqtrace files",
   "type": "module",
   "license": "MIT",
   "author": "moqtap",
   "repository": {
     "type": "git",
-    "url": "https://github.com/moqtap/moqtap-js.git",
+    "url": "git+https://github.com/moqtap/moqtap-js.git",
     "directory": "packages/trace"
   },
   "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/trace",
