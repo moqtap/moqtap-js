@@ -109,7 +109,7 @@ function encodeSetupParams(params: Draft14Params, writer: BufferWriter): void {
       tmpWriter.writeVarInt(tok.token_type)
     }
     if (tok.token_value !== undefined) {
-      tmpWriter.writeBytes(hexToBytes(tok.token_value))
+      tmpWriter.writeBytes(tok.token_value)
     }
     if (tok.token_alias !== undefined) {
       tmpWriter.writeVarInt(tok.token_alias)
@@ -184,7 +184,7 @@ function decodeSetupParams(reader: BufferReader): Draft14Params {
           tok.token_type = tokenReader.readVarInt()
           if (tokenReader.remaining > 0) {
             const tokenValue = tokenReader.readBytesView(tokenReader.remaining)
-            tok.token_value = bytesToHex(tokenValue)
+            tok.token_value = new Uint8Array(tokenValue)
           }
         }
         result.authorization_token = tok as unknown as AuthorizationToken
@@ -228,7 +228,7 @@ function encodeMessageParams(params: Draft14Params, writer: BufferWriter): void 
       tmpWriter.writeVarInt(tok.token_type)
     }
     if (tok.token_value !== undefined) {
-      tmpWriter.writeBytes(hexToBytes(tok.token_value))
+      tmpWriter.writeBytes(tok.token_value)
     }
     if (tok.token_alias !== undefined) {
       tmpWriter.writeVarInt(tok.token_alias)
@@ -287,7 +287,7 @@ function decodeMessageParams(reader: BufferReader): Draft14Params {
           tok.token_type = tokenReader.readVarInt()
           if (tokenReader.remaining > 0) {
             const tokenValue = tokenReader.readBytesView(tokenReader.remaining)
-            tok.token_value = bytesToHex(tokenValue)
+            tok.token_value = new Uint8Array(tokenValue)
           }
         }
         result.authorization_token = tok as unknown as AuthorizationToken

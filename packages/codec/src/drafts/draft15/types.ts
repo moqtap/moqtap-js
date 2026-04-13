@@ -13,7 +13,7 @@ export interface AuthorizationToken {
   readonly alias_type: bigint
   readonly token_alias?: bigint // present when alias_type = 0 or 1
   readonly token_type?: bigint // present when alias_type = 1 or 3
-  readonly token_value_hex?: string // present when alias_type = 1 or 3
+  readonly token_value?: Uint8Array // present when alias_type = 1 or 3
 }
 
 // Setup parameters (constant namespace across versions)

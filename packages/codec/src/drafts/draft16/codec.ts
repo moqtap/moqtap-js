@@ -200,8 +200,7 @@ function encodeAuthorizationToken(token: AuthorizationToken, w: BufferWriter): v
   }
   if (aliasType === 1 || aliasType === 3) {
     w.writeVarInt(token.token_type!)
-    const tokenBytes = hexToBytes(token.token_value_hex!)
-    w.writeBytes(tokenBytes)
+    w.writeBytes(token.token_value!)
   }
 }
 
@@ -215,7 +214,7 @@ function decodeAuthorizationToken(r: BufferReader): AuthorizationToken {
   if (aliasType === 1 || aliasType === 3) {
     result.token_type = r.readVarInt()
     const tokenBytes = r.readBytesView(r.remaining)
-    result.token_value_hex = bytesToHex(tokenBytes)
+    result.token_value = new Uint8Array(tokenBytes)
   }
   return result as unknown as AuthorizationToken
 }

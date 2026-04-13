@@ -12,7 +12,7 @@ export interface AuthorizationToken {
   readonly alias_type: bigint // 0=DELETE, 1=REGISTER, 2=USE_ALIAS, 3=USE_VALUE
   readonly token_alias?: bigint // present for DELETE(0), REGISTER(1), USE_ALIAS(2)
   readonly token_type?: bigint // present for REGISTER(1), USE_VALUE(3)
-  readonly token_value?: string // present for REGISTER(1), USE_VALUE(3)
+  readonly token_value?: Uint8Array // present for REGISTER(1), USE_VALUE(3)
 }
 
 // Setup options (KVP encoding, no count prefix)
@@ -58,7 +58,7 @@ export interface Draft17Params {
 export interface Draft17TrackProperties {
   delivery_timeout?: bigint // 0x02 even varint
   max_cache_duration?: bigint // 0x04 even varint
-  immutable_properties?: string // 0x0b odd length-prefixed raw hex
+  immutable_properties?: Uint8Array // 0x0b odd length-prefixed
   default_publisher_priority?: bigint // 0x0c even varint
   default_publisher_group_order?: bigint // 0x22 even varint
   dynamic_groups?: bigint // 0x30 even varint

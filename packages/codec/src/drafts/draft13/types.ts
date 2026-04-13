@@ -14,7 +14,7 @@ export interface AuthorizationToken {
   readonly alias_type: bigint
   readonly token_alias?: bigint // present for DELETE(0), REGISTER(1), USE_ALIAS(2)
   readonly token_type?: bigint // present for USE_VALUE(3), REGISTER(1)
-  readonly token_value?: string // present for USE_VALUE(3), REGISTER(1)
+  readonly token_value?: Uint8Array // present for USE_VALUE(3), REGISTER(1)
 }
 
 // Setup parameters (PATH, MAX_REQUEST_ID, AUTHORIZATION_TOKEN, MAX_AUTH_TOKEN_CACHE_SIZE)

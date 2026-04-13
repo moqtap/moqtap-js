@@ -33,7 +33,7 @@ export interface UnknownParam {
 export interface AuthorizationToken {
   readonly alias_type: bigint
   readonly token_type?: bigint
-  readonly token_value?: string // raw hex
+  readonly token_value?: Uint8Array
   readonly token_alias?: bigint
 }
 

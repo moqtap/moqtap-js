@@ -144,7 +144,9 @@ function assertParamsMatch(
       const actualNested = actualParams[pk] as Record<string, unknown>
       expect(actualNested).toBeDefined()
       for (const [nk, nv] of Object.entries(pv as Record<string, unknown>)) {
-        expect(String(actualNested[nk])).toBe(String(nv))
+        const av = actualNested[nk]
+        const actual = av instanceof Uint8Array ? Buffer.from(av).toString('hex') : String(av)
+        expect(actual).toBe(String(nv))
       }
     } else {
       expect(String(actualParams[pk])).toBe(String(pv))

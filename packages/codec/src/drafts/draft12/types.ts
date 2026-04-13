@@ -12,7 +12,7 @@ export interface UnknownParam {
 export interface AuthorizationToken {
   readonly alias_type: bigint
   readonly token_type: bigint
-  readonly token_value: string
+  readonly token_value: Uint8Array
 }
 
 // Setup parameters (PATH, MAX_REQUEST_ID) — same even/odd encoding as later drafts

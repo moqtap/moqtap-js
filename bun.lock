@@ -13,9 +13,9 @@
     },
     "packages/codec": {
       "name": "@moqtap/codec",
-      "version": "0.3.0",
+      "version": "0.4.2",
       "devDependencies": {
-        "@moqtap/test-vectors": "^0.8.2",
+        "@moqtap/test-vectors": "^0.8.3",
         "tsup": "^8.0.0",
         "typescript": "^5.5.0",
         "vitest": "^3.0.0",
@@ -34,7 +34,7 @@
         "vitest": "^3.0.0",
       },
       "peerDependencies": {
-        "@moqtap/codec": "^0.1.0",
+        "@moqtap/codec": "^0.3.0",
       },
     },
   },
@@ -131,7 +131,7 @@
 
     "@moqtap/codec": ["@moqtap/codec@workspace:packages/codec"],
 
-    "@moqtap/test-vectors": ["@moqtap/test-vectors@0.8.2", "", {}, "sha512-KdqgqiWJ2+ZTpysWmEw6EyxFWhHD8PrksH0osdlxYdWMAZgbJ54WDi1ez9cGG21nUi/0CwqgfrnNQMpeOhqOeg=="],
+    "@moqtap/test-vectors": ["@moqtap/test-vectors@0.8.3", "", {}, "sha512-khJZ2ZKCOs9j0qVmA5NLc5Av/gsFHZikpq2d7h79DZNSwYuZe1F77g8bJASgc3DmHY/rm7HBndpkYDF0dxN7aQ=="],
 
     "@moqtap/trace": ["@moqtap/trace@workspace:packages/trace"],
 

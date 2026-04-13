@@ -199,9 +199,9 @@ function encodeAuthorizationToken(token: AuthorizationToken, w: BufferWriter): v
   if (aliasType === 1 || aliasType === 3) {
     // REGISTER, USE_VALUE: token_type + token_value present
     w.writeVarInt(token.token_type ?? 0n)
-    const encoded = textEncoder.encode(token.token_value ?? '')
-    w.writeVarInt(BigInt(encoded.byteLength))
-    w.writeBytes(encoded)
+    const tv = token.token_value ?? new Uint8Array(0)
+    w.writeVarInt(BigInt(tv.byteLength))
+    w.writeBytes(tv)
   }
 }
 
@@ -217,7 +217,7 @@ function decodeAuthorizationToken(r: BufferReader): AuthorizationToken {
     ;(result as { token_type: bigint }).token_type = r.readVarInt()
     const len = Number(r.readVarInt())
     const bytes = r.readBytes(len)
-    ;(result as { token_value: string }).token_value = textDecoder.decode(bytes)
+    ;(result as { token_value: Uint8Array }).token_value = bytes
   }
 
   return result
@@ -464,7 +464,7 @@ function encodeTrackProperties(props: Draft17TrackProperties, writer: BufferWrit
     entries.push({
       type: TPROP_IMMUTABLE_PROPERTIES,
       encode: (w) => {
-        const raw = hexToBytes(props.immutable_properties!)
+        const raw = props.immutable_properties!
         w.writeVarInt(BigInt(raw.byteLength))
         w.writeBytes(raw)
       },
@@ -557,7 +557,7 @@ function decodeTrackProperties(reader: BufferReader, payloadEnd: number): Draft1
       const length = Number(reader.readVarInt())
       const bytes = reader.readBytes(length)
       if (propType === TPROP_IMMUTABLE_PROPERTIES) {
-        result.immutable_properties = bytesToHex(bytes)
+        result.immutable_properties = bytes
       } else {
         unknown.push({
           id: `0x${propType.toString(16)}`,

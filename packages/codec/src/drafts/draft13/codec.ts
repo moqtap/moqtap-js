@@ -85,8 +85,7 @@ function encodeAuthorizationToken(at: AuthorizationToken, w: BufferWriter): void
   if (aliasType === 1 || aliasType === 3) {
     // REGISTER, USE_VALUE have token_type + token_value
     tmpW.writeVarInt(at.token_type ?? 0n)
-    const tokenBytes = textEncoder.encode(at.token_value ?? '')
-    tmpW.writeBytes(tokenBytes)
+    tmpW.writeBytes(at.token_value ?? new Uint8Array(0))
   }
   const raw = tmpW.finish()
   w.writeVarInt(raw.byteLength)
@@ -105,7 +104,7 @@ function decodeAuthorizationToken(r: BufferReader, length: number): Authorizatio
     result.token_type = r.readVarInt()
     const tokenBytesLen = length - (r.offset - startOff)
     const tokenBytes = r.readBytes(tokenBytesLen)
-    result.token_value = textDecoder.decode(tokenBytes)
+    result.token_value = tokenBytes
   }
   return result as unknown as AuthorizationToken
 }

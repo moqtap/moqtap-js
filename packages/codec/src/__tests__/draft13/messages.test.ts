@@ -129,7 +129,9 @@ function assertParamsMatch(
       const actualToken = actualParams.authorization_token as Record<string, unknown>
       expect(actualToken).toBeDefined()
       for (const [nk, nv] of Object.entries(pv as Record<string, unknown>)) {
-        expect(String(actualToken[nk])).toBe(String(nv))
+        const av = actualToken[nk]
+        const actual = av instanceof Uint8Array ? Buffer.from(av).toString('hex') : String(av)
+        expect(actual).toBe(String(nv))
       }
     } else {
       expect(String(actualParams[pk])).toBe(String(pv))

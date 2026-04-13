@@ -94,8 +94,7 @@ function encodeSetupParams(params: Draft12SetupParams, w: BufferWriter): void {
     const tmpW = new BufferWriter(64)
     tmpW.writeVarInt(at.alias_type)
     tmpW.writeVarInt(at.token_type)
-    const tokenBytes = textEncoder.encode(at.token_value)
-    tmpW.writeBytes(tokenBytes)
+    tmpW.writeBytes(at.token_value)
     const raw = tmpW.finish()
     w.writeVarInt(raw.byteLength)
     w.writeBytes(raw)
@@ -152,7 +151,7 @@ function decodeSetupParams(r: BufferReader): Draft12SetupParams {
         result.authorization_token = {
           alias_type,
           token_type,
-          token_value: textDecoder.decode(tokenBytes),
+          token_value: tokenBytes,
         }
       } else {
         const bytes = r.readBytes(length)
@@ -191,8 +190,7 @@ function encodeParams(params: Draft12Params, w: BufferWriter): void {
     const tmpW = new BufferWriter(64)
     tmpW.writeVarInt(at.alias_type)
     tmpW.writeVarInt(at.token_type)
-    const tokenBytes = textEncoder.encode(at.token_value)
-    tmpW.writeBytes(tokenBytes)
+    tmpW.writeBytes(at.token_value)
     const raw = tmpW.finish()
     w.writeVarInt(raw.byteLength)
     w.writeBytes(raw)
@@ -259,7 +257,7 @@ function decodeParams(r: BufferReader): Draft12Params {
         result.authorization_token = {
           alias_type,
           token_type,
-          token_value: textDecoder.decode(tokenBytes),
+          token_value: tokenBytes,
         }
       } else {
         const bytes = r.readBytes(length)
