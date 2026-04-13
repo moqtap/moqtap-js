@@ -35,6 +35,7 @@ export const MSG_SERVER_SETUP = 0x21n
 export const PARAM_ROLE = 0x00n
 export const PARAM_PATH = 0x01n
 export const PARAM_MAX_REQUEST_ID = 0x02n
+export const PARAM_MOQT_IMPLEMENTATION = 0x07n
 
 // Map from wire ID to message type name
 export const MESSAGE_TYPE_MAP: ReadonlyMap<bigint, string> = new Map([

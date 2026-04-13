@@ -36,6 +36,7 @@ import {
   MSG_UNSUBSCRIBE,
   MSG_UNSUBSCRIBE_NAMESPACE,
   PARAM_MAX_REQUEST_ID,
+  PARAM_MOQT_IMPLEMENTATION,
   PARAM_PATH,
   PARAM_ROLE,
 } from './messages.js'
@@ -79,6 +80,7 @@ function encodeSetupParams(params: Draft14Params, writer: BufferWriter): void {
   if (params.max_request_id !== undefined) count++
   if (params.authority !== undefined) count++
   if (params.max_auth_token_cache_size !== undefined) count++
+  if (params.moqt_implementation !== undefined) count++
   if (params.unknown) count += params.unknown.length
 
   writer.writeVarInt(count)
@@ -104,6 +106,12 @@ function encodeSetupParams(params: Draft14Params, writer: BufferWriter): void {
   if (params.authority !== undefined) {
     writer.writeVarInt(PARAM_AUTHORITY)
     const encoded = textEncoder.encode(params.authority)
+    writer.writeVarInt(encoded.byteLength)
+    writer.writeBytes(encoded)
+  }
+  if (params.moqt_implementation !== undefined) {
+    writer.writeVarInt(PARAM_MOQT_IMPLEMENTATION)
+    const encoded = textEncoder.encode(params.moqt_implementation)
     writer.writeVarInt(encoded.byteLength)
     writer.writeBytes(encoded)
   }
@@ -151,6 +159,8 @@ function decodeSetupParams(reader: BufferReader): Draft14Params {
         result.path = textDecoder.decode(bytes)
       } else if (paramType === PARAM_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
+      } else if (paramType === PARAM_MOQT_IMPLEMENTATION) {
+        result.moqt_implementation = textDecoder.decode(bytes)
       } else {
         unknown.push({
           id: `0x${paramType.toString(16)}`,

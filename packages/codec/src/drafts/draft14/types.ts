@@ -44,6 +44,7 @@ export interface Draft14Params {
   max_request_id?: bigint
   authority?: string
   max_auth_token_cache_size?: bigint
+  moqt_implementation?: string // 0x07 odd, length-prefixed UTF-8
   // Message parameters (SUBSCRIBE, PUBLISH, etc.)
   delivery_timeout?: bigint
   authorization_token?: AuthorizationToken

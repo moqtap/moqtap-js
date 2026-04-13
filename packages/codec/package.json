@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/codec",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "MoQT wire-format codec and session state machine — multi-draft, zero dependencies",
   "type": "module",
   "license": "MIT",
