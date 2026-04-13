@@ -78,6 +78,7 @@ function encodeSetupParams(params: Draft14Params, writer: BufferWriter): void {
   if (params.role !== undefined) count++
   if (params.path !== undefined) count++
   if (params.max_request_id !== undefined) count++
+  if (params.authorization_token !== undefined) count++
   if (params.authority !== undefined) count++
   if (params.max_auth_token_cache_size !== undefined) count++
   if (params.moqt_implementation !== undefined) count++
@@ -98,6 +99,24 @@ function encodeSetupParams(params: Draft14Params, writer: BufferWriter): void {
   if (params.max_request_id !== undefined) {
     writer.writeVarInt(PARAM_MAX_REQUEST_ID)
     writer.writeVarInt(params.max_request_id)
+  }
+  if (params.authorization_token !== undefined) {
+    writer.writeVarInt(PARAM_AUTHORIZATION_TOKEN)
+    const tok = params.authorization_token
+    const tmpWriter = new BufferWriter(64)
+    tmpWriter.writeVarInt(tok.alias_type)
+    if (tok.token_type !== undefined) {
+      tmpWriter.writeVarInt(tok.token_type)
+    }
+    if (tok.token_value !== undefined) {
+      tmpWriter.writeBytes(hexToBytes(tok.token_value))
+    }
+    if (tok.token_alias !== undefined) {
+      tmpWriter.writeVarInt(tok.token_alias)
+    }
+    const tokenBytes = tmpWriter.finish()
+    writer.writeVarInt(tokenBytes.byteLength)
+    writer.writeBytes(tokenBytes)
   }
   if (params.max_auth_token_cache_size !== undefined) {
     writer.writeVarInt(PARAM_MAX_AUTH_TOKEN_CACHE_SIZE)
@@ -157,6 +176,18 @@ function decodeSetupParams(reader: BufferReader): Draft14Params {
       const bytes = reader.readBytes(length)
       if (paramType === PARAM_PATH) {
         result.path = textDecoder.decode(bytes)
+      } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
+        const tokenReader = new BufferReader(bytes)
+        const alias_type = tokenReader.readVarInt()
+        const tok: Record<string, unknown> = { alias_type }
+        if (tokenReader.remaining > 0) {
+          tok.token_type = tokenReader.readVarInt()
+          if (tokenReader.remaining > 0) {
+            const tokenValue = tokenReader.readBytesView(tokenReader.remaining)
+            tok.token_value = bytesToHex(tokenValue)
+          }
+        }
+        result.authorization_token = tok as unknown as AuthorizationToken
       } else if (paramType === PARAM_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
       } else if (paramType === PARAM_MOQT_IMPLEMENTATION) {

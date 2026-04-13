@@ -19,6 +19,7 @@ export interface AuthorizationToken {
 export interface Draft12SetupParams {
   path?: string // 0x01 odd
   max_request_id?: bigint // 0x02 even
+  authorization_token?: AuthorizationToken // 0x03 odd
   unknown?: UnknownParam[]
 }
 

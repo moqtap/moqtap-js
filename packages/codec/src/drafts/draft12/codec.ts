@@ -73,6 +73,7 @@ function encodeSetupParams(params: Draft12SetupParams, w: BufferWriter): void {
   let count = 0
   if (params.path !== undefined) count++
   if (params.max_request_id !== undefined) count++
+  if (params.authorization_token !== undefined) count++
   if (params.unknown) count += params.unknown.length
 
   w.writeVarInt(count)
@@ -86,6 +87,18 @@ function encodeSetupParams(params: Draft12SetupParams, w: BufferWriter): void {
   if (params.max_request_id !== undefined) {
     w.writeVarInt(SETUP_PARAM_MAX_REQUEST_ID)
     w.writeVarInt(params.max_request_id)
+  }
+  if (params.authorization_token !== undefined) {
+    w.writeVarInt(PARAM_AUTHORIZATION_TOKEN)
+    const at = params.authorization_token
+    const tmpW = new BufferWriter(64)
+    tmpW.writeVarInt(at.alias_type)
+    tmpW.writeVarInt(at.token_type)
+    const tokenBytes = textEncoder.encode(at.token_value)
+    tmpW.writeBytes(tokenBytes)
+    const raw = tmpW.finish()
+    w.writeVarInt(raw.byteLength)
+    w.writeBytes(raw)
   }
   if (params.unknown) {
     for (const u of params.unknown) {
@@ -127,10 +140,22 @@ function decodeSetupParams(r: BufferReader): Draft12SetupParams {
       }
     } else {
       const length = Number(r.readVarInt())
-      const bytes = r.readBytes(length)
+      const startOff = r.offset
       if (paramType === SETUP_PARAM_PATH) {
+        const bytes = r.readBytes(length)
         result.path = textDecoder.decode(bytes)
+      } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
+        const alias_type = r.readVarInt()
+        const token_type = r.readVarInt()
+        const tokenBytesLen = length - (r.offset - startOff)
+        const tokenBytes = r.readBytes(tokenBytesLen)
+        result.authorization_token = {
+          alias_type,
+          token_type,
+          token_value: textDecoder.decode(tokenBytes),
+        }
       } else {
+        const bytes = r.readBytes(length)
         unknown.push({
           id: `0x${paramType.toString(16)}`,
           length,
