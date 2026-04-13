@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/codec",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MoQT wire-format codec and session state machine — multi-draft, zero dependencies",
   "type": "module",
   "license": "MIT",
@@ -41,41 +41,41 @@
       "import": "./dist/session.js",
       "require": "./dist/session.cjs"
     },
-    "./draft7": {
+    "./draft07": {
       "bun": "./src/drafts/draft07/index.ts",
-      "types": "./dist/draft7.d.ts",
-      "import": "./dist/draft7.js",
-      "require": "./dist/draft7.cjs"
+      "types": "./dist/draft07.d.ts",
+      "import": "./dist/draft07.js",
+      "require": "./dist/draft07.cjs"
     },
-    "./draft7/session": {
+    "./draft07/session": {
       "bun": "./src/drafts/draft07/session.ts",
-      "types": "./dist/draft7-session.d.ts",
-      "import": "./dist/draft7-session.js",
-      "require": "./dist/draft7-session.cjs"
+      "types": "./dist/draft07-session.d.ts",
+      "import": "./dist/draft07-session.js",
+      "require": "./dist/draft07-session.cjs"
     },
-    "./draft8": {
+    "./draft08": {
       "bun": "./src/drafts/draft08/index.ts",
-      "types": "./dist/draft8.d.ts",
-      "import": "./dist/draft8.js",
-      "require": "./dist/draft8.cjs"
+      "types": "./dist/draft08.d.ts",
+      "import": "./dist/draft08.js",
+      "require": "./dist/draft08.cjs"
     },
-    "./draft8/session": {
+    "./draft08/session": {
       "bun": "./src/drafts/draft08/session.ts",
-      "types": "./dist/draft8-session.d.ts",
-      "import": "./dist/draft8-session.js",
-      "require": "./dist/draft8-session.cjs"
+      "types": "./dist/draft08-session.d.ts",
+      "import": "./dist/draft08-session.js",
+      "require": "./dist/draft08-session.cjs"
     },
-    "./draft9": {
+    "./draft09": {
       "bun": "./src/drafts/draft09/index.ts",
-      "types": "./dist/draft9.d.ts",
-      "import": "./dist/draft9.js",
-      "require": "./dist/draft9.cjs"
+      "types": "./dist/draft09.d.ts",
+      "import": "./dist/draft09.js",
+      "require": "./dist/draft09.cjs"
     },
-    "./draft9/session": {
+    "./draft09/session": {
       "bun": "./src/drafts/draft09/session.ts",
-      "types": "./dist/draft9-session.d.ts",
-      "import": "./dist/draft9-session.js",
-      "require": "./dist/draft9-session.cjs"
+      "types": "./dist/draft09-session.d.ts",
+      "import": "./dist/draft09-session.js",
+      "require": "./dist/draft09-session.cjs"
     },
     "./draft10": {
       "bun": "./src/drafts/draft10/index.ts",

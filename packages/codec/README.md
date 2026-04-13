@@ -20,7 +20,7 @@ npm install @moqtap/codec
 MoQT is pre-RFC, so a draft version must always be specified. Use draft-scoped imports for the best experience:
 
 ```typescript
-import { createDraft07Codec, DRAFT_VERSION } from '@moqtap/codec/draft7'
+import { createDraft07Codec, DRAFT_VERSION } from '@moqtap/codec/draft07'
 
 const codec = createDraft07Codec()
 
@@ -56,9 +56,9 @@ Each draft is available as a subpath import with its own codec and session state
 | Import path                      | Description                                       |
 | -------------------------------- | ------------------------------------------------- |
 | `@moqtap/codec`                  | Factory + shared types (`createCodec({ draft })`) |
-| `@moqtap/codec/draft7`           | Draft-07 codec                                    |
-| `@moqtap/codec/draft8`           | Draft-08 codec                                    |
-| `@moqtap/codec/draft9`           | Draft-09 codec                                    |
+| `@moqtap/codec/draft07`          | Draft-07 codec                                    |
+| `@moqtap/codec/draft08`          | Draft-08 codec                                    |
+| `@moqtap/codec/draft09`          | Draft-09 codec                                    |
 | `@moqtap/codec/draft10`          | Draft-10 codec                                    |
 | `@moqtap/codec/draft11`          | Draft-11 codec                                    |
 | `@moqtap/codec/draft12`          | Draft-12 codec                                    |

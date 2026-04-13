@@ -3,8 +3,7 @@
  *
  * Requires a codec instance (which carries the draft version).
  * For direct access, use draft-scoped imports:
- *   import { createDraft07SessionState } from '@moqtap/codec/draft7/session';
- *   import { createDraft14SessionState } from '@moqtap/codec/draft14/session';
+ *   import { createDraft17SessionState } from '@moqtap/codec/draft17/session';
  */
 
 import type { SessionState, SessionStateOptions } from './core/session-types.js'

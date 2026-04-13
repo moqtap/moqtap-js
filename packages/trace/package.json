@@ -47,7 +47,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@moqtap/codec": "^0.1.0"
+    "@moqtap/codec": "^0.3.0"
   },
   "dependencies": {
     "cbor-x": "^1.6.0"
