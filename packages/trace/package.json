@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/trace",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "MoQT session trace format — record, serialize, and analyze .moqtrace files",
   "type": "module",
   "license": "MIT",

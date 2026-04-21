@@ -1,5 +1,19 @@
-import { decode, decodeMultiple, encode } from 'cbor-x'
+import { Encoder } from 'cbor-x'
 import type { DetailLevel, Perspective, Trace, TraceEvent, TraceHeader } from './types.js'
+
+// Use a CBOR codec configured for cross-language interop.
+// Why: cbor-x's default `useRecords: true` enables a proprietary "record
+// extension" that encodes JS objects as tagged structures rather than standard
+// CBOR maps — unreadable by ciborium (Rust) and other spec-compliant decoders.
+// The .moqtrace spec requires standard CBOR, so we disable records and encode
+// as plain maps. `mapsAsObjects` is set so decoded maps come back as plain
+// JS objects (matching the code that accesses fields via `obj.protocol`).
+const codec = new Encoder({ useRecords: false, mapsAsObjects: true })
+const encode = (value: unknown): Uint8Array => codec.encode(value)
+const decode = (bytes: Uint8Array): unknown => codec.decode(bytes)
+const decodeMultiple = (bytes: Uint8Array, cb: (value: unknown) => void): void => {
+  codec.decodeMultiple(bytes, cb as (value: unknown) => boolean | undefined)
+}
 
 const MAGIC = new Uint8Array([0x4d, 0x4f, 0x51, 0x54, 0x52, 0x41, 0x43, 0x45]) // "MOQTRACE"
 const FORMAT_VERSION = 1
