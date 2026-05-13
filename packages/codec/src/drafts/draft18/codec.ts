@@ -1,0 +1,1310 @@
+import { BufferReader } from '../../core/buffer-reader.js'
+import { BufferWriter } from '../../core/buffer-writer.js'
+import { bytesToHex, hexToBytes } from '../../core/hex.js'
+import type { BaseCodec, DecodeResult } from '../../core/types.js'
+import { DecodeError } from '../../core/types.js'
+import {
+  MESSAGE_ID_MAP,
+  MSG_FETCH,
+  MSG_FETCH_OK,
+  MSG_GOAWAY,
+  MSG_NAMESPACE,
+  MSG_NAMESPACE_DONE,
+  MSG_PUBLISH,
+  MSG_PUBLISH_BLOCKED,
+  MSG_PUBLISH_DONE,
+  MSG_PUBLISH_NAMESPACE,
+  MSG_REQUEST_ERROR,
+  MSG_REQUEST_OK,
+  MSG_REQUEST_UPDATE,
+  MSG_SETUP,
+  MSG_SUBSCRIBE,
+  MSG_SUBSCRIBE_NAMESPACE,
+  MSG_SUBSCRIBE_OK,
+  MSG_SUBSCRIBE_TRACKS,
+  MSG_TRACK_STATUS,
+  SETUP_OPT_AUTHORITY,
+  SETUP_OPT_AUTHORIZATION_TOKEN,
+  SETUP_OPT_MAX_AUTH_TOKEN_CACHE_SIZE,
+  SETUP_OPT_MOQT_IMPLEMENTATION,
+  SETUP_OPT_PATH,
+} from './messages.js'
+import type {
+  AuthorizationToken,
+  DatagramObject,
+  DataStreamEvent,
+  Draft18DataStream,
+  Draft18Fetch,
+  Draft18Message,
+  Draft18Params,
+  Draft18SetupOptions,
+  Draft18TrackProperties,
+  FetchStream,
+  FetchStreamHeader,
+  JoiningFetch,
+  ObjectPayload,
+  Redirect,
+  StandaloneFetch,
+  SubgroupStream,
+  SubgroupStreamHeader,
+  UnknownParam,
+} from './types.js'
+
+const textEncoder = /* @__PURE__ */ new TextEncoder()
+const textDecoder = /* @__PURE__ */ new TextDecoder()
+
+const REQUEST_ERROR_REDIRECT = 0x34n
+
+// ─── Setup Options Encoding/Decoding (KVP, no count prefix) ─────────────────
+
+function encodeSetupOptions(opts: Draft18SetupOptions, writer: BufferWriter): void {
+  // Collect all options sorted by type ID
+  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
+
+  if (opts.path !== undefined) {
+    entries.push({
+      type: SETUP_OPT_PATH,
+      encode: (w) => {
+        const encoded = textEncoder.encode(opts.path!)
+        w.writeVarInt(BigInt(encoded.byteLength))
+        w.writeBytes(encoded)
+      },
+    })
+  }
+  if (opts.authorization_token !== undefined) {
+    entries.push({
+      type: SETUP_OPT_AUTHORIZATION_TOKEN,
+      encode: (w) => {
+        const tmpW = new BufferWriter(64)
+        encodeAuthorizationToken(opts.authorization_token!, tmpW)
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
+  }
+  if (opts.max_auth_token_cache_size !== undefined) {
+    entries.push({
+      type: SETUP_OPT_MAX_AUTH_TOKEN_CACHE_SIZE,
+      encode: (w) => w.writeVarInt(opts.max_auth_token_cache_size!),
+    })
+  }
+  if (opts.authority !== undefined) {
+    entries.push({
+      type: SETUP_OPT_AUTHORITY,
+      encode: (w) => {
+        const encoded = textEncoder.encode(opts.authority!)
+        w.writeVarInt(BigInt(encoded.byteLength))
+        w.writeBytes(encoded)
+      },
+    })
+  }
+  if (opts.moqt_implementation !== undefined) {
+    entries.push({
+      type: SETUP_OPT_MOQT_IMPLEMENTATION,
+      encode: (w) => {
+        const encoded = textEncoder.encode(opts.moqt_implementation!)
+        w.writeVarInt(BigInt(encoded.byteLength))
+        w.writeBytes(encoded)
+      },
+    })
+  }
+  if (opts.unknown) {
+    for (const u of opts.unknown) {
+      const id = BigInt(u.id)
+      entries.push({
+        type: id,
+        encode: (w) => {
+          if (id % 2n === 0n) {
+            const raw = hexToBytes(u.raw_hex)
+            const tmpReader = new BufferReader(raw)
+            w.writeVarInt(tmpReader.readVarInt())
+          } else {
+            const raw = hexToBytes(u.raw_hex)
+            w.writeVarInt(BigInt(raw.byteLength))
+            w.writeBytes(raw)
+          }
+        },
+      })
+    }
+  }
+
+  // Sort by type (ascending) and write with delta encoding
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
+  let prevType = 0n
+  for (const entry of entries) {
+    writer.writeVarInt(entry.type - prevType)
+    entry.encode(writer)
+    prevType = entry.type
+  }
+}
+
+function decodeSetupOptions(reader: BufferReader, payloadEnd: number): Draft18SetupOptions {
+  const result: Draft18SetupOptions = {}
+  const unknown: UnknownParam[] = []
+  let prevType = 0n
+
+  while (reader.offset < payloadEnd) {
+    const delta = reader.readVarInt()
+    const optType = prevType + delta
+    prevType = optType
+
+    if (optType % 2n === 0n) {
+      // Even: single varint value
+      const value = reader.readVarInt()
+      if (optType === SETUP_OPT_MAX_AUTH_TOKEN_CACHE_SIZE) {
+        result.max_auth_token_cache_size = value
+      } else {
+        const tmpWriter = new BufferWriter(16)
+        tmpWriter.writeVarInt(value)
+        const raw = tmpWriter.finish()
+        unknown.push({
+          id: `0x${optType.toString(16)}`,
+          length: raw.byteLength,
+          raw_hex: bytesToHex(raw),
+        })
+      }
+    } else {
+      // Odd: length-prefixed bytes
+      const length = Number(reader.readVarInt())
+      const bytes = reader.readBytes(length)
+      if (optType === SETUP_OPT_PATH) {
+        result.path = textDecoder.decode(bytes)
+      } else if (optType === SETUP_OPT_AUTHORIZATION_TOKEN) {
+        result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
+      } else if (optType === SETUP_OPT_AUTHORITY) {
+        result.authority = textDecoder.decode(bytes)
+      } else if (optType === SETUP_OPT_MOQT_IMPLEMENTATION) {
+        result.moqt_implementation = textDecoder.decode(bytes)
+      } else {
+        unknown.push({
+          id: `0x${optType.toString(16)}`,
+          length,
+          raw_hex: bytesToHex(bytes),
+        })
+      }
+    }
+  }
+
+  if (unknown.length > 0) result.unknown = unknown
+  return result
+}
+
+// ─── Authorization Token Encoding/Decoding ────────────────────────────────────
+
+function encodeAuthorizationToken(token: AuthorizationToken, w: BufferWriter): void {
+  const aliasType = Number(token.alias_type)
+  w.writeVarInt(token.alias_type)
+  if (aliasType === 0 || aliasType === 1 || aliasType === 2) {
+    // DELETE, REGISTER, USE_ALIAS: token_alias present
+    w.writeVarInt(token.token_alias ?? 0n)
+  }
+  if (aliasType === 1 || aliasType === 3) {
+    // REGISTER, USE_VALUE: token_type + token_value present.
+    // In draft-18 the Token Value is NOT length-prefixed inside the Token
+    // structure; it consumes the remainder of the outer length-prefixed buffer.
+    w.writeVarInt(token.token_type ?? 0n)
+    const tv = token.token_value ?? new Uint8Array(0)
+    w.writeBytes(tv)
+  }
+}
+
+function decodeAuthorizationToken(r: BufferReader): AuthorizationToken {
+  const alias_type = r.readVarInt()
+  const aliasType = Number(alias_type)
+  const result: AuthorizationToken = { alias_type }
+
+  if (aliasType === 0 || aliasType === 1 || aliasType === 2) {
+    ;(result as { token_alias: bigint }).token_alias = r.readVarInt()
+  }
+  if (aliasType === 1 || aliasType === 3) {
+    ;(result as { token_type: bigint }).token_type = r.readVarInt()
+    // Token Value extends to the end of the outer length-prefixed buffer
+    const bytes = r.readBytes(r.remaining)
+    ;(result as { token_value: Uint8Array }).token_value = bytes
+  }
+
+  return result
+}
+
+// ─── Tuple (Track Namespace) encode/decode for params ────────────────────────
+
+function encodeNamespaceTuple(ns: string[], w: BufferWriter): void {
+  w.writeVarInt(BigInt(ns.length))
+  for (const part of ns) {
+    const encoded = textEncoder.encode(part)
+    w.writeVarInt(BigInt(encoded.byteLength))
+    w.writeBytes(encoded)
+  }
+}
+
+function decodeNamespaceTuple(r: BufferReader): string[] {
+  const count = Number(r.readVarInt())
+  const parts: string[] = []
+  for (let i = 0; i < count; i++) {
+    const len = Number(r.readVarInt())
+    parts.push(textDecoder.decode(r.readBytes(len)))
+  }
+  return parts
+}
+
+// ─── Message Parameter Encoding/Decoding (delta types, count prefix) ─────────
+
+const PARAM_OBJECT_DELIVERY_TIMEOUT = 0x02n
+const PARAM_AUTHORIZATION_TOKEN = 0x03n
+const PARAM_RENDEZVOUS_TIMEOUT = 0x04n
+const PARAM_SUBGROUP_DELIVERY_TIMEOUT = 0x06n
+const PARAM_EXPIRES = 0x08n
+const PARAM_LARGEST_OBJECT = 0x09n
+const PARAM_FILL_TIMEOUT = 0x0an
+const PARAM_FORWARD = 0x10n
+const PARAM_SUBSCRIBER_PRIORITY = 0x20n
+const PARAM_SUBSCRIPTION_FILTER = 0x21n
+const PARAM_GROUP_ORDER = 0x22n
+const PARAM_NEW_GROUP_REQUEST = 0x32n
+const PARAM_TRACK_NAMESPACE_PREFIX = 0x34n
+
+function encodeParams(params: Draft18Params, writer: BufferWriter): void {
+  // Collect and sort params by type
+  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
+
+  if (params.object_delivery_timeout !== undefined) {
+    entries.push({
+      type: PARAM_OBJECT_DELIVERY_TIMEOUT,
+      encode: (w) => w.writeVarInt(params.object_delivery_timeout!),
+    })
+  }
+  if (params.authorization_token !== undefined) {
+    entries.push({
+      type: PARAM_AUTHORIZATION_TOKEN,
+      encode: (w) => {
+        const tmpW = new BufferWriter(64)
+        encodeAuthorizationToken(params.authorization_token!, tmpW)
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
+  }
+  if (params.rendezvous_timeout !== undefined) {
+    entries.push({
+      type: PARAM_RENDEZVOUS_TIMEOUT,
+      encode: (w) => w.writeVarInt(params.rendezvous_timeout!),
+    })
+  }
+  if (params.subgroup_delivery_timeout !== undefined) {
+    entries.push({
+      type: PARAM_SUBGROUP_DELIVERY_TIMEOUT,
+      encode: (w) => w.writeVarInt(params.subgroup_delivery_timeout!),
+    })
+  }
+  if (params.expires !== undefined) {
+    entries.push({
+      type: PARAM_EXPIRES,
+      encode: (w) => w.writeVarInt(params.expires!),
+    })
+  }
+  if (params.largest_object !== undefined) {
+    entries.push({
+      type: PARAM_LARGEST_OBJECT,
+      encode: (w) => {
+        const tmpW = new BufferWriter(16)
+        tmpW.writeVarInt(params.largest_object!.group)
+        tmpW.writeVarInt(params.largest_object!.object)
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
+  }
+  if (params.fill_timeout !== undefined) {
+    entries.push({
+      type: PARAM_FILL_TIMEOUT,
+      encode: (w) => w.writeVarInt(params.fill_timeout!),
+    })
+  }
+  if (params.forward !== undefined) {
+    entries.push({
+      type: PARAM_FORWARD,
+      encode: (w) => w.writeUint8(Number(params.forward!)),
+    })
+  }
+  if (params.subscriber_priority !== undefined) {
+    entries.push({
+      type: PARAM_SUBSCRIBER_PRIORITY,
+      encode: (w) => w.writeUint8(Number(params.subscriber_priority!)),
+    })
+  }
+  if (params.subscription_filter !== undefined) {
+    entries.push({
+      type: PARAM_SUBSCRIPTION_FILTER,
+      encode: (w) => {
+        const f = params.subscription_filter!
+        const tmpW = new BufferWriter(32)
+        tmpW.writeVarInt(f.filter_type)
+        if (f.filter_type === 3n || f.filter_type === 4n) {
+          tmpW.writeVarInt(f.start_group!)
+          tmpW.writeVarInt(f.start_object!)
+        }
+        if (f.filter_type === 4n) {
+          tmpW.writeVarInt(f.end_group!)
+        }
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
+  }
+  if (params.group_order !== undefined) {
+    entries.push({
+      type: PARAM_GROUP_ORDER,
+      encode: (w) => w.writeUint8(Number(params.group_order!)),
+    })
+  }
+  if (params.new_group_request !== undefined) {
+    entries.push({
+      type: PARAM_NEW_GROUP_REQUEST,
+      encode: (w) => w.writeVarInt(params.new_group_request!),
+    })
+  }
+  if (params.track_namespace_prefix !== undefined) {
+    entries.push({
+      type: PARAM_TRACK_NAMESPACE_PREFIX,
+      encode: (w) => {
+        const tmpW = new BufferWriter(32)
+        encodeNamespaceTuple(params.track_namespace_prefix!, tmpW)
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
+  }
+
+  // Unknown params
+  if (params.unknown) {
+    for (const u of params.unknown) {
+      const id = BigInt(u.id)
+      entries.push({
+        type: id,
+        encode: (w) => {
+          const raw = hexToBytes(u.raw_hex)
+          // For unknown params, we store raw bytes and re-emit them
+          w.writeBytes(raw)
+        },
+      })
+    }
+  }
+
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
+
+  writer.writeVarInt(BigInt(entries.length))
+  let prevType = 0n
+  for (const entry of entries) {
+    writer.writeVarInt(entry.type - prevType)
+    entry.encode(writer)
+    prevType = entry.type
+  }
+}
+
+function decodeParams(reader: BufferReader): Draft18Params {
+  const count = Number(reader.readVarInt())
+  const result: Draft18Params = {}
+  const unknown: UnknownParam[] = []
+  let prevType = 0n
+
+  for (let i = 0; i < count; i++) {
+    const delta = reader.readVarInt()
+    const paramType = prevType + delta
+    prevType = paramType
+
+    if (paramType === PARAM_OBJECT_DELIVERY_TIMEOUT) {
+      result.object_delivery_timeout = reader.readVarInt()
+    } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
+      const length = Number(reader.readVarInt())
+      const bytes = reader.readBytes(length)
+      result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
+    } else if (paramType === PARAM_RENDEZVOUS_TIMEOUT) {
+      result.rendezvous_timeout = reader.readVarInt()
+    } else if (paramType === PARAM_SUBGROUP_DELIVERY_TIMEOUT) {
+      result.subgroup_delivery_timeout = reader.readVarInt()
+    } else if (paramType === PARAM_EXPIRES) {
+      result.expires = reader.readVarInt()
+    } else if (paramType === PARAM_LARGEST_OBJECT) {
+      // Length-prefixed Location: 2 varints (Group, Object)
+      const length = Number(reader.readVarInt())
+      const startOff = reader.offset
+      const group = reader.readVarInt()
+      const object = reader.readVarInt()
+      const consumed = reader.offset - startOff
+      if (consumed < length) reader.readBytes(length - consumed)
+      result.largest_object = { group, object }
+    } else if (paramType === PARAM_FILL_TIMEOUT) {
+      result.fill_timeout = reader.readVarInt()
+    } else if (paramType === PARAM_FORWARD) {
+      // uint8 in draft-18 (was varint in draft-17)
+      result.forward = BigInt(reader.readUint8())
+    } else if (paramType === PARAM_SUBSCRIBER_PRIORITY) {
+      // uint8: single raw byte
+      result.subscriber_priority = BigInt(reader.readUint8())
+    } else if (paramType === PARAM_SUBSCRIPTION_FILTER) {
+      // Length-prefixed
+      const length = Number(reader.readVarInt())
+      const startOff = reader.offset
+      const filter_type = reader.readVarInt()
+      const filter: {
+        filter_type: bigint
+        start_group?: bigint
+        start_object?: bigint
+        end_group?: bigint
+      } = { filter_type }
+      if (filter_type === 3n || filter_type === 4n) {
+        filter.start_group = reader.readVarInt()
+        filter.start_object = reader.readVarInt()
+      }
+      if (filter_type === 4n) {
+        filter.end_group = reader.readVarInt()
+      }
+      const consumed = reader.offset - startOff
+      if (consumed < length) reader.readBytes(length - consumed)
+      result.subscription_filter = filter
+    } else if (paramType === PARAM_GROUP_ORDER) {
+      // uint8: single raw byte
+      result.group_order = BigInt(reader.readUint8())
+    } else if (paramType === PARAM_NEW_GROUP_REQUEST) {
+      result.new_group_request = reader.readVarInt()
+    } else if (paramType === PARAM_TRACK_NAMESPACE_PREFIX) {
+      const length = Number(reader.readVarInt())
+      const bytes = reader.readBytes(length)
+      result.track_namespace_prefix = decodeNamespaceTuple(new BufferReader(bytes))
+    } else {
+      // Unknown parameter — heuristic encoding decode
+      if (paramType % 2n === 0n) {
+        const value = reader.readVarInt()
+        const tmpWriter = new BufferWriter(16)
+        tmpWriter.writeVarInt(value)
+        const raw = tmpWriter.finish()
+        unknown.push({
+          id: `0x${paramType.toString(16)}`,
+          length: raw.byteLength,
+          raw_hex: bytesToHex(raw),
+        })
+      } else {
+        const length = Number(reader.readVarInt())
+        const bytes = reader.readBytes(length)
+        unknown.push({
+          id: `0x${paramType.toString(16)}`,
+          length,
+          raw_hex: bytesToHex(bytes),
+        })
+      }
+    }
+  }
+
+  if (unknown.length > 0) result.unknown = unknown
+  return result
+}
+
+// ─── Track Properties Encoding/Decoding (KVP, no count prefix) ──────────────
+
+const TPROP_OBJECT_DELIVERY_TIMEOUT = 0x02n
+const TPROP_MAX_CACHE_DURATION = 0x04n
+const TPROP_SUBGROUP_DELIVERY_TIMEOUT = 0x06n
+const TPROP_IMMUTABLE_PROPERTIES = 0x0bn
+const TPROP_DEFAULT_PUBLISHER_PRIORITY = 0x0en
+const TPROP_DEFAULT_PUBLISHER_GROUP_ORDER = 0x22n
+const TPROP_DYNAMIC_GROUPS = 0x30n
+
+function encodeTrackProperties(props: Draft18TrackProperties, writer: BufferWriter): void {
+  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
+
+  if (props.object_delivery_timeout !== undefined) {
+    entries.push({
+      type: TPROP_OBJECT_DELIVERY_TIMEOUT,
+      encode: (w) => w.writeVarInt(props.object_delivery_timeout!),
+    })
+  }
+  if (props.max_cache_duration !== undefined) {
+    entries.push({
+      type: TPROP_MAX_CACHE_DURATION,
+      encode: (w) => w.writeVarInt(props.max_cache_duration!),
+    })
+  }
+  if (props.subgroup_delivery_timeout !== undefined) {
+    entries.push({
+      type: TPROP_SUBGROUP_DELIVERY_TIMEOUT,
+      encode: (w) => w.writeVarInt(props.subgroup_delivery_timeout!),
+    })
+  }
+  if (props.immutable_properties !== undefined) {
+    entries.push({
+      type: TPROP_IMMUTABLE_PROPERTIES,
+      encode: (w) => {
+        const raw = props.immutable_properties!
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      },
+    })
+  }
+  if (props.default_publisher_priority !== undefined) {
+    entries.push({
+      type: TPROP_DEFAULT_PUBLISHER_PRIORITY,
+      encode: (w) => w.writeVarInt(props.default_publisher_priority!),
+    })
+  }
+  if (props.default_publisher_group_order !== undefined) {
+    entries.push({
+      type: TPROP_DEFAULT_PUBLISHER_GROUP_ORDER,
+      encode: (w) => w.writeVarInt(props.default_publisher_group_order!),
+    })
+  }
+  if (props.dynamic_groups !== undefined) {
+    entries.push({
+      type: TPROP_DYNAMIC_GROUPS,
+      encode: (w) => w.writeVarInt(props.dynamic_groups!),
+    })
+  }
+
+  if (props.unknown) {
+    for (const u of props.unknown) {
+      const id = BigInt(u.id)
+      entries.push({
+        type: id,
+        encode: (w) => {
+          if (id % 2n === 0n) {
+            const raw = hexToBytes(u.raw_hex)
+            const tmpReader = new BufferReader(raw)
+            w.writeVarInt(tmpReader.readVarInt())
+          } else {
+            const raw = hexToBytes(u.raw_hex)
+            w.writeVarInt(BigInt(raw.byteLength))
+            w.writeBytes(raw)
+          }
+        },
+      })
+    }
+  }
+
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
+
+  let prevType = 0n
+  for (const entry of entries) {
+    writer.writeVarInt(entry.type - prevType)
+    entry.encode(writer)
+    prevType = entry.type
+  }
+}
+
+function decodeTrackProperties(reader: BufferReader, payloadEnd: number): Draft18TrackProperties {
+  const result: Draft18TrackProperties = {}
+  const unknown: UnknownParam[] = []
+  let prevType = 0n
+
+  while (reader.offset < payloadEnd) {
+    const delta = reader.readVarInt()
+    const propType = prevType + delta
+    prevType = propType
+
+    if (propType % 2n === 0n) {
+      // Even: single varint value
+      const value = reader.readVarInt()
+      if (propType === TPROP_OBJECT_DELIVERY_TIMEOUT) {
+        result.object_delivery_timeout = value
+      } else if (propType === TPROP_MAX_CACHE_DURATION) {
+        result.max_cache_duration = value
+      } else if (propType === TPROP_SUBGROUP_DELIVERY_TIMEOUT) {
+        result.subgroup_delivery_timeout = value
+      } else if (propType === TPROP_DEFAULT_PUBLISHER_PRIORITY) {
+        result.default_publisher_priority = value
+      } else if (propType === TPROP_DEFAULT_PUBLISHER_GROUP_ORDER) {
+        result.default_publisher_group_order = value
+      } else if (propType === TPROP_DYNAMIC_GROUPS) {
+        result.dynamic_groups = value
+      } else {
+        const tmpWriter = new BufferWriter(16)
+        tmpWriter.writeVarInt(value)
+        const raw = tmpWriter.finish()
+        unknown.push({
+          id: `0x${propType.toString(16)}`,
+          length: raw.byteLength,
+          raw_hex: bytesToHex(raw),
+        })
+      }
+    } else {
+      // Odd: length-prefixed bytes
+      const length = Number(reader.readVarInt())
+      const bytes = reader.readBytes(length)
+      if (propType === TPROP_IMMUTABLE_PROPERTIES) {
+        result.immutable_properties = bytes
+      } else {
+        unknown.push({
+          id: `0x${propType.toString(16)}`,
+          length,
+          raw_hex: bytesToHex(bytes),
+        })
+      }
+    }
+  }
+
+  if (unknown.length > 0) result.unknown = unknown
+  return result
+}
+
+// ─── Redirect Structure Encoding/Decoding ───────────────────────────────────
+
+function encodeRedirect(redirect: Redirect, w: BufferWriter): void {
+  const uri = textEncoder.encode(redirect.connect_uri)
+  w.writeVarInt(BigInt(uri.byteLength))
+  w.writeBytes(uri)
+  w.writeTuple(redirect.track_namespace)
+  w.writeString(redirect.track_name)
+}
+
+function decodeRedirect(r: BufferReader): Redirect {
+  const uriLen = Number(r.readVarInt())
+  const uriBytes = r.readBytes(uriLen)
+  const connect_uri = textDecoder.decode(uriBytes)
+  const track_namespace = r.readTuple()
+  const track_name = r.readString()
+  return { connect_uri, track_namespace, track_name }
+}
+
+// ─── Payload Encoders ──────────────────────────────────────────────────────────
+
+function encodeSetupPayload(msg: Draft18Message & { type: 'setup' }, w: BufferWriter): void {
+  encodeSetupOptions(msg.options, w)
+}
+
+function encodeSubscribePayload(
+  msg: Draft18Message & { type: 'subscribe' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.request_id)
+  w.writeTuple(msg.track_namespace)
+  w.writeString(msg.track_name)
+  encodeParams(msg.parameters, w)
+}
+
+function encodeSubscribeOkPayload(
+  msg: Draft18Message & { type: 'subscribe_ok' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.track_alias)
+  encodeParams(msg.parameters, w)
+  encodeTrackProperties(msg.track_properties, w)
+}
+
+function encodeRequestUpdatePayload(
+  msg: Draft18Message & { type: 'request_update' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.request_id)
+  encodeParams(msg.parameters, w)
+}
+
+function encodePublishPayload(msg: Draft18Message & { type: 'publish' }, w: BufferWriter): void {
+  w.writeVarInt(msg.request_id)
+  w.writeTuple(msg.track_namespace)
+  w.writeString(msg.track_name)
+  w.writeVarInt(msg.track_alias)
+  encodeParams(msg.parameters, w)
+  encodeTrackProperties(msg.track_properties, w)
+}
+
+function encodePublishDonePayload(
+  msg: Draft18Message & { type: 'publish_done' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.status_code)
+  w.writeVarInt(msg.stream_count)
+  w.writeString(msg.reason_phrase)
+}
+
+function encodePublishNamespacePayload(
+  msg: Draft18Message & { type: 'publish_namespace' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.request_id)
+  w.writeTuple(msg.track_namespace)
+  encodeParams(msg.parameters, w)
+}
+
+function encodeNamespacePayload(
+  msg: Draft18Message & { type: 'namespace' },
+  w: BufferWriter,
+): void {
+  w.writeTuple(msg.namespace_suffix)
+}
+
+function encodeNamespaceDonePayload(
+  msg: Draft18Message & { type: 'namespace_done' },
+  w: BufferWriter,
+): void {
+  w.writeTuple(msg.namespace_suffix)
+}
+
+function encodeSubscribeNamespacePayload(
+  msg: Draft18Message & { type: 'subscribe_namespace' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.request_id)
+  w.writeTuple(msg.namespace_prefix)
+  encodeParams(msg.parameters, w)
+}
+
+function encodeSubscribeTracksPayload(
+  msg: Draft18Message & { type: 'subscribe_tracks' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.request_id)
+  w.writeTuple(msg.namespace_prefix)
+  encodeParams(msg.parameters, w)
+}
+
+function encodePublishBlockedPayload(
+  msg: Draft18Message & { type: 'publish_blocked' },
+  w: BufferWriter,
+): void {
+  w.writeTuple(msg.namespace_suffix)
+  w.writeString(msg.track_name)
+}
+
+function encodeFetchPayload(msg: Draft18Message & { type: 'fetch' }, w: BufferWriter): void {
+  w.writeVarInt(msg.request_id)
+  w.writeVarInt(msg.fetch_type)
+  const ft = Number(msg.fetch_type)
+  if (ft === 1 && msg.standalone) {
+    w.writeTuple(msg.standalone.track_namespace)
+    w.writeString(msg.standalone.track_name)
+    w.writeVarInt(msg.standalone.start_group)
+    w.writeVarInt(msg.standalone.start_object)
+    w.writeVarInt(msg.standalone.end_group)
+    w.writeVarInt(msg.standalone.end_object)
+  } else if ((ft === 2 || ft === 3) && msg.joining) {
+    w.writeVarInt(msg.joining.joining_request_id)
+    w.writeVarInt(msg.joining.joining_start)
+  }
+  encodeParams(msg.parameters, w)
+}
+
+function encodeFetchOkPayload(msg: Draft18Message & { type: 'fetch_ok' }, w: BufferWriter): void {
+  w.writeUint8(msg.end_of_track)
+  w.writeVarInt(msg.end_group)
+  w.writeVarInt(msg.end_object)
+  encodeParams(msg.parameters, w)
+  encodeTrackProperties(msg.track_properties, w)
+}
+
+function encodeTrackStatusPayload(
+  msg: Draft18Message & { type: 'track_status' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.request_id)
+  w.writeTuple(msg.track_namespace)
+  w.writeString(msg.track_name)
+  encodeParams(msg.parameters, w)
+}
+
+function encodeRequestOkPayload(
+  msg: Draft18Message & { type: 'request_ok' },
+  w: BufferWriter,
+): void {
+  encodeParams(msg.parameters, w)
+  encodeTrackProperties(msg.track_properties, w)
+}
+
+function encodeRequestErrorPayload(
+  msg: Draft18Message & { type: 'request_error' },
+  w: BufferWriter,
+): void {
+  w.writeVarInt(msg.error_code)
+  w.writeVarInt(msg.retry_interval)
+  w.writeString(msg.reason_phrase)
+  if (msg.error_code === REQUEST_ERROR_REDIRECT && msg.redirect) {
+    encodeRedirect(msg.redirect, w)
+  }
+}
+
+function encodeGoAwayPayload(msg: Draft18Message & { type: 'goaway' }, w: BufferWriter): void {
+  w.writeString(msg.new_session_uri)
+  w.writeVarInt(msg.timeout)
+  if (msg.request_id !== undefined) {
+    w.writeVarInt(msg.request_id)
+  }
+}
+
+// ─── Payload Decoders ──────────────────────────────────────────────────────────
+
+function decodeSetupPayload(r: BufferReader, payloadEnd: number): Draft18Message {
+  const options = decodeSetupOptions(r, payloadEnd)
+  return { type: 'setup', options }
+}
+
+function decodeSubscribePayload(r: BufferReader): Draft18Message {
+  const request_id = r.readVarInt()
+  const track_namespace = r.readTuple()
+  const track_name = r.readString()
+  const parameters = decodeParams(r)
+  return {
+    type: 'subscribe',
+    request_id,
+    track_namespace,
+    track_name,
+    parameters,
+  }
+}
+
+function decodeSubscribeOkPayload(r: BufferReader, payloadEnd: number): Draft18Message {
+  const track_alias = r.readVarInt()
+  const parameters = decodeParams(r)
+  const track_properties = decodeTrackProperties(r, payloadEnd)
+  return { type: 'subscribe_ok', track_alias, parameters, track_properties }
+}
+
+function decodeRequestUpdatePayload(r: BufferReader): Draft18Message {
+  const request_id = r.readVarInt()
+  const parameters = decodeParams(r)
+  return {
+    type: 'request_update',
+    request_id,
+    parameters,
+  }
+}
+
+function decodePublishPayload(r: BufferReader, payloadEnd: number): Draft18Message {
+  const request_id = r.readVarInt()
+  const track_namespace = r.readTuple()
+  const track_name = r.readString()
+  const track_alias = r.readVarInt()
+  const parameters = decodeParams(r)
+  const track_properties = decodeTrackProperties(r, payloadEnd)
+  return {
+    type: 'publish',
+    request_id,
+    track_namespace,
+    track_name,
+    track_alias,
+    parameters,
+    track_properties,
+  }
+}
+
+function decodePublishDonePayload(r: BufferReader): Draft18Message {
+  const status_code = r.readVarInt()
+  const stream_count = r.readVarInt()
+  const reason_phrase = r.readString()
+  return { type: 'publish_done', status_code, stream_count, reason_phrase }
+}
+
+function decodePublishNamespacePayload(r: BufferReader): Draft18Message {
+  const request_id = r.readVarInt()
+  const track_namespace = r.readTuple()
+  const parameters = decodeParams(r)
+  return {
+    type: 'publish_namespace',
+    request_id,
+    track_namespace,
+    parameters,
+  }
+}
+
+function decodeNamespacePayload(r: BufferReader): Draft18Message {
+  const namespace_suffix = r.readTuple()
+  return { type: 'namespace', namespace_suffix }
+}
+
+function decodeNamespaceDonePayload(r: BufferReader): Draft18Message {
+  const namespace_suffix = r.readTuple()
+  return { type: 'namespace_done', namespace_suffix }
+}
+
+function decodeSubscribeNamespacePayload(r: BufferReader): Draft18Message {
+  const request_id = r.readVarInt()
+  const namespace_prefix = r.readTuple()
+  const parameters = decodeParams(r)
+  return {
+    type: 'subscribe_namespace',
+    request_id,
+    namespace_prefix,
+    parameters,
+  }
+}
+
+function decodeSubscribeTracksPayload(r: BufferReader): Draft18Message {
+  const request_id = r.readVarInt()
+  const namespace_prefix = r.readTuple()
+  const parameters = decodeParams(r)
+  return {
+    type: 'subscribe_tracks',
+    request_id,
+    namespace_prefix,
+    parameters,
+  }
+}
+
+function decodePublishBlockedPayload(r: BufferReader): Draft18Message {
+  const namespace_suffix = r.readTuple()
+  const track_name = r.readString()
+  return { type: 'publish_blocked', namespace_suffix, track_name }
+}
+
+function decodeFetchPayload(r: BufferReader): Draft18Message {
+  const request_id = r.readVarInt()
+  const fetch_type = r.readVarInt()
+  const ft = Number(fetch_type)
+
+  if (ft < 1 || ft > 3) {
+    throw new DecodeError('CONSTRAINT_VIOLATION', `Invalid fetch_type: ${ft}`, r.offset)
+  }
+
+  let standalone: StandaloneFetch | undefined
+  let joining: JoiningFetch | undefined
+
+  if (ft === 1) {
+    const track_namespace = r.readTuple()
+    const track_name = r.readString()
+    const start_group = r.readVarInt()
+    const start_object = r.readVarInt()
+    const end_group = r.readVarInt()
+    const end_object = r.readVarInt()
+    standalone = {
+      track_namespace,
+      track_name,
+      start_group,
+      start_object,
+      end_group,
+      end_object,
+    }
+  } else {
+    const joining_request_id = r.readVarInt()
+    const joining_start = r.readVarInt()
+    joining = { joining_request_id, joining_start }
+  }
+
+  const parameters = decodeParams(r)
+
+  return {
+    type: 'fetch',
+    request_id,
+    fetch_type,
+    standalone,
+    joining,
+    parameters,
+  } as Draft18Fetch
+}
+
+function decodeFetchOkPayload(r: BufferReader, payloadEnd: number): Draft18Message {
+  const end_of_track = r.readUint8()
+  const end_group = r.readVarInt()
+  const end_object = r.readVarInt()
+  const parameters = decodeParams(r)
+  const track_properties = decodeTrackProperties(r, payloadEnd)
+  return {
+    type: 'fetch_ok',
+    end_of_track,
+    end_group,
+    end_object,
+    parameters,
+    track_properties,
+  }
+}
+
+function decodeTrackStatusPayload(r: BufferReader): Draft18Message {
+  const request_id = r.readVarInt()
+  const track_namespace = r.readTuple()
+  const track_name = r.readString()
+  const parameters = decodeParams(r)
+  return {
+    type: 'track_status',
+    request_id,
+    track_namespace,
+    track_name,
+    parameters,
+  }
+}
+
+function decodeRequestOkPayload(r: BufferReader, payloadEnd: number): Draft18Message {
+  const parameters = decodeParams(r)
+  const track_properties = decodeTrackProperties(r, payloadEnd)
+  return { type: 'request_ok', parameters, track_properties }
+}
+
+function decodeRequestErrorPayload(r: BufferReader, payloadEnd: number): Draft18Message {
+  const error_code = r.readVarInt()
+  const retry_interval = r.readVarInt()
+  const reason_phrase = r.readString()
+  let redirect: Redirect | undefined
+  if (error_code === REQUEST_ERROR_REDIRECT && r.offset < payloadEnd) {
+    redirect = decodeRedirect(r)
+  }
+  if (redirect !== undefined) {
+    return { type: 'request_error', error_code, retry_interval, reason_phrase, redirect }
+  }
+  return { type: 'request_error', error_code, retry_interval, reason_phrase }
+}
+
+function decodeGoAwayPayload(r: BufferReader, payloadEnd: number): Draft18Message {
+  const new_session_uri = r.readString()
+  const timeout = r.readVarInt()
+  let request_id: bigint | undefined
+  if (r.offset < payloadEnd) {
+    request_id = r.readVarInt()
+  }
+  if (request_id !== undefined) {
+    return { type: 'goaway', new_session_uri, timeout, request_id }
+  }
+  return { type: 'goaway', new_session_uri, timeout }
+}
+
+// ─── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Encode a draft-18 control message with type(varint) + length(uint16 BE) + payload.
+ */
+export function encodeMessage(message: Draft18Message): Uint8Array {
+  const typeId = MESSAGE_ID_MAP.get(message.type)
+  if (typeId === undefined) {
+    throw new Error(`Unknown message type: ${message.type}`)
+  }
+
+  const payloadWriter = new BufferWriter()
+  encodePayload(message, payloadWriter)
+  const payload = payloadWriter.finishView()
+
+  if (payload.byteLength > 0xffff) {
+    throw new Error(`Payload too large for 16-bit length: ${payload.byteLength}`)
+  }
+
+  const writer = new BufferWriter(payload.byteLength + 16)
+  writer.writeVarInt(typeId)
+  writer.writeUint8((payload.byteLength >> 8) & 0xff)
+  writer.writeUint8(payload.byteLength & 0xff)
+  writer.writeBytes(payload)
+
+  return writer.finish()
+}
+
+function encodePayload(msg: Draft18Message, w: BufferWriter): void {
+  switch (msg.type) {
+    case 'setup':
+      return encodeSetupPayload(msg, w)
+    case 'subscribe':
+      return encodeSubscribePayload(msg, w)
+    case 'subscribe_ok':
+      return encodeSubscribeOkPayload(msg, w)
+    case 'request_update':
+      return encodeRequestUpdatePayload(msg, w)
+    case 'publish':
+      return encodePublishPayload(msg, w)
+    case 'publish_done':
+      return encodePublishDonePayload(msg, w)
+    case 'publish_namespace':
+      return encodePublishNamespacePayload(msg, w)
+    case 'namespace':
+      return encodeNamespacePayload(msg, w)
+    case 'namespace_done':
+      return encodeNamespaceDonePayload(msg, w)
+    case 'subscribe_namespace':
+      return encodeSubscribeNamespacePayload(msg, w)
+    case 'subscribe_tracks':
+      return encodeSubscribeTracksPayload(msg, w)
+    case 'publish_blocked':
+      return encodePublishBlockedPayload(msg, w)
+    case 'fetch':
+      return encodeFetchPayload(msg, w)
+    case 'fetch_ok':
+      return encodeFetchOkPayload(msg, w)
+    case 'track_status':
+      return encodeTrackStatusPayload(msg, w)
+    case 'request_ok':
+      return encodeRequestOkPayload(msg, w)
+    case 'request_error':
+      return encodeRequestErrorPayload(msg, w)
+    case 'goaway':
+      return encodeGoAwayPayload(msg, w)
+    default: {
+      const _exhaustive: never = msg
+      throw new Error(`Unhandled message type: ${(_exhaustive as Draft18Message).type}`)
+    }
+  }
+}
+
+/**
+ * Decode a draft-18 control message from bytes (type + uint16 length + payload).
+ */
+export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft18Message> {
+  try {
+    const reader = new BufferReader(bytes)
+    const typeId = reader.readVarInt()
+
+    const lenHi = reader.readUint8()
+    const lenLo = reader.readUint8()
+    const payloadLength = (lenHi << 8) | lenLo
+
+    const payloadBytes = reader.readBytes(payloadLength)
+    const payloadReader = new BufferReader(payloadBytes)
+
+    let message: Draft18Message
+
+    if (typeId === MSG_SETUP) {
+      message = decodeSetupPayload(payloadReader, payloadLength)
+    } else if (typeId === MSG_SUBSCRIBE) {
+      message = decodeSubscribePayload(payloadReader)
+    } else if (typeId === MSG_SUBSCRIBE_OK) {
+      message = decodeSubscribeOkPayload(payloadReader, payloadLength)
+    } else if (typeId === MSG_REQUEST_UPDATE) {
+      message = decodeRequestUpdatePayload(payloadReader)
+    } else if (typeId === MSG_PUBLISH) {
+      message = decodePublishPayload(payloadReader, payloadLength)
+    } else if (typeId === MSG_PUBLISH_DONE) {
+      message = decodePublishDonePayload(payloadReader)
+    } else if (typeId === MSG_PUBLISH_NAMESPACE) {
+      message = decodePublishNamespacePayload(payloadReader)
+    } else if (typeId === MSG_NAMESPACE) {
+      message = decodeNamespacePayload(payloadReader)
+    } else if (typeId === MSG_NAMESPACE_DONE) {
+      message = decodeNamespaceDonePayload(payloadReader)
+    } else if (typeId === MSG_SUBSCRIBE_NAMESPACE) {
+      message = decodeSubscribeNamespacePayload(payloadReader)
+    } else if (typeId === MSG_SUBSCRIBE_TRACKS) {
+      message = decodeSubscribeTracksPayload(payloadReader)
+    } else if (typeId === MSG_PUBLISH_BLOCKED) {
+      message = decodePublishBlockedPayload(payloadReader)
+    } else if (typeId === MSG_FETCH) {
+      message = decodeFetchPayload(payloadReader)
+    } else if (typeId === MSG_FETCH_OK) {
+      message = decodeFetchOkPayload(payloadReader, payloadLength)
+    } else if (typeId === MSG_TRACK_STATUS) {
+      message = decodeTrackStatusPayload(payloadReader)
+    } else if (typeId === MSG_REQUEST_OK) {
+      message = decodeRequestOkPayload(payloadReader, payloadLength)
+    } else if (typeId === MSG_REQUEST_ERROR) {
+      message = decodeRequestErrorPayload(payloadReader, payloadLength)
+    } else if (typeId === MSG_GOAWAY) {
+      message = decodeGoAwayPayload(payloadReader, payloadLength)
+    } else {
+      return {
+        ok: false,
+        error: new DecodeError(
+          'UNKNOWN_MESSAGE_TYPE',
+          `Unknown message type ID: 0x${typeId.toString(16)}`,
+          0,
+        ),
+      }
+    }
+
+    return { ok: true, value: message, bytesRead: reader.offset }
+  } catch (e) {
+    if (e instanceof DecodeError) {
+      return { ok: false, error: e }
+    }
+    throw e
+  }
+}
+
+// ─── Data Stream Encoding/Decoding (re-exported from data-streams.ts) ───────
+
+import {
+  createDataStreamDecoder,
+  createFetchStreamDecoder,
+  createSubgroupStreamDecoder,
+  decodeDatagram,
+  decodeDataStream,
+  decodeFetchStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  encodeSubgroupStream,
+} from './data-streams.js'
+
+export {
+  createDataStreamDecoder,
+  createFetchStreamDecoder,
+  createSubgroupStreamDecoder,
+  decodeDatagram,
+  decodeDataStream,
+  decodeFetchStream,
+  decodeSubgroupStream,
+  encodeDatagram,
+  encodeFetchStream,
+  encodeSubgroupStream,
+}
+
+// ─── Stream Decoders ───────────────────────────────────────────────────────────
+
+export function createStreamDecoder(): TransformStream<Uint8Array, Draft18Message> {
+  let buffer = new Uint8Array(0)
+  let offset = 0
+
+  return new TransformStream<Uint8Array, Draft18Message>({
+    transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset)
+        offset = 0
+      }
+      const newBuffer = new Uint8Array(buffer.length + chunk.length)
+      newBuffer.set(buffer, 0)
+      newBuffer.set(chunk, buffer.length)
+      buffer = newBuffer
+
+      while (offset < buffer.length) {
+        const result = decodeMessage(buffer.subarray(offset))
+        if (!result.ok) {
+          if (result.error.code === 'UNEXPECTED_END') {
+            break
+          }
+          controller.error(result.error)
+          return
+        }
+        controller.enqueue(result.value)
+        offset += result.bytesRead
+      }
+    },
+
+    flush(controller) {
+      if (offset < buffer.length) {
+        controller.error(
+          new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete message data', 0),
+        )
+      }
+    },
+  })
+}
+
+// ─── Codec Factory ─────────────────────────────────────────────────────────────
+
+export interface Draft18Codec extends BaseCodec<Draft18Message> {
+  readonly draft: '18'
+  encodeSubgroupStream(stream: SubgroupStream): Uint8Array
+  encodeDatagram(dg: DatagramObject): Uint8Array
+  encodeFetchStream(stream: FetchStream): Uint8Array
+  decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>
+  decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject>
+  decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>
+  decodeDataStream(
+    streamType: 'subgroup' | 'datagram' | 'fetch',
+    bytes: Uint8Array,
+  ): DecodeResult<Draft18DataStream>
+  createStreamDecoder(): TransformStream<Uint8Array, Draft18Message>
+  createSubgroupStreamDecoder(): TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>
+  createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>
+  createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent>
+}
+
+export function createDraft18Codec(): Draft18Codec {
+  return {
+    draft: '18',
+    encodeMessage,
+    decodeMessage,
+    encodeSubgroupStream,
+    encodeDatagram,
+    encodeFetchStream,
+    decodeSubgroupStream,
+    decodeDatagram,
+    decodeFetchStream,
+    decodeDataStream,
+    createStreamDecoder,
+    createSubgroupStreamDecoder,
+    createFetchStreamDecoder,
+    createDataStreamDecoder,
+  }
+}

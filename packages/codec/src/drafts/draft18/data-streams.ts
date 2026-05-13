@@ -1,0 +1,996 @@
+import { BufferReader } from '../../core/buffer-reader.js'
+import { BufferWriter } from '../../core/buffer-writer.js'
+import type { DecodeResult } from '../../core/types.js'
+import { DecodeError } from '../../core/types.js'
+import type {
+  DatagramObject,
+  DataStreamEvent,
+  Draft18DataStream,
+  FetchObjectPayload,
+  FetchStream,
+  FetchStreamHeader,
+  ObjectPayload,
+  SubgroupStream,
+  SubgroupStreamHeader,
+} from './types.js'
+
+// ─── Data Stream Encoding/Decoding ─────────────────────────────────────────
+
+const FETCH_STREAM_TYPE = 0x05n
+
+// Object property type IDs
+const OBJPROP_PRIOR_GROUP_ID_GAP = 0x3cn
+const OBJPROP_PRIOR_OBJECT_ID_GAP = 0x3en
+
+const KNOWN_OBJ_PROPS: ReadonlyMap<bigint, string> = new Map([
+  [OBJPROP_PRIOR_OBJECT_ID_GAP, 'prior_object_id_gap'],
+  [OBJPROP_PRIOR_GROUP_ID_GAP, 'prior_group_id_gap'],
+])
+
+function decodeObjectProperties(r: BufferReader, propsLength: number): Record<string, bigint> {
+  const endOff = r.offset + propsLength
+  const props: Record<string, bigint> = {}
+  let prevType = 0n
+
+  while (r.offset < endOff) {
+    const delta = r.readVarInt()
+    const propType = prevType + delta
+    prevType = propType
+
+    if (propType % 2n === 0n) {
+      const value = r.readVarInt()
+      const name = KNOWN_OBJ_PROPS.get(propType) ?? `0x${propType.toString(16)}`
+      props[name] = value
+    } else {
+      const length = Number(r.readVarInt())
+      // Skip unknown odd properties
+      r.readBytes(length)
+    }
+  }
+  return props
+}
+
+function encodeObjectProperties(props: Record<string, bigint>, w: BufferWriter): void {
+  const reverseMap = new Map<string, bigint>()
+  for (const [id, name] of KNOWN_OBJ_PROPS) {
+    reverseMap.set(name, id)
+  }
+
+  const entries: Array<{ type: bigint; value: bigint }> = []
+  for (const [name, value] of Object.entries(props)) {
+    const typeId = reverseMap.get(name)
+    if (typeId !== undefined) {
+      entries.push({ type: typeId, value })
+    }
+  }
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
+
+  let prevType = 0n
+  for (const entry of entries) {
+    w.writeVarInt(entry.type - prevType)
+    w.writeVarInt(entry.value)
+    prevType = entry.type
+  }
+}
+
+// Subgroup stream type validation per draft-18 §11.4.2:
+// Type matches 0b0XX1XXXX (i.e. 0x10..0x1F / 0x30..0x3F / 0x50..0x5F / 0x70..0x7F)
+// with SUBGROUP_ID_MODE (bits 1-2) != 0b11.
+function isValidSubgroupType(streamType: number): boolean {
+  const inRange =
+    (streamType >= 0x10 && streamType <= 0x1f) ||
+    (streamType >= 0x30 && streamType <= 0x3f) ||
+    (streamType >= 0x50 && streamType <= 0x5f) ||
+    (streamType >= 0x70 && streamType <= 0x7f)
+  if (!inRange) return false
+  // SUBGROUP_ID_MODE = 0b11 (mask 0x06 == 0x06) is reserved
+  return (streamType & 0x06) !== 0x06
+}
+
+export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
+  const w = new BufferWriter()
+  const streamType = stream.headerType
+  // SUBGROUP_HEADER stream type is a single byte in draft-18 to allow types up to 0x7D.
+  w.writeUint8(streamType)
+
+  const propertiesPresent = (streamType & 0x01) !== 0
+  const subgroupMode = (streamType & 0x06) >> 1
+  const hasSubgroupField = subgroupMode === 0x02
+  // DEFAULT_PRIORITY bit (0x20): when set, priority is absent
+  const hasPriority = (streamType & 0x20) === 0
+
+  w.writeVarInt(stream.trackAlias)
+  w.writeVarInt(stream.groupId)
+  if (hasSubgroupField) {
+    w.writeVarInt(stream.subgroupId)
+  }
+  if (hasPriority) {
+    w.writeUint8(stream.publisherPriority)
+  }
+  let prevObjectId = -1n
+  for (const obj of stream.objects) {
+    const delta = prevObjectId < 0n ? obj.objectId : obj.objectId - prevObjectId - 1n
+    w.writeVarInt(delta)
+    if (propertiesPresent) {
+      if (obj.objectProperties && Object.keys(obj.objectProperties).length > 0) {
+        const tmpW = new BufferWriter(32)
+        encodeObjectProperties(obj.objectProperties, tmpW)
+        const raw = tmpW.finish()
+        w.writeVarInt(BigInt(raw.byteLength))
+        w.writeBytes(raw)
+      } else {
+        w.writeVarInt(0n)
+      }
+    }
+    w.writeVarInt(BigInt(obj.payloadLength))
+    if (obj.payloadLength === 0) {
+      w.writeVarInt(obj.status ?? 0n)
+    } else {
+      w.writeBytes(obj.payload)
+    }
+    prevObjectId = obj.objectId
+  }
+  return w.finish()
+}
+
+export function encodeDatagram(dg: DatagramObject): Uint8Array {
+  const w = new BufferWriter()
+  const dgType = dg.datagramType
+  // OBJECT_DATAGRAM type is a single byte in draft-18.
+  w.writeUint8(dgType)
+  w.writeVarInt(dg.trackAlias)
+  w.writeVarInt(dg.groupId)
+
+  const objectIdAbsent = (dgType & 0x04) !== 0
+  const isStatus = (dgType & 0x20) !== 0
+  const defaultPriority = (dgType & 0x08) !== 0
+  const propertiesPresent = (dgType & 0x01) !== 0
+
+  if (!objectIdAbsent) {
+    w.writeVarInt(dg.objectId)
+  }
+  if (!defaultPriority) {
+    w.writeUint8(dg.publisherPriority)
+  }
+
+  if (propertiesPresent) {
+    if (dg.objectProperties && Object.keys(dg.objectProperties).length > 0) {
+      const tmpW = new BufferWriter(32)
+      encodeObjectProperties(dg.objectProperties, tmpW)
+      const raw = tmpW.finish()
+      w.writeVarInt(BigInt(raw.byteLength))
+      w.writeBytes(raw)
+    } else {
+      w.writeVarInt(0n)
+    }
+  }
+
+  if (isStatus) {
+    w.writeVarInt(dg.objectStatus ?? 0n)
+  } else {
+    w.writeBytes(dg.payload)
+  }
+  return w.finish()
+}
+
+export function encodeFetchStream(stream: FetchStream): Uint8Array {
+  const w = new BufferWriter()
+  w.writeVarInt(FETCH_STREAM_TYPE)
+  w.writeVarInt(stream.requestId)
+
+  let prevGroupId = 0n
+  let prevObjectId = 0n
+  let first = true
+
+  for (const obj of stream.objects) {
+    w.writeVarInt(BigInt(obj.serializationFlags))
+    const flags = obj.serializationFlags
+    if (flags >= 0x80) {
+      // End of Range (0x8C, 0x10C): Group ID, Object ID, PayloadLength=0
+      w.writeVarInt(obj.groupId)
+      w.writeVarInt(obj.objectId)
+      w.writeVarInt(BigInt(obj.payloadLength))
+    } else if (flags & 0x40) {
+      // DATAGRAM mode: no subgroup_id field
+      if (flags & 0x08) {
+        // First object encodes absolute group; subsequent encode delta (ascending: delta+1)
+        if (first) w.writeVarInt(obj.groupId)
+        else w.writeVarInt(obj.groupId - prevGroupId - 1n)
+      }
+      if (flags & 0x04) w.writeVarInt(obj.objectId)
+      if (flags & 0x10) w.writeUint8(obj.publisherPriority)
+      if (flags & 0x20) {
+        if (obj.objectProperties && Object.keys(obj.objectProperties).length > 0) {
+          const tmpW = new BufferWriter(32)
+          encodeObjectProperties(obj.objectProperties, tmpW)
+          const raw = tmpW.finish()
+          w.writeVarInt(BigInt(raw.byteLength))
+          w.writeBytes(raw)
+        } else {
+          w.writeVarInt(0n)
+        }
+      }
+      w.writeVarInt(BigInt(obj.payloadLength))
+      if (obj.payloadLength > 0) {
+        w.writeBytes(obj.payload)
+      }
+    } else {
+      if (flags & 0x08) {
+        if (first) w.writeVarInt(obj.groupId)
+        else w.writeVarInt(obj.groupId - prevGroupId - 1n)
+      }
+      const subgroupEncoding = flags & 0x03
+      if (subgroupEncoding === 0x03) w.writeVarInt(obj.subgroupId)
+      if (flags & 0x04) w.writeVarInt(obj.objectId)
+      if (flags & 0x10) w.writeUint8(obj.publisherPriority)
+      if (flags & 0x20) {
+        if (obj.objectProperties && Object.keys(obj.objectProperties).length > 0) {
+          const tmpW = new BufferWriter(32)
+          encodeObjectProperties(obj.objectProperties, tmpW)
+          const raw = tmpW.finish()
+          w.writeVarInt(BigInt(raw.byteLength))
+          w.writeBytes(raw)
+        } else {
+          w.writeVarInt(0n)
+        }
+      }
+      w.writeVarInt(BigInt(obj.payloadLength))
+      if (obj.payloadLength > 0) {
+        w.writeBytes(obj.payload)
+      }
+    }
+    prevGroupId = obj.groupId
+    prevObjectId = obj.objectId
+    first = false
+  }
+  // suppress unused-warning: prevObjectId is updated for clarity / future use
+  void prevObjectId
+  return w.finish()
+}
+
+export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream> {
+  try {
+    const r = new BufferReader(bytes)
+    const streamType = r.readUint8()
+
+    if (!isValidSubgroupType(streamType)) {
+      return {
+        ok: false,
+        error: new DecodeError(
+          'CONSTRAINT_VIOLATION',
+          `Invalid subgroup stream type 0x${streamType.toString(16)}`,
+          0,
+        ),
+      }
+    }
+
+    const propertiesPresent = (streamType & 0x01) !== 0
+    const subgroupMode = (streamType & 0x06) >> 1
+    const hasSubgroupField = subgroupMode === 0x02
+    const subgroupIsFirstObjId = subgroupMode === 0x01
+    const endOfGroup = (streamType & 0x08) !== 0
+    const hasPriority = (streamType & 0x20) === 0
+    const firstObject = (streamType & 0x40) !== 0
+
+    const trackAlias = r.readVarInt()
+    const groupId = r.readVarInt()
+
+    let subgroupId = 0n
+    if (hasSubgroupField) {
+      subgroupId = r.readVarInt()
+    }
+
+    let publisherPriority = 128
+    if (hasPriority) {
+      publisherPriority = r.readUint8()
+    }
+
+    const objects: ObjectPayload[] = []
+    let prevObjectId = -1n
+    let isFirst = true
+
+    while (r.remaining > 0) {
+      const byteOffset = r.offset
+      const delta = r.readVarInt()
+      let objectId: bigint
+      if (isFirst) {
+        objectId = delta
+        if (subgroupIsFirstObjId) {
+          subgroupId = objectId
+        }
+        isFirst = false
+      } else {
+        objectId = prevObjectId + 1n + delta
+      }
+      const extensionData = new Uint8Array(0)
+      let objectProperties: Record<string, bigint> | undefined
+      if (propertiesPresent) {
+        const propsLen = Number(r.readVarInt())
+        if (propsLen > 0) {
+          objectProperties = decodeObjectProperties(r, propsLen)
+        }
+      }
+      const payloadLength = Number(r.readVarInt())
+      let payload: Uint8Array
+      let status: bigint | undefined
+      let payloadByteOffset: number
+      if (payloadLength === 0) {
+        status = r.readVarInt()
+        payloadByteOffset = r.offset
+        payload = new Uint8Array(0)
+      } else {
+        payloadByteOffset = r.offset
+        payload = r.readBytesView(payloadLength)
+      }
+      const obj: ObjectPayload = {
+        type: 'object',
+        byteOffset,
+        payloadByteOffset,
+        objectId,
+        payloadLength,
+        payload,
+        extensionData,
+      }
+      if (status !== undefined) (obj as unknown as Record<string, unknown>).status = status
+      if (objectProperties !== undefined)
+        (obj as unknown as Record<string, unknown>).objectProperties = objectProperties
+      objects.push(obj)
+      prevObjectId = objectId
+    }
+
+    const result: SubgroupStream = {
+      type: 'subgroup',
+      headerType: streamType,
+      trackAlias,
+      groupId,
+      subgroupId,
+      publisherPriority,
+      objects,
+    }
+    if (endOfGroup) (result as unknown as Record<string, unknown>).endOfGroup = true
+    if (firstObject) (result as unknown as Record<string, unknown>).firstObject = true
+
+    return {
+      ok: true,
+      value: result,
+      bytesRead: r.offset,
+    }
+  } catch (e) {
+    if (e instanceof DecodeError) return { ok: false, error: e }
+    throw e
+  }
+}
+
+export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> {
+  try {
+    const r = new BufferReader(bytes)
+    const dgType = r.readUint8()
+
+    const objectIdAbsent = (dgType & 0x04) !== 0
+    const endOfGroup = (dgType & 0x02) !== 0
+    const isStatus = (dgType & 0x20) !== 0
+    const defaultPriority = (dgType & 0x08) !== 0
+    const propertiesPresent = (dgType & 0x01) !== 0
+
+    const trackAlias = r.readVarInt()
+    const groupId = r.readVarInt()
+    let objectId = 0n
+    if (!objectIdAbsent) {
+      objectId = r.readVarInt()
+    }
+
+    let publisherPriority = 128
+    if (!defaultPriority) {
+      publisherPriority = r.readUint8()
+    }
+
+    let objectProperties: Record<string, bigint> | undefined
+    if (propertiesPresent) {
+      const propsLen = Number(r.readVarInt())
+      if (propsLen > 0) {
+        objectProperties = decodeObjectProperties(r, propsLen)
+      }
+    }
+
+    let objectStatus: bigint | undefined
+    let payload: Uint8Array
+    if (isStatus) {
+      objectStatus = r.readVarInt()
+      payload = new Uint8Array(0)
+    } else {
+      payload = r.readBytesView(r.remaining)
+    }
+    const payloadLength = payload.byteLength
+
+    const result: DatagramObject = {
+      type: 'datagram',
+      datagramType: dgType,
+      trackAlias,
+      groupId,
+      objectId,
+      publisherPriority,
+      payloadLength,
+      payload,
+    }
+
+    if (endOfGroup) (result as unknown as Record<string, unknown>).endOfGroup = true
+    if (objectStatus !== undefined)
+      (result as unknown as Record<string, unknown>).objectStatus = objectStatus
+    if (objectProperties !== undefined)
+      (result as unknown as Record<string, unknown>).objectProperties = objectProperties
+
+    return { ok: true, value: result, bytesRead: r.offset }
+  } catch (e) {
+    if (e instanceof DecodeError) return { ok: false, error: e }
+    throw e
+  }
+}
+
+export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> {
+  try {
+    const r = new BufferReader(bytes)
+    const streamType = r.readVarInt()
+    if (streamType !== FETCH_STREAM_TYPE) {
+      return {
+        ok: false,
+        error: new DecodeError(
+          'CONSTRAINT_VIOLATION',
+          `Expected fetch stream type 0x05, got 0x${streamType.toString(16)}`,
+          0,
+        ),
+      }
+    }
+    const requestId = r.readVarInt()
+    const objects: FetchObjectPayload[] = []
+
+    let prevGroupId = 0n
+    let prevSubgroupId = 0n
+    let prevObjectId = 0n
+    let prevPriority = 128
+    let first = true
+
+    while (r.remaining > 0) {
+      const byteOffset = r.offset
+      const flags = Number(r.readVarInt())
+
+      let groupId = prevGroupId
+      let subgroupId = prevSubgroupId
+      let objectId = prevObjectId + 1n
+      let payloadLength: number
+      let payload: Uint8Array
+      let payloadByteOffset: number
+      const extensionData = new Uint8Array(0)
+
+      if (flags >= 0x80) {
+        // End of Range: 0x8C = End of Non-Existent Range, 0x10C = End of Unknown Range
+        if (flags !== 0x8c && flags !== 0x10c) {
+          return {
+            ok: false,
+            error: new DecodeError(
+              'CONSTRAINT_VIOLATION',
+              `Unknown serialization flags value: 0x${flags.toString(16)}`,
+              r.offset,
+            ),
+          }
+        }
+        groupId = r.readVarInt()
+        objectId = r.readVarInt()
+        payloadLength = Number(r.readVarInt())
+        payloadByteOffset = r.offset
+        payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0)
+      } else if (flags & 0x40) {
+        // DATAGRAM mode: no subgroup_id field
+        const objectIdPresent = (flags & 0x04) !== 0
+        const groupIdPresent = (flags & 0x08) !== 0
+        const priorityPresent = (flags & 0x10) !== 0
+        const propsPresent = (flags & 0x20) !== 0
+
+        if (groupIdPresent) {
+          // First object's delta IS the absolute group id;
+          // subsequent objects: groupId = prevGroupId + delta + 1 (ascending)
+          const groupDelta = r.readVarInt()
+          groupId = first ? groupDelta : prevGroupId + groupDelta + 1n
+        }
+        if (objectIdPresent) {
+          objectId = r.readVarInt()
+        }
+        if (priorityPresent) {
+          prevPriority = r.readUint8()
+        }
+        let objectProperties: Record<string, bigint> | undefined
+        if (propsPresent) {
+          const propsLen = Number(r.readVarInt())
+          if (propsLen > 0) {
+            objectProperties = decodeObjectProperties(r, propsLen)
+          }
+        }
+        payloadLength = Number(r.readVarInt())
+        payloadByteOffset = r.offset
+        payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0)
+
+        const obj: FetchObjectPayload = {
+          type: 'object',
+          byteOffset,
+          payloadByteOffset,
+          serializationFlags: flags,
+          groupId,
+          subgroupId: 0n,
+          objectId,
+          publisherPriority: prevPriority,
+          payloadLength,
+          payload,
+          extensionData,
+        }
+        if (objectProperties)
+          (obj as unknown as Record<string, unknown>).objectProperties = objectProperties
+        objects.push(obj)
+
+        prevGroupId = groupId
+        prevObjectId = objectId
+        first = false
+        continue
+      } else {
+        const subgroupEncoding = flags & 0x03
+        const objectIdPresent = (flags & 0x04) !== 0
+        const groupIdPresent = (flags & 0x08) !== 0
+        const priorityPresent = (flags & 0x10) !== 0
+        const propsPresent = (flags & 0x20) !== 0
+
+        if (groupIdPresent) {
+          const groupDelta = r.readVarInt()
+          groupId = first ? groupDelta : prevGroupId + groupDelta + 1n
+        } else if (first) {
+          return {
+            ok: false,
+            error: new DecodeError(
+              'CONSTRAINT_VIOLATION',
+              'First fetch object must include groupId',
+              r.offset,
+            ),
+          }
+        }
+
+        if (subgroupEncoding === 0x00) {
+          subgroupId = 0n
+        } else if (subgroupEncoding === 0x01) {
+          if (first) {
+            return {
+              ok: false,
+              error: new DecodeError(
+                'CONSTRAINT_VIOLATION',
+                'First fetch object cannot reference prior subgroupId',
+                r.offset,
+              ),
+            }
+          }
+          subgroupId = prevSubgroupId
+        } else if (subgroupEncoding === 0x02) {
+          if (first) {
+            return {
+              ok: false,
+              error: new DecodeError(
+                'CONSTRAINT_VIOLATION',
+                'First fetch object cannot reference prior subgroupId',
+                r.offset,
+              ),
+            }
+          }
+          subgroupId = prevSubgroupId + 1n
+        } else if (subgroupEncoding === 0x03) {
+          subgroupId = r.readVarInt()
+        }
+
+        if (objectIdPresent) {
+          objectId = r.readVarInt()
+        } else if (first) {
+          return {
+            ok: false,
+            error: new DecodeError(
+              'CONSTRAINT_VIOLATION',
+              'First fetch object must include objectId',
+              r.offset,
+            ),
+          }
+        }
+
+        if (priorityPresent) {
+          prevPriority = r.readUint8()
+        }
+
+        let objectProperties: Record<string, bigint> | undefined
+        if (propsPresent) {
+          const propsLen = Number(r.readVarInt())
+          if (propsLen > 0) {
+            objectProperties = decodeObjectProperties(r, propsLen)
+          }
+        }
+
+        payloadLength = Number(r.readVarInt())
+        payloadByteOffset = r.offset
+        payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0)
+
+        if (objectProperties) {
+          const obj: FetchObjectPayload = {
+            type: 'object',
+            byteOffset,
+            payloadByteOffset,
+            serializationFlags: flags,
+            groupId,
+            subgroupId,
+            objectId,
+            publisherPriority: prevPriority,
+            payloadLength,
+            payload,
+            extensionData,
+          }
+          ;(obj as unknown as Record<string, unknown>).objectProperties = objectProperties
+          objects.push(obj)
+          prevGroupId = groupId
+          prevSubgroupId = subgroupId
+          prevObjectId = objectId
+          first = false
+          continue
+        }
+      }
+
+      const obj: FetchObjectPayload = {
+        type: 'object',
+        byteOffset,
+        payloadByteOffset,
+        serializationFlags: flags,
+        groupId,
+        subgroupId,
+        objectId,
+        publisherPriority: prevPriority,
+        payloadLength,
+        payload,
+        extensionData,
+      }
+      objects.push(obj)
+
+      prevGroupId = groupId
+      prevSubgroupId = subgroupId
+      prevObjectId = objectId
+      first = false
+    }
+
+    return {
+      ok: true,
+      value: { type: 'fetch', requestId, objects },
+      bytesRead: r.offset,
+    }
+  } catch (e) {
+    if (e instanceof DecodeError) return { ok: false, error: e }
+    throw e
+  }
+}
+
+export function decodeDataStream(
+  streamType: 'subgroup' | 'datagram' | 'fetch',
+  bytes: Uint8Array,
+): DecodeResult<Draft18DataStream> {
+  switch (streamType) {
+    case 'subgroup':
+      return decodeSubgroupStream(bytes)
+    case 'datagram':
+      return decodeDatagram(bytes)
+    case 'fetch':
+      return decodeFetchStream(bytes)
+    default: {
+      const _exhaustive: never = streamType
+      throw new Error(`Unknown stream type: ${_exhaustive}`)
+    }
+  }
+}
+
+// ─── Data Stream Decoders ──────────────────────────────────────────────────────
+
+export function createSubgroupStreamDecoder(): TransformStream<
+  Uint8Array,
+  SubgroupStreamHeader | ObjectPayload
+> {
+  let buffer = new Uint8Array(0)
+  let offset = 0
+  let headerEmitted = false
+  let prevObjectId = -1n
+  let firstObject = true
+  let _propertiesPresent = false
+
+  return new TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>({
+    transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset)
+        offset = 0
+      }
+      const newBuffer = new Uint8Array(buffer.length + chunk.length)
+      newBuffer.set(buffer, 0)
+      newBuffer.set(chunk, buffer.length)
+      buffer = newBuffer
+
+      if (!headerEmitted) {
+        try {
+          const r = new BufferReader(buffer.subarray(offset))
+          const streamType = r.readUint8()
+
+          if (!isValidSubgroupType(streamType)) {
+            controller.error(
+              new DecodeError(
+                'CONSTRAINT_VIOLATION',
+                `Invalid subgroup stream type 0x${streamType.toString(16)}`,
+                0,
+              ),
+            )
+            return
+          }
+
+          _propertiesPresent = (streamType & 0x01) !== 0
+          const subgroupMode = (streamType & 0x06) >> 1
+          const hasSubgroupField = subgroupMode === 0x02
+          const hasPriority = (streamType & 0x20) === 0
+
+          const trackAlias = r.readVarInt()
+          const groupId = r.readVarInt()
+
+          let subgroupId = 0n
+          if (hasSubgroupField) {
+            subgroupId = r.readVarInt()
+          }
+
+          let publisherPriority = 128
+          if (hasPriority) {
+            publisherPriority = r.readUint8()
+          }
+
+          controller.enqueue({
+            type: 'subgroup_header',
+            trackAlias,
+            groupId,
+            subgroupId,
+            publisherPriority,
+          })
+          headerEmitted = true
+          offset += r.offset
+        } catch (e) {
+          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+            return
+          }
+          controller.error(e)
+          return
+        }
+      }
+
+      while (offset < buffer.length) {
+        try {
+          const r = new BufferReader(buffer.subarray(offset))
+          const delta = r.readVarInt()
+          let objectId: bigint
+          if (firstObject) {
+            objectId = delta
+            firstObject = false
+          } else {
+            objectId = prevObjectId + 1n + delta
+          }
+          let extensionData = new Uint8Array(0)
+          if (_propertiesPresent) {
+            const extLen = Number(r.readVarInt())
+            extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0)
+          }
+          const payloadLength = Number(r.readVarInt())
+          const payloadByteOffset = r.offset
+          const payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0)
+          controller.enqueue({
+            type: 'object',
+            objectId,
+            payloadLength,
+            payload,
+            extensionData,
+            byteOffset: 0,
+            payloadByteOffset,
+          })
+          offset += r.offset
+          prevObjectId = objectId
+        } catch (e) {
+          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+            break
+          }
+          controller.error(e)
+          return
+        }
+      }
+    },
+
+    flush(controller) {
+      if (offset < buffer.length) {
+        controller.error(new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete data', 0))
+      }
+    },
+  })
+}
+
+export function createFetchStreamDecoder(): TransformStream<
+  Uint8Array,
+  FetchStreamHeader | ObjectPayload
+> {
+  let buffer = new Uint8Array(0)
+  let offset = 0
+  let headerEmitted = false
+
+  return new TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>({
+    transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset)
+        offset = 0
+      }
+      const newBuffer = new Uint8Array(buffer.length + chunk.length)
+      newBuffer.set(buffer, 0)
+      newBuffer.set(chunk, buffer.length)
+      buffer = newBuffer
+
+      if (!headerEmitted) {
+        try {
+          const r = new BufferReader(buffer.subarray(offset))
+          const streamType = r.readVarInt()
+          if (streamType !== FETCH_STREAM_TYPE) {
+            controller.error(
+              new DecodeError(
+                'CONSTRAINT_VIOLATION',
+                `Expected fetch stream type 0x05, got 0x${streamType.toString(16)}`,
+                0,
+              ),
+            )
+            return
+          }
+          const requestId = r.readVarInt()
+          controller.enqueue({ type: 'fetch_header', requestId })
+          headerEmitted = true
+          offset += r.offset
+        } catch (e) {
+          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+            return
+          }
+          controller.error(e)
+          return
+        }
+      }
+
+      while (offset < buffer.length) {
+        try {
+          const r = new BufferReader(buffer.subarray(offset))
+          const flags = Number(r.readVarInt())
+          const objectIdPresent = (flags & 0x04) !== 0
+          const groupIdPresent = (flags & 0x08) !== 0
+          const priorityPresent = (flags & 0x10) !== 0
+          const extensionsPresent = (flags & 0x20) !== 0
+          const subgroupEncoding = flags & 0x03
+
+          if (groupIdPresent) r.readVarInt()
+          if (subgroupEncoding === 0x03) r.readVarInt()
+          let objectId = 0n
+          if (objectIdPresent) objectId = r.readVarInt()
+          if (priorityPresent) r.readUint8()
+          let extensionData = new Uint8Array(0)
+          if (extensionsPresent) {
+            const extLen = Number(r.readVarInt())
+            extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0)
+          }
+          const payloadLength = Number(r.readVarInt())
+          const payloadByteOffset = r.offset
+          const payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0)
+          controller.enqueue({
+            type: 'object',
+            objectId,
+            payloadLength,
+            payload,
+            extensionData,
+            byteOffset: 0,
+            payloadByteOffset,
+          })
+          offset += r.offset
+        } catch (e) {
+          if (e instanceof DecodeError && e.code === 'UNEXPECTED_END') {
+            break
+          }
+          controller.error(e)
+          return
+        }
+      }
+    },
+
+    flush(controller) {
+      if (offset < buffer.length) {
+        controller.error(new DecodeError('UNEXPECTED_END', 'Stream ended with incomplete data', 0))
+      }
+    },
+  })
+}
+
+export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent> {
+  let buffer = new Uint8Array(0)
+  let offset = 0
+  let inner: TransformStream<Uint8Array, DataStreamEvent> | null = null
+
+  return new TransformStream<Uint8Array, DataStreamEvent>({
+    transform(chunk, controller) {
+      if (offset > 0) {
+        buffer = buffer.subarray(offset)
+        offset = 0
+      }
+      const newBuffer = new Uint8Array(buffer.length + chunk.length)
+      newBuffer.set(buffer, 0)
+      newBuffer.set(chunk, buffer.length)
+      buffer = newBuffer
+
+      if (inner === null) {
+        if (offset >= buffer.length) return
+        const firstByte = buffer[offset]!
+
+        if (isValidSubgroupType(firstByte)) {
+          const decoder = createSubgroupStreamDecoder()
+          inner = decoder as unknown as TransformStream<Uint8Array, DataStreamEvent>
+        } else if (firstByte === 0x05) {
+          const decoder = createFetchStreamDecoder()
+          inner = decoder as unknown as TransformStream<Uint8Array, DataStreamEvent>
+        } else {
+          controller.error(
+            new DecodeError(
+              'CONSTRAINT_VIOLATION',
+              `Unknown data stream type: 0x${firstByte.toString(16)}`,
+              0,
+            ),
+          )
+          return
+        }
+      }
+    },
+
+    flush(controller) {
+      if (offset >= buffer.length) return
+      const view = buffer.subarray(offset)
+
+      const firstByte = view[0]!
+      let result: DecodeResult<Draft18DataStream>
+
+      if (isValidSubgroupType(firstByte)) {
+        result = decodeSubgroupStream(view)
+      } else if (firstByte === 0x05) {
+        result = decodeFetchStream(view)
+      } else {
+        controller.error(
+          new DecodeError(
+            'CONSTRAINT_VIOLATION',
+            `Unknown data stream type: 0x${firstByte.toString(16)}`,
+            0,
+          ),
+        )
+        return
+      }
+
+      if (!result.ok) {
+        controller.error(result.error)
+        return
+      }
+
+      const stream = result.value
+      if (stream.type === 'subgroup') {
+        controller.enqueue({
+          type: 'subgroup_header',
+          trackAlias: stream.trackAlias,
+          groupId: stream.groupId,
+          subgroupId: stream.subgroupId,
+          publisherPriority: stream.publisherPriority,
+        })
+        for (const obj of stream.objects) {
+          controller.enqueue(obj)
+        }
+      } else if (stream.type === 'fetch') {
+        controller.enqueue({
+          type: 'fetch_header',
+          requestId: stream.requestId,
+        })
+        for (const obj of stream.objects) {
+          controller.enqueue(obj)
+        }
+      }
+    },
+  })
+}

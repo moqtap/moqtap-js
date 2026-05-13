@@ -1,5 +1,17 @@
 // Draft identifiers
-export type Draft = '07' | '08' | '09' | '10' | '11' | '12' | '13' | '14' | '15' | '16' | '17'
+export type Draft =
+  | '07'
+  | '08'
+  | '09'
+  | '10'
+  | '11'
+  | '12'
+  | '13'
+  | '14'
+  | '15'
+  | '16'
+  | '17'
+  | '18'
 
 // Base codec interface — draft-specific codecs extend this
 export interface BaseCodec<M> {
