@@ -36,6 +36,8 @@ import type { Draft17Codec } from './drafts/draft17/codec.js'
 import { createDraft17Codec } from './drafts/draft17/codec.js'
 import type { Draft18Codec } from './drafts/draft18/codec.js'
 import { createDraft18Codec } from './drafts/draft18/codec.js'
+import type { Draft19Codec } from './drafts/draft19/codec.js'
+import { createDraft19Codec } from './drafts/draft19/codec.js'
 
 /**
  * Wire version numbers for each MoQT draft, keyed by short aliases.
@@ -53,6 +55,7 @@ export const DRAFT_VERSIONS: Record<string, bigint> = {
   '16': 0xff000010n,
   '17': 0xff000011n,
   '18': 0xff000012n,
+  '19': 0xff000013n,
 }
 
 export function createCodec(options: CodecOptions & { draft: '07' }): Draft07Codec
@@ -67,6 +70,7 @@ export function createCodec(options: CodecOptions & { draft: '15' }): Draft15Cod
 export function createCodec(options: CodecOptions & { draft: '16' }): Draft16Codec
 export function createCodec(options: CodecOptions & { draft: '17' }): Draft17Codec
 export function createCodec(options: CodecOptions & { draft: '18' }): Draft18Codec
+export function createCodec(options: CodecOptions & { draft: '19' }): Draft19Codec
 
 /**
  * Create a codec for the specified draft version.
@@ -89,6 +93,7 @@ export function createCodec(
   | Draft16Codec
   | Draft17Codec
   | Draft18Codec
+  | Draft19Codec
 export function createCodec(
   options: CodecOptions,
 ):
@@ -103,7 +108,8 @@ export function createCodec(
   | Draft15Codec
   | Draft16Codec
   | Draft17Codec
-  | Draft18Codec {
+  | Draft18Codec
+  | Draft19Codec {
   const draft = DRAFT_VERSIONS[options.draft]
   if (!draft) {
     throw new Error(
@@ -138,6 +144,8 @@ export function createCodec(
       return createDraft17Codec()
     case '18':
       return createDraft18Codec()
+    case '19':
+      return createDraft19Codec()
     default:
       throw new Error(`Unsupported draft: ${draft}`)
   }

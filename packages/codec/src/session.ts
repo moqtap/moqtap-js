@@ -32,6 +32,8 @@ import { createDraft17SessionState } from './drafts/draft17/session.js'
 import type { Draft17Message, Draft17MessageType } from './drafts/draft17/types.js'
 import { createDraft18SessionState } from './drafts/draft18/session.js'
 import type { Draft18Message, Draft18MessageType } from './drafts/draft18/types.js'
+import { createDraft19SessionState } from './drafts/draft19/session.js'
+import type { Draft19Message, Draft19MessageType } from './drafts/draft19/types.js'
 
 type DraftSessionStateMap = {
   '07': SessionState<Draft07Message, Draft07MessageType>
@@ -46,6 +48,7 @@ type DraftSessionStateMap = {
   '16': SessionState<Draft16Message, Draft16MessageType>
   '17': SessionState<Draft17Message, Draft17MessageType>
   '18': SessionState<Draft18Message, Draft18MessageType>
+  '19': SessionState<Draft19Message, Draft19MessageType>
 }
 
 /**
@@ -69,6 +72,7 @@ export function createSessionState<T extends Draft>(
     '16': createDraft16SessionState,
     '17': createDraft17SessionState,
     '18': createDraft18SessionState,
+    '19': createDraft19SessionState,
   }
 
   const factory = factories[draft]
