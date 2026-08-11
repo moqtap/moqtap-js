@@ -1,7 +1,7 @@
 import vectorFile_ from '@moqtap/test-vectors/transport/draft18/codec/varint.json'
 import { describe, expect, it } from 'vitest'
-import { BufferReader } from '../../core/buffer-reader.js'
-import { BufferWriter } from '../../core/buffer-writer.js'
+import { MoqtBufferReader as BufferReader } from '../../core/buffer-reader.js'
+import { MoqtBufferWriter as BufferWriter } from '../../core/buffer-writer.js'
 import type { TestVectorFile } from '../helpers.js'
 import { bytesToHex, hexToBytes } from '../helpers.js'
 

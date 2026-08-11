@@ -2,7 +2,7 @@
 
 MoQT (Media over QUIC Transport) wire-format codec and session state machine for JavaScript/TypeScript.
 
-- Multi-draft support (drafts 07 through 17)
+- Multi-draft support (drafts 07 through 19)
 - Stateless encode/decode of all MoQT control messages and data streams
 - Protocol session state machine with FSM-based validation per draft
 - Zero runtime dependencies
@@ -43,7 +43,7 @@ Or use the factory if your application supports multiple drafts:
 ```typescript
 import { createCodec, DRAFT_VERSIONS } from '@moqtap/codec'
 
-const codec = createCodec({ draft: '17' }) // '07' through '17'
+const codec = createCodec({ draft: '19' }) // '07' through '19'
 
 // DRAFT_VERSIONS provides wire version numbers under short aliases:
 //   DRAFT_VERSIONS['07'] — 0xff000007n
@@ -67,6 +67,8 @@ Each draft is available as a subpath import with its own codec and session state
 | `@moqtap/codec/draft15`          | Draft-15 codec                                    |
 | `@moqtap/codec/draft16`          | Draft-16 codec                                    |
 | `@moqtap/codec/draft17`          | Draft-17 codec                                    |
+| `@moqtap/codec/draft18`          | Draft-18 codec                                    |
+| `@moqtap/codec/draft19`          | Draft-19 codec                                    |
 | `@moqtap/codec/draft{N}/session` | Session state machine for draft N                 |
 
 > **Note:** A default (versionless) codec will be available once the MoQT specification reaches RFC status. Until then, always specify a draft version.

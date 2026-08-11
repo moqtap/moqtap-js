@@ -11,7 +11,7 @@ JavaScript/TypeScript implementation of [MoQT (Media over QUIC Transport)](https
 
 ## Features
 
-- **Multi-draft support** — drafts 07 through 17
+- **Multi-draft support** — drafts 07 through 19
 - **Stateless codec** — encode/decode all MoQT control messages and data stream headers
 - **Session state machine** — FSM-based protocol validation per draft
 - **Trace recording** — capture sessions with configurable detail levels

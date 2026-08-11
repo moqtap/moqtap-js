@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/codec",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "MoQT wire-format codec and session state machine — multi-draft, zero dependencies",
   "type": "module",
   "license": "MIT",
@@ -208,7 +208,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@moqtap/test-vectors": "^0.10.0",
+    "@moqtap/test-vectors": "^0.11.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.0.0"

@@ -1,5 +1,5 @@
-import { BufferReader } from '../../core/buffer-reader.js'
-import { BufferWriter } from '../../core/buffer-writer.js'
+import { MoqtBufferReader as BufferReader } from '../../core/buffer-reader.js'
+import { MoqtBufferWriter as BufferWriter } from '../../core/buffer-writer.js'
 import { bytesToHex, hexToBytes } from '../../core/hex.js'
 import type { BaseCodec, DecodeResult } from '../../core/types.js'
 import { DecodeError } from '../../core/types.js'

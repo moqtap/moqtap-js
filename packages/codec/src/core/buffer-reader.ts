@@ -3,8 +3,8 @@ import { DecodeError } from './types.js'
 const textDecoder = /* @__PURE__ */ new TextDecoder()
 
 export class BufferReader {
-  private readonly view: DataView
-  private pos: number
+  protected readonly view: DataView
+  protected pos: number
 
   constructor(
     readonly buffer: Uint8Array,
@@ -126,5 +126,77 @@ export class BufferReader {
       params.set(key, value)
     }
     return params
+  }
+}
+
+/**
+ * Reader for drafts 17 and later, which dropped the RFC 9000 varint for MoQT's
+ * own (§1.4.1).
+ *
+ * The number of leading 1 bits in the first byte gives the encoded length; the
+ * bits after the terminating 0, followed by the remaining bytes, are the value
+ * in network byte order. One byte therefore carries 0-127 rather than 0-63,
+ * and nine bytes carry the full 64-bit range instead of RFC 9000's 62. A first
+ * byte of 0xff is the nine-byte form and is prefix only.
+ *
+ * Encodings need not be minimal: draft-19 §1.4.1 says any length that can
+ * represent the value is valid, so 0 may arrive as 0x00, 0x8000, 0xc00000 or
+ * longer.
+ */
+export class MoqtBufferReader extends BufferReader {
+  /** Draft-17 omits the 7-byte length; draft-18 restored it. */
+  protected get allowSevenByte(): boolean {
+    return true
+  }
+
+  override readVarInt(): bigint {
+    if (this.remaining < 1) {
+      throw new DecodeError('UNEXPECTED_END', 'Not enough bytes for varint', this.pos)
+    }
+    const first = this.view.getUint8(this.pos)
+
+    if (first === 0xff) {
+      if (this.remaining < 9) {
+        throw new DecodeError('UNEXPECTED_END', 'Not enough bytes for 9-byte varint', this.pos)
+      }
+      const value = this.view.getBigUint64(this.pos + 1)
+      this.pos += 9
+      return value
+    }
+
+    let leadingOnes = 0
+    while (leadingOnes < 8 && (first & (0x80 >> leadingOnes)) !== 0) leadingOnes++
+    const length = leadingOnes + 1
+
+    if (length === 7 && !this.allowSevenByte) {
+      // draft-17 §1.4.1: "11111100 is an invalid code point. An endpoint that
+      // receives this value MUST close the session with a PROTOCOL_VIOLATION."
+      throw new DecodeError(
+        'INVALID_VARINT',
+        'The 7-byte varint is not defined in draft-17',
+        this.pos,
+      )
+    }
+    if (this.remaining < length) {
+      throw new DecodeError(
+        'UNEXPECTED_END',
+        `Not enough bytes for ${length}-byte varint`,
+        this.pos,
+      )
+    }
+
+    let value = BigInt(first & ((1 << (8 - length)) - 1))
+    for (let i = 1; i < length; i++) {
+      value = (value << 8n) | BigInt(this.view.getUint8(this.pos + i))
+    }
+    this.pos += length
+    return value
+  }
+}
+
+/** Draft-17's reader, which rejects the 7-byte form draft-18 restored. */
+export class Draft17BufferReader extends MoqtBufferReader {
+  protected override get allowSevenByte(): boolean {
+    return false
   }
 }
