@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { createDraft14Codec } from '../../drafts/draft14/codec.js'
-import { bytesToHex, hexToBytes, loadVectorDir, normalizeDecoded } from '../helpers.js'
+import {
+  bytesToHex,
+  flattenFetch,
+  hexToBytes,
+  loadVectorDir,
+  normalizeDecoded,
+} from '../helpers.js'
 
 const codec = createDraft14Codec()
 
@@ -57,18 +63,21 @@ for (const { file, data: vectorFile } of vectorEntries) {
 function assertFieldsMatch(
   actual: Record<string, unknown>,
   expected: Record<string, unknown>,
-  _messageType: string,
+  messageType: string,
 ): void {
+  // Vectors spell FETCH flat; the codec groups standalone/joining fields.
+  const flatActual = messageType === 'fetch' ? flattenFetch(actual) : actual
+
   for (const [key, expectedValue] of Object.entries(expected)) {
     if (key === 'parameters') {
       assertParamsMatch(
-        actual.parameters as Record<string, unknown> | undefined,
+        flatActual.parameters as Record<string, unknown> | undefined,
         expectedValue as Record<string, unknown>,
       )
       continue
     }
 
-    const actualValue = actual[key]
+    const actualValue = flatActual[key]
 
     if (Array.isArray(expectedValue)) {
       expect(actualValue).toEqual(expectedValue)

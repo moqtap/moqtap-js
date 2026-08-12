@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { createDraft19Codec } from '../../drafts/draft19/codec.js'
-import { bytesToHex, hexToBytes, loadVectorDir, normalizeDecoded } from '../helpers.js'
+import {
+  bytesToHex,
+  flattenFetch,
+  hexToBytes,
+  loadVectorDir,
+  normalizeDecoded,
+} from '../helpers.js'
 
 const codec = createDraft19Codec()
 
@@ -109,23 +115,6 @@ function assertFieldsMatch(
       expect(String(actualValue)).toBe(String(expectedValue))
     }
   }
-}
-
-/**
- * Flatten the nested fetch structure to match test vector format.
- */
-function flattenFetch(msg: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(msg)) {
-    if (key === 'standalone' && value && typeof value === 'object') {
-      Object.assign(result, value)
-    } else if (key === 'joining' && value && typeof value === 'object') {
-      Object.assign(result, value)
-    } else {
-      result[key] = value
-    }
-  }
-  return result
 }
 
 function assertParamsMatch(

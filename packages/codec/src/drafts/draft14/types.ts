@@ -115,8 +115,8 @@ export interface Draft14Subscribe extends Draft14BaseMessage {
   readonly request_id: bigint
   readonly track_namespace: string[]
   readonly track_name: string
-  readonly subscriber_priority: bigint
-  readonly group_order: bigint
+  readonly subscriber_priority: number // uint8
+  readonly group_order: number // uint8
   readonly forward: bigint
   readonly filter_type: bigint
   readonly start_group?: bigint
@@ -130,7 +130,7 @@ export interface Draft14SubscribeOk extends Draft14BaseMessage {
   readonly request_id: bigint
   readonly track_alias: bigint
   readonly expires: bigint
-  readonly group_order: bigint
+  readonly group_order: number // uint8
   readonly content_exists: bigint
   readonly largest_location?: Location
   readonly parameters: Draft14Params
@@ -143,7 +143,7 @@ export interface Draft14SubscribeUpdate extends Draft14BaseMessage {
   readonly start_group: bigint
   readonly start_object: bigint
   readonly end_group: bigint
-  readonly subscriber_priority: bigint
+  readonly subscriber_priority: number // uint8
   readonly forward: bigint
   readonly parameters: Draft14Params
 }
@@ -167,7 +167,7 @@ export interface Draft14Publish extends Draft14BaseMessage {
   readonly track_namespace: string[]
   readonly track_name: string
   readonly track_alias: bigint
-  readonly group_order: bigint
+  readonly group_order: number // uint8
   readonly content_exists: bigint
   readonly largest_location?: Location
   readonly forward: bigint
@@ -178,8 +178,8 @@ export interface Draft14PublishOk extends Draft14BaseMessage {
   readonly type: 'publish_ok'
   readonly request_id: bigint
   readonly forward: bigint
-  readonly subscriber_priority: bigint
-  readonly group_order: bigint
+  readonly subscriber_priority: number // uint8
+  readonly group_order: number // uint8
   readonly filter_type: bigint
   readonly start_group?: bigint
   readonly start_object?: bigint
@@ -261,29 +261,37 @@ export interface Draft14UnsubscribeNamespace extends Draft14BaseMessage {
 }
 
 // Fetch
+export interface StandaloneFetch {
+  readonly track_namespace: string[]
+  readonly track_name: string
+  readonly start_group: bigint
+  readonly start_object: bigint
+  readonly end_group: bigint
+  readonly end_object: bigint
+}
+
+export interface JoiningFetch {
+  readonly joining_request_id: bigint
+  readonly joining_start: bigint
+}
+
 export interface Draft14Fetch extends Draft14BaseMessage {
   readonly type: 'fetch'
   readonly request_id: bigint
-  readonly subscriber_priority: bigint
-  readonly group_order: bigint
+  readonly subscriber_priority: number // uint8
+  readonly group_order: number // uint8
   readonly fetch_type: bigint
-  // Standalone fields (fetch_type=1)
-  readonly track_namespace?: string[]
-  readonly track_name?: string
-  readonly start_group?: bigint
-  readonly start_object?: bigint
-  readonly end_group?: bigint
-  readonly end_object?: bigint
-  // Joining fields (fetch_type=2 or 3)
-  readonly joining_request_id?: bigint
-  readonly joining_start?: bigint
+  /** Present when fetch_type = 1 */
+  readonly standalone?: StandaloneFetch
+  /** Present when fetch_type = 2 or 3 */
+  readonly joining?: JoiningFetch
   readonly parameters: Draft14Params
 }
 
 export interface Draft14FetchOk extends Draft14BaseMessage {
   readonly type: 'fetch_ok'
   readonly request_id: bigint
-  readonly group_order: bigint
+  readonly group_order: number // uint8
   readonly end_of_track: bigint
   readonly end_location: Location
   readonly parameters: Draft14Params
@@ -307,8 +315,8 @@ export interface Draft14TrackStatus extends Draft14BaseMessage {
   readonly request_id: bigint
   readonly track_namespace: string[]
   readonly track_name: string
-  readonly subscriber_priority: bigint
-  readonly group_order: bigint
+  readonly subscriber_priority: number // uint8
+  readonly group_order: number // uint8
   readonly forward: bigint
   readonly filter_type: bigint
   readonly start_group?: bigint
@@ -321,7 +329,7 @@ export interface Draft14TrackStatusOk extends Draft14BaseMessage {
   readonly request_id: bigint
   readonly track_alias: bigint
   readonly expires: bigint
-  readonly group_order: bigint
+  readonly group_order: number // uint8
   readonly content_exists: bigint
   readonly largest_location?: Location
   readonly parameters: Draft14Params

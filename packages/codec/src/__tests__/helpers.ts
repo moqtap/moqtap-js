@@ -94,6 +94,29 @@ export function normalizeDecoded(msg: Record<string, unknown>): Record<string, u
 }
 
 /**
+ * Flatten a FETCH's `standalone` / `joining` sub-structure up to the top level.
+ *
+ * The codec groups those fields because only one set is present at a time, and
+ * which one is decided by `fetch_type`. The test vectors spell them flat, the
+ * way the wire lays them out. Neither is wrong, so the two are reconciled here
+ * rather than in each draft's runner.
+ *
+ * A no-op for any message without the sub-structures, including draft-07's
+ * FETCH, which predates joining fetch and is genuinely flat.
+ */
+export function flattenFetch(msg: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(msg)) {
+    if ((key === 'standalone' || key === 'joining') && value && typeof value === 'object') {
+      Object.assign(result, value)
+    } else {
+      result[key] = value
+    }
+  }
+  return result
+}
+
+/**
  * Normalize draft-14 params for comparison with test vector JSON.
  * Test vectors use: { "max_request_id": "0", "path": "/moq", "unknown": [...] }
  * Our codec uses: Draft14Params { role?: bigint, path?: string, max_request_id?: bigint, unknown?: UnknownParam[] }

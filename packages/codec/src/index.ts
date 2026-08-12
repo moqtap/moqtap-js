@@ -151,6 +151,14 @@ export function createCodec(
   }
 }
 
+// Draft-agnostic readers for decoded messages
+export type { AnyMessage, TrackIdentity } from './core/accessors.js'
+export {
+  joiningRequestIdOf,
+  requestIdOf,
+  trackAliasOf,
+  trackOf,
+} from './core/accessors.js'
 export type {
   BaseCodec,
   CodecOptions,

@@ -333,8 +333,8 @@ function encodeSubscribePayload(
   w.writeVarInt(msg.request_id)
   w.writeTuple(msg.track_namespace)
   w.writeString(msg.track_name)
-  w.writeUint8(Number(msg.subscriber_priority))
-  w.writeUint8(Number(msg.group_order))
+  w.writeUint8(msg.subscriber_priority)
+  w.writeUint8(msg.group_order)
   w.writeVarInt(msg.forward)
   w.writeVarInt(msg.filter_type)
   const ft = msg.filter_type
@@ -355,7 +355,7 @@ function encodeSubscribeOkPayload(
   w.writeVarInt(msg.request_id)
   w.writeVarInt(msg.track_alias)
   w.writeVarInt(msg.expires)
-  w.writeUint8(Number(msg.group_order))
+  w.writeUint8(msg.group_order)
   w.writeVarInt(msg.content_exists)
   if (msg.content_exists === 1n) {
     w.writeVarInt(msg.largest_location!.group)
@@ -373,7 +373,7 @@ function encodeSubscribeUpdatePayload(
   w.writeVarInt(msg.start_group)
   w.writeVarInt(msg.start_object)
   w.writeVarInt(msg.end_group)
-  w.writeUint8(Number(msg.subscriber_priority))
+  w.writeUint8(msg.subscriber_priority)
   w.writeVarInt(msg.forward)
   encodeMessageParams(msg.parameters, w)
 }
@@ -399,7 +399,7 @@ function encodePublishPayload(msg: Draft14Message & { type: 'publish' }, w: Buff
   w.writeTuple(msg.track_namespace)
   w.writeString(msg.track_name)
   w.writeVarInt(msg.track_alias)
-  w.writeUint8(Number(msg.group_order))
+  w.writeUint8(msg.group_order)
   w.writeVarInt(msg.content_exists)
   if (msg.content_exists === 1n) {
     w.writeVarInt(msg.largest_location!.group)
@@ -415,8 +415,8 @@ function encodePublishOkPayload(
 ): void {
   w.writeVarInt(msg.request_id)
   w.writeVarInt(msg.forward)
-  w.writeUint8(Number(msg.subscriber_priority))
-  w.writeUint8(Number(msg.group_order))
+  w.writeUint8(msg.subscriber_priority)
+  w.writeUint8(msg.group_order)
   w.writeVarInt(msg.filter_type)
   const ft = msg.filter_type
   if (ft >= FilterType.AbsoluteStart) {
@@ -525,27 +525,27 @@ function encodeUnsubscribeNamespacePayload(
 
 function encodeFetchPayload(msg: Draft14Message & { type: 'fetch' }, w: BufferWriter): void {
   w.writeVarInt(msg.request_id)
-  w.writeUint8(Number(msg.subscriber_priority))
-  w.writeUint8(Number(msg.group_order))
+  w.writeUint8(msg.subscriber_priority)
+  w.writeUint8(msg.group_order)
   w.writeVarInt(msg.fetch_type)
   const ft = msg.fetch_type
-  if (ft === FetchType.Standalone) {
-    w.writeTuple(msg.track_namespace!)
-    w.writeString(msg.track_name!)
-    w.writeVarInt(msg.start_group!)
-    w.writeVarInt(msg.start_object!)
-    w.writeVarInt(msg.end_group!)
-    w.writeVarInt(msg.end_object!)
-  } else {
-    w.writeVarInt(msg.joining_request_id!)
-    w.writeVarInt(msg.joining_start!)
+  if (ft === FetchType.Standalone && msg.standalone) {
+    w.writeTuple(msg.standalone.track_namespace)
+    w.writeString(msg.standalone.track_name)
+    w.writeVarInt(msg.standalone.start_group)
+    w.writeVarInt(msg.standalone.start_object)
+    w.writeVarInt(msg.standalone.end_group)
+    w.writeVarInt(msg.standalone.end_object)
+  } else if (msg.joining) {
+    w.writeVarInt(msg.joining.joining_request_id)
+    w.writeVarInt(msg.joining.joining_start)
   }
   encodeMessageParams(msg.parameters, w)
 }
 
 function encodeFetchOkPayload(msg: Draft14Message & { type: 'fetch_ok' }, w: BufferWriter): void {
   w.writeVarInt(msg.request_id)
-  w.writeUint8(Number(msg.group_order))
+  w.writeUint8(msg.group_order)
   w.writeVarInt(msg.end_of_track)
   w.writeVarInt(msg.end_location.group)
   w.writeVarInt(msg.end_location.object)
@@ -575,8 +575,8 @@ function encodeTrackStatusPayload(
   w.writeVarInt(msg.request_id)
   w.writeTuple(msg.track_namespace)
   w.writeString(msg.track_name)
-  w.writeUint8(Number(msg.subscriber_priority))
-  w.writeUint8(Number(msg.group_order))
+  w.writeUint8(msg.subscriber_priority)
+  w.writeUint8(msg.group_order)
   w.writeVarInt(msg.forward)
   w.writeVarInt(msg.filter_type)
   const ft = msg.filter_type
@@ -594,7 +594,7 @@ function encodeTrackStatusOkPayload(
   w.writeVarInt(msg.request_id)
   w.writeVarInt(msg.track_alias)
   w.writeVarInt(msg.expires)
-  w.writeUint8(Number(msg.group_order))
+  w.writeUint8(msg.group_order)
   w.writeVarInt(msg.content_exists)
   if (msg.content_exists === 1n) {
     w.writeVarInt(msg.largest_location!.group)
@@ -659,8 +659,8 @@ function decodeSubscribePayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
   const track_namespace = r.readTuple()
   const track_name = r.readString()
-  const subscriber_priority = BigInt(r.readUint8())
-  const group_order = BigInt(r.readUint8())
+  const subscriber_priority = r.readUint8()
+  const group_order = r.readUint8()
   const forward = r.readVarInt()
   const filter_type = r.readVarInt()
 
@@ -705,7 +705,7 @@ function decodeSubscribeOkPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
   const track_alias = r.readVarInt()
   const expires = r.readVarInt()
-  const group_order = BigInt(r.readUint8())
+  const group_order = r.readUint8()
   const content_exists = r.readVarInt()
 
   let largest_location: Location | undefined
@@ -736,7 +736,7 @@ function decodeSubscribeUpdatePayload(r: BufferReader): Draft14Message {
   const start_group = r.readVarInt()
   const start_object = r.readVarInt()
   const end_group = r.readVarInt()
-  const subscriber_priority = BigInt(r.readUint8())
+  const subscriber_priority = r.readUint8()
   const forward = r.readVarInt()
   const parameters = decodeMessageParams(r)
   return {
@@ -769,7 +769,7 @@ function decodePublishPayload(r: BufferReader): Draft14Message {
   const track_namespace = r.readTuple()
   const track_name = r.readString()
   const track_alias = r.readVarInt()
-  const group_order = BigInt(r.readUint8())
+  const group_order = r.readUint8()
   const content_exists = r.readVarInt()
   let largest_location: Location | undefined
   if (content_exists === 1n) {
@@ -797,8 +797,8 @@ function decodePublishPayload(r: BufferReader): Draft14Message {
 function decodePublishOkPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
   const forward = r.readVarInt()
-  const subscriber_priority = BigInt(r.readUint8())
-  const group_order = BigInt(r.readUint8())
+  const subscriber_priority = r.readUint8()
+  const group_order = r.readUint8()
   const filter_type = r.readVarInt()
 
   let start_group: bigint | undefined
@@ -931,8 +931,8 @@ function decodeUnsubscribeNamespacePayload(r: BufferReader): Draft14Message {
 
 function decodeFetchPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
-  const subscriber_priority = BigInt(r.readUint8())
-  const group_order = BigInt(r.readUint8())
+  const subscriber_priority = r.readUint8()
+  const group_order = r.readUint8()
   const fetch_type = r.readVarInt()
 
   if (fetch_type < FetchType.Standalone || fetch_type > FetchType.AbsoluteJoining) {
@@ -940,12 +940,14 @@ function decodeFetchPayload(r: BufferReader): Draft14Message {
   }
 
   if (fetch_type === FetchType.Standalone) {
-    const track_namespace = r.readTuple()
-    const track_name = r.readString()
-    const start_group = r.readVarInt()
-    const start_object = r.readVarInt()
-    const end_group = r.readVarInt()
-    const end_object = r.readVarInt()
+    const standalone = {
+      track_namespace: r.readTuple(),
+      track_name: r.readString(),
+      start_group: r.readVarInt(),
+      start_object: r.readVarInt(),
+      end_group: r.readVarInt(),
+      end_object: r.readVarInt(),
+    }
     const parameters = decodeMessageParams(r)
     return {
       type: 'fetch',
@@ -953,17 +955,14 @@ function decodeFetchPayload(r: BufferReader): Draft14Message {
       subscriber_priority,
       group_order,
       fetch_type,
-      track_namespace,
-      track_name,
-      start_group,
-      start_object,
-      end_group,
-      end_object,
+      standalone,
       parameters,
     }
   } else {
-    const joining_request_id = r.readVarInt()
-    const joining_start = r.readVarInt()
+    const joining = {
+      joining_request_id: r.readVarInt(),
+      joining_start: r.readVarInt(),
+    }
     const parameters = decodeMessageParams(r)
     return {
       type: 'fetch',
@@ -971,8 +970,7 @@ function decodeFetchPayload(r: BufferReader): Draft14Message {
       subscriber_priority,
       group_order,
       fetch_type,
-      joining_request_id,
-      joining_start,
+      joining,
       parameters,
     }
   }
@@ -980,7 +978,7 @@ function decodeFetchPayload(r: BufferReader): Draft14Message {
 
 function decodeFetchOkPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
-  const group_order = BigInt(r.readUint8())
+  const group_order = r.readUint8()
   const end_of_track = r.readVarInt()
   const end_location: Location = {
     group: r.readVarInt(),
@@ -1013,8 +1011,8 @@ function decodeTrackStatusPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
   const track_namespace = r.readTuple()
   const track_name = r.readString()
-  const subscriber_priority = BigInt(r.readUint8())
-  const group_order = BigInt(r.readUint8())
+  const subscriber_priority = r.readUint8()
+  const group_order = r.readUint8()
   const forward = r.readVarInt()
   const filter_type = r.readVarInt()
 
@@ -1048,7 +1046,7 @@ function decodeTrackStatusOkPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
   const track_alias = r.readVarInt()
   const expires = r.readVarInt()
-  const group_order = BigInt(r.readUint8())
+  const group_order = r.readUint8()
   const content_exists = r.readVarInt()
 
   let largest_location: Location | undefined

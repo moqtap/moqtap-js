@@ -82,6 +82,30 @@ import { createDraft17Codec } from '@moqtap/codec/draft17'
 import { createDraft17SessionState } from '@moqtap/codec/draft17/session'
 ```
 
+## Reading Across Drafts
+
+Each draft gets its own message model, because the drafts genuinely differ — a
+track alias travels in SUBSCRIBE through draft-11 and in SUBSCRIBE_OK from
+draft-12; a request is a `subscribe_id` through draft-10 and a `request_id`
+after it. Code that spans drafts can ask for the answer instead of tracking
+where each version keeps it:
+
+```typescript
+import { joiningRequestIdOf, requestIdOf, trackAliasOf, trackOf } from '@moqtap/codec'
+
+const decoded = codec.decodeMessage(bytes)
+if (decoded.ok) {
+  requestIdOf(decoded.value) // bigint, whichever name this draft uses
+  trackAliasOf(decoded.value) // bigint, or undefined if not assigned yet
+  trackOf(decoded.value) // { namespace, name }, or undefined if none is named
+  joiningRequestIdOf(decoded.value) // for a joining FETCH: the request it continues
+}
+```
+
+Each returns `undefined` when the message does not carry the field, including
+when the draft has not assigned it yet — `trackAliasOf` on a draft-14 SUBSCRIBE
+is `undefined` because the publisher chooses the alias in SUBSCRIBE_OK.
+
 ## Session State Machine
 
 Validate protocol message sequences without transport coupling:
