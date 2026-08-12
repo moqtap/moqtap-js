@@ -25,6 +25,15 @@ export interface ControlMessageEvent extends BaseEvent {
   readonly messageType: number
   readonly message: Record<string, unknown>
   readonly raw?: Uint8Array
+  /**
+   * QUIC stream the message travelled on.
+   *
+   * Optional, and only meaningful for a recorder that knows it. It matters
+   * from draft-17, where the control plane is no longer one stream: each
+   * request gets its own bidirectional stream and responses carry no request
+   * id, so the stream is the only thing tying a response to its request.
+   */
+  readonly streamId?: bigint
 }
 
 export interface StreamOpenedEvent extends BaseEvent {

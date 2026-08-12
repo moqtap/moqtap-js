@@ -117,12 +117,27 @@ Short key names are used intentionally — traces can contain hundreds of thousa
 
 #### Event 0: Control Message
 
-| Key     | Type        | Detail Level | Description                                       |
-| ------- | ----------- | ------------ | ------------------------------------------------- |
-| `"d"`   | integer     | `control`+   | Direction: `0` = sent (tx), `1` = received (rx)   |
-| `"mt"`  | integer     | `control`+   | Wire message type ID (e.g., `0x03` for SUBSCRIBE) |
-| `"msg"` | map         | `control`+   | Decoded message fields (draft-specific structure) |
-| `"raw"` | byte string | `full` only  | Raw wire bytes (including type and length prefix) |
+| Key     | Type        | Detail Level | Description                                                    |
+| ------- | ----------- | ------------ | ---------------------------------------------------------------- |
+| `"d"`   | integer     | `control`+   | Direction: `0` = sent (tx), `1` = received (rx)                |
+| `"mt"`  | integer     | `control`+   | Wire message type ID (e.g., `0x03` for SUBSCRIBE)              |
+| `"msg"` | map         | `control`+   | Decoded message fields (draft-specific structure)              |
+| `"sid"` | integer     | `control`+   | QUIC stream ID the message travelled on. Optional (see below). |
+| `"raw"` | byte string | `full` only  | Raw wire bytes (including type and length prefix)              |
+
+`"sid"` is optional: a recorder that sits at the session level rather than the
+stream level has no stream to report, and omitting the key says so. Readers
+MUST distinguish an absent `"sid"` from stream `0`.
+
+Recorders SHOULD write it. From draft-17 the control plane is no longer a
+single stream — the session control stream became a pair of unidirectional
+streams, and every request (SUBSCRIBE, PUBLISH, FETCH, …) gets its own
+bidirectional stream. Responses on those streams carry no request ID, because
+the stream itself is the correlation, so a trace without `"sid"` cannot tie a
+SUBSCRIBE_OK back to its SUBSCRIBE, and everything derived from that pairing —
+track names, aliases, request outcomes — is lost to the reader. Through
+draft-16 all control messages share one stream and the field is merely
+informative.
 
 #### Event 1: Stream Opened
 
@@ -215,6 +230,10 @@ Object header events and object payload events (event 4) for the same object sha
 - **Version 1** is defined by this document.
 - Readers MUST check the format version before parsing.
 - Unknown keys in header maps or event maps MUST be ignored (forward-compatible).
+- Optional keys MAY be added to an existing event type without a version bump —
+  `"sid"` on event 0 was added this way. A reader must therefore treat any
+  optional key as absent-by-default rather than assuming files of a given
+  version all carry the same keys.
 - New event types (`"e"` values) MAY be added in future versions; readers SHOULD skip unknown event types.
 - The detail level in the header is informational — readers MUST handle missing fields gracefully regardless of declared level.
 

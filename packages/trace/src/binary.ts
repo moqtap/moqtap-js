@@ -89,6 +89,7 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
       base.d = event.direction
       base.mt = event.messageType
       base.msg = event.message
+      if (event.streamId != null) base.sid = event.streamId
       if (event.raw != null) base.raw = event.raw
       break
     }
@@ -164,6 +165,7 @@ function cborToEvent(obj: Record<string, unknown>): TraceEvent {
         direction: obj.d as 0 | 1,
         messageType: Number(obj.mt ?? 0),
         message: (obj.msg ?? {}) as Record<string, unknown>,
+        ...(obj.sid != null ? { streamId: BigInt(obj.sid as bigint | number) } : {}),
         ...(obj.raw != null ? { raw: obj.raw as Uint8Array } : {}),
       }
 

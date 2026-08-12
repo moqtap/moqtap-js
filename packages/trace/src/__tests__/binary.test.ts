@@ -141,6 +141,47 @@ describe('binary .moqtrace format', () => {
       }
     })
 
+    it('control message with a stream id', () => {
+      // Draft-17 put every request on its own bidirectional stream and dropped
+      // request ids from responses, so a reader can only tie a response back to
+      // its request through the stream it arrived on.
+      const { events } = roundTrip([
+        {
+          type: 'control',
+          seq: 0,
+          timestamp: 1000,
+          direction: 1,
+          messageType: 0x03,
+          message: { type: 'subscribe_ok', track_alias: 7 },
+          streamId: 12n,
+        },
+      ])
+      const e = events[0]!
+      expect(e.type).toBe('control')
+      if (e.type === 'control') {
+        expect(e.streamId).toBe(12n)
+      }
+    })
+
+    it('control message without a stream id omits the key', () => {
+      // A recorder with no stream context must not be made to invent one, and a
+      // reader has to tell "unknown" apart from stream 0.
+      const { events } = roundTrip([
+        {
+          type: 'control',
+          seq: 0,
+          timestamp: 1000,
+          direction: 0,
+          messageType: 0x03,
+          message: { type: 'subscribe' },
+        },
+      ])
+      const e = events[0]!
+      if (e.type === 'control') {
+        expect(e.streamId).toBeUndefined()
+      }
+    })
+
     it('control message with raw bytes', () => {
       const raw = new Uint8Array([0x03, 0x00, 0x0a, 0xff])
       const { events } = roundTrip([
