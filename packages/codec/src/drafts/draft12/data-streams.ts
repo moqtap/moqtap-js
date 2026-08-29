@@ -56,7 +56,7 @@ export function encodeDatagram(dg: DatagramObject): Uint8Array {
     w.writeVarInt(extData.byteLength)
     if (extData.byteLength > 0) w.writeBytes(extData)
   }
-  const isStatus = dg.streamTypeId === 0x02 || dg.streamTypeId === 0x03
+  const isStatus = dg.streamTypeId >= 0x04
   if (isStatus) {
     w.writeVarInt(dg.objectStatus ?? 0n)
   } else {
@@ -182,18 +182,26 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
   try {
     const r = new BufferReader(bytes)
     const streamTypeId = Number(r.readVarInt())
-    if (streamTypeId < 0x00 || streamTypeId > 0x03) {
+    if (streamTypeId < 0x00 || streamTypeId > 0x05) {
       return {
         ok: false,
         error: new DecodeError(
           'CONSTRAINT_VIOLATION',
-          `Expected datagram type 0x00-0x03, got 0x${streamTypeId.toString(16)}`,
+          `Expected datagram type 0x00-0x05, got 0x${streamTypeId.toString(16)}`,
           0,
         ),
       }
     }
     const extensionsPresent = (streamTypeId & 0x01) !== 0
-    const isStatus = streamTypeId === 0x02 || streamTypeId === 0x03
+    // Draft-12 states its datagram types twice and the two disagree. Table 12
+    // gives OBJECT_DATAGRAM four values and puts the End of Group marker on
+    // 0x02/0x03; the OBJECT_DATAGRAM_STATUS paragraph still says "0x02 to
+    // 0x03", which is the sentence draft-11 wrote before an End of Group
+    // marker existed. Both cannot hold, and the table is the half that
+    // changed. Draft-13 repeats the contradiction verbatim and draft-14
+    // resolves it the same way: payload below 0x04, status at and above it.
+    const endOfGroup = (streamTypeId & 0x02) !== 0 && streamTypeId < 0x04
+    const isStatus = streamTypeId >= 0x04
     const trackAlias = r.readVarInt()
     const groupId = r.readVarInt()
     const objectId = r.readVarInt()
@@ -225,6 +233,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
       payloadLength: payload.byteLength,
       payload,
     }
+    if (endOfGroup) (result as unknown as Record<string, unknown>).endOfGroup = true
     if (extensionHeadersLength !== undefined)
       (result as unknown as Record<string, unknown>).extensionHeadersLength = extensionHeadersLength
     if (extensionData !== undefined)

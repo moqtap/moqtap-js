@@ -311,116 +311,146 @@ function decodeTrackExtensions(reader: BufferReader): Draft16TrackExtensions {
 }
 
 function encodeParams(params: Draft16Params, writer: BufferWriter): void {
-  let count = params.unknown ? params.unknown.length : 0
-  if (params.delivery_timeout !== undefined) count++
-  if (params.authorization_token !== undefined) count++
-  if (params.max_cache_duration !== undefined) count++
-  if (params.expires !== undefined) count++
-  if (params.largest_object !== undefined) count++
-  if (params.publisher_priority !== undefined) count++
-  if (params.forward !== undefined) count++
-  if (params.subscriber_priority !== undefined) count++
-  if (params.subscription_filter !== undefined) count++
-  if (params.group_order !== undefined) count++
-  if (params.dynamic_groups !== undefined) count++
-  if (params.new_group_request !== undefined) count++
-  writer.writeVarInt(count)
+  // Draft-16 Section 1.4.2: "Key-Value-Pairs encode a Type value as a delta
+  // from the previous Type value, or from 0 if there is no previous Type
+  // value." That only defines a wire format if the order is fixed, which the
+  // same section fixes: "Parameters MUST be serialized in ascending order by
+  // Type." So the entries are collected, sorted, and written as differences.
+  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
 
   if (params.delivery_timeout !== undefined) {
-    writer.writeVarInt(PARAM_DELIVERY_TIMEOUT)
-    writer.writeVarInt(params.delivery_timeout)
+    entries.push({
+      type: PARAM_DELIVERY_TIMEOUT,
+      encode: (w) => w.writeVarInt(params.delivery_timeout!),
+    })
   }
   if (params.authorization_token !== undefined) {
-    writer.writeVarInt(PARAM_AUTHORIZATION_TOKEN)
-    const tmpW = new BufferWriter(64)
-    encodeAuthorizationToken(params.authorization_token, tmpW)
-    const raw = tmpW.finish()
-    writer.writeVarInt(raw.byteLength)
-    writer.writeBytes(raw)
+    entries.push({
+      type: PARAM_AUTHORIZATION_TOKEN,
+      encode: (w) => {
+        const tmpW = new BufferWriter(64)
+        encodeAuthorizationToken(params.authorization_token!, tmpW)
+        const raw = tmpW.finish()
+        w.writeVarInt(raw.byteLength)
+        w.writeBytes(raw)
+      },
+    })
   }
   if (params.max_cache_duration !== undefined) {
-    writer.writeVarInt(PARAM_MAX_CACHE_DURATION)
-    writer.writeVarInt(params.max_cache_duration)
+    entries.push({
+      type: PARAM_MAX_CACHE_DURATION,
+      encode: (w) => w.writeVarInt(params.max_cache_duration!),
+    })
   }
   if (params.expires !== undefined) {
-    writer.writeVarInt(PARAM_EXPIRES)
-    writer.writeVarInt(params.expires)
+    entries.push({ type: PARAM_EXPIRES, encode: (w) => w.writeVarInt(params.expires!) })
   }
   if (params.largest_object !== undefined) {
-    writer.writeVarInt(PARAM_LARGEST_OBJECT)
-    const tmpW = new BufferWriter(16)
-    tmpW.writeVarInt(params.largest_object.group)
-    tmpW.writeVarInt(params.largest_object.object)
-    const raw = tmpW.finish()
-    writer.writeVarInt(raw.byteLength)
-    writer.writeBytes(raw)
+    entries.push({
+      type: PARAM_LARGEST_OBJECT,
+      // Draft-16 has no per-parameter value encoding: a Key-Value-Pair whose
+      // Type is odd carries a Length, and 0x09 is odd. Drafts 17 and later
+      // replaced that with "the encoding is specified by each parameter
+      // definition", which is where the same field loses its length.
+      encode: (w) => {
+        const tmpW = new BufferWriter(16)
+        tmpW.writeVarInt(params.largest_object!.group)
+        tmpW.writeVarInt(params.largest_object!.object)
+        const raw = tmpW.finish()
+        w.writeVarInt(raw.byteLength)
+        w.writeBytes(raw)
+      },
+    })
   }
   if (params.publisher_priority !== undefined) {
-    writer.writeVarInt(PARAM_PUBLISHER_PRIORITY)
-    writer.writeVarInt(params.publisher_priority)
+    entries.push({
+      type: PARAM_PUBLISHER_PRIORITY,
+      encode: (w) => w.writeVarInt(params.publisher_priority!),
+    })
   }
   if (params.forward !== undefined) {
-    writer.writeVarInt(PARAM_FORWARD)
-    writer.writeVarInt(params.forward)
+    entries.push({ type: PARAM_FORWARD, encode: (w) => w.writeVarInt(params.forward!) })
   }
   if (params.subscriber_priority !== undefined) {
-    writer.writeVarInt(PARAM_SUBSCRIBER_PRIORITY)
-    writer.writeVarInt(params.subscriber_priority)
+    entries.push({
+      type: PARAM_SUBSCRIBER_PRIORITY,
+      encode: (w) => w.writeVarInt(params.subscriber_priority!),
+    })
   }
   if (params.subscription_filter !== undefined) {
-    writer.writeVarInt(PARAM_SUBSCRIPTION_FILTER)
-    const tmpW = new BufferWriter(32)
-    const f = params.subscription_filter
-    tmpW.writeVarInt(f.filter_type)
-    if (f.filter_type === 3n || f.filter_type === 4n) {
-      tmpW.writeVarInt(f.start_group!)
-      tmpW.writeVarInt(f.start_object!)
-    }
-    if (f.filter_type === 4n) {
-      tmpW.writeVarInt(f.end_group!)
-    }
-    const raw = tmpW.finish()
-    writer.writeVarInt(raw.byteLength)
-    writer.writeBytes(raw)
+    entries.push({
+      type: PARAM_SUBSCRIPTION_FILTER,
+      encode: (w) => {
+        const tmpW = new BufferWriter(32)
+        const f = params.subscription_filter!
+        tmpW.writeVarInt(f.filter_type)
+        if (f.filter_type === 3n || f.filter_type === 4n) {
+          tmpW.writeVarInt(f.start_group!)
+          tmpW.writeVarInt(f.start_object!)
+        }
+        if (f.filter_type === 4n) {
+          tmpW.writeVarInt(f.end_group!)
+        }
+        const raw = tmpW.finish()
+        w.writeVarInt(raw.byteLength)
+        w.writeBytes(raw)
+      },
+    })
   }
   if (params.group_order !== undefined) {
-    writer.writeVarInt(PARAM_GROUP_ORDER)
-    writer.writeVarInt(params.group_order)
+    entries.push({ type: PARAM_GROUP_ORDER, encode: (w) => w.writeVarInt(params.group_order!) })
   }
   if (params.dynamic_groups !== undefined) {
-    writer.writeVarInt(PARAM_DYNAMIC_GROUPS)
-    writer.writeVarInt(params.dynamic_groups)
+    entries.push({
+      type: PARAM_DYNAMIC_GROUPS,
+      encode: (w) => w.writeVarInt(params.dynamic_groups!),
+    })
   }
   if (params.new_group_request !== undefined) {
-    writer.writeVarInt(PARAM_NEW_GROUP_REQUEST)
-    writer.writeVarInt(params.new_group_request)
+    entries.push({
+      type: PARAM_NEW_GROUP_REQUEST,
+      encode: (w) => w.writeVarInt(params.new_group_request!),
+    })
   }
 
   if (params.unknown) {
     for (const u of params.unknown) {
       const id = BigInt(u.id)
-      writer.writeVarInt(id)
-      if (id % 2n === 0n) {
-        const raw = hexToBytes(u.raw_hex)
-        const tmpReader = new BufferReader(raw)
-        const value = tmpReader.readVarInt()
-        writer.writeVarInt(value)
-      } else {
-        const raw = hexToBytes(u.raw_hex)
-        writer.writeVarInt(raw.byteLength)
-        writer.writeBytes(raw)
-      }
+      entries.push({
+        type: id,
+        encode: (w) => {
+          const raw = hexToBytes(u.raw_hex)
+          if (id % 2n === 0n) {
+            w.writeVarInt(new BufferReader(raw).readVarInt())
+          } else {
+            w.writeVarInt(raw.byteLength)
+            w.writeBytes(raw)
+          }
+        },
+      })
     }
+  }
+
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
+
+  writer.writeVarInt(entries.length)
+  let prevType = 0n
+  for (const entry of entries) {
+    writer.writeVarInt(entry.type - prevType)
+    entry.encode(writer)
+    prevType = entry.type
   }
 }
 
 function decodeParams(reader: BufferReader): Draft16Params {
   const count = Number(reader.readVarInt())
   const result: Draft16Params = {}
-  const unknown: UnknownParam[] = []
+  let prevType = 0n
 
   for (let i = 0; i < count; i++) {
-    const paramType = reader.readVarInt()
+    const delta = reader.readVarInt()
+    const paramType = prevType + delta
+    prevType = paramType
 
     if (paramType === PARAM_DELIVERY_TIMEOUT) {
       result.delivery_timeout = reader.readVarInt()
@@ -472,29 +502,22 @@ function decodeParams(reader: BufferReader): Draft16Params {
       const consumed = reader.offset - startOff
       if (consumed < length) reader.readBytes(length - consumed)
       result.subscription_filter = filter
-    } else if (paramType % 2n === 0n) {
-      const value = reader.readVarInt()
-      const tmpWriter = new BufferWriter(16)
-      tmpWriter.writeVarInt(value)
-      const raw = tmpWriter.finish()
-      unknown.push({
-        id: `0x${paramType.toString(16)}`,
-        length: raw.byteLength,
-        raw_hex: bytesToHex(raw),
-      })
     } else {
-      const length = Number(reader.readVarInt())
-      const bytes = reader.readBytes(length)
-      unknown.push({
-        id: `0x${paramType.toString(16)}`,
-        length,
-        raw_hex: bytesToHex(bytes),
-      })
+      // Drafts 16 and later: "All Message Parameters MUST be defined in the
+      // negotiated version of MOQT or negotiated via Setup Parameters. An
+      // endpoint that receives an unknown Message Parameter MUST close the
+      // session with PROTOCOL_VIOLATION." (Section 9.2)
+      //
+      // There is no skipping an unknown one and carrying on: the value's
+      // encoding comes from its definition, so a receiver that does not know
+      // the Type does not know how many bytes it spans either. Drafts 11
+      // through 15 say the opposite and keep collecting them.
+      throw new DecodeError(
+        'INVALID_PARAMETER',
+        `Unknown Message Parameter type 0x${paramType.toString(16)}`,
+        reader.offset,
+      )
     }
-  }
-
-  if (unknown.length > 0) {
-    result.unknown = unknown
   }
 
   return result

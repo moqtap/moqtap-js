@@ -462,7 +462,6 @@ function encodePublishNamespaceOkPayload(
   w: BufferWriter,
 ): void {
   w.writeVarInt(msg.request_id)
-  encodeMessageParams(msg.parameters, w)
 }
 
 function encodePublishNamespaceErrorPayload(
@@ -504,7 +503,6 @@ function encodeSubscribeNamespaceOkPayload(
   w: BufferWriter,
 ): void {
   w.writeVarInt(msg.request_id)
-  encodeMessageParams(msg.parameters, w)
 }
 
 function encodeSubscribeNamespaceErrorPayload(
@@ -861,8 +859,7 @@ function decodePublishNamespacePayload(r: BufferReader): Draft14Message {
 
 function decodePublishNamespaceOkPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
-  const parameters = decodeMessageParams(r)
-  return { type: 'publish_namespace_ok', request_id, parameters }
+  return { type: 'publish_namespace_ok', request_id }
 }
 
 function decodePublishNamespaceErrorPayload(r: BufferReader): Draft14Message {
@@ -908,8 +905,7 @@ function decodeSubscribeNamespacePayload(r: BufferReader): Draft14Message {
 
 function decodeSubscribeNamespaceOkPayload(r: BufferReader): Draft14Message {
   const request_id = r.readVarInt()
-  const parameters = decodeMessageParams(r)
-  return { type: 'subscribe_namespace_ok', request_id, parameters }
+  return { type: 'subscribe_namespace_ok', request_id }
 }
 
 function decodeSubscribeNamespaceErrorPayload(r: BufferReader): Draft14Message {

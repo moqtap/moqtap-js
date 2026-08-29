@@ -347,6 +347,52 @@ function decodeRangeFilter(reader: BufferReader, hasProperty: boolean): RangeFil
   return property_type !== undefined ? { set_id, property_type, ranges } : { set_id, ranges }
 }
 
+/**
+ * Which messages each Message Parameter's own definition names.
+ *
+ * Section 10.2.1: "Each Message Parameter definition indicates the message types in
+ * which it can appear. If it appears in some other type of message, the
+ * receiving endpoint MUST close the connection with a PROTOCOL_VIOLATION."
+ * Drafts up to and including 16 end that sentence "it MUST be ignored", so this
+ * table has no counterpart there.
+ *
+ * A parameter type absent from this table is one no definition restricts. A
+ * type this draft does not define at all never reaches here: it is refused as
+ * unknown while its scope is still undecidable.
+ */
+const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
+  [0x02n, new Set(['request_ok', 'subscribe', 'request_update', 'subscribe_tracks'])],
+  [
+    0x03n,
+    new Set([
+      'publish',
+      'subscribe',
+      'request_update',
+      'subscribe_namespace',
+      'subscribe_tracks',
+      'publish_namespace',
+      'track_status',
+      'fetch',
+    ]),
+  ],
+  [0x04n, new Set(['subscribe', 'subscribe_tracks'])],
+  [0x06n, new Set(['request_ok', 'subscribe', 'request_update', 'subscribe_tracks'])],
+  [0x08n, new Set(['subscribe_ok', 'publish', 'request_ok'])],
+  [0x09n, new Set(['subscribe_ok', 'publish', 'request_ok'])],
+  [0x0an, new Set(['fetch'])],
+  [0x10n, new Set(['subscribe', 'request_update', 'publish', 'request_ok', 'subscribe_tracks'])],
+  [0x20n, new Set(['subscribe', 'fetch', 'request_update', 'request_ok', 'subscribe_tracks'])],
+  [0x21n, new Set(['subscribe', 'request_ok', 'request_update', 'subscribe_tracks'])],
+  [0x22n, new Set(['subscribe', 'subscribe_tracks', 'fetch'])],
+  [0x25n, new Set(['fetch', 'subscribe', 'subscribe_tracks', 'request_ok', 'request_update'])],
+  [0x26n, new Set(['fetch', 'subscribe', 'subscribe_tracks', 'request_ok', 'request_update'])],
+  [0x27n, new Set(['fetch', 'subscribe', 'subscribe_tracks', 'request_ok', 'request_update'])],
+  [0x28n, new Set(['fetch', 'subscribe', 'subscribe_tracks', 'request_ok', 'request_update'])],
+  [0x29n, new Set(['subscribe_tracks', 'request_update'])],
+  [0x32n, new Set(['request_ok', 'subscribe', 'request_update', 'subscribe_tracks'])],
+  [0x34n, new Set(['request_update'])],
+])
+
 function encodeParams(params: Draft19Params, writer: BufferWriter): void {
   // Collect and sort params by type
   const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
@@ -390,13 +436,12 @@ function encodeParams(params: Draft19Params, writer: BufferWriter): void {
   if (params.largest_object !== undefined) {
     entries.push({
       type: PARAM_LARGEST_OBJECT,
+      // A Location is "Two consecutive varints (Group, Object)", which is a
+      // different value encoding from "Length-prefixed". Nothing states the
+      // length, so nothing writes one.
       encode: (w) => {
-        const tmpW = new BufferWriter(16)
-        tmpW.writeVarInt(params.largest_object!.group)
-        tmpW.writeVarInt(params.largest_object!.object)
-        const raw = tmpW.finish()
-        w.writeVarInt(BigInt(raw.byteLength))
-        w.writeBytes(raw)
+        w.writeVarInt(params.largest_object!.group)
+        w.writeVarInt(params.largest_object!.object)
       },
     })
   }
@@ -483,12 +528,11 @@ function encodeParams(params: Draft19Params, writer: BufferWriter): void {
   if (params.track_namespace_prefix !== undefined) {
     entries.push({
       type: PARAM_TRACK_NAMESPACE_PREFIX,
+      // The parameter "uses the Track Namespace encoding", which is a tuple
+      // that states its own field count. That is not the Length-prefixed
+      // encoding, so there is no byte length ahead of it.
       encode: (w) => {
-        const tmpW = new BufferWriter(32)
-        encodeNamespaceTuple(params.track_namespace_prefix!, tmpW)
-        const raw = tmpW.finish()
-        w.writeVarInt(BigInt(raw.byteLength))
-        w.writeBytes(raw)
+        encodeNamespaceTuple(params.track_namespace_prefix!, w)
       },
     })
   }
@@ -519,16 +563,24 @@ function encodeParams(params: Draft19Params, writer: BufferWriter): void {
   }
 }
 
-function decodeParams(reader: BufferReader): Draft19Params {
+function decodeParams(reader: BufferReader, messageType: string): Draft19Params {
   const count = Number(reader.readVarInt())
   const result: Draft19Params = {}
-  const unknown: UnknownParam[] = []
   let prevType = 0n
 
   for (let i = 0; i < count; i++) {
     const delta = reader.readVarInt()
     const paramType = prevType + delta
     prevType = paramType
+
+    const scope = PARAMETER_SCOPE.get(paramType)
+    if (scope !== undefined && !scope.has(messageType)) {
+      throw new DecodeError(
+        'CONSTRAINT_VIOLATION',
+        `Message Parameter 0x${paramType.toString(16)} may not appear in ${messageType}`,
+        reader.offset,
+      )
+    }
 
     if (paramType === PARAM_OBJECT_DELIVERY_TIMEOUT) {
       result.object_delivery_timeout = reader.readVarInt()
@@ -543,13 +595,9 @@ function decodeParams(reader: BufferReader): Draft19Params {
     } else if (paramType === PARAM_EXPIRES) {
       result.expires = reader.readVarInt()
     } else if (paramType === PARAM_LARGEST_OBJECT) {
-      // Length-prefixed Location: 2 varints (Group, Object)
-      const length = Number(reader.readVarInt())
-      const startOff = reader.offset
+      // Location: 2 bare varints (not length-prefixed)
       const group = reader.readVarInt()
       const object = reader.readVarInt()
-      const consumed = reader.offset - startOff
-      if (consumed < length) reader.readBytes(length - consumed)
       result.largest_object = { group, object }
     } else if (paramType === PARAM_FILL_TIMEOUT) {
       result.fill_timeout = reader.readVarInt()
@@ -596,34 +644,27 @@ function decodeParams(reader: BufferReader): Draft19Params {
     } else if (paramType === PARAM_NEW_GROUP_REQUEST) {
       result.new_group_request = reader.readVarInt()
     } else if (paramType === PARAM_TRACK_NAMESPACE_PREFIX) {
-      const length = Number(reader.readVarInt())
-      const bytes = reader.readBytes(length)
-      result.track_namespace_prefix = decodeNamespaceTuple(new BufferReader(bytes))
+      // Track Namespace encoding, read in place: the tuple's own field count
+      // bounds it.
+      result.track_namespace_prefix = decodeNamespaceTuple(reader)
     } else {
-      // Unknown parameter — heuristic encoding decode
-      if (paramType % 2n === 0n) {
-        const value = reader.readVarInt()
-        const tmpWriter = new BufferWriter(16)
-        tmpWriter.writeVarInt(value)
-        const raw = tmpWriter.finish()
-        unknown.push({
-          id: `0x${paramType.toString(16)}`,
-          length: raw.byteLength,
-          raw_hex: bytesToHex(raw),
-        })
-      } else {
-        const length = Number(reader.readVarInt())
-        const bytes = reader.readBytes(length)
-        unknown.push({
-          id: `0x${paramType.toString(16)}`,
-          length,
-          raw_hex: bytesToHex(bytes),
-        })
-      }
+      // Drafts 16 and later: "All Message Parameters MUST be defined in the
+      // negotiated version of MOQT or negotiated via Setup Options. An
+      // endpoint that receives an unknown Message Parameter MUST close the
+      // session with PROTOCOL_VIOLATION." (Section 10.2)
+      //
+      // There is no skipping an unknown one and carrying on: the value's
+      // encoding comes from its definition, so a receiver that does not know
+      // the Type does not know how many bytes it spans either. Drafts 11
+      // through 15 say the opposite and keep collecting them.
+      throw new DecodeError(
+        'INVALID_PARAMETER',
+        `Unknown Message Parameter type 0x${paramType.toString(16)}`,
+        reader.offset,
+      )
     }
   }
 
-  if (unknown.length > 0) result.unknown = unknown
   return result
 }
 
@@ -964,7 +1005,7 @@ function decodeSubscribePayload(r: BufferReader): Draft19Message {
   const request_id = r.readVarInt()
   const track_namespace = r.readTuple()
   const track_name = r.readString()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'subscribe')
   return {
     type: 'subscribe',
     request_id,
@@ -976,14 +1017,14 @@ function decodeSubscribePayload(r: BufferReader): Draft19Message {
 
 function decodeSubscribeOkPayload(r: BufferReader, payloadEnd: number): Draft19Message {
   const track_alias = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'subscribe_ok')
   const track_properties = decodeTrackProperties(r, payloadEnd)
   return { type: 'subscribe_ok', track_alias, parameters, track_properties }
 }
 
 function decodeRequestUpdatePayload(r: BufferReader): Draft19Message {
   const request_id = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'request_update')
   return {
     type: 'request_update',
     request_id,
@@ -996,7 +1037,7 @@ function decodePublishPayload(r: BufferReader, payloadEnd: number): Draft19Messa
   const track_namespace = r.readTuple()
   const track_name = r.readString()
   const track_alias = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'publish')
   const track_properties = decodeTrackProperties(r, payloadEnd)
   return {
     type: 'publish',
@@ -1019,7 +1060,7 @@ function decodePublishDonePayload(r: BufferReader): Draft19Message {
 function decodePublishNamespacePayload(r: BufferReader): Draft19Message {
   const request_id = r.readVarInt()
   const track_namespace = r.readTuple()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'publish_namespace')
   return {
     type: 'publish_namespace',
     request_id,
@@ -1041,7 +1082,7 @@ function decodeNamespaceDonePayload(r: BufferReader): Draft19Message {
 function decodeSubscribeNamespacePayload(r: BufferReader): Draft19Message {
   const request_id = r.readVarInt()
   const namespace_prefix = r.readTuple()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'subscribe_namespace')
   return {
     type: 'subscribe_namespace',
     request_id,
@@ -1053,7 +1094,7 @@ function decodeSubscribeNamespacePayload(r: BufferReader): Draft19Message {
 function decodeSubscribeTracksPayload(r: BufferReader): Draft19Message {
   const request_id = r.readVarInt()
   const namespace_prefix = r.readTuple()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'subscribe_tracks')
   return {
     type: 'subscribe_tracks',
     request_id,
@@ -1101,7 +1142,7 @@ function decodeFetchPayload(r: BufferReader): Draft19Message {
     joining = { joining_request_id, joining_start }
   }
 
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'fetch')
 
   return {
     type: 'fetch',
@@ -1117,7 +1158,7 @@ function decodeFetchOkPayload(r: BufferReader, payloadEnd: number): Draft19Messa
   const end_of_track = r.readUint8()
   const end_group = r.readVarInt()
   const end_object = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'fetch_ok')
   const track_properties = decodeTrackProperties(r, payloadEnd)
   return {
     type: 'fetch_ok',
@@ -1133,7 +1174,7 @@ function decodeTrackStatusPayload(r: BufferReader): Draft19Message {
   const request_id = r.readVarInt()
   const track_namespace = r.readTuple()
   const track_name = r.readString()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'track_status')
   return {
     type: 'track_status',
     request_id,
@@ -1144,7 +1185,7 @@ function decodeTrackStatusPayload(r: BufferReader): Draft19Message {
 }
 
 function decodeRequestOkPayload(r: BufferReader, payloadEnd: number): Draft19Message {
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'request_ok')
   const track_properties = decodeTrackProperties(r, payloadEnd)
   return { type: 'request_ok', parameters, track_properties }
 }

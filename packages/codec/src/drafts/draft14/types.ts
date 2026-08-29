@@ -213,7 +213,6 @@ export interface Draft14PublishNamespace extends Draft14BaseMessage {
 export interface Draft14PublishNamespaceOk extends Draft14BaseMessage {
   readonly type: 'publish_namespace_ok'
   readonly request_id: bigint
-  readonly parameters: Draft14Params
 }
 
 export interface Draft14PublishNamespaceError extends Draft14BaseMessage {
@@ -245,7 +244,6 @@ export interface Draft14SubscribeNamespace extends Draft14BaseMessage {
 export interface Draft14SubscribeNamespaceOk extends Draft14BaseMessage {
   readonly type: 'subscribe_namespace_ok'
   readonly request_id: bigint
-  readonly parameters: Draft14Params
 }
 
 export interface Draft14SubscribeNamespaceError extends Draft14BaseMessage {

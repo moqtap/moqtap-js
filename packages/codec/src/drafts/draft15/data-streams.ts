@@ -75,19 +75,23 @@ export function encodeDatagram(dg: DatagramObject): Uint8Array {
   w.writeVarInt(dg.trackAlias)
   w.writeVarInt(dg.groupId)
 
-  // Datagram type flags:
+  // Datagram type flags, Table 5:
   // bit 0 (0x01): extensions present
   // bit 1 (0x02): end-of-group
   // bit 2 (0x04): object_id ABSENT when set
+  // bit 3 (0x08): publisher priority ABSENT when set
   // bit 5 (0x20): status (replaces payload)
   const extensionsPresent = (dgType & 0x01) !== 0
   const objectIdAbsent = (dgType & 0x04) !== 0
+  const defaultPriority = (dgType & 0x08) !== 0
   const isStatus = (dgType & 0x20) !== 0
 
   if (!objectIdAbsent) {
     w.writeVarInt(dg.objectId)
   }
-  w.writeUint8(dg.publisherPriority)
+  if (!defaultPriority) {
+    w.writeUint8(dg.publisherPriority)
+  }
 
   if (extensionsPresent) {
     const extData = dg.extensionData ?? new Uint8Array(0)
@@ -141,29 +145,34 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
     const r = new BufferReader(bytes)
     const streamType = Number(r.readVarInt())
 
-    // Draft-15 valid subgroup types: 0x10-0x17, 0x30-0x37
-    // bit 0: extensions, bit 1: end-of-group, bit 2: explicit subgroup_id
+    // Draft-15 Table 6 assigns 0x10-0x15, 0x18-0x1D, 0x30-0x35 and 0x38-0x3D:
+    // the end-of-group marker at 0x08 doubles the range the previous drafts
+    // used. What the table leaves out is every Type whose two Subgroup ID mode
+    // bits are 0b11. Draft-16 names those reserved in prose; draft-15 only
+    // omits them, which comes to the same refusal by a different route.
     if (
-      !((streamType >= 0x10 && streamType <= 0x17) || (streamType >= 0x30 && streamType <= 0x37))
+      !((streamType >= 0x10 && streamType <= 0x1f) || (streamType >= 0x30 && streamType <= 0x3f)) ||
+      (streamType & 0x06) === 0x06
     ) {
       return {
         ok: false,
         error: new DecodeError(
           'CONSTRAINT_VIOLATION',
-          `Expected subgroup stream type 0x10-0x17/0x30-0x37, got 0x${streamType.toString(16)}`,
+          `Expected subgroup stream type 0x10-0x1F/0x30-0x3F, got 0x${streamType.toString(16)}`,
           0,
         ),
       }
     }
 
     // Decode type flags
-    // Draft-15 bit layout:
-    // bit 0: extensions present
-    // bit 1: end-of-group
-    // bit 2: explicit subgroup_id field present
+    // Draft-15 Table 6, over the 0x10 base:
+    // bit 0 (0x01): extensions present
+    // bit 1 (0x02): subgroup id is the first Object ID, not transmitted
+    // bit 2 (0x04): explicit subgroup_id field present
+    // bit 3 (0x08): contains end of group
     // bit 5 (0x20): no priority (>= 0x30)
     const extensionsPresent = (streamType & 0x01) !== 0
-    const endOfGroup = (streamType & 0x02) !== 0
+    const endOfGroup = (streamType & 0x08) !== 0
     const hasSubgroupField = (streamType & 0x04) !== 0
     const hasPriority = streamType < 0x30
 
@@ -260,10 +269,12 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     // bit 0 (0x01): extensions present
     // bit 1 (0x02): end-of-group
     // bit 2 (0x04): object_id ABSENT when set
+    // bit 3 (0x08): publisher priority ABSENT when set
     // bit 5 (0x20): status (replaces payload with status varint)
     const extensionsPresent = (dgType & 0x01) !== 0
     const objectIdAbsent = (dgType & 0x04) !== 0
     const endOfGroup = (dgType & 0x02) !== 0
+    const defaultPriority = (dgType & 0x08) !== 0
     const isStatus = (dgType & 0x20) !== 0
 
     const trackAlias = r.readVarInt()
@@ -272,7 +283,10 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     if (!objectIdAbsent) {
       objectId = r.readVarInt()
     }
-    const publisherPriority = r.readUint8()
+    let publisherPriority = 128 // default
+    if (!defaultPriority) {
+      publisherPriority = r.readUint8()
+    }
 
     let extensionData: Uint8Array | undefined
     if (extensionsPresent) {
@@ -531,8 +545,8 @@ export function createSubgroupStreamDecoder(): TransformStream<
 
           if (
             !(
-              (streamType >= 0x10 && streamType <= 0x17) ||
-              (streamType >= 0x30 && streamType <= 0x37)
+              (streamType >= 0x10 && streamType <= 0x1f) ||
+              (streamType >= 0x30 && streamType <= 0x3f)
             )
           ) {
             controller.error(
@@ -760,7 +774,7 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
         if (offset >= buffer.length) return
         const firstByte = buffer[offset]!
 
-        if ((firstByte >= 0x10 && firstByte <= 0x17) || (firstByte >= 0x30 && firstByte <= 0x37)) {
+        if ((firstByte >= 0x10 && firstByte <= 0x1f) || (firstByte >= 0x30 && firstByte <= 0x3f)) {
           // Subgroup — delegate to subgroup decoder
           // We need to feed the full buffer including the type byte
           const decoder = createSubgroupStreamDecoder()
@@ -796,7 +810,7 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
       const firstByte = view[0]!
       let result: DecodeResult<Draft15DataStream>
 
-      if ((firstByte >= 0x10 && firstByte <= 0x17) || (firstByte >= 0x30 && firstByte <= 0x37)) {
+      if ((firstByte >= 0x10 && firstByte <= 0x1f) || (firstByte >= 0x30 && firstByte <= 0x3f)) {
         result = decodeSubgroupStream(view)
       } else if (firstByte === 0x05) {
         result = decodeFetchStream(view)

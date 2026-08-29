@@ -236,6 +236,43 @@ const PARAM_SUBSCRIPTION_FILTER = 0x21n
 const PARAM_GROUP_ORDER = 0x22n
 const PARAM_NEW_GROUP_REQUEST = 0x32n
 
+/**
+ * Which messages each Message Parameter's own definition names.
+ *
+ * Section 9.3.1: "Each Message Parameter definition indicates the message types in
+ * which it can appear. If it appears in some other type of message, the
+ * receiving endpoint MUST close the connection with a PROTOCOL_VIOLATION."
+ * Drafts up to and including 16 end that sentence "it MUST be ignored", so this
+ * table has no counterpart there.
+ *
+ * A parameter type absent from this table is one no definition restricts. A
+ * type this draft does not define at all never reaches here: it is refused as
+ * unknown while its scope is still undecidable.
+ */
+const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
+  [0x02n, new Set(['publish_ok', 'subscribe', 'request_update'])],
+  [
+    0x03n,
+    new Set([
+      'publish',
+      'subscribe',
+      'request_update',
+      'subscribe_namespace',
+      'publish_namespace',
+      'track_status',
+      'fetch',
+    ]),
+  ],
+  [0x04n, new Set(['subscribe'])],
+  [0x08n, new Set(['subscribe_ok', 'publish', 'publish_ok', 'request_ok'])],
+  [0x09n, new Set(['subscribe_ok', 'publish', 'request_ok'])],
+  [0x10n, new Set(['subscribe', 'request_update', 'publish', 'publish_ok', 'subscribe_namespace'])],
+  [0x20n, new Set(['subscribe', 'fetch', 'request_update', 'publish_ok'])],
+  [0x21n, new Set(['subscribe', 'publish_ok', 'request_update'])],
+  [0x22n, new Set(['subscribe', 'publish_ok', 'fetch'])],
+  [0x32n, new Set(['publish_ok', 'subscribe', 'request_update'])],
+])
+
 function encodeParams(params: Draft17Params, writer: BufferWriter): void {
   // Collect and sort params by type
   const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
@@ -350,16 +387,24 @@ function encodeParams(params: Draft17Params, writer: BufferWriter): void {
   }
 }
 
-function decodeParams(reader: BufferReader): Draft17Params {
+function decodeParams(reader: BufferReader, messageType: string): Draft17Params {
   const count = Number(reader.readVarInt())
   const result: Draft17Params = {}
-  const unknown: UnknownParam[] = []
   let prevType = 0n
 
   for (let i = 0; i < count; i++) {
     const delta = reader.readVarInt()
     const paramType = prevType + delta
     prevType = paramType
+
+    const scope = PARAMETER_SCOPE.get(paramType)
+    if (scope !== undefined && !scope.has(messageType)) {
+      throw new DecodeError(
+        'CONSTRAINT_VIOLATION',
+        `Message Parameter 0x${paramType.toString(16)} may not appear in ${messageType}`,
+        reader.offset,
+      )
+    }
 
     if (paramType === PARAM_DELIVERY_TIMEOUT) {
       result.delivery_timeout = reader.readVarInt()
@@ -408,31 +453,23 @@ function decodeParams(reader: BufferReader): Draft17Params {
     } else if (paramType === PARAM_NEW_GROUP_REQUEST) {
       result.new_group_request = reader.readVarInt()
     } else {
-      // Unknown parameter — we don't know the encoding, protocol violation per spec
-      // But for robustness, attempt even/odd heuristic
-      if (paramType % 2n === 0n) {
-        const value = reader.readVarInt()
-        const tmpWriter = new BufferWriter(16)
-        tmpWriter.writeVarInt(value)
-        const raw = tmpWriter.finish()
-        unknown.push({
-          id: `0x${paramType.toString(16)}`,
-          length: raw.byteLength,
-          raw_hex: bytesToHex(raw),
-        })
-      } else {
-        const length = Number(reader.readVarInt())
-        const bytes = reader.readBytes(length)
-        unknown.push({
-          id: `0x${paramType.toString(16)}`,
-          length,
-          raw_hex: bytesToHex(bytes),
-        })
-      }
+      // Drafts 16 and later: "All Message Parameters MUST be defined in the
+      // negotiated version of MOQT or negotiated via Setup Options. An
+      // endpoint that receives an unknown Message Parameter MUST close the
+      // session with PROTOCOL_VIOLATION." (Section 9.3)
+      //
+      // There is no skipping an unknown one and carrying on: the value's
+      // encoding comes from its definition, so a receiver that does not know
+      // the Type does not know how many bytes it spans either. Drafts 11
+      // through 15 say the opposite and keep collecting them.
+      throw new DecodeError(
+        'INVALID_PARAMETER',
+        `Unknown Message Parameter type 0x${paramType.toString(16)}`,
+        reader.offset,
+      )
     }
   }
 
-  if (unknown.length > 0) result.unknown = unknown
   return result
 }
 
@@ -747,7 +784,7 @@ function decodeSubscribePayload(r: BufferReader): Draft17Message {
   const required_request_id_delta = r.readVarInt()
   const track_namespace = r.readTuple()
   const track_name = r.readString()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'subscribe')
   return {
     type: 'subscribe',
     request_id,
@@ -760,7 +797,7 @@ function decodeSubscribePayload(r: BufferReader): Draft17Message {
 
 function decodeSubscribeOkPayload(r: BufferReader, payloadEnd: number): Draft17Message {
   const track_alias = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'subscribe_ok')
   const track_properties = decodeTrackProperties(r, payloadEnd)
   return { type: 'subscribe_ok', track_alias, parameters, track_properties }
 }
@@ -768,7 +805,7 @@ function decodeSubscribeOkPayload(r: BufferReader, payloadEnd: number): Draft17M
 function decodeRequestUpdatePayload(r: BufferReader): Draft17Message {
   const request_id = r.readVarInt()
   const required_request_id_delta = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'request_update')
   return {
     type: 'request_update',
     request_id,
@@ -783,7 +820,7 @@ function decodePublishPayload(r: BufferReader, payloadEnd: number): Draft17Messa
   const track_namespace = r.readTuple()
   const track_name = r.readString()
   const track_alias = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'publish')
   const track_properties = decodeTrackProperties(r, payloadEnd)
   return {
     type: 'publish',
@@ -798,7 +835,7 @@ function decodePublishPayload(r: BufferReader, payloadEnd: number): Draft17Messa
 }
 
 function decodePublishOkPayload(r: BufferReader): Draft17Message {
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'publish_ok')
   return { type: 'publish_ok', parameters }
 }
 
@@ -813,7 +850,7 @@ function decodePublishNamespacePayload(r: BufferReader): Draft17Message {
   const request_id = r.readVarInt()
   const required_request_id_delta = r.readVarInt()
   const track_namespace = r.readTuple()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'publish_namespace')
   return {
     type: 'publish_namespace',
     request_id,
@@ -838,7 +875,7 @@ function decodeSubscribeNamespacePayload(r: BufferReader): Draft17Message {
   const required_request_id_delta = r.readVarInt()
   const namespace_prefix = r.readTuple()
   const subscribe_options = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'subscribe_namespace')
   return {
     type: 'subscribe_namespace',
     request_id,
@@ -889,7 +926,7 @@ function decodeFetchPayload(r: BufferReader): Draft17Message {
     joining = { joining_request_id, joining_start }
   }
 
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'fetch')
 
   return {
     type: 'fetch',
@@ -906,7 +943,7 @@ function decodeFetchOkPayload(r: BufferReader, payloadEnd: number): Draft17Messa
   const end_of_track = r.readUint8()
   const end_group = r.readVarInt()
   const end_object = r.readVarInt()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'fetch_ok')
   const track_properties = decodeTrackProperties(r, payloadEnd)
   return {
     type: 'fetch_ok',
@@ -923,7 +960,7 @@ function decodeTrackStatusPayload(r: BufferReader): Draft17Message {
   const required_request_id_delta = r.readVarInt()
   const track_namespace = r.readTuple()
   const track_name = r.readString()
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'track_status')
   return {
     type: 'track_status',
     request_id,
@@ -935,7 +972,7 @@ function decodeTrackStatusPayload(r: BufferReader): Draft17Message {
 }
 
 function decodeRequestOkPayload(r: BufferReader): Draft17Message {
-  const parameters = decodeParams(r)
+  const parameters = decodeParams(r, 'request_ok')
   return { type: 'request_ok', parameters }
 }
 
