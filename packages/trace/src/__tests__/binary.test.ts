@@ -536,18 +536,16 @@ describe('binary .moqtrace format', () => {
   })
 
   describe('unknown event types', () => {
-    it('unknown event types are preserved as annotations', () => {
-      const trace = makeTrace([
-        {
-          type: 'annotation',
-          seq: 0,
-          timestamp: 100,
-          label: 'before',
-          data: null,
-        },
+    // The test that stood here wrote a real annotation and asserted it read
+    // back as an annotation, under the name 'unknown event types are
+    // preserved as annotations'. It measured nothing about unknown events —
+    // and the behaviour it named was itself the defect, because relabelling
+    // rewrites the event type on the next write. Real coverage is in
+    // format-v2.test.ts under 'unknown event types'.
+    it('a known event type is not mistaken for an unknown one', () => {
+      const result = roundTrip([
+        { type: 'annotation', seq: 0, timestamp: 100, label: 'before', data: null },
       ])
-      const bytes = writeMoqtrace(trace)
-      const result = readMoqtrace(bytes)
       expect(result.events).toHaveLength(1)
       expect(result.events[0]?.type).toBe('annotation')
     })

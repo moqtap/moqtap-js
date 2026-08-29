@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/trace",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MoQT session trace format — record, serialize, and analyze .moqtrace files",
   "type": "module",
   "license": "MIT",
@@ -47,7 +47,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@moqtap/codec": "^0.3.0"
+    "@moqtap/codec": "*"
   },
   "dependencies": {
     "cbor-x": "^1.6.0"

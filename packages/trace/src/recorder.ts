@@ -58,6 +58,16 @@ const DETAIL_RANK: Record<DetailLevel, number> = {
 export function createRecorder(options: RecorderOptions): TraceRecorder {
   const detail = options.detail
   const detailRank = DETAIL_RANK[detail]
+  // A reader must tolerate a detail level it does not know; a recorder cannot.
+  // Asked for a level this build does not implement, it would either capture
+  // less than the caller believes — writing a header that claims a detail the
+  // events do not have — or capture more, which for the payload-bearing
+  // levels is a privacy failure. Neither is worth a trace, so refuse instead.
+  if (detailRank === undefined) {
+    throw new Error(
+      `Unknown detail level '${detail}': cannot record at a level this build does not implement`,
+    )
+  }
   const maxEvents = options.maxEvents ?? 100_000
   const clock = options.clock ?? (() => Math.round(performance.now() * 1000))
   const messageTypeId = options.messageTypeId ?? (() => 0)
