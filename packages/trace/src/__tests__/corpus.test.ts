@@ -222,15 +222,27 @@ describe.skipIf(CORPUS == null)(SUITE, () => {
       const trace = readMoqtrace(bytesOf(root, 'v2-extra-keys', 'rust.moqtrace'))
 
       const [opened, header, failure] = trace.events
-      // The keys are the ones PROPOSAL-v3 §§1-3 propose. Reading them back off
-      // a file written by the other implementation is what makes "additive"
-      // a checked claim rather than an assumption.
-      expect(opened?.extra).toEqual({ ta: 7, sg: 2 })
-      expect(header?.extra).toEqual({ ta: 7 })
-      expect(failure?.extra?.ek).toBe('decode')
-      expect(new Uint8Array(failure?.extra?.raw as Uint8Array)).toEqual(
+      // Every key is `x-` prefixed, the range SPEC.md reserves for private use
+      // and promises never to define. The fixture used to borrow keys from this
+      // proposal's own sections instead, until §2 shipped and claimed two of
+      // them — turning these assertions red, which invited weakening them
+      // rather than replacing the fixture.
+      // Reading them back off a file the other implementation wrote is what
+      // makes "an unrecognised key survives" a checked claim.
+      expect(opened?.extra).toEqual({ 'x-ta': 7, 'x-sg': 2 })
+      expect(header?.extra?.['x-ta']).toBe(7)
+      expect(failure?.extra?.['x-ek']).toBe('decode')
+      expect(new Uint8Array(failure?.extra?.['x-raw'] as Uint8Array)).toEqual(
         new Uint8Array([0x99, 0x01]),
       )
+
+      // A nested value, because preservation has to be structural: a shallow
+      // copy passes every flat assertion above and loses this one.
+      expect(header?.extra?.['x-nested']).toEqual({
+        blob: new Uint8Array([0x0f, 0xf0]),
+        inner: { depth: 3 },
+        list: [1, 'two'],
+      })
 
       // Ignoring an unrecognised key is allowed. Dropping one is not: this
       // round trip is the redaction pass, the filter, the annotated download.

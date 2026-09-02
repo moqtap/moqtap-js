@@ -269,12 +269,17 @@ export const v2UnknownPerspective: Trace = {
 }
 
 /**
- * A file whose *known* event types carry keys no reader knows.
+ * Known event types carrying keys no reader knows, and no reader ever will.
  *
- * The keys are real proposals rather than invented ones — `"ta"` and `"sg"` on
- * a stream open, `"ek"` and `"raw"` on an error — so this case doubles as
- * evidence that today's readers keep them, which is what makes those proposals
- * additive rather than breaking.
+ * Every key here begins `x-`, the prefix SPEC.md reserves for private use and
+ * promises never to define. That reservation exists because of this case: it
+ * was first built from the keys PROPOSAL-v3 §§1-3 propose, on the reasoning
+ * that real proposals make better evidence than invented ones. §2 then landed
+ * and claimed two of them. The dedicated assertions went red, which is the
+ * mechanism working — but a red test whose *fixture* has gone stale invites
+ * weakening the assertion rather than replacing the fixture, and that is what
+ * happened before this rebuild. A fixture for a rule about unknown keys has to
+ * be built from keys that cannot stop being unknown.
  *
  * The failure it guards is quiet: a reader may ignore an unrecognised key, but
  * a reader that *drops* one turns any read-modify-write — a redaction pass, a
@@ -297,7 +302,7 @@ export const v2ExtraKeys: Trace = {
       streamId: 4n,
       direction: 1,
       streamType: 0,
-      extra: { ta: 7, sg: 2 },
+      extra: { 'x-ta': 7, 'x-sg': 2 },
     },
     {
       type: 'object-header',
@@ -308,7 +313,16 @@ export const v2ExtraKeys: Trace = {
       objectId: 0n,
       publisherPriority: 128,
       objectStatus: 0,
-      extra: { ta: 7 },
+      extra: {
+        'x-ta': 7,
+        // A nested value, because "the key survives" has to mean the whole tree
+        // survives. A shallow copy passes every flat case above and loses this.
+        'x-nested': {
+          blob: bytes(0x0f, 0xf0),
+          inner: { depth: 3 },
+          list: [1, 'two'],
+        },
+      },
     },
     {
       type: 'error',
@@ -316,7 +330,7 @@ export const v2ExtraKeys: Trace = {
       timestamp: 300,
       errorCode: 0,
       reason: 'undecodable control bytes',
-      extra: { ek: 'decode', raw: bytes(0x99, 0x01) },
+      extra: { 'x-ek': 'decode', 'x-raw': bytes(0x99, 0x01) },
     },
   ],
 }
@@ -378,6 +392,78 @@ export const v2ControlMsgMap: Trace = {
   ],
 }
 
+/**
+ * A `headers`-level trace where the stream-header identifiers are the only way
+ * to group anything.
+ *
+ * This is what §2 exists for. At `"headers"` there are no payload bytes to
+ * re-parse, so before the four keys below a recording could not answer which
+ * track a stream belonged to — the level's whole purpose. One stream per type
+ * covers all three scopes: `"sg"` on a subgroup, `"fri"` on a fetch, `"g"` on a
+ * datagram, and `"ta"` on each.
+ *
+ * The three streams deliberately share a track alias. That is legal and
+ * ordinary — one track delivered over a subgroup stream, a fetch and a
+ * datagram — and it is why `"ta"` alone cannot key a flow, which is §1's
+ * argument sitting in a file rather than in prose.
+ */
+export const v2HeadersLevelFlow: Trace = {
+  header: {
+    protocol: 'moq-transport-19',
+    perspective: 'observer',
+    detail: 'headers',
+    startTime: START_TIME,
+    sessionId: 'v2-headers-level-flow',
+  },
+  events: [
+    {
+      type: 'stream-opened',
+      seq: 0,
+      timestamp: 100,
+      streamId: 4n,
+      direction: 1,
+      streamType: 0,
+      trackAlias: 9n,
+      subgroupId: 2n,
+    },
+    {
+      type: 'object-header',
+      seq: 1,
+      timestamp: 150,
+      streamId: 4n,
+      groupId: 7n,
+      objectId: 0n,
+      publisherPriority: 128,
+      objectStatus: 0,
+    },
+    {
+      // `"fri"` is the only correlation between a fetch stream and the FETCH
+      // that asked for it, which is why it is the one key a writer MUST emit.
+      type: 'stream-opened',
+      seq: 2,
+      timestamp: 200,
+      streamId: 8n,
+      direction: 1,
+      streamType: 2,
+      trackAlias: 9n,
+      fetchRequestId: 42n,
+    },
+    {
+      // A datagram carries its group on the stream-opened event, because there
+      // is no subgroup stream to hang it off. Note that `"sid"` here names a
+      // stream a datagram never opened — §1's subject, visible in this file.
+      type: 'stream-opened',
+      seq: 3,
+      timestamp: 300,
+      streamId: 12n,
+      direction: 1,
+      streamType: 1,
+      trackAlias: 9n,
+      groupId: 4294967296n,
+    },
+  ],
+}
+
 /** Every single-segment case both implementations author, by directory name. */
 export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v1-basic': v1Basic,
@@ -386,6 +472,7 @@ export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v2-unknown-perspective': v2UnknownPerspective,
   'v2-extra-keys': v2ExtraKeys,
   'v2-control-msg-map': v2ControlMsgMap,
+  'v2-headers-level-flow': v2HeadersLevelFlow,
 }
 
 /** Cases whose file is a segmented stream rather than a single trace. */

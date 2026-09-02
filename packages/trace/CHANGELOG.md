@@ -9,6 +9,59 @@ This file starts at 0.4.0. Earlier releases are in the git history. Version
 0.3.1 was tagged in the working tree but never published; its contents are
 folded into 0.4.0 below.
 
+## [Unreleased]
+
+The Event 1 keys below and the fixes to them are in the same unreleased range.
+No published version of this package shipped the data loss.
+
+### Added
+
+- **Event 1 carries the stream header's identifiers**: `trackAlias`,
+  `subgroupId`, `fetchRequestId` and `groupId` on `StreamOpenedEvent`, from the
+  new `"ta"`, `"sg"`, `"fri"` and `"g"` keys. No detail level records the bytes
+  of a `SUBGROUP_HEADER`, a fetch header or a datagram header, so before these a
+  `'headers'` recording could not say which track a stream belonged to and had
+  nothing left to re-parse it from. All four are optional; each of the last
+  three is meaningful on one stream type only.
+- All four are `bigint`, matching `ObjectHeaderEvent`'s `groupId`, `objectId`
+  and `streamId` rather than this event's narrow `direction` and `streamType`.
+  As `number` they would make `streamOpened.groupId === objectHeader.groupId`
+  evaluate `42 === 42n` — `false`, silently, for two fields naming one group.
+
+### Fixed
+
+- **A wrong-typed value on an optional key no longer costs the whole file.**
+  The four keys above were decoded with `BigInt(value)`, which throws on text,
+  on a fractional number, and on an array or a map. One event carrying
+  `"ta": "hello"` therefore threw a raw `SyntaxError` out of `readMoqtrace`,
+  which returned nothing at all: no events, and not an error type this package
+  defines, so a caller handling its error types did not catch it either. Every
+  optional key is now read through a type test, and a value the field cannot
+  hold is kept rather than thrown on.
+- **A defined key whose value has an unusable type is preserved again**, as
+  SPEC.md requires: it goes to `extra`, is ignored for meaning, and is written
+  back unchanged, exactly as a key the reader had never heard of is. Adding
+  `"ta"`, `"sg"`, `"fri"` and `"g"` to the reader's vocabulary had *reduced*
+  what it preserved — before, a text or fractional `"ta"` survived in `extra`;
+  after, it was lost. The reader now decides by what the decode could use
+  rather than by a list of the keys each event type owns, so this holds for
+  every optional key on every event type, not only the four that exposed it.
+- **`true` is no longer read as the identifier 1, nor the text `"4"` as 4.**
+  `BigInt` converts both, so a wrong-typed value could reach the event as an
+  identifier the file never carried — and one the Rust reader, which coerces
+  neither, does not see. The same conversion was applied to a subscription
+  derivation's request id, and is gone from there too.
+- A required integer key with an unusable value still fails the event, which is
+  what the format asks for, but now names the key instead of surfacing whatever
+  `BigInt` threw.
+
+### Changed
+
+- A `"traceId"` whose length is not 16 bytes is kept in `extra` rather than
+  failing the event. The key is optional, and what makes the event a derivation
+  — the upstream and downstream subscriptions it links — decoded fine. Writing
+  a wrong-length trace id is still refused.
+
 ## [0.4.0] - 2026-09-02
 
 **Breaking, which is why this is 0.4.0 and not 0.3.2.**

@@ -4,11 +4,9 @@ import type {
   DerivationKind,
   DetailLevel,
   DropPolicy,
-  PeerRole,
   Perspective,
   SamplingInfo,
   SegmentInfo,
-  Side,
   SubscriptionRef,
   Trace,
   TraceEvent,
@@ -83,41 +81,32 @@ const INT_TO_EVENT_TYPE: Record<number, Exclude<TraceEvent['type'], 'unknown'>> 
 const COMMON_EVENT_KEYS = new Set(['n', 't', 'p', 'e'])
 
 /**
- * The keys each known event type owns, in the order it writes them.
+ * One event map being decoded, and the keys the decode has taken from it.
  *
- * Everything else on such an event is a key this version does not recognise,
- * and goes to `extra` rather than being dropped. Adding a key to an event type
- * means adding it here too — a key read into a named field but missing from
- * this list would be written twice, once from the field and once from `extra`.
+ * Everything left over is a key this version does not recognise, and goes to
+ * `extra` rather than being dropped. "Left over" is narrower than "not owned by
+ * this event type", and the difference is the whole point: a key the type owns
+ * whose value is of a type the reader cannot use was not taken either, and is
+ * preserved exactly as a key nobody had heard of would be — SPEC.md,
+ * "A defined key whose value has an unusable type is treated as unrecognised."
  *
- * An unknown event type is absent: `UnknownEvent.fields` already holds every
- * non-common key on it, so nothing is collected into `extra` there.
+ * Only the decode writes to the set, so there is no separate list of owned keys
+ * to keep in step with it. The list there used to be is what made adding
+ * `"ta"`, `"sg"`, `"fri"` and `"g"` to Event 1 *reduce* what this reader
+ * preserved: those keys counted as owned whatever they carried, so a
+ * wrong-typed one was kept out of `extra` while the decode either threw on it,
+ * losing the whole file, or coerced it into a value the file never carried.
  */
-const VARIANT_KEYS: Record<number, ReadonlySet<string>> = {
-  0: new Set(['d', 'mt', 'msg', 'sid', 'raw']),
-  1: new Set(['sid', 'd', 'st']),
-  2: new Set(['sid', 'ec']),
-  3: new Set(['sid', 'g', 'o', 'pp', 'os']),
-  4: new Set(['sid', 'g', 'o', 'sz', 'pl']),
-  5: new Set(['from', 'to']),
-  6: new Set(['ec', 'reason']),
-  7: new Set(['label', 'data']),
-  8: new Set(['endpoint', 'transport', 'role', 'side']),
-  9: new Set(['ec', 'reason']),
-  10: new Set(['u', 'd', 'kind', 'traceId', 'ns', 'tn', 'tdr', 'tus', 'tuo', 'tdo']),
+interface Decoding {
+  readonly obj: Record<string, unknown>
+  readonly used: Set<string>
 }
 
-/** Every key on a decoded event map that neither the common fields nor its type owns. */
-function unrecognisedKeys(
-  obj: Record<string, unknown>,
-  eventType: number,
-): Record<string, unknown> | undefined {
-  const owned = VARIANT_KEYS[eventType]
-  if (owned == null) return undefined
-
+/** Every key on a decoded event map that the decode did not take. */
+function unrecognisedKeys(src: Decoding): Record<string, unknown> | undefined {
   let extra: Record<string, unknown> | undefined
-  for (const [key, value] of Object.entries(obj)) {
-    if (COMMON_EVENT_KEYS.has(key) || owned.has(key)) continue
+  for (const [key, value] of Object.entries(src.obj)) {
+    if (src.used.has(key)) continue
     extra ??= {}
     extra[key] = value
   }
@@ -242,7 +231,16 @@ function cborToSubscriptionRef(value: unknown): SubscriptionRef {
   if (!Array.isArray(value) || value.length !== 2) {
     throw new Error('Subscription reference must be [peer, requestId]')
   }
-  return { peer: value[0] as string, requestId: BigInt(value[1] as bigint | number) }
+  // Both halves are required, so an unusable one is a malformed event rather
+  // than something to route elsewhere — there is no subscription to name
+  // without them. Checked rather than converted, for the reason `asUint` gives:
+  // `BigInt(true)` is `1n`, a request id no file ever carried.
+  const peer = asText(value[0])
+  const requestId = asUint(value[1])
+  if (peer == null || requestId == null) {
+    throw new Error('Subscription reference must be a [text, unsigned integer] pair')
+  }
+  return { peer, requestId }
 }
 
 /**
@@ -273,12 +271,14 @@ function int(value: number): number | bigint {
 }
 
 /**
- * Read a trace id, refusing any length but the one the format fixes.
+ * Write a trace id, refusing any length but the one the format fixes.
  *
- * A wrong-length value is malformed rather than something to pad or truncate:
- * the identifier exists so two implementations independently derive
- * byte-identical values for one subscription chain, and a reader that quietly
- * reshapes it breaks exactly the property it is there for.
+ * A wrong-length value is not something to pad or truncate: the identifier
+ * exists so two implementations independently derive byte-identical values for
+ * one subscription chain, and reshaping it breaks exactly the property it is
+ * there for. The reader's counterpart is {@link asTraceId}, which keeps a
+ * wrong-length value instead of refusing it — `"traceId"` is optional, and an
+ * optional key's type never fails a file.
  */
 function checkTraceId(value: unknown): Uint8Array {
   const bytes = toBytes(value)
@@ -317,6 +317,13 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
       base.sid = event.streamId
       base.d = event.direction
       base.st = event.streamType
+      // Written only when set, and each is scoped to one stream type: a
+      // subgroup id on a fetch stream, or a group id on a subgroup stream,
+      // names something the header it came from never carried.
+      if (event.trackAlias != null) base.ta = event.trackAlias
+      if (event.subgroupId != null) base.sg = event.subgroupId
+      if (event.fetchRequestId != null) base.fri = event.fetchRequestId
+      if (event.groupId != null) base.g = event.groupId
       break
     }
     case 'stream-closed': {
@@ -390,14 +397,17 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
   }
 
   // Last, so the event's own keys keep the positions a reader expects and the
-  // file stays diffable against one written without them. A key the type owns
-  // is written from the field, so an `extra` entry repeating it is dropped:
-  // a CBOR map with a duplicate key is malformed, and the field is what a
-  // reader produced.
+  // file stays diffable against one written without them. An entry naming a key
+  // this event already wrote from a field is dropped: a CBOR map with a
+  // duplicate key is malformed, and the field is what a reader produced.
+  //
+  // The test is what the event *wrote*, not what its type owns. A defined key
+  // whose value the reader could not use is held in `extra` and no field wrote
+  // it, so on the owned-key test it would be dropped here — silently undoing
+  // the preservation the read side had just performed.
   if (event.type !== 'unknown' && event.extra != null) {
-    const owned = VARIANT_KEYS[EVENT_TYPE_TO_INT[event.type]]
     for (const [key, value] of Object.entries(event.extra)) {
-      if (COMMON_EVENT_KEYS.has(key) || owned?.has(key)) continue
+      if (COMMON_EVENT_KEYS.has(key) || Object.hasOwn(base, key)) continue
       base[key] = value
     }
   }
@@ -405,23 +415,140 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
   return base
 }
 
+// --- Reading one key ---
+//
+// Each of these answers `undefined` for a value it cannot use, and the caller
+// then leaves the key untaken so that `unrecognisedKeys` preserves it.
+//
+// They are type *tests*, not conversion attempts. The distinction is not
+// pedantic even where a conversion throws on the obvious cases: `BigInt`
+// answers `1n` for `true` and `4n` for the text `"4"`, so a `try`/`catch`
+// around it would still put an identifier on the event that the file never
+// carried — and the Rust reader, which coerces neither, would then read the
+// same file differently.
+
+/** A CBOR unsigned integer, as a `bigint`. */
+function asUint(value: unknown): bigint | undefined {
+  if (typeof value === 'bigint') return value >= 0n ? value : undefined
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return undefined
+  return BigInt(value)
+}
+
 /**
- * Decode one event, keeping any key its type does not own.
+ * The same, where the field it feeds is a JS `number`.
  *
- * The keys are kept on the event rather than dropped so that reading a trace
+ * A value past `Number.MAX_SAFE_INTEGER` is refused rather than rounded: the
+ * rounded number is not what the file said, and refusing keeps the digits
+ * intact in `extra`.
+ */
+function asUintNumber(value: unknown): number | undefined {
+  const int = asUint(value)
+  return int == null || int > BigInt(Number.MAX_SAFE_INTEGER) ? undefined : Number(int)
+}
+
+/** A CBOR text string. */
+function asText(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+/** A CBOR byte string, copied by {@link toBytes} so it owns its bytes. */
+function asByteString(value: unknown): Uint8Array | undefined {
+  return value instanceof Uint8Array ? toBytes(value) : undefined
+}
+
+/** A CBOR array of byte strings — the shape a track namespace takes. */
+function asByteStrings(value: unknown): Uint8Array[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const parts: Uint8Array[] = []
+  for (const item of value) {
+    const bytes = asByteString(item)
+    if (bytes == null) return undefined
+    parts.push(bytes)
+  }
+  return parts
+}
+
+/**
+ * A trace id: {@link TRACE_ID_LENGTH} bytes and no other length.
+ *
+ * The reader's half of {@link checkTraceId}. It keeps a wrong-length value
+ * rather than throwing, because `"traceId"` is optional and an optional key's
+ * type never fails a file; the value then survives in `extra` with its bytes
+ * intact, which a padded or truncated field would not.
+ */
+function asTraceId(value: unknown): Uint8Array | undefined {
+  const bytes = asByteString(value)
+  return bytes?.length === TRACE_ID_LENGTH ? bytes : undefined
+}
+
+/** Take a key's value as it stands, whatever shape it has. */
+function take(src: Decoding, key: string): unknown {
+  src.used.add(key)
+  return src.obj[key]
+}
+
+/**
+ * Take a required integer key, or fail the event.
+ *
+ * The one case where an unusable value is not routed to `extra`: without the
+ * key there is no event to build, so the event is malformed exactly as it
+ * would be with the key absent. That is as far as it goes — a *file* is never
+ * failed over an optional key's type.
+ */
+function requireUint(src: Decoding, key: string): bigint {
+  const value = asUint(take(src, key))
+  if (value == null) {
+    throw new Error(`Event key ${JSON.stringify(key)} must be an unsigned integer`)
+  }
+  return value
+}
+
+/**
+ * Take an optional key, as the property to spread onto the event — or nothing
+ * at all, when the key is absent or carries a value of a type this reader
+ * cannot use.
+ *
+ * Those two cases build the same event and differ in what they leave behind:
+ * an absent key leaves nothing, an unusable one stays untaken and is preserved
+ * verbatim as an unrecognised key. Neither throws. The events around this one
+ * decoded fine, and one key's type is no reason to lose them.
+ */
+function optional<K extends string, V>(
+  src: Decoding,
+  key: string,
+  name: K,
+  read: (value: unknown) => V | undefined,
+): { [P in K]?: V } {
+  const usable = read(src.obj[key])
+  if (usable === undefined) return {} as { [P in K]?: V }
+  src.used.add(key)
+  return { [name]: usable } as { [P in K]?: V }
+}
+
+/**
+ * Decode one event, keeping every key the decode could not use.
+ *
+ * Those keys are kept on the event rather than dropped so that reading a trace
  * and writing it back does not quietly strip what a newer writer put there.
+ * Two kinds land there, and the second is the one easily lost: a key this
+ * version has never heard of, and a key it knows whose value is of a type it
+ * cannot use — a text `"ta"`, say. Both are unrecognised as far as meaning
+ * goes, and both are written back unchanged.
+ *
  * An `UnknownEvent` is returned untouched: its `fields` already hold every
  * non-common key, and adding them to `extra` too would write each one twice.
  */
 function cborToEvent(obj: Record<string, unknown>): TraceEvent {
-  const event = decodeEvent(obj)
+  const src: Decoding = { obj, used: new Set(COMMON_EVENT_KEYS) }
+  const event = decodeEvent(src)
   if (event.type === 'unknown') return event
 
-  const extra = unrecognisedKeys(obj, EVENT_TYPE_TO_INT[event.type])
+  const extra = unrecognisedKeys(src)
   return extra == null ? event : { ...event, extra }
 }
 
-function decodeEvent(obj: Record<string, unknown>): TraceEvent {
+function decodeEvent(src: Decoding): TraceEvent {
+  const obj = src.obj
   const seq = Number(obj.n ?? 0)
   const timestamp = Number(obj.t ?? 0)
   const peerFields = obj.p != null ? { peer: obj.p as string } : {}
@@ -453,8 +580,8 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        direction: obj.d as 0 | 1,
-        messageType: Number(obj.mt ?? 0),
+        direction: take(src, 'd') as 0 | 1,
+        messageType: Number(take(src, 'mt') ?? 0),
         // Handed over exactly as it decoded. A `"msg"` that is not a map is
         // still the only decode the recording has — the corpus captures carry
         // a Rust `Debug` string here — and the format requires a reader to
@@ -462,10 +589,11 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         // includes `null`, which is a value a writer chose to put on the wire,
         // not an absence; absence is the single case normalised, to `{}`, so
         // that a caller reading keys off a conforming file never meets
-        // `undefined`.
-        message: Object.hasOwn(obj, 'msg') ? obj.msg : {},
-        ...(obj.sid != null ? { streamId: BigInt(obj.sid as bigint | number) } : {}),
-        ...(obj.raw != null ? { raw: toBytes(obj.raw) } : {}),
+        // `undefined`. It is the one key with no unusable shape: the field's
+        // type is `unknown`, so every value is one it can hold.
+        message: Object.hasOwn(obj, 'msg') ? take(src, 'msg') : {},
+        ...optional(src, 'sid', 'streamId', asUint),
+        ...optional(src, 'raw', 'raw', asByteString),
       }
 
     case 'stream-opened':
@@ -474,9 +602,27 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        streamId: BigInt(obj.sid as bigint | number),
-        direction: obj.d as 0 | 1,
-        streamType: obj.st as 0 | 1 | 2,
+        streamId: requireUint(src, 'sid'),
+        direction: take(src, 'd') as 0 | 1,
+        streamType: take(src, 'st') as 0 | 1 | 2,
+        // `bigint`, not `number`, even though a writer that used a narrow CBOR
+        // integer hands these back as JS numbers. They are the same
+        // identifiers an object-header event carries, and that event converts;
+        // leaving one a number here makes `opened.groupId === header.groupId`
+        // read `42 === 42n` and answer `false` for values that match.
+        //
+        // Tested rather than converted, and optional rather than required.
+        // `BigInt(obj.ta)` threw on a text or fractional value and took the
+        // whole file down with it, since nothing catches one event's decode; it
+        // answered `1n` for `true` and `4n` for `"4"`, inventing an identifier
+        // the file never carried; and the owned-key list then kept the
+        // survivors out of `extra`, so adding these four keys *lost* values
+        // this reader had preserved before it knew them. A value of any other
+        // shape now stays where it was, on the event as an unrecognised key.
+        ...optional(src, 'ta', 'trackAlias', asUint),
+        ...optional(src, 'sg', 'subgroupId', asUint),
+        ...optional(src, 'fri', 'fetchRequestId', asUint),
+        ...optional(src, 'g', 'groupId', asUint),
       }
 
     case 'stream-closed':
@@ -485,8 +631,8 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        streamId: BigInt(obj.sid as bigint | number),
-        errorCode: Number(obj.ec ?? 0),
+        streamId: requireUint(src, 'sid'),
+        errorCode: Number(take(src, 'ec') ?? 0),
       }
 
     case 'object-header':
@@ -495,11 +641,11 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        streamId: BigInt(obj.sid as bigint | number),
-        groupId: BigInt(obj.g as bigint | number),
-        objectId: BigInt(obj.o as bigint | number),
-        publisherPriority: Number(obj.pp ?? 0),
-        objectStatus: Number(obj.os ?? 0),
+        streamId: requireUint(src, 'sid'),
+        groupId: requireUint(src, 'g'),
+        objectId: requireUint(src, 'o'),
+        publisherPriority: Number(take(src, 'pp') ?? 0),
+        objectStatus: Number(take(src, 'os') ?? 0),
       }
 
     case 'object-payload':
@@ -508,11 +654,11 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        streamId: BigInt(obj.sid as bigint | number),
-        groupId: BigInt(obj.g as bigint | number),
-        objectId: BigInt(obj.o as bigint | number),
-        size: Number(obj.sz ?? 0),
-        ...(obj.pl != null ? { payload: toBytes(obj.pl) } : {}),
+        streamId: requireUint(src, 'sid'),
+        groupId: requireUint(src, 'g'),
+        objectId: requireUint(src, 'o'),
+        size: Number(take(src, 'sz') ?? 0),
+        ...optional(src, 'pl', 'payload', asByteString),
       }
 
     case 'state-change':
@@ -521,8 +667,8 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        from: obj.from as string,
-        to: obj.to as string,
+        from: take(src, 'from') as string,
+        to: take(src, 'to') as string,
       }
 
     case 'error':
@@ -531,8 +677,8 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        errorCode: Number(obj.ec ?? 0),
-        reason: (obj.reason ?? '') as string,
+        errorCode: Number(take(src, 'ec') ?? 0),
+        reason: (take(src, 'reason') ?? '') as string,
       }
 
     case 'annotation':
@@ -541,8 +687,8 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        label: (obj.label ?? '') as string,
-        data: obj.data,
+        label: (take(src, 'label') ?? '') as string,
+        data: take(src, 'data'),
       }
 
     case 'peer-connected':
@@ -551,10 +697,13 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        ...(obj.endpoint != null ? { endpoint: obj.endpoint as string } : {}),
-        ...(obj.transport != null ? { transport: obj.transport as string } : {}),
-        ...(obj.role != null ? { role: obj.role as PeerRole } : {}),
-        ...(obj.side != null ? { side: obj.side as Side } : {}),
+        ...optional(src, 'endpoint', 'endpoint', asText),
+        ...optional(src, 'transport', 'transport', asText),
+        // A role or side this version has never heard of is still text, and
+        // still kept: the unions they widen to exist for exactly that. What
+        // `asText` refuses is a value that is not text at all.
+        ...optional(src, 'role', 'role', asText),
+        ...optional(src, 'side', 'side', asText),
       }
 
     case 'peer-disconnected':
@@ -563,8 +712,8 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        errorCode: Number(obj.ec ?? 0),
-        ...(obj.reason != null ? { reason: obj.reason as string } : {}),
+        errorCode: Number(take(src, 'ec') ?? 0),
+        ...optional(src, 'reason', 'reason', asText),
       }
 
     case 'subscription-derivation':
@@ -573,16 +722,16 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         seq,
         timestamp,
         ...peerFields,
-        upstream: cborToSubscriptionRef(obj.u),
-        downstream: ((obj.d ?? []) as unknown[]).map(cborToSubscriptionRef),
-        kind: (obj.kind ?? '') as DerivationKind,
-        ...(obj.traceId != null ? { traceId: checkTraceId(obj.traceId) } : {}),
-        ...(obj.ns != null ? { namespace: (obj.ns as unknown[]).map(toBytes) } : {}),
-        ...(obj.tn != null ? { trackName: toBytes(obj.tn) } : {}),
-        ...(obj.tdr != null ? { tDownstreamReceived: Number(obj.tdr) } : {}),
-        ...(obj.tus != null ? { tUpstreamSent: Number(obj.tus) } : {}),
-        ...(obj.tuo != null ? { tUpstreamOkReceived: Number(obj.tuo) } : {}),
-        ...(obj.tdo != null ? { tDownstreamOkSent: Number(obj.tdo) } : {}),
+        upstream: cborToSubscriptionRef(take(src, 'u')),
+        downstream: ((take(src, 'd') ?? []) as unknown[]).map(cborToSubscriptionRef),
+        kind: (take(src, 'kind') ?? '') as DerivationKind,
+        ...optional(src, 'traceId', 'traceId', asTraceId),
+        ...optional(src, 'ns', 'namespace', asByteStrings),
+        ...optional(src, 'tn', 'trackName', asByteString),
+        ...optional(src, 'tdr', 'tDownstreamReceived', asUintNumber),
+        ...optional(src, 'tus', 'tUpstreamSent', asUintNumber),
+        ...optional(src, 'tuo', 'tUpstreamOkReceived', asUintNumber),
+        ...optional(src, 'tdo', 'tDownstreamOkSent', asUintNumber),
       }
   }
 }

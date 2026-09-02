@@ -34,9 +34,17 @@ The `"detail"` field (see Part 2 header) declares what was recorded. Each level 
 | `"headers"`       | Control messages + data stream headers (subgroup/fetch/datagram headers, object metadata: group, object ID, priority, status). No payload bytes. | Delivery pattern analysis, timing.                    |
 | `"headers+sizes"` | Everything in `"headers"` + payload byte lengths for each object.                                                                                | Bandwidth analysis without storing media.             |
 | `"headers+data"`  | Everything in `"headers"` + full payload bytes for each object.                                                                                  | Full session replay, debugging media corruption.      |
-| `"full"`          | Everything above + raw wire bytes for every message (pre-decode).                                                                                | Wire-level debugging, compliance testing.             |
+| `"full"`          | Everything above + raw wire bytes for every *control* message (pre-decode). See the note below on data-stream framing.                            | Wire-level debugging, compliance testing.             |
 
 Levels `"headers+data"` and `"full"`, and the `"raw"` field on `"control"`-level events, are **payload-bearing** — see [Privacy Considerations](#privacy-considerations).
+
+**No level carries data-stream framing bytes.** `"raw"` exists only on Event 0,
+and Event 4's `"pl"` begins after the object header, so the bytes of a
+`SUBGROUP_HEADER`, a fetch header or a datagram header are recorded at no level
+including `"full"`. What those headers carry is recorded as decoded fields
+instead — see [Event 1](#event-1-stream-opened). Closing that gap needs a new
+key and is not in this revision; the level's description no longer implies
+otherwise.
 
 At any detail level, the recorder MAY be configured to **mask payloads** — replacing payload bytes with zeroes before writing. This preserves payload sizes for bandwidth analysis while stripping media content. Sources MUST advertise masking via `"payloadMasked": true` in the header's `"custom"` map when active.
 
@@ -148,15 +156,12 @@ or to `null`, and the two will disagree about which. There is no file this
 matters for unless one is written deliberately; the rule exists so that nobody
 writes one expecting it to survive.
 
-The reader rule outranks the writer rule on a rewrite. **A tool that reads a
-trace and writes it back MUST preserve a non-map `"msg"` as it found it**, and
-MUST NOT replace it with an empty map to satisfy the writer rule above. The
-writer rule binds a recorder deciding what to say about a message it just saw;
-it does not license a redaction pass, a filter or a format converter to discard
-the only record of a message that will never be seen again. This is the same
-principle as [unrecognised keys](#versioning-and-compatibility): a tool may
-decline to understand something, but not decide on the reader's behalf that it
-never existed.
+**A tool that reads a trace and writes it back MUST preserve a non-map `"msg"`
+as it found it**, and MUST NOT replace it with an empty map to satisfy the
+writer rule above. Replacing it would discard the only record of a message that
+will never be seen again. This is one instance of a general rule stated under
+[Versioning and Compatibility](#versioning-and-compatibility): on a rewrite the
+reader rule outranks the writer rule.
 
 ### Event 1: Stream Opened
 
@@ -165,6 +170,73 @@ never existed.
 | `"sid"` | integer | `headers`+   | QUIC stream ID                                           |
 | `"d"`   | integer | `headers`+   | Direction: `0` = outgoing, `1` = incoming                |
 | `"st"`  | integer | `headers`+   | Stream type: `0` = subgroup, `1` = datagram, `2` = fetch |
+| `"ta"`  | integer | `headers`+   | Track alias the stream carries. Optional.                |
+| `"sg"`  | integer | `headers`+   | Subgroup ID. Optional; only meaningful when `st == 0`.   |
+| `"fri"` | integer | `headers`+   | Fetch request ID. Optional; only meaningful when `st == 2`. |
+| `"g"`   | integer | `headers`+   | Group ID. Optional; only meaningful when `st == 1`.       |
+
+#### Why these four keys exist
+
+A `SUBGROUP_HEADER` carries a track alias, a group, a subgroup and a publisher
+priority. A fetch header carries a request ID. A datagram header carries a track
+alias, a group, an object and a priority. Before this revision the model could
+express group, object, priority and status and nothing else — **track alias,
+subgroup ID and fetch request ID had nowhere to live**, and at `"headers"` there
+are no payload bytes to re-parse them from. A `"headers"` recording therefore
+could not answer which track a stream belonged to, which is most of what the
+level exists for.
+
+**A writer MUST write `"fri"` on a fetch stream** (`st == 2`), where it is the
+only correlation between the stream and the FETCH that asked for it. A reader
+MUST NOT reject a fetch stream that lacks it: recordings predating this revision
+have none, and Event 1 is not a type a reader may discard on a missing optional
+key. The same asymmetry as [`"msg"`](#msg-field-naming-and-shape) — writers
+conform, readers tolerate.
+
+The other three are written when known. `"sg"`, `"fri"` and `"g"` are each
+scoped to one stream type because on the others they have no source; a writer
+MUST NOT write one outside its scope, and a reader that meets one there MUST
+**keep** it — read it into the field it names, and write it back — rather than
+reject the event or route it elsewhere.
+
+"Keep", not "ignore": a reader is free to disregard the *meaning* of an
+out-of-scope key, but it does not get to drop the value. Dropping would violate
+[the preservation rule](#versioning-and-compatibility), and routing it to the
+unrecognised-key store would be wrong twice over — the key *is* recognised, its
+value *is* usable, and a key held in both places is written back twice.
+
+Wrong *place* is not wrong *shape*, and they part company here. A `"sg"` on a
+fetch stream is a usable value in a position that means nothing: it reaches the
+field. A `"sg"` carrying a text string is not a usable value at all, wherever it
+sits, and goes to the unrecognised-key store under [the rule for unusable
+types](#versioning-and-compatibility). A reader has to answer both questions,
+in that order.
+
+**Event 3 wins.** Where a value appears both here and on an Event 3 for the same
+stream — a group ID, most obviously — **Event 3 is authoritative** and this copy
+is a convenience for readers that have not yet seen an object. A reader MUST NOT
+treat a disagreement as corruption; it MUST prefer Event 3.
+
+`"g"` is scoped to datagrams for that reason: on a subgroup stream every object
+carries the same group by construction, so a copy here would be a second field
+with no independent source. `"pp"` is deliberately **not** added for the same
+reason — Event 3's `"pp"` is the stream header's publisher priority copied per
+object, and a second copy would have no tiebreak.
+
+#### Integer keys decode to the same type as their Event 3 counterparts
+
+`"ta"`, `"sg"`, `"fri"` and `"g"` MUST decode to whatever language type an
+implementation gives Event 3's `"g"`, `"o"` and `"sid"` — not to whatever it
+gives Event 1's existing `"st"` and `"d"`.
+
+Those two groups differ today, for a good reason that does not extend here:
+`"st"` and `"d"` are small enumerations, and an implementation may reasonably
+hold them in a narrow type. The keys added above are wire identifiers with the
+same range as Event 3's. An implementer following the enclosing event's local
+convention would type Event 1's `"g"` as a JavaScript `number` while Event 3's
+is a `bigint`, and `event1.g === event3.groupId` would then evaluate `42 === 42n`
+as `false` — silently, and for every reader that made the same reasonable
+choice.
 
 ### Event 2: Stream Closed
 
@@ -485,6 +557,82 @@ If the stream ends part-way through a CBOR item, the file was truncated — a cr
 - Optional keys MAY be added to an existing event type without a version bump — `"sid"` on event 0 was added this way. A reader must therefore treat any optional key as absent-by-default rather than assuming files of a given version all carry the same keys.
 - New event types (`"e"` values) MAY be added without a version bump; readers MUST skip unknown event types rather than failing. A reader that rejects an unknown `"e"` value turns every future addition into a breaking change.
 - New `"perspective"` and `"detail"` values MAY likewise be added; see [Perspective](#perspective).
+- **A defined key whose value has an unusable type is treated as unrecognised.**
+  If this document says `"ta"` is an integer and a file carries `"ta": "hello"`,
+  a reader cannot use the value — but it MUST NOT delete it. The key goes to the
+  unrecognised-key store, is ignored for meaning, and is written back unchanged,
+  exactly as a key the reader had never heard of would be. A reader that knows
+  more about a key must not therefore preserve it less. "Unchanged" binds the
+  value, not its position: such a key is written wherever the store is emitted,
+  which is generally after the keys the event type owns rather than where the
+  key originally sat. CBOR maps are unordered, so this loses nothing — but a
+  byte-for-byte diff against the input will show it.
+
+  This matters most where it is least expected: adding a key to a reader's
+  vocabulary must never *reduce* what that reader preserves. Before a key is
+  defined, a wrong-typed value survives as an unrecognised key; after, a reader
+  that simply type-checks and moves on drops it. Both reference implementations
+  did precisely that when Event 1's keys were added, and lost values they had
+  previously kept.
+
+  Two bounds on the rule. A **required** key with an unusable type is a
+  malformed event, indistinguishable from that key being absent, because there
+  is no event to construct without it. And an unusable **optional** key MUST NOT fail
+  the event at all — it is the case this whole rule exists for, and the value
+  goes to the store.
+
+  That bound is about the event, not the API. Whether a malformed event ends the
+  read is a property of how a reader is driven: a streaming reader whose
+  idiomatic use collects into a fallible result stops at the first one, so for
+  that caller failing an event *is* failing the file. Readers MAY stop and MAY
+  continue, but MUST make which one is happening visible to the caller, and MUST
+  NOT report a partial event list as a complete one. Two conformant readers can
+  return different event counts for the same malformed file; nothing may depend
+  on them agreeing.
+
+  **What "unusable" means**, because two readers that draw this line differently
+  disagree about which values reach a field and which reach the store — and that
+  disagreement is invisible until someone diffs their output:
+
+  - A CBOR integer and a float with an integral value are both usable for an
+    integer key. Files carrying the float form exist and readers already MUST
+    accept them (see [Interoperability](#interoperability)); this rule does not
+    take that back.
+  - A number with a fractional part is **unusable** for an integer key.
+  - A negative value is **unusable** for a key this document defines as
+    unsigned. Every identifier here is a wire varint and has no negative form.
+  - A value outside the range the key's meaning allows is **unusable** where the
+    key is optional — `"sg"` as `-1`. Where the key is **required**, a reader
+    that can represent the value MUST still build the event: `"pp": 999` is a
+    number no conformant writer produces, but discarding the event loses far
+    more than the odd priority does. Report it if you like; do not delete it.
+    A required value the reader genuinely cannot represent remains malformed,
+    which is the same outcome as the key being absent.
+  - An implementation that holds a key in a type narrower than the key's range
+    MUST treat an unrepresentable value as unusable rather than rounding it.
+    Rounding invents a value the file never carried. This is why the identifier
+    keys must be held in a 64-bit-capable type: in a language where the ordinary
+    number type stops being exact at 2^53, using it for a `u64` identifier makes
+    that reader disagree with every other one above 2^53 — silently, and only
+    for large values, which is to say only in production.
+- **On a rewrite, the reader rule outranks the writer rule.** A tool that reads
+  a trace and writes it back is bound by what it read, not by what a recorder
+  should have written. Where this document tells a writer MUST NOT emit
+  something — a `"msg"` that is not a map, a key outside its stream-type scope —
+  and tells a reader to keep it, a rewrite **keeps it**. The writer rules bind a
+  recorder deciding what to say about traffic it just saw; they do not license a
+  redaction pass, a filter or a format converter to quietly correct someone
+  else's file into one that no longer says what happened. A tool that wants to
+  report non-conformance should report it, not silently repair it.
+- **Keys beginning `"x-"` are reserved for private use.** No revision of this
+  specification will define one, so a tool may add its own without ever
+  colliding with a future key — and a conformance test can rely on such a key
+  staying unrecognised. Every rule above applies to them unchanged: ignore them,
+  and preserve them on a rewrite. Absent this reservation there is no key an
+  implementation can be *sure* stays unknown, which matters more than it sounds:
+  a test fixture built from keys borrowed from a live proposal silently stops
+  testing anything the moment that proposal ships, and this specification did
+  exactly that to its own corpus once.
 - The detail level in the header is informational — readers MUST handle missing fields gracefully regardless of declared level.
 
 ### Why version 2 exists

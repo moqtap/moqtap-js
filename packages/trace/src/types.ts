@@ -117,6 +117,12 @@ interface BaseEvent {
    * and one tool's ignorance would become permanent for every reader
    * downstream of it.
    *
+   * A key this version *does* know counts as unrecognised when its value is of
+   * a type the field cannot hold — a `"ta"` carrying text, say. It is kept
+   * here rather than coerced into the field or dropped, and written back
+   * unchanged, exactly as a key nobody had heard of would be. Knowing more
+   * about a key must not mean preserving it less.
+   *
    * {@link UnknownEvent} already does this for an event type the package
    * cannot name. This is the same guarantee one level down, for a key on a
    * type it can. It is always absent on an `UnknownEvent`, whose `fields`
@@ -181,6 +187,63 @@ export interface StreamOpenedEvent extends BaseEvent {
   readonly streamId: bigint
   readonly direction: 0 | 1
   readonly streamType: 0 | 1 | 2
+  /**
+   * Track alias the stream carries. Written whenever the recorder knows it.
+   *
+   * The stream header carries the alias and no detail level records that
+   * header's bytes, so before this field a `'headers'` recording could not say
+   * which track a stream belonged to — which is most of what the level exists
+   * to answer, and there was nothing left to re-parse it from.
+   *
+   * `bigint`, and so are the three fields below, unlike this event's
+   * `direction` and `streamType`. Those two are small enumerations that a
+   * narrow type suits; these four are wire identifiers with the same range as
+   * {@link ObjectHeaderEvent}'s `groupId`, `objectId` and `streamId`, and
+   * readers compare the two events. Typed as `number` here, a match would read
+   * as a mismatch: `streamOpened.groupId === objectHeader.groupId` evaluates
+   * `42 === 42n`, which is `false`, with no error, for every pair of values
+   * that are in fact the same.
+   *
+   * Absent when the file's `"ta"` was not an unsigned integer — and the same
+   * for the three fields below. Such a value belongs to no field here, so it
+   * stays verbatim in {@link BaseEvent.extra} and is written back as it came.
+   * It is never coerced on the way in: `true` and the text `"4"` are not track
+   * alias 1 and track alias 4, however willingly `BigInt` converts them.
+   */
+  readonly trackAlias?: bigint
+  /**
+   * Subgroup ID, on a subgroup stream (`streamType === 0`).
+   *
+   * A writer must not set it on another stream type, where nothing supplies
+   * it. A reader that meets one there keeps it rather than rejecting the
+   * event: an out-of-scope key makes one field meaningless, not the file
+   * unreadable, and discarding the event throws away every other field on it —
+   * all of which were fine. That is about the key being in the wrong place; a
+   * `"sg"` of the wrong *shape* is not held here at all, but in
+   * {@link BaseEvent.extra}.
+   */
+  readonly subgroupId?: bigint
+  /**
+   * Fetch request ID, on a fetch stream (`streamType === 2`).
+   *
+   * A writer MUST set it there. It is the only correlation between the stream
+   * and the FETCH that asked for it, and without it a fetch stream cannot be
+   * attributed to a request at all. A reader must nevertheless accept a fetch
+   * stream that lacks one — every recording made before the key existed lacks
+   * it — for the same reason as the `'msg'` asymmetry on
+   * {@link ControlMessageEvent.message}: writers conform, readers tolerate.
+   */
+  readonly fetchRequestId?: bigint
+  /**
+   * Group ID, on a datagram stream (`streamType === 1`).
+   *
+   * Scoped to datagrams because on a subgroup stream every object carries the
+   * same group by construction, so a copy here would be a second field with no
+   * independent source. Where an {@link ObjectHeaderEvent} for the same stream
+   * disagrees, that event wins and this is not corruption: this copy is a
+   * convenience for a reader that has not yet seen an object.
+   */
+  readonly groupId?: bigint
 }
 
 export interface StreamClosedEvent extends BaseEvent {
