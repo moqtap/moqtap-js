@@ -263,6 +263,11 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
         ...(options.source != null ? { source: options.source } : {}),
         ...(options.endpoint != null ? { endpoint: options.endpoint } : {}),
         ...(options.sessionId != null ? { sessionId: options.sessionId } : {}),
+        // Carried through so a recorder with something to say the format has
+        // no key for can say it, and so a header this package builds has the
+        // same shape as one it reads. `writeMoqtrace` writes the store after
+        // the keys above and drops any entry naming one of them.
+        ...(options.extra != null ? { extra: options.extra } : {}),
       }
       return { header, events: [...events] }
     },

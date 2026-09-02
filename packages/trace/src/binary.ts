@@ -2,9 +2,6 @@ import { Encoder } from 'cbor-x'
 import { cborItemLength, MalformedCborError } from './cbor-scan.js'
 import type {
   DerivationKind,
-  DetailLevel,
-  DropPolicy,
-  Perspective,
   SamplingInfo,
   SegmentInfo,
   SubscriptionRef,
@@ -28,11 +25,32 @@ import { TRACE_ID_LENGTH } from './types.js'
 // every payload-bearing field this package wrote: raw wire bytes, object
 // payloads, track names, trace ids. Readers still accept the tagged form,
 // because files carrying it already exist.
+//
+// `mapsAsObjects` has one cost this package cannot pay off, and it belongs
+// here, where the decoder is chosen, rather than where the damage shows.
+// cbor-x runs every decoded map key through an internal `safeKey`, which
+// rewrites the text key `"__proto__"` to `"__proto_"` and stringifies a
+// non-text key. Both are silent, both happen before any code in this file
+// runs, and either can collide with a real key of the rewritten name and lose
+// a value: a map carrying both `"__proto__"` and `"__proto_"` decodes to one
+// entry, and so does one carrying both `1` and `"1"`. There is no option for
+// it — in cbor-x 1.6.4 `safeKey` is unconditional on every `mapsAsObjects:
+// true` path, and the one decoder that skips it is `mapsAsObjects: false`,
+// which hands back a `Map` for every map in the file and is a different reader
+// from this one. So a store here faithfully re-emits the renamed key, and this
+// reader writes `"__proto_"` where the file said `"__proto__"` — including
+// inside `"custom"`, which it otherwise hands back key for key, and inside any
+// preserved value at any depth. SPEC.md, "Shapes a CBOR library may normalise
+// before you see them", part 3: the normalisation happens below this
+// implementation, so the reader is not non-conformant and nothing may depend
+// on the outcome — but it is not invisible either, and the Rust reader keeps
+// the two keys apart. The *write* half of the same key is ours, and is not
+// excused: see {@link setKey}.
 const codec = new Encoder({ useRecords: false, mapsAsObjects: true, tagUint8Array: false })
 const encode = (value: unknown): Uint8Array => codec.encode(value)
-const decode = (bytes: Uint8Array): unknown => codec.decode(bytes)
+export const decode = (bytes: Uint8Array): unknown => codec.decode(bytes)
 
-const MAGIC = new Uint8Array([0x4d, 0x4f, 0x51, 0x54, 0x52, 0x41, 0x43, 0x45]) // "MOQTRACE"
+export const MAGIC = new Uint8Array([0x4d, 0x4f, 0x51, 0x54, 0x52, 0x41, 0x43, 0x45]) // "MOQTRACE"
 
 /** Format version this package writes. */
 export const FORMAT_VERSION = 2
@@ -46,7 +64,7 @@ export const FORMAT_VERSION = 2
  */
 export const SUPPORTED_VERSIONS: readonly number[] = [1, FORMAT_VERSION]
 
-const PREAMBLE_SIZE = 16 // 8 magic + 4 version + 4 header length
+export const PREAMBLE_SIZE = 16 // 8 magic + 4 version + 4 header length
 
 // Event type string ↔ integer mapping
 const EVENT_TYPE_TO_INT: Record<Exclude<TraceEvent['type'], 'unknown'>, number> = {
@@ -81,12 +99,13 @@ const INT_TO_EVENT_TYPE: Record<number, Exclude<TraceEvent['type'], 'unknown'>> 
 const COMMON_EVENT_KEYS = new Set(['n', 't', 'p', 'e'])
 
 /**
- * One event map being decoded, and the keys the decode has taken from it.
+ * One decoded map — an event, the header, or one of the header's inner maps —
+ * and the keys the decode has taken from it.
  *
  * Everything left over is a key this version does not recognise, and goes to
- * `extra` rather than being dropped. "Left over" is narrower than "not owned by
- * this event type", and the difference is the whole point: a key the type owns
- * whose value is of a type the reader cannot use was not taken either, and is
+ * `extra` rather than being dropped. "Left over" is narrower than "not named by
+ * this document", and the difference is the whole point: a defined key whose
+ * value is of a type the reader cannot use was not taken either, and is
  * preserved exactly as a key nobody had heard of would be — SPEC.md,
  * "A defined key whose value has an unusable type is treated as unrecognised."
  *
@@ -102,15 +121,72 @@ interface Decoding {
   readonly used: Set<string>
 }
 
-/** Every key on a decoded event map that the decode did not take. */
+/**
+ * Put a key carried by a file onto a plain object, as an own property.
+ *
+ * `target[key] = value` is not this, for one key in the whole of JavaScript.
+ * `__proto__` reaches the accessor `Object.prototype` defines, which sets the
+ * object's prototype instead of creating a property: `Object.hasOwn(target,
+ * '__proto__')` is then false, `Object.entries` does not list it, and the
+ * entry is gone. A caller whose store came from `JSON.parse('{"__proto__":
+ * "x"}')` — a real own property on the way in, since JSON has no such
+ * special case — therefore wrote a file with the key missing, silently, on
+ * the one code path whose entire purpose is preservation.
+ *
+ * `defineProperty` makes the own property for every key alike, and cbor-x
+ * encodes it: a store entry named `__proto__` reaches the file as the text key
+ * `"__proto__"`, which is what the Rust implementation writes for the same
+ * trace. Used for every key that comes from a file or from a store — never for
+ * a field name this format defines, which is a literal in the source and can
+ * be neither `__proto__` nor anything else surprising.
+ *
+ * This is only the write half. Reading `"__proto__"` back out of that file
+ * hands us `"__proto_"`, below this code and past helping — see the note on
+ * the codec above.
+ */
+function setKey(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  })
+}
+
+/** Every key on a decoded map that the decode did not take. */
 function unrecognisedKeys(src: Decoding): Record<string, unknown> | undefined {
   let extra: Record<string, unknown> | undefined
   for (const [key, value] of Object.entries(src.obj)) {
     if (src.used.has(key)) continue
     extra ??= {}
-    extra[key] = value
+    setKey(extra, key, value)
   }
   return extra
+}
+
+/**
+ * Write a map's unrecognised-key store back into it, after its own keys.
+ *
+ * Last, so the map's own keys keep the positions a reader expects and the file
+ * stays diffable against one written without a store. An entry naming a key the
+ * map already wrote is dropped: a CBOR map carrying one key twice is a map no
+ * two readers need agree on, and the field is what a reader produced.
+ *
+ * The test is what the map *wrote*, not which keys the format defines. A
+ * defined key whose value the reader could not use is held in the store and no
+ * field wrote it, so on a defined-key test it would be dropped here — silently
+ * undoing the preservation the read side had just performed.
+ */
+function withStore(
+  map: Record<string, unknown>,
+  store: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (store == null) return map
+  for (const [key, value] of Object.entries(store)) {
+    if (Object.hasOwn(map, key)) continue
+    setKey(map, key, value)
+  }
+  return map
 }
 
 /** The stream ended part-way through an item — the file was truncated. */
@@ -137,23 +213,123 @@ export class TruncatedTraceError extends Error {
   }
 }
 
+/**
+ * A header carried no usable value for a key there is no header without.
+ *
+ * Five keys reach here: the four the format requires — `"protocol"`,
+ * `"perspective"`, `"detail"`, `"startTime"` — and `"segment.sequence"`, the
+ * sole ordering key of a segmented stream. Every other key in the header is
+ * optional, and an optional key's value never fails a file: an unusable one
+ * goes to the store its map keeps and the read continues.
+ *
+ * The alternative is worse than the error. A reader that fills a missing
+ * required key with `undefined`, an empty string or `0` returns a header the
+ * file never carried, and nothing downstream can tell it from a real one — a
+ * fabricated trace reported as evidence. `"segment.sequence"` is the sharpest
+ * case: the default `0` turns a segment whose place in the stream is unknown
+ * into one that claims to be first.
+ *
+ * Malformed here means malformed for *that segment*. {@link ReadOptions.recover}
+ * skips it and carries on at the next one, on the same terms as a malformed
+ * event.
+ *
+ * The writer throws the same error for the same key, before it emits anything.
+ * `"startTime"` and `"segment.sequence"` are `number` fields and TypeScript
+ * admits `-5` and `1.5` into both, so a header built by hand could be written
+ * to a file this package's own reader then refused — a writer emitting files
+ * only some other tool can open, out of a caller mistake nothing reported at
+ * the point it was made. One error type for both directions because it is one
+ * fault about one key, and a read-modify-write catches it once.
+ */
+export class MalformedHeaderError extends Error {
+  /** The key at fault, dotted for one inside `"segment"`. */
+  readonly key: string
+
+  /**
+   * @param key the key at fault
+   * @param fault what was wrong with it, as a predicate on the key
+   */
+  constructor(key: string, fault: string) {
+    // Absent and present-but-unusable are the same outcome — there is no
+    // header to construct either way — but they are different faults, and one
+    // message for both told whoever has to fix the file the wrong thing.
+    // "must be a text string" on a header that carries no `"protocol"` at all
+    // sends them looking at a value that is not there, and it is the message a
+    // person debugging a broken capture reads.
+    super(`Malformed header: ${JSON.stringify(key)} ${fault}`)
+    this.name = 'MalformedHeaderError'
+    this.key = key
+  }
+}
+
 // --- Header serialization ---
 
+/**
+ * Write a required header integer, or refuse to write the file.
+ *
+ * The writer's half of {@link requireHeaderUint}, and deliberately the same
+ * test: `"startTime"` and `"segment.sequence"` are the two header keys read as
+ * unsigned integers *and* required, so a negative or fractional one produces a
+ * file whose own reader throws `MalformedHeaderError` on it. This package
+ * emitting a trace it cannot open is a worse failure than a rejected call —
+ * the file is written, the process exits 0, and the fault surfaces wherever
+ * someone later tries to read it, if anyone does. The Rust implementation
+ * cannot reach the state at all: its field is a `u64`.
+ *
+ * It refuses only these two, and only the field. Every other integer in the
+ * header is optional, and a negative `"endTime"` written into one is read back
+ * into that map's store rather than failing the read — the value survives and
+ * so does the file, which is the contract the reader already states for an
+ * optional key. A store entry is never checked here either, for the reason
+ * SPEC.md gives for ranking a reader's obligations above a writer's: a value
+ * routed to a store is one the reader could not use and must hand back
+ * unchanged, and a writer that validated it would delete exactly what the
+ * store exists to carry. So a file that legitimately carries such a value can
+ * still be read, edited and written back — nothing that survives a read is
+ * refused on the way out.
+ */
+function requiredUint(value: number, reportedAs: string): number | bigint {
+  if (!Number.isInteger(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) {
+    throw new MalformedHeaderError(reportedAs, 'must be an unsigned integer')
+  }
+  return int(value)
+}
+
 function segmentToCbor(segment: SegmentInfo): Record<string, unknown> {
-  const map: Record<string, unknown> = { sequence: int(segment.sequence) }
+  const map: Record<string, unknown> = {
+    sequence: requiredUint(segment.sequence, 'segment.sequence'),
+  }
   if (segment.durationMs != null) map.durationMs = int(segment.durationMs)
   if (segment.streamId != null) map.streamId = segment.streamId
   if (segment.continues != null) map.continues = segment.continues
-  return map
+  return withStore(map, segment.extra)
 }
 
-function cborToSegment(obj: Record<string, unknown>): SegmentInfo {
-  return {
-    sequence: Number(obj.sequence ?? 0),
-    ...(obj.durationMs != null ? { durationMs: Number(obj.durationMs) } : {}),
-    ...(obj.streamId != null ? { streamId: obj.streamId as string } : {}),
-    ...(obj.continues != null ? { continues: obj.continues as boolean } : {}),
+/**
+ * Read the `"segment"` map, or answer `undefined` for a value that is not one.
+ *
+ * `undefined` leaves the key untaken, so a `"segment"` that is not a map goes
+ * to the *header's* store and the trace reads as non-segmented — which is what
+ * the format asks for. Failing the file instead would turn one unreadable
+ * metadata value into the loss of every event behind it.
+ *
+ * `"sequence"` is the exception, and the only key inside here that can fail a
+ * header: it is the sole ordering key of a segmented stream, so a reader that
+ * cannot read it cannot place the segment, and the `0` this function used to
+ * default to invents an order the file never had.
+ */
+function cborToSegment(value: unknown): SegmentInfo | undefined {
+  const obj = asMap(value)
+  if (obj == null) return undefined
+  const src: Decoding = { obj, used: new Set() }
+  const segment: SegmentInfo = {
+    sequence: requireHeaderUint(src, 'sequence', 'segment.sequence'),
+    ...optional(src, 'durationMs', 'durationMs', asUintNumber),
+    ...optional(src, 'streamId', 'streamId', asText),
+    ...optional(src, 'continues', 'continues', asBoolean),
   }
+  const extra = unrecognisedKeys(src)
+  return extra == null ? segment : { ...segment, extra }
 }
 
 function samplingToCbor(sampling: SamplingInfo): Record<string, unknown> {
@@ -166,20 +342,31 @@ function samplingToCbor(sampling: SamplingInfo): Record<string, unknown> {
   if (sampling.rule != null) map.rule = sampling.rule
   if (sampling.ruleLang != null) map.ruleLang = sampling.ruleLang
   if (sampling.appliesTo != null) map.appliesTo = sampling.appliesTo.map(int)
-  return map
+  return withStore(map, sampling.extra)
 }
 
-function cborToSampling(obj: Record<string, unknown>): SamplingInfo {
-  return {
-    ...(obj.effectiveRate != null ? { effectiveRate: Number(obj.effectiveRate) } : {}),
-    ...(obj.maxEventsPerSec != null ? { maxEventsPerSec: Number(obj.maxEventsPerSec) } : {}),
-    ...(obj.dropPolicy != null ? { dropPolicy: obj.dropPolicy as DropPolicy } : {}),
-    ...(obj.droppedTotal != null ? { droppedTotal: Number(obj.droppedTotal) } : {}),
-    ...(obj.droppedSegment != null ? { droppedSegment: Number(obj.droppedSegment) } : {}),
-    ...(obj.rule != null ? { rule: obj.rule as string } : {}),
-    ...(obj.ruleLang != null ? { ruleLang: obj.ruleLang as string } : {}),
-    ...(obj.appliesTo != null ? { appliesTo: (obj.appliesTo as number[]).map(Number) } : {}),
+/** The same for `"sampling"`; every key inside it is optional. */
+function cborToSampling(value: unknown): SamplingInfo | undefined {
+  const obj = asMap(value)
+  if (obj == null) return undefined
+  const src: Decoding = { obj, used: new Set() }
+  const sampling: SamplingInfo = {
+    // A rate is a fraction, so this is the one header number that is not an
+    // integer — and the one whose range the format states, so it is the one
+    // key here checked for more than its type. It is tested rather than
+    // converted: `Number('half')` is `NaN`, a rate no file carried and none
+    // can be written back from.
+    ...optional(src, 'effectiveRate', 'effectiveRate', asRate),
+    ...optional(src, 'maxEventsPerSec', 'maxEventsPerSec', asUintNumber),
+    ...optional(src, 'dropPolicy', 'dropPolicy', asText),
+    ...optional(src, 'droppedTotal', 'droppedTotal', asUintNumber),
+    ...optional(src, 'droppedSegment', 'droppedSegment', asUintNumber),
+    ...optional(src, 'rule', 'rule', asText),
+    ...optional(src, 'ruleLang', 'ruleLang', asText),
+    ...optional(src, 'appliesTo', 'appliesTo', asUintNumbers),
   }
+  const extra = unrecognisedKeys(src)
+  return extra == null ? sampling : { ...sampling, extra }
 }
 
 function headerToCbor(header: TraceHeader): Record<string, unknown> {
@@ -187,7 +374,7 @@ function headerToCbor(header: TraceHeader): Record<string, unknown> {
     protocol: header.protocol,
     perspective: header.perspective,
     detail: header.detail,
-    startTime: int(header.startTime),
+    startTime: requiredUint(header.startTime, 'startTime'),
   }
   if (header.endTime != null) map.endTime = int(header.endTime)
   if (header.transport != null) map.transport = header.transport
@@ -197,28 +384,46 @@ function headerToCbor(header: TraceHeader): Record<string, unknown> {
   if (header.segment != null) map.segment = segmentToCbor(header.segment)
   if (header.sampling != null) map.sampling = samplingToCbor(header.sampling)
   if (header.custom != null) map.custom = header.custom
-  return map
+  return withStore(map, header.extra)
 }
 
-function cborToHeader(obj: Record<string, unknown>): TraceHeader {
-  return {
-    protocol: obj.protocol as string,
-    perspective: obj.perspective as Perspective,
-    detail: obj.detail as DetailLevel,
-    startTime: Number(obj.startTime),
-    ...(obj.endTime != null ? { endTime: Number(obj.endTime) } : {}),
-    ...(obj.transport != null ? { transport: obj.transport as string } : {}),
-    ...(obj.source != null ? { source: obj.source as string } : {}),
-    ...(obj.endpoint != null ? { endpoint: obj.endpoint as string } : {}),
-    ...(obj.sessionId != null ? { sessionId: obj.sessionId as string } : {}),
-    ...(obj.segment != null
-      ? { segment: cborToSegment(obj.segment as Record<string, unknown>) }
-      : {}),
-    ...(obj.sampling != null
-      ? { sampling: cborToSampling(obj.sampling as Record<string, unknown>) }
-      : {}),
-    ...(obj.custom != null ? { custom: obj.custom as Record<string, unknown> } : {}),
+/**
+ * Decode the header, keeping every key the decode could not use.
+ *
+ * Three maps here have keys the format names — this one, `"segment"` and
+ * `"sampling"` — and each keeps its own store, because a private key on
+ * `"segment"` and a key of the same name at the top level are different keys.
+ * `"custom"` keeps none: every key in it belongs to whoever wrote the trace.
+ *
+ * The four required keys throw rather than default. Everything else that is
+ * unusable stays in the store of the map it appeared in, and the read
+ * continues: an optional key's type never fails a file.
+ *
+ * @throws {MalformedHeaderError} when a required key is absent or unusable.
+ */
+export function cborToHeader(obj: Record<string, unknown>): TraceHeader {
+  const src: Decoding = { obj, used: new Set() }
+  const header: TraceHeader = {
+    protocol: requireHeaderText(src, 'protocol'),
+    perspective: requireHeaderText(src, 'perspective'),
+    detail: requireHeaderText(src, 'detail'),
+    startTime: requireHeaderUint(src, 'startTime'),
+    ...optional(src, 'endTime', 'endTime', asUintNumber),
+    ...optional(src, 'transport', 'transport', asText),
+    ...optional(src, 'source', 'source', asText),
+    ...optional(src, 'endpoint', 'endpoint', asText),
+    ...optional(src, 'sessionId', 'sessionId', asText),
+    ...optional(src, 'segment', 'segment', cborToSegment),
+    ...optional(src, 'sampling', 'sampling', cborToSampling),
+    // Not `Record<string, unknown>` by assertion but by test. A `"custom"`
+    // that is not a map used to reach this field wearing that type, so the
+    // first caller to iterate its keys met a shape it was told could not
+    // occur. The bytes survive either way; only one of the two keeps the
+    // field's type true.
+    ...optional(src, 'custom', 'custom', asMap),
   }
+  const extra = unrecognisedKeys(src)
+  return extra == null ? header : { ...header, extra }
 }
 
 // --- Event serialization ---
@@ -390,7 +595,7 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
     case 'unknown': {
       base.e = event.eventType
       for (const [key, value] of Object.entries(event.fields)) {
-        base[key] = value
+        setKey(base, key, value)
       }
       break
     }
@@ -408,7 +613,7 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
   if (event.type !== 'unknown' && event.extra != null) {
     for (const [key, value] of Object.entries(event.extra)) {
       if (COMMON_EVENT_KEYS.has(key) || Object.hasOwn(base, key)) continue
-      base[key] = value
+      setKey(base, key, value)
     }
   }
 
@@ -449,6 +654,91 @@ function asUintNumber(value: unknown): number | undefined {
 /** A CBOR text string. */
 function asText(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+
+/** A CBOR boolean. */
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+/**
+ * A CBOR number, for the one header key defined as a float.
+ *
+ * Non-finite values are refused along with everything that is not a number:
+ * CBOR can carry a NaN or an infinity, but neither is a fraction of the events
+ * retained, and a field holding one states a rate the file never gave.
+ *
+ * No test covers the finite check, and none can: {@link asRate} is the only
+ * caller, and its `> 0 && <= 1` already rejects NaN and both infinities, so
+ * deleting `Number.isFinite` here changes no observable behaviour today. It
+ * stays because the redundancy belongs to the caller and not to this function.
+ * `asRate` bounds its key by meaning, which the format does for that key and
+ * for no other; the next float key added here would arrive through this type
+ * test with no range behind it, and would take a NaN into its field. Rather
+ * than a test that cannot fail, this note.
+ */
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * A sampling rate: a number in `(0.0, 1.0]`, and no other number.
+ *
+ * The one value in the header the format bounds by meaning rather than by
+ * type, and the bound is checked here because consumers divide by it. A `0.0`
+ * handed to a caller reconstructing true event counts is a division by zero,
+ * and a `1.5` is a count larger than what was recorded — each a wrong answer
+ * produced silently, from a header the reader had already decided to trust.
+ *
+ * The interval is open at `0` and closed at `1`, so `1.0` — "no rate-based
+ * dropping", the commonest value there is — passes and `0.0` does not. A value
+ * outside it is unusable on an optional key, so it goes to the sampling map's
+ * store with its bytes intact rather than failing the file. NaN fails both
+ * comparisons, which is the wanted answer twice over: it is in no interval,
+ * and it is no fraction of the events retained.
+ */
+function asRate(value: unknown): number | undefined {
+  const rate = asNumber(value)
+  return rate != null && rate > 0 && rate <= 1 ? rate : undefined
+}
+
+/**
+ * A CBOR array of unsigned integers — the shape `"sampling.appliesTo"` takes.
+ *
+ * All or nothing, like {@link asByteStrings}. An array with one element that is
+ * not an event type ID is unusable *entire*: this key names the types a drop
+ * policy touched, and readers may treat every type absent from it as complete,
+ * so keeping `[3, 5]` out of `[3, "x", 5]` would report a sampled type as fully
+ * recorded — the opposite of what the file said, stated just as confidently.
+ */
+function asUintNumbers(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const ids: number[] = []
+  for (const item of value) {
+    const id = asUintNumber(item)
+    if (id == null) return undefined
+    ids.push(id)
+  }
+  return ids
+}
+
+/**
+ * A CBOR map, as the plain object this codec decodes one to.
+ *
+ * `typeof value === 'object'` is not the test: it also admits `null`, an array,
+ * a byte string and a tagged value, each of which would then be handed back as
+ * a field map and read `undefined` for every key. The prototype is what
+ * separates them — a decoded map is a plain object, and everything else this
+ * decoder produces for a non-map is an instance of something. A `Map` fails the
+ * same test, which is right for the same reason: a reader that cannot hold a
+ * map exactly must route it to a store rather than hand back a shape its own
+ * declared type denies.
+ */
+function asMap(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const proto = Object.getPrototypeOf(value)
+  if (proto !== Object.prototype && proto !== null) return undefined
+  return value as Record<string, unknown>
 }
 
 /** A CBOR byte string, copied by {@link toBytes} so it owns its bytes. */
@@ -504,14 +794,52 @@ function requireUint(src: Decoding, key: string): bigint {
 }
 
 /**
- * Take an optional key, as the property to spread onto the event — or nothing
- * at all, when the key is absent or carries a value of a type this reader
- * cannot use.
+ * Take a required header text key, or fail the header.
  *
- * Those two cases build the same event and differ in what they leave behind:
+ * The reader used to assert the type instead — `obj.protocol as string` — which
+ * let a header with no `"protocol"` reach a caller with `undefined` sitting in
+ * a field declared `string`, and re-encode as CBOR `undefined`, a shape the
+ * format tells writers never to produce.
+ */
+function requireHeaderText(src: Decoding, key: string): string {
+  const present = Object.hasOwn(src.obj, key)
+  const value = asText(take(src, key))
+  if (value == null) {
+    throw new MalformedHeaderError(key, present ? 'must be a text string' : 'is missing')
+  }
+  return value
+}
+
+/**
+ * Take a required header integer key, or fail the header.
+ *
+ * @param reportedAs the key's name in the error, dotted for one inside
+ *   `"segment"`, where `"sequence"` alone would not say which map it was in.
+ */
+function requireHeaderUint(src: Decoding, key: string, reportedAs = key): number {
+  const present = Object.hasOwn(src.obj, key)
+  const value = asUintNumber(take(src, key))
+  if (value == null) {
+    throw new MalformedHeaderError(
+      reportedAs,
+      present ? 'must be an unsigned integer' : 'is missing',
+    )
+  }
+  return value
+}
+
+/**
+ * Take an optional key, as the property to spread onto the event or header map
+ * being built — or nothing at all, when the key is absent or carries a value of
+ * a type this reader cannot use.
+ *
+ * Those two cases build the same result and differ in what they leave behind:
  * an absent key leaves nothing, an unusable one stays untaken and is preserved
  * verbatim as an unrecognised key. Neither throws. The events around this one
  * decoded fine, and one key's type is no reason to lose them.
+ *
+ * `read` may itself throw, which is how `"segment.sequence"` fails a header
+ * from inside an otherwise optional `"segment"`.
  */
 function optional<K extends string, V>(
   src: Decoding,
@@ -538,7 +866,7 @@ function optional<K extends string, V>(
  * An `UnknownEvent` is returned untouched: its `fields` already hold every
  * non-common key, and adding them to `extra` too would write each one twice.
  */
-function cborToEvent(obj: Record<string, unknown>): TraceEvent {
+export function cborToEvent(obj: Record<string, unknown>): TraceEvent {
   const src: Decoding = { obj, used: new Set(COMMON_EVENT_KEYS) }
   const event = decodeEvent(src)
   if (event.type === 'unknown') return event
@@ -561,7 +889,7 @@ function decodeEvent(src: Decoding): TraceEvent {
     // downstream of it, because a read-modify-write then rewrites the type.
     const fields: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(obj)) {
-      if (!COMMON_EVENT_KEYS.has(key)) fields[key] = value
+      if (!COMMON_EVENT_KEYS.has(key)) setKey(fields, key, value)
     }
     return {
       type: 'unknown' as const,
@@ -748,7 +1076,7 @@ function writePreamble(headerCbor: Uint8Array): Uint8Array {
   return buf
 }
 
-function startsWithMagic(bytes: Uint8Array, offset: number): boolean {
+export function startsWithMagic(bytes: Uint8Array, offset: number): boolean {
   if (offset + MAGIC.length > bytes.length) return false
   for (let i = 0; i < MAGIC.length; i++) {
     if (bytes[offset + i] !== MAGIC[i]) return false
@@ -756,6 +1084,21 @@ function startsWithMagic(bytes: Uint8Array, offset: number): boolean {
   return true
 }
 
+/**
+ * Read and check a segment preamble, for a buffer that holds the whole file.
+ *
+ * **"Too short" means truncated here, and that is only true of a whole file.**
+ * A caller reading a complete buffer has everything the file will ever have,
+ * so a preamble that runs off the end is a cut recording. A caller reading a
+ * *stream* is in the opposite situation: a short buffer is the ordinary state
+ * between two chunks, and the missing bytes are on their way. An incremental
+ * reader that reuses this function would report a truncation on every chunk
+ * boundary.
+ *
+ * The distinction is invisible from the name, which is why it is written down:
+ * `createMoqtraceReader` does its own length checks for this reason and shares
+ * only the parts that carry meaning — the version check and `cborToHeader`.
+ */
 function validatePreamble(
   bytes: Uint8Array,
   offset = 0,
@@ -836,11 +1179,23 @@ function readSegments(bytes: Uint8Array, options?: ReadOptions): Trace[] {
       const { headerLength } = validatePreamble(bytes, offset)
       const start = offset + PREAMBLE_SIZE
       const headerBytes = bytes.subarray(start, start + headerLength)
+      let header: TraceHeader
+      try {
+        header = cborToHeader(decode(headerBytes) as Record<string, unknown>)
+      } catch (error) {
+        // A header this reader cannot build is malformed for *that segment*,
+        // and the segment is not presented as read — the alternative is a
+        // header the file never carried, which nothing downstream can tell
+        // from a real one. `recover` skips to the next segment, on the same
+        // terms as a malformed event; without it the read stops here.
+        if (!recover) throw error
+        const next = findNextSegment(bytes, offset + 1)
+        if (next < 0) return segments
+        offset = next
+        continue
+      }
       events = []
-      segments.push({
-        header: cborToHeader(decode(headerBytes) as Record<string, unknown>),
-        events,
-      })
+      segments.push({ header, events })
       offset = start + headerLength
       continue
     }
@@ -939,6 +1294,8 @@ export function writeMoqtraceSegments(segments: Trace[]): Uint8Array {
  *
  * @throws {TruncatedTraceError} if the file stops part-way through an item.
  *   The error carries everything that decoded before the cut.
+ * @throws {MalformedHeaderError} if a segment header carries no usable value
+ *   for a required key. Pass `recover` to skip that segment instead.
  */
 export function readMoqtrace(bytes: Uint8Array, options?: ReadOptions): Trace {
   const trace = flatten(readSegments(bytes, options))
@@ -953,6 +1310,8 @@ export function readMoqtrace(bytes: Uint8Array, options?: ReadOptions): Trace {
  *
  * A non-segmented file yields exactly one entry, whose header carries no
  * `segment` field.
+ *
+ * @throws {MalformedHeaderError} as {@link readMoqtrace} does.
  */
 export function readMoqtraceSegments(bytes: Uint8Array, options?: ReadOptions): Trace[] {
   return readSegments(bytes, options)
@@ -962,6 +1321,10 @@ export function readMoqtraceSegments(bytes: Uint8Array, options?: ReadOptions): 
  * Read only the header from a .moqtrace file (fast metadata peek).
  *
  * In a segmented file this is the first segment's header.
+ *
+ * @throws {MalformedHeaderError} if that header carries no usable value for a
+ *   required key. There is no partial header to hand back and no later segment
+ *   to fall forward to, so this one always throws.
  */
 export function readMoqtraceHeader(bytes: Uint8Array): TraceHeader {
   const { headerLength } = validatePreamble(bytes)

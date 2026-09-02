@@ -121,3 +121,37 @@ describe('traceToJSON', () => {
     expect(json).toContain('  "header"')
   })
 })
+
+describe('the unrecognised-key stores in the JSON view', () => {
+  // The JSON export is what someone reaches for when they suspect a key went
+  // missing, so a rendering that dropped the stores would hide exactly the
+  // loss the binary reader stopped making — and would do it in the one view
+  // whose whole purpose is to show what the file said.
+
+  const trace: Trace = {
+    header: {
+      protocol: 'moq-transport-14',
+      perspective: 'client',
+      detail: 'control',
+      startTime: 1700000000000,
+      segment: { sequence: 0, extra: { 'x-rot': 'size' } },
+      sampling: { droppedTotal: 3, extra: { appliesTo: [3, 'x', 5] } },
+      extra: { 'x-note': 'hello', 'x-bytes': new Uint8Array([0xde, 0xad]) },
+    },
+    events: [
+      { type: 'annotation', seq: 0, timestamp: 0, label: 'a', data: null, extra: { 'x-e': 1 } },
+    ],
+  }
+
+  it('shows all three header stores, each inside the map it belongs to', () => {
+    const parsed = JSON.parse(traceToJSON(trace))
+    expect(parsed.header.extra['x-note']).toBe('hello')
+    expect(parsed.header.segment.extra).toEqual({ 'x-rot': 'size' })
+    expect(parsed.header.sampling.extra).toEqual({ appliesTo: [3, 'x', 5] })
+    expect(parsed.events[0].extra).toEqual({ 'x-e': 1 })
+  })
+
+  it('renders a byte string nested in a store as hex, like any other', () => {
+    expect(JSON.parse(traceToJSON(trace)).header.extra['x-bytes']).toBe('dead')
+  })
+})

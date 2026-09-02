@@ -41,6 +41,14 @@ export interface SegmentInfo {
   readonly streamId?: string
   /** True if this segment continues a previous one with the same `streamId`. */
   readonly continues?: boolean
+  /**
+   * Keys in the `"segment"` map this version does not recognise, kept verbatim
+   * and written back inside that map rather than at the top level.
+   *
+   * See {@link TraceHeader.extra}, which this mirrors — including the part
+   * about a key this version *does* know whose value it cannot use.
+   */
+  readonly extra?: Record<string, unknown>
 }
 
 /**
@@ -63,8 +71,24 @@ export interface SamplingInfo {
   readonly rule?: string
   /** Language the rule is written in ('prefix', 'glob', 'cel'). */
   readonly ruleLang?: string
-  /** Event type IDs the drop policy was applied to. */
+  /**
+   * Event type IDs the drop policy was applied to.
+   *
+   * All or nothing: an array with one element that is not an event type ID is
+   * unusable *entire* and stays in {@link extra}. Keeping the elements that
+   * read cleanly would not be a partial answer but a wrong one — this key
+   * names the types the policy touched, and every type absent from it may be
+   * treated as complete, so a shortened array reports a sampled type as fully
+   * recorded.
+   */
   readonly appliesTo?: number[]
+  /**
+   * Keys in the `"sampling"` map this version does not recognise, kept
+   * verbatim and written back inside that map rather than at the top level.
+   *
+   * See {@link TraceHeader.extra}, which this mirrors.
+   */
+  readonly extra?: Record<string, unknown>
 }
 
 export interface TraceHeader {
@@ -85,7 +109,43 @@ export interface TraceHeader {
   readonly segment?: SegmentInfo
   /** Present only when events were dropped or filtered at the source. */
   readonly sampling?: SamplingInfo
+  /**
+   * User-defined metadata, handed back key for key and value for value.
+   *
+   * A passthrough, and the one map in the header with no store of its own:
+   * every key in it belongs to whoever wrote the trace, so there is no such
+   * thing as an unrecognised key there. A `"custom"` this reader cannot hold
+   * exactly — one that is not a map at all — is therefore unusable as a whole
+   * and goes to {@link extra}, leaving this field absent rather than typed as
+   * a record it is not.
+   */
   readonly custom?: Record<string, unknown>
+  /**
+   * Keys in the header map that this version of the package does not
+   * recognise, kept verbatim.
+   *
+   * The same guarantee a `TraceEvent`'s `extra` gives one level down, and for
+   * the same reason: "unknown keys MUST be ignored" is a rule about reading
+   * *past* them, not a licence to drop them. A tool that reads a trace and
+   * writes it back — a redaction pass, a filter, a re-segmentation, a download
+   * with annotations applied — would otherwise emit a valid file that looks as
+   * though it never carried them, and one tool's ignorance would become
+   * permanent for every reader downstream of it.
+   *
+   * A key this version *does* know counts as unrecognised when its value is of
+   * a type the field cannot hold. `"transport": 42` is not a transport; it is
+   * also not nothing. Such a value is kept here rather than coerced into the
+   * field or dropped, {@link transport} reads as absent, and the key is
+   * written back unchanged. Knowing more about a key must not mean preserving
+   * it less.
+   *
+   * Three maps in the header carry a store — this one, {@link SegmentInfo} and
+   * {@link SamplingInfo} — and each is written back into the map it came from.
+   * One store for the whole header would not do: a private key on `"segment"`
+   * and a key of the same name at the top level are different keys, and
+   * re-emitting either in the other's map changes what the file says.
+   */
+  readonly extra?: Record<string, unknown>
 }
 
 interface BaseEvent {
@@ -419,6 +479,16 @@ export interface RecorderOptions {
   readonly source?: string
   readonly endpoint?: string
   readonly sessionId?: string
+  /**
+   * Extra header keys to write, for a recorder that has something to say the
+   * format has no key for.
+   *
+   * Goes to {@link TraceHeader.extra} on the finalized trace and is written
+   * into the header map after the keys above. Use the `"x-"` prefix the format
+   * reserves for private use; a key the format defines is dropped here rather
+   * than written twice, since the field always wins.
+   */
+  readonly extra?: Record<string, unknown>
   readonly maxEvents?: number
   readonly clock?: () => number
   /** Map message type name (e.g. 'subscribe') to wire ID (e.g. 0x03). Required for session-layer recording. */

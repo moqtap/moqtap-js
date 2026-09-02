@@ -4,6 +4,7 @@ export type { MoqtraceWriter, ReadOptions } from './binary.js'
 export {
   createMoqtraceWriter,
   FORMAT_VERSION,
+  MalformedHeaderError,
   readMoqtrace,
   readMoqtraceHeader,
   readMoqtraceSegments,

@@ -1,5 +1,6 @@
 import type { SessionPhase, SessionState, TransitionResult } from '@moqtap/codec/session'
 import { describe, expect, it } from 'vitest'
+import { readMoqtraceHeader, writeMoqtrace } from '../binary.js'
 import { createRecorder } from '../recorder.js'
 
 /** Minimal message type for testing — no draft dependency. */
@@ -343,5 +344,33 @@ describe('TraceRecorder', () => {
     expect(trace.header.sessionId).toBe('sess-001')
     expect(trace.header.startTime).toBeGreaterThan(0)
     expect(trace.header.endTime).toBeGreaterThanOrEqual(trace.header.startTime)
+  })
+
+  it('carries extra header keys through to the finalized header', () => {
+    // A recorder with something to say the format has no key for can say it,
+    // under the `x-` prefix the format reserves for private use — and a header
+    // this package builds then has the same shape as one it reads back.
+    const recorder = createRecorder({
+      detail: 'control',
+      protocol: 'moq-transport-14',
+      perspective: 'client',
+      extra: { 'x-capture-host': 'lab-3' },
+      clock: () => 0,
+    })
+    const { header } = recorder.finalize()
+    expect(header.extra).toEqual({ 'x-capture-host': 'lab-3' })
+    expect(readMoqtraceHeader(writeMoqtrace({ header, events: [] })).extra).toEqual({
+      'x-capture-host': 'lab-3',
+    })
+  })
+
+  it('leaves the header store absent when the recorder was given none', () => {
+    const recorder = createRecorder({
+      detail: 'control',
+      protocol: 'moq-transport-14',
+      perspective: 'client',
+      clock: () => 0,
+    })
+    expect(recorder.finalize().header.extra).toBeUndefined()
   })
 })

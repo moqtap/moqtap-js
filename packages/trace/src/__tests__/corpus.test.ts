@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  PREAMBLE_SIZE,
   readMoqtrace,
   readMoqtraceSegments,
   TruncatedTraceError,
@@ -9,6 +10,7 @@ import {
   writeMoqtraceSegments,
 } from '../binary.js'
 import type { Trace } from '../types.js'
+import { v2HeaderExtra, v2HeadersLevelFlow } from './corpus/cases.js'
 import { CORPUS_MISSING_MESSAGE, findCorpusDir } from './corpus/locate.js'
 
 /**
@@ -53,6 +55,38 @@ function bytesOf(root: string, id: string, file: string): Uint8Array {
 
 function declaredVersion(bytes: Uint8Array): number {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(8, true)
+}
+
+/** The CBOR header of a single-segment file, as the bytes carry it. */
+function headerBytes(file: Uint8Array): Uint8Array {
+  const length = new DataView(file.buffer, file.byteOffset, file.byteLength).getUint32(12, true)
+  return file.subarray(PREAMBLE_SIZE, PREAMBLE_SIZE + length)
+}
+
+function indexOfBytes(haystack: Uint8Array, needle: readonly number[]): number {
+  for (let i = 0; i + needle.length <= haystack.length; i++) {
+    if (needle.every((byte, j) => haystack[i + j] === byte)) return i
+  }
+  return -1
+}
+
+/**
+ * The `count` bytes a CBOR map holds immediately after the given text key.
+ *
+ * For asserting how a value is *encoded*, where the decoded value cannot say:
+ * cbor-x folds tag 64 and an integral float away before any code here runs, so
+ * a value assertion about either passes whatever the file carried.
+ *
+ * The key is matched as a definite-length text string with its length in the
+ * head byte, which covers any name up to 23 characters — every key in this
+ * format, and every key any corpus case invents.
+ */
+function bytesAfterKey(cbor: Uint8Array, key: string, count: number): number[] {
+  const name = new TextEncoder().encode(key)
+  const at = indexOfBytes(cbor, [0x60 + name.length, ...name])
+  if (at < 0) throw new Error(`no key '${key}' in these bytes`)
+  const value = at + 1 + name.length
+  return [...cbor.subarray(value, value + count)]
 }
 
 /** Read a file whether or not it is truncated, keeping what decoded. */
@@ -256,6 +290,130 @@ describe.skipIf(CORPUS == null)(SUITE, () => {
       const trace = readMoqtrace(bytesOf(root, 'v2-unknown-event', 'js.moqtrace'))
       const unknown = trace.events.find((event) => event.type === 'unknown')
       expect(unknown?.extra).toBeUndefined()
+    })
+  })
+
+  describe('the three unrecognised-key stores in the header', () => {
+    // Both files, deliberately. On `rust.moqtrace` the assertions say this
+    // package reads what an implementation sharing no code with it wrote; on
+    // `js.moqtrace` they say this package's own writer put the values where
+    // SPEC.md requires — the half a decode-of-my-own-encode test cannot see.
+    const files = ['js.moqtrace', 'rust.moqtrace']
+
+    it.each(files)('keeps a key of one name in three maps apart, in %s', (file) => {
+      const trace = readMoqtrace(bytesOf(root, 'v2-header-extra', file))
+      const { header } = trace
+
+      // One key name, three maps, three values. A reader that merged the
+      // stores into one would emit the segment's private key at the top level,
+      // and the file would then say something it never said. No other file in
+      // the corpus carries an unrecognised *header* key at all, so nothing else
+      // here can tell a merged store from three.
+      expect(header.extra?.['x-scope']).toBe('header')
+      expect(header.segment?.extra?.['x-scope']).toBe('segment')
+      expect(header.sampling?.extra?.['x-scope']).toBe('sampling')
+
+      // Structural, not shallow: a copy that kept only the top level passes
+      // every flat assertion here and loses this one.
+      expect(header.extra?.['x-tree']).toEqual({
+        list: [1, 'two'],
+        blob: new Uint8Array([0x0f, 0xf0]),
+        gap: null,
+      })
+
+      // A key the format *defines*, carrying a value no reader can use. It
+      // reaches the store through the ordinary field path, `transport` reads as
+      // absent, and the entry survives: knowing more about a key must not mean
+      // preserving it less.
+      expect(header.transport).toBeUndefined()
+      expect(header.extra?.transport).toBe(42)
+
+      // Every unrecognised key in this file is in the header, so a store on an
+      // event is a reader putting one where it does not belong.
+      expect(trace.events.every((event) => event.extra == null)).toBe(true)
+
+      // The round trip is the redaction pass, the filter, the annotated
+      // download — and a fixed point, not merely lossless once.
+      expect(readMoqtrace(writeMoqtrace(trace))).toEqual(trace)
+    })
+
+    it.each(files)('writes a stored value in the encoding SPEC.md requires, in %s', (file) => {
+      // Checked in bytes rather than in values, because this reader cannot see
+      // either shape: cbor-x hands back a bare byte string for one under tag 64
+      // and an integer for an integral float, both below any code here. A value
+      // assertion on this side would pass whatever the file carried, which is
+      // exactly the blind spot the corpus exists for. The Rust case builds
+      // these two entries as `Tag(64, Bytes)` and `Float(1.0)`, so a file
+      // carrying either shape is one only that writer could have produced.
+      const header = headerBytes(bytesOf(root, 'v2-header-extra', file))
+
+      // A byte string of two bytes, major type 2 (0x42) — never RFC 8746's
+      // tag 64 (0xd8 0x40).
+      expect(bytesAfterKey(header, 'x-blob', 3)).toEqual([0x42, 0xca, 0xfe])
+      // The CBOR integer 1, never a float (0xf9, 0xfa or 0xfb).
+      expect(bytesAfterKey(header, 'x-scale', 1)).toEqual([0x01])
+    })
+
+    it('is the file this package writes for the case', () => {
+      // Every assertion above reads a file, and a committed file has already
+      // been through a writer once: it carries the required encoding whatever
+      // the writer would do with the case today. So they all stay green through
+      // a writer regression until somebody regenerates the corpus — the same
+      // decode-of-my-own-encode shape one level out, with the encode cached on
+      // disk. This is the assertion that reads the writer, and the one that
+      // fails if `js.moqtrace` is stale.
+      expect(writeMoqtrace(v2HeaderExtra)).toEqual(bytesOf(root, 'v2-header-extra', 'js.moqtrace'))
+    })
+  })
+
+  describe('a headers-level trace, where the stream identifiers are all there is', () => {
+    const files = ['js.moqtrace', 'rust.moqtrace']
+
+    it.each(files)('groups three streams that share one track alias, in %s', (file) => {
+      // The case existed for a session before anything named it, so its
+      // documented claims were asserted nowhere and it could have decoded to
+      // anything without a test noticing. `detail: 'headers'` records no
+      // payload and no data-stream framing bytes, so these four keys are the
+      // only thing in the file that says which track a stream carried.
+      const trace = readMoqtrace(bytesOf(root, 'v2-headers-level-flow', file))
+      expect(trace.header.detail).toBe('headers')
+
+      const opened = trace.events.filter((e) => e.type === 'stream-opened')
+      expect(opened).toHaveLength(3)
+
+      // Every stream carries the same alias, which is legal and ordinary — one
+      // track delivered as a subgroup, a fetch and a datagram. It is also the
+      // whole point: `ta` alone cannot key a flow, which is why the flow
+      // identity is the tuple and not this number.
+      expect(opened.map((e) => e.trackAlias)).toEqual([9n, 9n, 9n])
+
+      // One discriminating key each, and never the other two. A reader that
+      // dropped any of them would leave three streams of one alias that
+      // nothing in the file could tell apart.
+      const [subgroup, fetch, datagram] = opened
+      expect([subgroup?.subgroupId, subgroup?.fetchRequestId, subgroup?.groupId]).toEqual([
+        2n,
+        undefined,
+        undefined,
+      ])
+      expect([fetch?.subgroupId, fetch?.fetchRequestId, fetch?.groupId]).toEqual([
+        undefined,
+        42n,
+        undefined,
+      ])
+      // Past 2^32, where the integer-not-float rule bites and a `number` would
+      // have stopped being exact long before.
+      expect([datagram?.subgroupId, datagram?.fetchRequestId, datagram?.groupId]).toEqual([
+        undefined,
+        undefined,
+        4294967296n,
+      ])
+    })
+
+    it('is the file this package writes for the case', () => {
+      expect(writeMoqtrace(v2HeadersLevelFlow)).toEqual(
+        bytesOf(root, 'v2-headers-level-flow', 'js.moqtrace'),
+      )
     })
   })
 

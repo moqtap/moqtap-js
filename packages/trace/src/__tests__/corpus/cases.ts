@@ -464,6 +464,106 @@ export const v2HeadersLevelFlow: Trace = {
   ],
 }
 
+/**
+ * The three unrecognised-key stores in the header, and the rules that reach
+ * into them.
+ *
+ * Three maps here have keys the format names — the header itself, `"segment"`
+ * and `"sampling"` — and each keeps its own store. No other file in the corpus
+ * carries an unrecognised *header* key at all, so until this one existed the
+ * whole mechanism could have been deleted with every corpus test still green:
+ * a round trip checks a reader against its own encoder, and an encoder that
+ * writes no store agrees with a decoder that reads none.
+ *
+ * Five claims, each of which fails differently:
+ *
+ * - `"x-scope"` sits in all three maps with three different values. A reader
+ *   that merged the stores emits the segment's private key at the top level,
+ *   and the file then says something it never said.
+ * - `"x-tree"` is a map holding an array, a byte string and a null, because
+ *   preservation has to be structural. A shallow copy passes every flat
+ *   assertion above and loses exactly this.
+ * - `"transport": 42` is a key this format *defines*, carrying a value no
+ *   reader can use. It reaches the store through the ordinary field path —
+ *   {@link TraceHeader.transport} reads as absent — which is how the
+ *   wrong-typed-key rule gets exercised by a file both generators can author.
+ * - `"x-scale"` is `1.0` and goes out as a CBOR integer. SPEC.md's encoding
+ *   rules bind every value a writer emits, stored ones included: `ciborium`
+ *   holds a float here and has to convert, while `cbor-x` cannot represent the
+ *   distinction at all. It is the one value in the corpus where the two could
+ *   silently disagree.
+ * - `"x-blob"` is a byte string written as major type 2. The Rust generator
+ *   holds it under RFC 8746's tag 64 and unwraps it on the way out; this one
+ *   cannot hold a tag, so both files carry the same two bytes.
+ *
+ * Every genuinely-unknown key is `"x-"` prefixed, the range SPEC.md reserves
+ * for private use, so no future revision can claim one and turn this fixture
+ * into a test of something else — which has happened to this corpus once.
+ *
+ * The header carries `"segment"` because a store needs a map to live in, and
+ * `"sampling"` for the same reason. Neither is decoration: this is the first
+ * segment of a stream that stopped after one, filtered by a source-side rule,
+ * which is what a rotating recorder's first file looks like.
+ */
+export const v2HeaderExtra: Trace = {
+  header: {
+    protocol: 'moq-transport-19',
+    perspective: 'observer',
+    detail: 'full',
+    startTime: START_TIME,
+    sessionId: 'v2-header-extra',
+    // No `transport` field: the header's `"transport"` key is in the store
+    // below, carrying an integer, and a field holding it as well would put the
+    // key in the map twice.
+    segment: {
+      sequence: 0,
+      streamId: 'corpus-header-extra',
+      continues: false,
+      extra: {
+        'x-scope': 'segment',
+        'x-blob': bytes(0xca, 0xfe),
+      },
+    },
+    sampling: {
+      // Integral, so it is written as a CBOR integer — the normative rule,
+      // on the one header key the format types as a float.
+      effectiveRate: 1.0,
+      rule: 'example/live',
+      ruleLang: 'prefix',
+      appliesTo: [3, 4],
+      extra: {
+        'x-scope': 'sampling',
+        'x-scale': 1.0,
+      },
+    },
+    extra: {
+      'x-scope': 'header',
+      'x-tree': {
+        list: [1, 'two'],
+        blob: bytes(0x0f, 0xf0),
+        gap: null,
+      },
+      transport: 42,
+    },
+  },
+  // Deliberately storeless: every unrecognised key in this file is in the
+  // header, so a store found on an event here is a reader putting one where it
+  // does not belong.
+  events: [
+    { type: 'stream-opened', seq: 0, timestamp: 100, streamId: 4n, direction: 1, streamType: 0 },
+    {
+      type: 'object-header',
+      seq: 1,
+      timestamp: 150,
+      streamId: 4n,
+      groupId: 7n,
+      objectId: 0n,
+      publisherPriority: 128,
+      objectStatus: 0,
+    },
+  ],
+}
+
 /** Every single-segment case both implementations author, by directory name. */
 export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v1-basic': v1Basic,
@@ -473,6 +573,7 @@ export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v2-extra-keys': v2ExtraKeys,
   'v2-control-msg-map': v2ControlMsgMap,
   'v2-headers-level-flow': v2HeadersLevelFlow,
+  'v2-header-extra': v2HeaderExtra,
 }
 
 /** Cases whose file is a segmented stream rather than a single trace. */
