@@ -1,6 +1,8 @@
+import { Encoder } from 'cbor-x'
 import { describe, expect, it } from 'vitest'
 import { createMoqtraceWriter, readMoqtrace, readMoqtraceHeader, writeMoqtrace } from '../binary.js'
-import type { Trace, TraceEvent, TraceHeader } from '../types.js'
+import type { ControlMessageEvent, Trace, TraceEvent, TraceHeader } from '../types.js'
+import { controlMessageFields } from '../types.js'
 
 function makeHeader(overrides?: Partial<TraceHeader>): TraceHeader {
   return {
@@ -601,5 +603,155 @@ describe('unrecognised keys on a recognised event type', () => {
     if (event?.type !== 'unknown') throw new Error('unreachable')
     expect(event.fields).toEqual({ note: 'hi', count: 3 })
     expect(event.extra).toBeUndefined()
+  })
+})
+
+describe('the "msg" field of a control event', () => {
+  const codec = new Encoder({ useRecords: false, mapsAsObjects: true })
+
+  // What every `capture-*` case in the conformance corpus carries in "msg":
+  // the CLI that wrote those files rendered the decoded message with Rust's
+  // `Debug` rather than emitting a map, and they still have to open.
+  const DEBUG_TEXT = 'Draft16(ClientSetup(ClientSetup { parameters: [] }))'
+
+  /**
+   * A one-event file built from a hand-written CBOR event map.
+   *
+   * The shapes that matter here — an absent `"msg"`, a text one — are exactly
+   * the ones this package's encoder will not produce, so a round trip through
+   * `writeMoqtrace` cannot set them up.
+   */
+  function fileWithEventMap(event: Record<string, unknown>): Uint8Array {
+    const preamble = createMoqtraceWriter(makeHeader()).preamble()
+    const eventBytes = codec.encode(event)
+    const file = new Uint8Array(preamble.length + eventBytes.length)
+    file.set(preamble, 0)
+    file.set(eventBytes, preamble.length)
+    return file
+  }
+
+  /** The single event map a one-event file carries, as it sits on the wire. */
+  function eventMapIn(file: Uint8Array): Record<string, unknown> {
+    const view = new DataView(file.buffer, file.byteOffset, file.byteLength)
+    const headerLength = view.getUint32(12, true)
+    return codec.decode(file.subarray(16 + headerLength)) as Record<string, unknown>
+  }
+
+  function controlEvent(message: unknown): TraceEvent {
+    return { type: 'control', seq: 0, timestamp: 1000, direction: 0, messageType: 0x03, message }
+  }
+
+  /** The one control event of a trace, or a failure naming what came instead. */
+  function onlyControlEvent(trace: Trace): ControlMessageEvent {
+    expect(trace.events).toHaveLength(1)
+    const event = trace.events[0]
+    if (event?.type !== 'control') throw new Error(`expected a control event, got ${event?.type}`)
+    return event
+  }
+
+  it('reads an event carrying no "msg" key as an empty map rather than dropping it', () => {
+    // Event 0 is one of the types sampling MUST NOT drop, so a reader that
+    // treated the absence as a malformed event would discard exactly the
+    // events the format promises will always be there.
+    const trace = readMoqtrace(fileWithEventMap({ n: 0, t: 1000, e: 0, d: 1, mt: 0x03 }))
+    const event = onlyControlEvent(trace)
+    expect(event.message).toEqual({})
+    expect(event.messageType).toBe(0x03)
+  })
+
+  it('hands back the text of a pre-spec "msg" instead of rejecting the event', () => {
+    const trace = readMoqtrace(
+      fileWithEventMap({ n: 0, t: 1000, e: 0, d: 0, mt: 0x20, msg: DEBUG_TEXT }),
+    )
+    expect(onlyControlEvent(trace).message).toBe(DEBUG_TEXT)
+  })
+
+  it('writes a text "msg" back as the same text after a read-modify-write', () => {
+    // A trace reaches its reader through filters, redaction passes and
+    // re-downloads. Any of them replacing the only decode these recordings
+    // have with an empty map would destroy it for everyone downstream.
+    const original = fileWithEventMap({ n: 0, t: 1000, e: 0, d: 0, mt: 0x20, msg: DEBUG_TEXT })
+    const rewritten = writeMoqtrace(readMoqtrace(original))
+
+    expect(eventMapIn(rewritten).msg).toBe(DEBUG_TEXT)
+    expect(onlyControlEvent(readMoqtrace(rewritten)).message).toBe(DEBUG_TEXT)
+  })
+
+  it('keeps a "msg" that is neither a map nor a string exactly as it read it', () => {
+    // Verbatim means the shape the writer chose, not the one shape we have
+    // happened to see. `null` is a value on the wire — promoting it to `{}`
+    // is the same silent content change as dropping a key — and absence is
+    // the only thing that becomes an empty map.
+    const withNull = readMoqtrace(fileWithEventMap({ n: 0, t: 1, e: 0, d: 0, mt: 3, msg: null }))
+    expect(onlyControlEvent(withNull).message).toBeNull()
+    expect(eventMapIn(writeMoqtrace(withNull)).msg).toBeNull()
+
+    const withList = readMoqtrace(fileWithEventMap({ n: 0, t: 1, e: 0, d: 0, mt: 3, msg: [1, 2] }))
+    expect(onlyControlEvent(withList).message).toEqual([1, 2])
+  })
+
+  it('writes the key with an empty map when it decoded no fields', () => {
+    const map = eventMapIn(writeMoqtrace(makeTrace([controlEvent({})])))
+    expect(Object.hasOwn(map, 'msg')).toBe(true)
+    expect(map.msg).toEqual({})
+  })
+
+  it('writes an empty map for an event that reached the encoder with no message', () => {
+    // `message` is required by the type, but the type is not there at
+    // runtime: a JS caller, an event revived from JSON, or code built against
+    // an older shape all arrive with the field missing. Passing that straight
+    // through encodes CBOR `undefined` — a simple value, not a map — which is
+    // the one thing the format tells a writer not to put here.
+    const event = {
+      type: 'control',
+      seq: 0,
+      timestamp: 1,
+      direction: 0,
+      messageType: 0x03,
+    } as unknown as TraceEvent
+
+    const map = eventMapIn(writeMoqtrace(makeTrace([event])))
+    expect(Object.hasOwn(map, 'msg')).toBe(true)
+    expect(map.msg).toEqual({})
+  })
+
+  it('leaves snake_case field names alone on the wire and on the way back', () => {
+    // snake_case is what the drafts and the shared codec vectors use, and it
+    // is the whole reason a reader can address `request_id` without knowing
+    // which implementation wrote the file. Anything that camelCased the keys
+    // in passing would rename every field in the corpus.
+    const fields = { request_id: 7, track_alias: 9, group_order: 1 }
+    const written = writeMoqtrace(makeTrace([controlEvent(fields)]))
+
+    expect(Object.keys(eventMapIn(written).msg as Record<string, unknown>)).toEqual([
+      'request_id',
+      'track_alias',
+      'group_order',
+    ])
+    expect(onlyControlEvent(readMoqtrace(written)).message).toEqual(fields)
+  })
+
+  it('does not let a field be read off "msg" without narrowing first', () => {
+    // The compile-time half of the same rule, enforced by `tsc --build`.
+    // While `message` was typed `Record<string, unknown>` this line compiled
+    // and read `undefined` on every corpus capture, with nothing to point at.
+    const event = onlyControlEvent(
+      readMoqtrace(fileWithEventMap({ n: 0, t: 1, e: 0, d: 0, mt: 0x20, msg: DEBUG_TEXT })),
+    )
+    // @ts-expect-error - `message` is `unknown`, and the corpus proves it can
+    // be a string, so reading a key off it has to be a compile error.
+    const requestId: unknown = event.message.request_id
+    expect(requestId).toBeUndefined()
+  })
+
+  it('offers the decoded fields only when "msg" really is a map', () => {
+    expect(controlMessageFields({ request_id: 7 })).toEqual({ request_id: 7 })
+    expect(controlMessageFields(DEBUG_TEXT)).toBeUndefined()
+    expect(controlMessageFields(null)).toBeUndefined()
+    expect(controlMessageFields([1, 2])).toBeUndefined()
+    // A CBOR byte string decodes to a Uint8Array, which `typeof` calls an
+    // object: the case a narrowing check written by hand at the call site
+    // gets wrong, and the reason this one is worth exporting.
+    expect(controlMessageFields(new Uint8Array([1, 2]))).toBeUndefined()
   })
 })

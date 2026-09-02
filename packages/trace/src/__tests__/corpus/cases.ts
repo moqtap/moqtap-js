@@ -321,6 +321,63 @@ export const v2ExtraKeys: Trace = {
   ],
 }
 
+/**
+ * The three shapes a conforming `"msg"` takes.
+ *
+ * `"msg"` is the one Event 0 key whose contents no version of the spec fixes,
+ * so its rules are about shape rather than content: a CBOR map, keyed in
+ * snake_case, and an empty map rather than an omission when the recorder
+ * decoded nothing. The empty-map event is the load-bearing one — omitting the
+ * key instead was the shipped Rust reader's cue to discard the event, and
+ * Event 0 is a type sampling MUST NOT drop.
+ *
+ * The fourth shape, a `"msg"` that is not a map at all, needs no case of its
+ * own: all four `capture-*` recordings carry a Rust `Debug` string there, so
+ * the corpus already holds real files exercising the tolerance rule.
+ */
+export const v2ControlMsgMap: Trace = {
+  header: {
+    protocol: 'moq-transport-19',
+    perspective: 'client',
+    detail: 'full',
+    startTime: START_TIME,
+    sessionId: 'v2-control-msg-map',
+  },
+  events: [
+    {
+      // Three value types in one map — integer, integer, byte string — so an
+      // encoder that keeps only one CBOR shape verbatim is caught here rather
+      // than in whichever field happened to be tested.
+      type: 'control',
+      seq: 0,
+      timestamp: 100,
+      direction: 0,
+      messageType: 0x03,
+      message: { request_id: 1, track_alias: 2, track_name: text('now') },
+    },
+    {
+      // Nothing decoded, so an empty map. A writer that omits the key instead
+      // produces a file the Rust reader dropped this event from entirely.
+      type: 'control',
+      seq: 1,
+      timestamp: 200,
+      direction: 1,
+      messageType: 0x2f00,
+      message: {},
+    },
+    {
+      // Nested structure, because "preserve the map" has to mean the whole
+      // tree and not just its top level.
+      type: 'control',
+      seq: 2,
+      timestamp: 300,
+      direction: 0,
+      messageType: 0x16,
+      message: { request_id: 3, parameters: { location_filter: [1, 2] } },
+    },
+  ],
+}
+
 /** Every single-segment case both implementations author, by directory name. */
 export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v1-basic': v1Basic,
@@ -328,6 +385,7 @@ export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v2-unknown-event': v2UnknownEvent,
   'v2-unknown-perspective': v2UnknownPerspective,
   'v2-extra-keys': v2ExtraKeys,
+  'v2-control-msg-map': v2ControlMsgMap,
 }
 
 /** Cases whose file is a segmented stream rather than a single trace. */

@@ -122,7 +122,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
           timestamp: clock(),
           direction: 1, // rx
           messageType: messageTypeId(message.type),
-          message: message as unknown as Record<string, unknown>,
+          message,
         })
 
         if (result.ok && result.phase !== prevPhase) {
@@ -152,7 +152,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
           timestamp: clock(),
           direction: 0, // tx
           messageType: messageTypeId(message.type),
-          message: message as unknown as Record<string, unknown>,
+          message,
         })
 
         if (result.ok && result.phase !== prevPhase) {

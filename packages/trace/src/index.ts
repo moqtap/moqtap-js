@@ -46,4 +46,4 @@ export type {
   TraceHeader,
   UnknownEvent,
 } from './types.js'
-export { TRACE_ID_LENGTH } from './types.js'
+export { controlMessageFields, TRACE_ID_LENGTH } from './types.js'

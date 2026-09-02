@@ -8,7 +8,7 @@
  * the corpus test compares the two files, so regenerating only one turns a
  * deliberate change into a failure that names the file nobody updated.
  *
- * Four of the files here cannot come from the normal writer, and each exists
+ * Five of the files here cannot come from the normal writer, and each exists
  * because a reader has to cope with something this package no longer emits:
  *
  *   - `v1-basic`      declares version 1, which the writer stopped writing.
@@ -18,10 +18,12 @@
  *                     before this package configured it not to.
  *   - `v2-tag64`      wraps byte strings in RFC 8746 tag 64, as cbor-x did
  *                     before the same fix.
+ *   - `v2-msg-absent` omits `"msg"` from every control message, which SPEC.md
+ *                     now forbids a writer to do.
  *
- * The last two are the two encoding conventions SPEC.md makes normative, in
- * the wrong form. Files written that way exist, so a conformant reader accepts
- * them — and until now nothing checked that.
+ * `v2-float-ints` and `v2-tag64` are the two encoding conventions SPEC.md
+ * makes normative, in the wrong form. Files written that way exist, so a
+ * conformant reader accepts them — and until now nothing checked that.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -29,7 +31,7 @@ import { join } from 'node:path'
 import { Encoder } from 'cbor-x'
 import { writeMoqtrace, writeMoqtraceSegments } from '../../binary.js'
 import { cborItemLength } from '../../cbor-scan.js'
-import { AUTHORED_CASES, SEGMENTED_CASES, v2Basic } from './cases.js'
+import { AUTHORED_CASES, SEGMENTED_CASES, v2Basic, v2ControlMsgMap } from './cases.js'
 import { CORPUS_MISSING_MESSAGE, findCorpusDir } from './locate.js'
 
 /** Byte offset of the format version in a segment preamble. */
@@ -120,6 +122,29 @@ function bigintsToNumbers(value: unknown): unknown {
 
 const identity = (value: unknown): unknown => value
 
+/**
+ * Delete `"msg"` from every control message, and rename the session so the
+ * file does not claim to be the case it was derived from.
+ *
+ * SPEC.md tells a writer with nothing decoded to emit an empty map rather than
+ * omit the key, so this file is deliberately non-conforming — and files shaped
+ * this way exist, because the rule postdates them. The reader requirement is
+ * the strict one: Event 0 is a type sampling MUST NOT drop, so a reader that
+ * treats the omission as a malformed event loses at least that event, and — if
+ * it collects into a `Result` rather than skipping — every event after it too.
+ * The shipped Rust reader took the first path until this case was written.
+ */
+function stripMsg(value: unknown): unknown {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return value
+  const item = value as Record<string, unknown>
+  // The header is the one item with no `"e"`; it arrives carrying the source
+  // case's session id, which would make this file introduce itself as that one.
+  if (item.e == null) return { ...item, sessionId: 'v2-msg-absent' }
+  if (item.e !== 0) return value
+  const { msg: _dropped, ...rest } = item
+  return rest
+}
+
 function main(): void {
   const dir = findCorpusDir()
   if (dir == null) throw new Error(CORPUS_MISSING_MESSAGE)
@@ -157,6 +182,17 @@ function main(): void {
     'js.moqtrace',
     // `tagUint8Array` left at its default, which is the whole point.
     reencode(basic, new Encoder({ useRecords: false, mapsAsObjects: true }), identity),
+  )
+
+  write(
+    dir,
+    'v2-msg-absent',
+    'js.moqtrace',
+    reencode(
+      writeMoqtrace(v2ControlMsgMap),
+      new Encoder({ useRecords: false, mapsAsObjects: true, tagUint8Array: false }),
+      stripMsg,
+    ),
   )
 }
 

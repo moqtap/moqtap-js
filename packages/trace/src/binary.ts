@@ -300,7 +300,15 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
     case 'control': {
       base.d = event.direction
       base.mt = int(event.messageType)
-      base.msg = event.message
+      // Always written, even when nothing was decoded: Event 0 is one of the
+      // types sampling must not drop, so a reader strict enough to treat a
+      // missing "msg" as a malformed event would discard exactly the events
+      // the format promises to keep. `undefined` is the one value not passed
+      // through — it encodes as CBOR `undefined`, which is not a map, and it
+      // means a caller left the field off rather than that a file carried it.
+      // Every other value is written as it stands, so a text `"msg"` read out
+      // of a pre-spec recording goes back to disk as the same text.
+      base.msg = event.message === undefined ? {} : event.message
       if (event.streamId != null) base.sid = event.streamId
       if (event.raw != null) base.raw = event.raw
       break
@@ -447,7 +455,15 @@ function decodeEvent(obj: Record<string, unknown>): TraceEvent {
         ...peerFields,
         direction: obj.d as 0 | 1,
         messageType: Number(obj.mt ?? 0),
-        message: (obj.msg ?? {}) as Record<string, unknown>,
+        // Handed over exactly as it decoded. A `"msg"` that is not a map is
+        // still the only decode the recording has — the corpus captures carry
+        // a Rust `Debug` string here — and the format requires a reader to
+        // preserve it rather than reject the event or substitute a map. That
+        // includes `null`, which is a value a writer chose to put on the wire,
+        // not an absence; absence is the single case normalised, to `{}`, so
+        // that a caller reading keys off a conforming file never meets
+        // `undefined`.
+        message: Object.hasOwn(obj, 'msg') ? obj.msg : {},
         ...(obj.sid != null ? { streamId: BigInt(obj.sid as bigint | number) } : {}),
         ...(obj.raw != null ? { raw: toBytes(obj.raw) } : {}),
       }

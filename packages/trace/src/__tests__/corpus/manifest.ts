@@ -36,6 +36,10 @@ const DESCRIPTIONS: Record<string, string> = {
     'Known event types carrying keys no reader knows: "ta" and "sg" on a stream open, "ek" and "raw" on an error. Ignoring an unrecognised key is allowed; dropping it is not, or any read-modify-write emits a file that looks like it never carried the key.',
   'v2-truncated':
     'A file that stops mid-event, as a capture killed at the wrong moment does. Readers must report the truncation distinctly and still return everything that decoded before the cut.',
+  'v2-control-msg-map':
+    'The three shapes a conforming "msg" takes: a populated snake_case map carrying an integer, an integer and a byte string; an empty map for a message the recorder decoded nothing from; and a nested map, because preserving a map has to mean the whole tree. The fourth shape, a "msg" that is not a map, needs no case of its own — every capture-* file carries a Rust debug string there.',
+  'v2-msg-absent':
+    'Control messages with no "msg" key at all, which SPEC.md now forbids a writer to produce. Readers must keep the events regardless: Event 0 is a type sampling MUST NOT drop, so rejecting the omission discards exactly what the format promises to keep. The shipped Rust reader did that until this case existed. JavaScript-authored only, since neither writer emits it.',
   'v2-float-ints':
     'The v2-basic content with integers past 2^32 written as CBOR float64 — what cbor-x emits by default. SPEC.md requires readers to accept this form because files carrying it exist. JavaScript-authored only: ciborium will not emit it.',
   'v2-tag64':

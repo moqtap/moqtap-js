@@ -96,7 +96,7 @@ Because `"p"` is source-local, a collector correlating traces from multiple sour
 | ------- | ----------- | ------------ | ------------------------------------------------- |
 | `"d"`   | integer     | `control`+   | Direction: `0` = sent (tx), `1` = received (rx)   |
 | `"mt"`  | integer     | `control`+   | Wire message type ID (e.g., `0x03` for SUBSCRIBE) |
-| `"msg"` | map         | `control`+   | Decoded message fields (draft-specific structure) |
+| `"msg"` | map         | `control`+   | Decoded message fields, keyed in snake_case (see below) |
 | `"sid"` | integer     | `control`+   | QUIC stream ID the message travelled on. Optional (see below). |
 | `"raw"` | byte string | `full` only  | Raw wire bytes (including type and length prefix). Payload-bearing — see [Privacy Considerations](#privacy-considerations). |
 
@@ -113,6 +113,50 @@ SUBSCRIBE_OK back to its SUBSCRIBE, and everything derived from that pairing —
 track names, aliases, request outcomes — is lost to the reader. Through
 draft-16 all control messages share one stream and the field is merely
 informative.
+
+#### `"msg"` field naming and shape
+
+`"msg"` MUST be a CBOR map. Its keys are the message's field names **in
+snake_case** — `request_id`, `track_alias`, `group_order` — which is what the
+drafts themselves use and what the shared codec vectors carry, so a reader can
+address a field without knowing which implementation wrote the file.
+
+A writer that has no decoded fields — the message type is one it cannot parse,
+or the recorder is not decoding bodies at all — MUST write an empty map `{}`
+rather than omit the key. Omission costs a reader more than the one byte it
+saves: Event 0 is one of the types [sampling](#sampling) MUST NOT drop, so a
+reader that treats a missing `"msg"` as a malformed event discards exactly the
+events the format promises to keep.
+
+Readers MUST be more tolerant than writers, because files predating this rule
+exist:
+
+- An **absent** `"msg"` MUST be read as an empty map, not as an error.
+- A `"msg"` that is **not a map** MUST be preserved verbatim and offered to the
+  caller unchanged. It MUST NOT cause the event to be rejected. Recordings
+  written before this revision carry a text rendering of the decoded message
+  here — every `capture-*` case in the conformance corpus is such a file — and
+  they remain readable, with the field simply not addressable by key.
+
+CBOR `null` is a value, not an absence: a writer put it there, so it falls
+under "not a map" and MUST be preserved. CBOR `undefined` (major type 7,
+simple value 23) is the one shape that is **not** preservable, and writers MUST
+NOT emit it. Neither reference implementation can represent it distinctly —
+the TypeScript reader cannot tell it from a field the caller never set, and the
+Rust reader decodes it to `null` — so a reader MAY normalise it to an empty map
+or to `null`, and the two will disagree about which. There is no file this
+matters for unless one is written deliberately; the rule exists so that nobody
+writes one expecting it to survive.
+
+The reader rule outranks the writer rule on a rewrite. **A tool that reads a
+trace and writes it back MUST preserve a non-map `"msg"` as it found it**, and
+MUST NOT replace it with an empty map to satisfy the writer rule above. The
+writer rule binds a recorder deciding what to say about a message it just saw;
+it does not license a redaction pass, a filter or a format converter to discard
+the only record of a message that will never be seen again. This is the same
+principle as [unrecognised keys](#versioning-and-compatibility): a tool may
+decline to understand something, but not decide on the reader's behalf that it
+never existed.
 
 ### Event 1: Stream Opened
 

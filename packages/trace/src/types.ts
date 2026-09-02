@@ -129,7 +129,24 @@ export interface ControlMessageEvent extends BaseEvent {
   readonly type: 'control'
   readonly direction: 0 | 1
   readonly messageType: number
-  readonly message: Record<string, unknown>
+  /**
+   * The message's decoded fields — the `"msg"` field of Event 0.
+   *
+   * A writer MUST produce a map here, keyed in snake_case (`request_id`,
+   * `track_alias`), and an empty one when it decoded nothing. A *reader* has
+   * to accept less, because files written before the format said so exist:
+   * every `capture-*` case in the conformance corpus carries a Rust `Debug`
+   * rendering of the message instead — `'Draft16(ClientSetup(ClientSetup {
+   * parameters: [] }))'` — and the format requires such a value to be handed
+   * back unchanged rather than rejected or replaced.
+   *
+   * So the type is `unknown`, not `Record<string, unknown>`. The `Record` was
+   * a lie the compiler could not catch: `event.message.request_id` typechecks
+   * against a string and reads `undefined` at runtime, on exactly the files
+   * this rule exists for. Narrow before reading keys — {@link
+   * controlMessageFields} does it correctly.
+   */
+  readonly message: unknown
   readonly raw?: Uint8Array
   /**
    * QUIC stream the message travelled on.
@@ -140,6 +157,23 @@ export interface ControlMessageEvent extends BaseEvent {
    * id, so the stream is the only thing tying a response to its request.
    */
   readonly streamId?: bigint
+}
+
+/**
+ * The decoded fields of a control message, or `undefined` when its `"msg"` is
+ * not a map and there are no fields to address.
+ *
+ * Provided because the narrowing is easy to get wrong once per call site and
+ * silently: `typeof message === 'object'` also admits `null`, a CBOR array,
+ * and a byte string, each of which would then be typed as a field map and
+ * read back `undefined` for every key. A caller that skips the check entirely
+ * gets the bug this function exists to prevent — see
+ * {@link ControlMessageEvent.message}.
+ */
+export function controlMessageFields(message: unknown): Record<string, unknown> | undefined {
+  if (message === null || typeof message !== 'object') return undefined
+  if (Array.isArray(message) || ArrayBuffer.isView(message)) return undefined
+  return message as Record<string, unknown>
 }
 
 export interface StreamOpenedEvent extends BaseEvent {
