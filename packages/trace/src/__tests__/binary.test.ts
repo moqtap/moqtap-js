@@ -551,3 +551,55 @@ describe('binary .moqtrace format', () => {
     })
   })
 })
+
+describe('unrecognised keys on a recognised event type', () => {
+  const opened: TraceEvent = {
+    type: 'stream-opened',
+    seq: 0,
+    timestamp: 100,
+    streamId: 4n,
+    direction: 1,
+    streamType: 0,
+  }
+
+  it('are kept rather than dropped', () => {
+    // "Unknown keys MUST be ignored" is a rule about reading past them. A
+    // reader that drops one turns any read-modify-write into a file that
+    // looks like it never carried the key — and the tools that rewrite a
+    // trace are exactly the ones it passes through on its way to someone
+    // else.
+    const result = roundTrip([{ ...opened, extra: { ta: 7, sg: 2 } }])
+    expect(result.events[0]?.extra).toEqual({ ta: 7, sg: 2 })
+  })
+
+  it('are absent, not empty, when the event carried none', () => {
+    // An empty object would make `extra != null` true everywhere and turn a
+    // "this file had unknown keys" check into a "this file was read by this
+    // version" check.
+    expect(roundTrip([opened]).events[0]?.extra).toBeUndefined()
+  })
+
+  it('never displace a key the event type owns', () => {
+    // A CBOR map with a duplicate key is malformed. The field is what a
+    // reader produced, so the field wins and the colliding entry is dropped.
+    const result = roundTrip([{ ...opened, extra: { sid: 999, ta: 7 } }])
+    const event = result.events[0]
+    expect(event?.type).toBe('stream-opened')
+    if (event?.type !== 'stream-opened') throw new Error('unreachable')
+    expect(event.streamId).toBe(4n)
+    expect(event.extra).toEqual({ ta: 7 })
+  })
+
+  it('are not collected on an event type no reader knows', () => {
+    // `UnknownEvent.fields` already holds every non-common key. Collecting
+    // them into `extra` as well writes each one twice.
+    const result = roundTrip([
+      { type: 'unknown', seq: 0, timestamp: 0, eventType: 99, fields: { note: 'hi', count: 3 } },
+    ])
+    const event = result.events[0]
+    expect(event?.type).toBe('unknown')
+    if (event?.type !== 'unknown') throw new Error('unreachable')
+    expect(event.fields).toEqual({ note: 'hi', count: 3 })
+    expect(event.extra).toBeUndefined()
+  })
+})

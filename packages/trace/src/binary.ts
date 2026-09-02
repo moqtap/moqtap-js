@@ -82,6 +82,48 @@ const INT_TO_EVENT_TYPE: Record<number, Exclude<TraceEvent['type'], 'unknown'>> 
 /** Keys the common event fields own; everything else belongs to the variant. */
 const COMMON_EVENT_KEYS = new Set(['n', 't', 'p', 'e'])
 
+/**
+ * The keys each known event type owns, in the order it writes them.
+ *
+ * Everything else on such an event is a key this version does not recognise,
+ * and goes to `extra` rather than being dropped. Adding a key to an event type
+ * means adding it here too — a key read into a named field but missing from
+ * this list would be written twice, once from the field and once from `extra`.
+ *
+ * An unknown event type is absent: `UnknownEvent.fields` already holds every
+ * non-common key on it, so nothing is collected into `extra` there.
+ */
+const VARIANT_KEYS: Record<number, ReadonlySet<string>> = {
+  0: new Set(['d', 'mt', 'msg', 'sid', 'raw']),
+  1: new Set(['sid', 'd', 'st']),
+  2: new Set(['sid', 'ec']),
+  3: new Set(['sid', 'g', 'o', 'pp', 'os']),
+  4: new Set(['sid', 'g', 'o', 'sz', 'pl']),
+  5: new Set(['from', 'to']),
+  6: new Set(['ec', 'reason']),
+  7: new Set(['label', 'data']),
+  8: new Set(['endpoint', 'transport', 'role', 'side']),
+  9: new Set(['ec', 'reason']),
+  10: new Set(['u', 'd', 'kind', 'traceId', 'ns', 'tn', 'tdr', 'tus', 'tuo', 'tdo']),
+}
+
+/** Every key on a decoded event map that neither the common fields nor its type owns. */
+function unrecognisedKeys(
+  obj: Record<string, unknown>,
+  eventType: number,
+): Record<string, unknown> | undefined {
+  const owned = VARIANT_KEYS[eventType]
+  if (owned == null) return undefined
+
+  let extra: Record<string, unknown> | undefined
+  for (const [key, value] of Object.entries(obj)) {
+    if (COMMON_EVENT_KEYS.has(key) || owned.has(key)) continue
+    extra ??= {}
+    extra[key] = value
+  }
+  return extra
+}
+
 /** The stream ended part-way through an item — the file was truncated. */
 export class TruncatedTraceError extends Error {
   /** Byte offset at which the incomplete item begins. */
@@ -339,10 +381,39 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
     }
   }
 
+  // Last, so the event's own keys keep the positions a reader expects and the
+  // file stays diffable against one written without them. A key the type owns
+  // is written from the field, so an `extra` entry repeating it is dropped:
+  // a CBOR map with a duplicate key is malformed, and the field is what a
+  // reader produced.
+  if (event.type !== 'unknown' && event.extra != null) {
+    const owned = VARIANT_KEYS[EVENT_TYPE_TO_INT[event.type]]
+    for (const [key, value] of Object.entries(event.extra)) {
+      if (COMMON_EVENT_KEYS.has(key) || owned?.has(key)) continue
+      base[key] = value
+    }
+  }
+
   return base
 }
 
+/**
+ * Decode one event, keeping any key its type does not own.
+ *
+ * The keys are kept on the event rather than dropped so that reading a trace
+ * and writing it back does not quietly strip what a newer writer put there.
+ * An `UnknownEvent` is returned untouched: its `fields` already hold every
+ * non-common key, and adding them to `extra` too would write each one twice.
+ */
 function cborToEvent(obj: Record<string, unknown>): TraceEvent {
+  const event = decodeEvent(obj)
+  if (event.type === 'unknown') return event
+
+  const extra = unrecognisedKeys(obj, EVENT_TYPE_TO_INT[event.type])
+  return extra == null ? event : { ...event, extra }
+}
+
+function decodeEvent(obj: Record<string, unknown>): TraceEvent {
   const seq = Number(obj.n ?? 0)
   const timestamp = Number(obj.t ?? 0)
   const peerFields = obj.p != null ? { peer: obj.p as string } : {}

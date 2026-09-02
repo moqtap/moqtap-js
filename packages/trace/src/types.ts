@@ -105,6 +105,24 @@ interface BaseEvent {
    * not name the same peer.
    */
   readonly peer?: string
+  /**
+   * Keys on this event that this version of the package does not recognise,
+   * kept verbatim.
+   *
+   * Optional keys may be added to an existing event type without a format
+   * version bump, so "unknown keys MUST be ignored" is a rule about *reading
+   * past* them. It is not a licence to drop them: a tool that reads a trace
+   * and writes it back — a redaction pass, a filter, an annotated download —
+   * would otherwise emit a valid file that looks like it never carried them,
+   * and one tool's ignorance would become permanent for every reader
+   * downstream of it.
+   *
+   * {@link UnknownEvent} already does this for an event type the package
+   * cannot name. This is the same guarantee one level down, for a key on a
+   * type it can. It is always absent on an `UnknownEvent`, whose `fields`
+   * hold every non-common key already.
+   */
+  readonly extra?: Record<string, unknown>
 }
 
 export interface ControlMessageEvent extends BaseEvent {

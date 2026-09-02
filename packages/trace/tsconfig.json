@@ -5,5 +5,11 @@
     "rootDir": "src",
     "composite": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // The corpus tests read files off disk, so they need `node:fs` and friends,
+  // and `@types/node` is not installed anywhere in this workspace. Excluding
+  // exactly those two paths keeps every other test typechecked, which
+  // `packages/codec` gave up on by excluding all of `src/__tests__`. Add
+  // `@types/node` and delete this and they come back.
+  "exclude": ["src/__tests__/corpus", "src/__tests__/corpus.test.ts"]
 }

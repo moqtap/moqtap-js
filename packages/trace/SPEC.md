@@ -437,6 +437,7 @@ If the stream ends part-way through a CBOR item, the file was truncated — a cr
 - **Writers SHOULD write version 2.**
 - **Readers MUST accept both version 1 and version 2, and MUST reject any other version.** A version-1 file is exactly a non-segmented version-2 trace without the keys this revision adds, and every added key is optional. Accepting version 1 therefore costs a reader nothing and keeps every previously recorded capture readable.
 - Unknown keys in header maps or event maps MUST be ignored (forward-compatible).
+- **A reader that writes a trace back out MUST preserve the unrecognised keys it read**, on a recognised event type as much as on an unrecognised one. "Ignore" above means read past, not discard. Skipping a key costs a reader nothing; dropping it costs every reader downstream, because the output is a valid file that looks like it never carried the key — and the tools that read and rewrite traces are exactly the ones a trace passes through on its way to someone else: a redaction pass, a filter, a re-segmentation, a download with annotations applied.
 - Optional keys MAY be added to an existing event type without a version bump — `"sid"` on event 0 was added this way. A reader must therefore treat any optional key as absent-by-default rather than assuming files of a given version all carry the same keys.
 - New event types (`"e"` values) MAY be added without a version bump; readers MUST skip unknown event types rather than failing. A reader that rejects an unknown `"e"` value turns every future addition into a breaking change.
 - New `"perspective"` and `"detail"` values MAY likewise be added; see [Perspective](#perspective).
@@ -465,6 +466,8 @@ Two encoding choices are **normative**, because a CBOR library's defaults are no
 Both rules exist because both were broken in opposite directions by the two implementations, and neither test suite could see it: each read only bytes it had written itself, so each agreed with a convention the other did not implement.
 
 This claim is maintained by a shared corpus of `.moqtrace` files that both implementations read and write as part of their test suites, covering at minimum: a version-1 file, a non-segmented version-2 file, a segmented version-2 stream, a file carrying an unknown event type, a file carrying an unknown perspective, and a truncated file. An implementation that cannot round-trip the corpus is not conformant, whatever this document says.
+
+The corpus is [`trace/` in the `test-vectors` repository](https://github.com/moqtap/test-vectors/tree/master/trace), alongside the codec vectors. Its `manifest.json` indexes every case with the format version, segment count, header fields, event count and event-type histogram a conformant reader must agree on, so a third implementation can use it without reading either reference implementation. Two files there carry the non-canonical encodings the rules above require readers to accept — integers as floats, and byte strings under tag 64 — because a rule with no file exercising it is a rule nobody is held to.
 
 ---
 
@@ -505,6 +508,7 @@ Implementations MAY batch multiple events into one object for efficiency at high
 - **Event 10 carries track identity and per-hop timestamps** — `"ns"`, `"tn"`, `"tdr"`, `"tus"`, `"tuo"`, `"tdo"` — making per-hop latency attribution possible from the event alone, plus explicit update semantics for events emitted before all four timestamps are known.
 - **Event 10's trace ID is `"traceId"`, a 16-byte byte string.** An earlier revision of this proposal spelled it `"trace"` and left the type open; a text-string spelling invites per-implementation encodings, which defeats the cross-operator stitching the field exists for.
 - **Unknown event types, perspectives and detail levels must be tolerated, not rejected.** Version 1 said readers "SHOULD skip unknown event types"; neither reference implementation did, which is why the purely additive parts of this revision would have broken them anyway.
+- **Unrecognised keys must survive a read-modify-write.** Version 1 said only that unknown keys must be ignored, which both implementations read as permission to drop them — so every optional key either revision adds was safe to read past and silently destroyed by any tool that rewrote the file.
 - Event `"n"` and `"t"` clarified as **segment-local** in segmented traces.
 - **Non-droppable event types rule** added to the Sampling section.
 - **Trace ID Propagation section** defining the role of the `MOQTAP_TRACE_ID` extension parameter.

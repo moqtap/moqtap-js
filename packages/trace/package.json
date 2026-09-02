@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/trace",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MoQT session trace format — record, serialize, and analyze .moqtrace files",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,8 @@
   ],
   "scripts": {
     "build": "tsup",
-    "test": "vitest run"
+    "test": "vitest run",
+    "corpus": "bun run src/__tests__/corpus/generate.ts && bun run src/__tests__/corpus/manifest.ts"
   },
   "peerDependencies": {
     "@moqtap/codec": "*"
