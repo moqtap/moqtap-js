@@ -66,3 +66,9 @@ coverage
 .claude/*.local.*
 
 samples/
+
+# Working documents. This repo is public, and a plan is not a shipped
+# artifact — these are ignored rather than merely untracked so that no
+# `git add` can sweep one in by accident.
+packages/*/PROPOSAL-*.md
+packages/*/CORPUS-PLAN.md
