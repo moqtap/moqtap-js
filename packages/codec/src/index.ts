@@ -38,9 +38,21 @@ import type { Draft18Codec } from './drafts/draft18/codec.js'
 import { createDraft18Codec } from './drafts/draft18/codec.js'
 import type { Draft19Codec } from './drafts/draft19/codec.js'
 import { createDraft19Codec } from './drafts/draft19/codec.js'
+import type { Draft20Codec } from './drafts/draft20/codec.js'
+import { createDraft20Codec } from './drafts/draft20/codec.js'
 
 /**
- * Wire version numbers for each MoQT draft, keyed by short aliases.
+ * Version identifiers for each MoQT draft, keyed by short aliases.
+ *
+ * Only the entries up to '14' are wire values: those drafts negotiated the
+ * version inside CLIENT_SETUP/SERVER_SETUP and really do put `0xff0000NN` on
+ * the wire. From draft-15 on, the version is negotiated by ALPN (raw QUIC) or
+ * `WT-Available-Protocols` (WebTransport) as the string `moqt-NN`, and no
+ * version number is sent at all — so '15' through '20' are *derived*
+ * identifiers kept as stable numeric keys, not observed values. Do not report
+ * one to a user as a version seen on the wire; report the protocol string.
+ * Each draft's own module exports it (e.g. `PROTOCOL_STRING` in
+ * `@moqtap/codec/draft20`).
  */
 export const DRAFT_VERSIONS: Record<string, bigint> = {
   '07': 0xff000007n,
@@ -56,6 +68,7 @@ export const DRAFT_VERSIONS: Record<string, bigint> = {
   '17': 0xff000011n,
   '18': 0xff000012n,
   '19': 0xff000013n,
+  '20': 0xff000014n,
 }
 
 export function createCodec(options: CodecOptions & { draft: '07' }): Draft07Codec
@@ -71,6 +84,7 @@ export function createCodec(options: CodecOptions & { draft: '16' }): Draft16Cod
 export function createCodec(options: CodecOptions & { draft: '17' }): Draft17Codec
 export function createCodec(options: CodecOptions & { draft: '18' }): Draft18Codec
 export function createCodec(options: CodecOptions & { draft: '19' }): Draft19Codec
+export function createCodec(options: CodecOptions & { draft: '20' }): Draft20Codec
 
 /**
  * Create a codec for the specified draft version.
@@ -94,6 +108,7 @@ export function createCodec(
   | Draft17Codec
   | Draft18Codec
   | Draft19Codec
+  | Draft20Codec
 export function createCodec(
   options: CodecOptions,
 ):
@@ -109,7 +124,8 @@ export function createCodec(
   | Draft16Codec
   | Draft17Codec
   | Draft18Codec
-  | Draft19Codec {
+  | Draft19Codec
+  | Draft20Codec {
   const draft = DRAFT_VERSIONS[options.draft]
   if (!draft) {
     throw new Error(
@@ -146,6 +162,8 @@ export function createCodec(
       return createDraft18Codec()
     case '19':
       return createDraft19Codec()
+    case '20':
+      return createDraft20Codec()
     default:
       throw new Error(`Unsupported draft: ${draft}`)
   }

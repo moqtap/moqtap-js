@@ -13,6 +13,7 @@ export type Draft =
   | '17'
   | '18'
   | '19'
+  | '20'
 
 // Base codec interface — draft-specific codecs extend this
 export interface BaseCodec<M> {

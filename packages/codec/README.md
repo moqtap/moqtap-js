@@ -2,7 +2,7 @@
 
 MoQT (Media over QUIC Transport) wire-format codec and session state machine for JavaScript/TypeScript.
 
-- Multi-draft support (drafts 07 through 19)
+- Multi-draft support (drafts 07 through 20)
 - Stateless encode/decode of all MoQT control messages and data streams
 - Protocol session state machine with FSM-based validation per draft
 - Zero runtime dependencies
@@ -43,10 +43,11 @@ Or use the factory if your application supports multiple drafts:
 ```typescript
 import { createCodec, DRAFT_VERSIONS } from '@moqtap/codec'
 
-const codec = createCodec({ draft: '19' }) // '07' through '19'
+const codec = createCodec({ draft: '20' }) // '07' through '20'
 
-// DRAFT_VERSIONS provides wire version numbers under short aliases:
-//   DRAFT_VERSIONS['07'] — 0xff000007n
+// DRAFT_VERSIONS provides version identifiers under short aliases:
+//   DRAFT_VERSIONS['07'] — 0xff000007n, a real draft-07 wire value
+//   DRAFT_VERSIONS['20'] — 0xff000014n, derived; see the note below
 ```
 
 ## Subpath Exports
@@ -69,9 +70,20 @@ Each draft is available as a subpath import with its own codec and session state
 | `@moqtap/codec/draft17`          | Draft-17 codec                                    |
 | `@moqtap/codec/draft18`          | Draft-18 codec                                    |
 | `@moqtap/codec/draft19`          | Draft-19 codec                                    |
+| `@moqtap/codec/draft20`          | Draft-20 codec                                    |
 | `@moqtap/codec/draft{N}/session` | Session state machine for draft N                 |
 
 > **Note:** A default (versionless) codec will be available once the MoQT specification reaches RFC status. Until then, always specify a draft version.
+
+`DRAFT_VERSIONS` is a table of numeric keys, and only the entries up to `'14'` are values a peer
+ever puts on the wire. From draft-15 the version is negotiated by ALPN (raw QUIC) or
+`WT-Available-Protocols` (WebTransport) as the string `moqt-NN`, and no version number is sent at
+all — so `DRAFT_VERSIONS['20']` is a derived identifier, not something observed. Each draft module
+from 15 on exports the real one:
+
+```typescript
+import { PROTOCOL_STRING } from '@moqtap/codec/draft20' // 'moqt-20'
+```
 
 ## Draft-Specific Imports
 

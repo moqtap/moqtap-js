@@ -81,6 +81,13 @@ export type ProtocolViolationCode =
 export type SideEffect =
   | { type: 'subscription-activated'; subscribeId: bigint }
   | { type: 'subscription-ended'; subscribeId: bigint; reason: string }
+  // draft-20 fill fetch streams (Section 5.1.3). A subscription can have
+  // several open at once, each keyed by the Request ID of the SUBSCRIBE or
+  // REQUEST_UPDATE that opened it; opening one does not close another.
+  | { type: 'fill-fetch-stream-opened'; subscribeId: bigint; requestId: bigint }
+  | { type: 'fill-fetch-stream-closed'; subscribeId: bigint; requestId: bigint; reason: string }
+  // draft-20 PUBLISH_STATE_NOTIFY (Section 10.10) — unilateral, no response.
+  | { type: 'subscription-state-notified'; subscribeId: bigint }
   | { type: 'announce-activated'; namespace: string[] }
   | { type: 'announce-ended'; namespace: string[] }
   | { type: 'publish-activated'; requestId: bigint }
