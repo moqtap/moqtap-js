@@ -36,7 +36,7 @@ The `"detail"` field (see Part 2 header) declares what was recorded. Each level 
 | `"headers+data"`  | Everything in `"headers"` + full payload bytes for each object.                                                                                  | Full session replay, debugging media corruption.      |
 | `"full"`          | Everything above + raw wire bytes for every *control* message (pre-decode), and the bytes behind an error event ([Event 6](#event-6-error) `"raw"`). See the note below on data-stream framing.                            | Wire-level debugging, compliance testing.             |
 
-Levels `"headers+data"` and `"full"`, and the `"raw"` field on `"control"`-level events, are **payload-bearing** — see [Privacy Considerations](#privacy-considerations). So is [Event 6](#event-6-error)'s `"raw"`, which is why it is gated at `"full"` and not at Event 6's own `control`+: an error naming a *data* stream has subgroup framing and object payload behind it, which is media, and inheriting the event's level would have put it in traces whose declared level excludes payloads entirely.
+Levels `"headers+data"` and `"full"`, and the `"raw"` field on Event 0 and [Event 6](#event-6-error), are **payload-bearing** — see [Privacy Considerations](#privacy-considerations). So is [Event 6](#event-6-error)'s `"raw"`, which is why it is gated at `"full"` and not at Event 6's own `control`+: an error naming a *data* stream has subgroup framing and object payload behind it, which is media, and inheriting the event's level would have put it in traces whose declared level excludes payloads entirely.
 
 **No level carries data-stream framing bytes.** `"raw"` exists only on Event 0,
 and Event 4's `"pl"` begins after the object header, so the bytes of a
@@ -105,7 +105,7 @@ Because `"p"` is source-local, a collector correlating traces from multiple sour
 | `"d"`   | integer     | `control`+   | Direction: `0` = sent (tx), `1` = received (rx)   |
 | `"mt"`  | integer     | `control`+   | Wire message type ID (e.g., `0x03` for SUBSCRIBE) |
 | `"msg"` | map         | `control`+   | Decoded message fields, keyed in snake_case (see below) |
-| `"sid"` | integer     | `control`+   | QUIC stream ID the message travelled on. Optional (see below). |
+| `"sid"` | unsigned integer | `control`+ | QUIC stream ID the message travelled on. Optional (see below). |
 | `"raw"` | byte string | `full` only  | Raw wire bytes (including type and length prefix). Payload-bearing — see [Privacy Considerations](#privacy-considerations). |
 
 `"sid"` is optional: a recorder that sits at the session level rather than the
@@ -287,7 +287,7 @@ Object header events and object payload events (event 4) for the same object sha
 | ---------- | ---------------- | ------------ | --------------------- |
 | `"ec"`     | integer          | `control`+   | Error code            |
 | `"reason"` | text string      | `control`+   | Human-readable reason |
-| `"sid"`    | integer          | `control`+   | QUIC stream ID the error was observed on. **Optional**, on the same terms as [Event 0's `"sid"`](#event-0-control-message): absent means there was no stream or none is known, and readers MUST distinguish that from stream `0`. |
+| `"sid"`    | unsigned integer | `control`+   | QUIC stream ID the error was observed on. **Optional**, on the same terms as [Event 0's `"sid"`](#event-0-control-message): absent means there was no stream or none is known, and readers MUST distinguish that from stream `0`. |
 | `"ek"`     | text string      | `control`+   | Error kind. **Optional.** See below. |
 | `"rawlen"` | unsigned integer | `headers+sizes`+ | Byte length of the input the recorder held for this error, before any truncation. **Optional.** See below. |
 | `"raw"`    | byte string      | `full` only  | The offending bytes, truncated to the cap below. **Optional.** Payload-bearing — see [Privacy Considerations](#privacy-considerations). |
@@ -377,6 +377,24 @@ take `rawlen > len(raw)` as the definition of a truncated capture. If
 `"rawlen"` is absent, a `"raw"` of exactly 4096 bytes MUST be treated as
 possibly truncated, since that is the one length the cap makes ambiguous.
 
+**A recorder that does not know the true length MUST omit `"rawlen"` rather
+than write the length it happens to hold.** This is the case the key is most
+easily got wrong in, and it defeats the key entirely. A recorder that stops
+*reading* at the cap — which is the sensible thing to do with a stream that
+will not parse, and what the recorder cited below does — never holds more than
+4096 bytes. Writing `rawlen` as 4096 there says `rawlen == len(raw)`, which is
+this section's own signal for **not truncated**: the field would assert
+completeness precisely when the recorder has the least idea whether the input
+was complete. Omitting it falls through to the rule above, where a `"raw"` of
+exactly the cap is treated as possibly truncated, which is the truth.
+
+Where the length *is* knowable without keeping the bytes, write it. A
+length-prefixed control message supplies it from its own length field, and a
+recorder that read that prefix and then gave up on the body knows exactly how
+much it did not keep. That is the case `"rawlen"` exists for, and it is common:
+the fault is often the body, and the prefix is what got the recorder as far as
+noticing.
+
 **The cap binds the recorder, and nothing else.** It is addressed to the party
 deciding what to say about traffic it has just observed. It is *not* addressed
 to a tool that reads an event and serializes it again: a reader meeting a
@@ -398,7 +416,11 @@ is *constructed from observed bytes*.
 #### One `"raw"` per flow
 
 **A recorder MUST NOT emit `"raw"` more than once per flow** — per stream where
-the error names one, per peer where it does not. Later errors on a flow that
+the error names one, per peer where it does not, and once for the whole
+recording where it writes no peer identifier either. That last case is every
+recorder but a relay tap, since `"p"` is only required of one: the three
+collapse to "the narrowest scope the recorder can name", and a recorder that
+can name none has one flow. Later errors on a flow that
 has already carried its bytes are still recorded; they simply carry no `"raw"`.
 
 The latch is on the field, not on the event, and the distinction is the whole
@@ -520,11 +542,16 @@ Trace recording ranges from protocol-metadata-only (low sensitivity) to full med
 1. **Payload-bearing events and fields.** These carry or reveal user content:
    - Event 4 `"pl"` (object payload bytes, `"headers+data"`+)
    - Event 0 `"raw"` (raw control-message bytes, `"full"`)
+   - [Event 6](#event-6-error) `"raw"` (the bytes behind an error, `"full"`).
+     Easy to overlook, because an error event sounds like metadata: its
+     `"sid"` may name a *data* stream, in which case the bytes behind the
+     error are subgroup framing and object payload — media, arriving through
+     the one event type sampling may never drop.
    - Detail levels `"headers+data"` and `"full"` in aggregate
 
    Capturing them is **optional** for all conformant recorders. Observer- and tap-based capture of these fields is equivalent to intercepting user media; recorders MUST NOT enable it by default and SHOULD require explicit operator opt-in per session or per track. The default detail level for general-purpose tools SHOULD be `"control"` or `"headers"`.
 
-2. **Payload size leakage.** Even without payload bytes, `"headers+sizes"` reveals object sizes, which can fingerprint media content. Operators handling sensitive traffic SHOULD evaluate size leakage as part of their threat model.
+2. **Payload size leakage.** Even without payload bytes, `"headers+sizes"` reveals object sizes, which can fingerprint media content. [Event 6](#event-6-error)'s `"rawlen"` belongs to this class rather than to the one above — it is gated with the sizes for that reason — and it leaks a little differently: the one-`"raw"`-per-flow latch does not bind it, so a stream that fails repeatedly yields a *sequence* of sizes rather than a single one. Operators handling sensitive traffic SHOULD evaluate size leakage as part of their threat model.
 
 3. **Trace ID correlation.** `MOQTAP_TRACE_ID` enables cross-operator correlation of subscription behavior. See [Trace ID Propagation](#trace-id-propagation) for egress mitigations.
 
@@ -986,7 +1013,7 @@ Both rules exist because both were broken in opposite directions by the two impl
 
 This claim is maintained by a shared corpus of `.moqtrace` files that both implementations read and write as part of their test suites, covering at minimum: a version-1 file, a non-segmented version-2 file, a segmented version-2 stream, a file carrying an unknown event type, a file carrying an unknown perspective, and a truncated file. An implementation that cannot round-trip the corpus is not conformant, whatever this document says.
 
-The corpus is [`trace/` in the `test-vectors` repository](https://github.com/moqtap/test-vectors/tree/master/trace), alongside the codec vectors. Its `manifest.json` indexes every case with the format version, segment count, header fields, event count and event-type histogram a conformant reader must agree on, so a third implementation can use it without reading either reference implementation. Two files there carry the non-canonical encodings the rules above require readers to accept — integers as floats, and byte strings under tag 64 — because a rule with no file exercising it is a rule nobody is held to.
+The corpus is [`moqtrace/` in the `test-traces` repository](https://github.com/moqtap/test-traces/tree/master/moqtrace), published as `@moqtap/test-traces`. Its `manifest.json` indexes every case with the format version, segment count, header fields, event count and event-type histogram a conformant reader must agree on, so a third implementation can use it without reading either reference implementation. Two files there carry the non-canonical encodings the rules above require readers to accept — integers as floats, and byte strings under tag 64 — because a rule with no file exercising it is a rule nobody is held to.
 
 ### Shapes a CBOR library may normalise before you see them
 

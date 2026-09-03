@@ -5,22 +5,25 @@ All notable changes to `@moqtap/trace` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-This file starts at 0.4.0. Earlier releases are in the git history. Version
-0.3.1 was tagged in the working tree but never published; its contents are
-folded into 0.4.0 below.
+This file starts at 0.4.0. Earlier releases are in the git history. Versions
+0.3.1 and an earlier 0.4.0 were prepared in the working tree but never
+published; their contents are folded into the 0.4.0 below, so every "before"
+in it describes 0.3.0 — the last version anyone can install.
 
-## [Unreleased]
+## [0.4.0] - 2026-09-03
 
-Every "before" in this section describes 0.4.0, the last published version,
-unless it says otherwise. Where a fix repairs something introduced *within*
-this unreleased range, the entry says so: the loss never reached anyone, and a
-"before" that quietly meant an intermediate working state would make a change
-look either unnecessary or larger than it was.
+**Breaking, which is why this is 0.4.0 and not 0.3.1.** Two changes to what
+this package accepts, both below: `ControlMessageEvent.message` is now
+`unknown`, and a header with no usable value for a required key now fails the
+read.
 
-The Event 1 keys below and the fixes to them are in the same unreleased range,
-so no published version shipped *that* loss. The header one is older: every
-published version of this package dropped the header keys it did not
-recognise, and 0.4.0 fixed the same defect one level down, on events.
+`ControlMessageEvent.message` is `unknown` rather than
+`Record<string, unknown>`. Anything reading a key straight off it stops
+compiling, which is the point: the old type was a claim the runtime did not
+keep. Every `capture-*` file in the conformance corpus carries a text rendering
+of the message there, so `event.message.request_id` typechecked and read
+`undefined` on exactly the files the tolerance rule exists for. Narrow with the
+new `controlMessageFields()` before reading keys.
 
 **Breaking: a header with no usable value for a required key now fails the
 read.** `readMoqtrace`, `readMoqtraceSegments` and `readMoqtraceHeader` throw
@@ -50,6 +53,20 @@ before.
 
 ### Added
 
+- `extra` on every known event type: keys a reader does not recognise are kept
+  verbatim and written back out. Ignoring an unrecognised key is permitted;
+  dropping one is not, or any read-modify-write — a redaction pass, a filter,
+  an annotated download — emits a file that looks like it never carried the
+  key. Absent on an `unknown` event, whose fields already hold everything.
+- `controlMessageFields(message)`, which narrows a control event's `"msg"` to a
+  field map or answers `undefined`. Provided because the check is easy to get
+  wrong once per call site and silently: `typeof message === 'object'` also
+  admits `null`, a CBOR array and a byte string, each of which would then be
+  typed as a field map and read back `undefined` for every key.
+- The package reads the shared `.moqtrace` conformance corpus
+  (`@moqtap/test-traces`, under `moqtrace/`) as part of its test suite, against
+  files written by the Rust implementation and by third-party relays rather
+  than by itself.
 - **The header preserves the keys it does not recognise**, in three stores:
   `extra` on `TraceHeader`, on `SegmentInfo` and on `SamplingInfo` — the same
   field, spelt the same way, as the one `TraceEvent` already carries, so a user
@@ -78,8 +95,54 @@ before.
   and `streamId` rather than this event's narrow `direction` and `streamType`.
   As `number` they would make `streamOpened.groupId === objectHeader.groupId`
   evaluate `42 === 42n` — `false`, silently, for two fields naming one group.
+- **Event 6 can say which stream failed, how, and with what bytes**:
+  `streamId`, `errorKind`, `rawLength` and `raw` on `TraceErrorEvent`, from the
+  new `"sid"`, `"ek"`, `"rawlen"` and `"raw"` keys, with `ErrorKind` and an
+  `ErrorDetails` argument to `recordError`. The event had nowhere to put the
+  bytes that caused it, so a recorder keeping the evidence had to record the
+  violation as a control message — asserting a decodable message where there
+  was none, in a way no reader can tell from a real one.
+  - `streamId` is optional on Event 0's terms: absent means no stream or none
+    known, and must not be read as stream `0`. `bigint`, to stay exact past
+    2^53 rather than disagree with the Rust reader silently.
+  - `errorKind` is an open vocabulary — `'protocol'`, `'transport'`, `'decode'`,
+    or any other string. Not spelt `kind`: `SubscriptionDerivationEvent` owns
+    that name with an unrelated vocabulary, and two vocabularies under one name
+    become one column in any flat export of a trace.
+  - `rawLength` is gated at `'headers+sizes'` and `raw` at `'full'`. A size
+    separates a truncated message from a mistyped one and carries no content;
+    the bytes behind an error naming a data stream are payload.
+  - `MAX_ERROR_RAW_BYTES` (4096) is applied in `recordError`, which truncates,
+    reports the untruncated length, and writes the bytes once per flow. It is
+    deliberately absent from `binary.ts`: a serializer cannot tell an event
+    just built from observed bytes from one that arrived by being read, so a
+    cap there would shorten evidence on every rewrite.
+- **An incremental reader, for a stream that arrives in pieces**:
+  `createMoqtraceReader()` returns a `MoqtraceReader` whose `push(chunk)` and
+  `end()` hand back the `ReadItem`s that have become whole, keeping the
+  remainder for the next chunk. The three entry points in `binary.ts` all take
+  a finished file, which a live capture does not have: chunk boundaries fall
+  wherever the transport put them, almost never on an item boundary. Header
+  and event decoding is imported from `binary.ts` rather than written again,
+  so a trace read in instalments and the same trace read whole produce the
+  same values.
+- `TruncatedStreamError`, thrown by `end()` when bytes remain that do not form
+  a whole item. Deliberately not `TruncatedTraceError`, whose `segments` field
+  promises everything that decoded before the cut: an incremental reader has
+  already handed those events to its caller and does not keep them, so it
+  cannot fill that field, and filling it with an empty array would report a
+  trace that decoded nothing — a wrong answer rather than a missing one.
 
 ### Fixed
+
+- **`recover` no longer discards a damaged region silently.** Pass
+  `onRecovered` alongside it and the reader reports each skipped region: the
+  offset it began at, whether a header, an event or a truncation ended it, and
+  the offset the read resumed at — `undefined` when nothing followed, meaning
+  the rest of the file was dropped. `Trace[]` has no error channel, so before
+  this a capture that lost a segment and one that never had it were the same
+  value, and the largest loss of all — recovery finding no further segment and
+  returning what it had — looked exactly like a clean end of file.
 
 - **A header no longer loses every key this version does not know.** An
   `"x-note"` in a header was gone after a read and absent after a write-back,
@@ -119,7 +182,7 @@ before.
   recorded for another, each produced silently out of a header the reader had
   already decided to trust. A text `"half"` reached it too, as the `NaN` that
   conversion answers, and `samplingToCbor` then wrote the `NaN` back to disk —
-  0.4.0 carried no finite check anywhere, and `NaN != null` is true, so nothing
+  No finite check existed anywhere, and `NaN != null` is true, so nothing
   stopped either end of that. The format states a range for this key and for no
   other in the header, and a value outside the range a key's meaning allows is
   unusable — so all of these now go to the sampling map's store with their
@@ -127,16 +190,14 @@ before.
   `0` and closed at `1`, so `1.0` — "no rate-based dropping", the commonest
   rate there is — still reads into the field.
 - **A malformed header names the key and says whether it was absent or
-  unusable.** 0.4.0 reported neither, because it did not report at all: the
+  unusable.** Neither was reported before, because there was no report at all: the
   required keys were `as` casts and a `Number(...)`, and a header missing
   `"protocol"` was returned rather than refused (see the Breaking note above).
   The message text is `Malformed header: "protocol" is missing` for an absent
   key and `Malformed header: "protocol" must be a text string` for a present
   one that no field can hold, and the Rust implementation's diagnosis of the
-  same file agrees. Within this unreleased range the error carried one message
-  for both faults for a while; nothing shipped that, and no published version
-  had the error at all.
-- `traceToJSON` renders the stores, header and event alike. This held in 0.4.0
+  same file agrees.
+- `traceToJSON` renders the stores, header and event alike. This held before
   and is now stated and pinned by tests rather than left to the fact that
   `JSON.stringify` happens to walk every field: it is the view someone reaches
   for when they suspect a key went missing, so one that showed only the keys
@@ -175,11 +236,23 @@ before.
   out of a sidecar file or a config wrote a trace with the key missing, on the
   one code path whose entire purpose is preservation. Every place a key from a
   file or from a store is put onto a map now goes through
-  `Object.defineProperty`. The defect shipped in 0.4.0 on an event's `extra`
-  and on an unknown event's `fields`; the three header stores are new in this
-  unreleased range and carried it too, so only the event half ever reached
-  anyone. The *read* half is not fixed and cannot be from here — see the
-  limitation below.
+  `Object.defineProperty`. Every store this reaches — an event's `extra`, an
+  unknown event's `fields`, and the three header stores — is new in this
+  release, so no published version ever carried the defect. The *read* half is
+  not fixed and cannot be from here — see the limitation below.
+- **A control message with no `"msg"` key is read rather than dropped**, as an
+  empty map. Event 0 is one of the types sampling MUST NOT drop, so treating
+  the absence as malformed discarded exactly the events the format promises to
+  keep.
+- **`"msg"` is written even when nothing was decoded.** An event that reached
+  the encoder with no `message` wrote CBOR `undefined` — a simple value, not a
+  map — producing precisely the file the spec tells writers not to produce.
+  It now writes an empty map.
+- **A `"msg"` of `null` is preserved rather than replaced.** The decoder used
+  `obj.msg ?? {}`, which conflated *absent* with *present and null*. `null` is
+  a value a writer chose to put on the wire; only absence is normalised.
+- A text `"msg"` — what every pre-spec recording carries — survives a
+  read-modify-write unchanged. This held before and is now pinned by tests.
 
 ### Changed
 
@@ -187,7 +260,7 @@ before.
   back.** `writeMoqtrace`, `writeMoqtraceSegments` and `createMoqtraceWriter`
   throw `MalformedHeaderError` when `startTime` or `segment.sequence` is
   negative, fractional or past `Number.MAX_SAFE_INTEGER`. Both are `number`
-  fields, so TypeScript admits `-5` and `1.5` into either, and 0.4.0 wrote them
+  fields, so TypeScript admits `-5` and `1.5` into either, and the writer wrote them
   out: the file was produced, the process exited 0, and the fault surfaced
   wherever someone later tried to open it, if anyone did. The Rust
   implementation cannot reach the state — its field is a `u64` — so the two
@@ -223,49 +296,6 @@ before.
   decoder stringifies a non-text map key with the same collision, so `1` and
   `"1"` in one map also read as one entry. Writing is unaffected: a store entry
   spelt `__proto__` now reaches the file spelt `__proto__` (above).
-
-## [0.4.0] - 2026-09-02
-
-**Breaking, which is why this is 0.4.0 and not 0.3.2.**
-`ControlMessageEvent.message` is now `unknown` rather than
-`Record<string, unknown>`. Anything reading a key straight off it stops
-compiling, which is the point: the old type was a claim the runtime did not
-keep. Every `capture-*` file in the conformance corpus carries a text rendering
-of the message there, so `event.message.request_id` typechecked and read
-`undefined` on exactly the files the tolerance rule exists for. Narrow with the
-new `controlMessageFields()` before reading keys.
-
-### Added
-
-- `extra` on every known event type: keys a reader does not recognise are kept
-  verbatim and written back out. Ignoring an unrecognised key is permitted;
-  dropping one is not, or any read-modify-write — a redaction pass, a filter,
-  an annotated download — emits a file that looks like it never carried the
-  key. Absent on an `unknown` event, whose fields already hold everything.
-- `controlMessageFields(message)`, which narrows a control event's `"msg"` to a
-  field map or answers `undefined`. Provided because the check is easy to get
-  wrong once per call site and silently: `typeof message === 'object'` also
-  admits `null`, a CBOR array and a byte string, each of which would then be
-  typed as a field map and read back `undefined` for every key.
-- The package reads the shared `.moqtrace` conformance corpus
-  (`test-vectors/trace/`) as part of its test suite, against files written by
-  the Rust implementation and by third-party relays rather than by itself.
-
-### Fixed
-
-- **A control message with no `"msg"` key is read rather than dropped**, as an
-  empty map. Event 0 is one of the types sampling MUST NOT drop, so treating
-  the absence as malformed discarded exactly the events the format promises to
-  keep.
-- **`"msg"` is written even when nothing was decoded.** An event that reached
-  the encoder with no `message` wrote CBOR `undefined` — a simple value, not a
-  map — producing precisely the file the spec tells writers not to produce.
-  It now writes an empty map.
-- **A `"msg"` of `null` is preserved rather than replaced.** The decoder used
-  `obj.msg ?? {}`, which conflated *absent* with *present and null*. `null` is
-  a value a writer chose to put on the wire; only absence is normalised.
-- A text `"msg"` — what every pre-spec recording carries — survives a
-  read-modify-write unchanged. This held before and is now pinned by tests.
 
 ### Notes
 

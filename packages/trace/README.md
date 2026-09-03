@@ -7,7 +7,10 @@ Record, serialize, and analyze MoQT (Media over QUIC Transport) sessions using t
 - Configurable detail levels from control-only to full wire captures
 - Session recorder that wraps `@moqtap/codec` session state machines
 - Human-readable JSON export for debugging
-- Zero-copy streaming writer for large traces
+- Zero-copy streaming writer, and an incremental reader for a stream that
+  arrives in chunks
+- Unrecognised keys, event types and enum values preserved through a
+  read-modify-write
 
 Writes format version 2 and reads versions 1 and 2.
 
@@ -50,6 +53,26 @@ const trace = recorder.finalize()
 const bytes = writeMoqtrace(trace) // → Uint8Array (.moqtrace binary)
 ```
 
+### Recording an error with the bytes behind it
+
+A report saying "your SUBSCRIBE_OK did not parse" is an assertion. The same
+report carrying the bytes is evidence the other party can run against their own
+encoder.
+
+```typescript
+recorder.recordError(0, 'SUBSCRIBE_OK did not parse', {
+  streamId: 4n,
+  errorKind: 'decode', // 'protocol' | 'transport' | 'decode' | any other string
+  raw: offendingBytes, // hand over everything held, untruncated
+})
+```
+
+Hand `raw` the full bytes. The recorder applies `MAX_ERROR_RAW_BYTES` (4096)
+itself and reports the untruncated length separately, so a caller that
+pre-truncates destroys the one signal saying the capture is partial. `rawLength`
+is recorded from `'headers+sizes'` and `raw` only at `'full'`, and the bytes are
+written once per flow.
+
 ### Reading a trace file
 
 ```typescript
@@ -78,6 +101,34 @@ outputStream.write(writer.preamble())
 
 for (const event of events) {
   outputStream.write(writer.writeEvent(event))
+}
+```
+
+### Streaming reader (for a stream that arrives in chunks)
+
+`readMoqtrace` and the functions beside it take a finished file. A live capture
+does not have one: chunk boundaries fall wherever the transport put them,
+almost never on an item boundary.
+
+```typescript
+import { createMoqtraceReader, TruncatedStreamError } from '@moqtap/trace'
+
+const reader = createMoqtraceReader()
+
+for await (const chunk of incoming) {
+  // Returns whatever the chunk completed — often nothing, which is ordinary.
+  for (const item of reader.push(chunk)) {
+    if (item.kind === 'segment') console.log('segment', item.header.sessionId)
+    else console.log(item.event.type, item.event.timestamp)
+  }
+}
+
+// `end()` can still yield items, and throws if bytes are left over that do not
+// form a whole one.
+try {
+  for (const item of reader.end()) console.log(item.kind)
+} catch (error) {
+  if (error instanceof TruncatedStreamError) console.warn('stream cut mid-item')
 }
 ```
 
@@ -111,7 +162,8 @@ for (const segment of readMoqtraceSegments(bytes)) {
 A file that stops part-way through an event throws `TruncatedTraceError`, which
 carries everything that decoded before the cut — a truncated trace is still
 evidence. On a segmented trace, `{ recover: true }` skips a damaged region and
-resumes at the next segment instead of throwing.
+resumes at the next segment instead of throwing; pass `onRecovered` alongside
+it to be told what that cost, since the return value cannot say.
 
 ```typescript
 import { readMoqtrace, readMoqtraceSegments, TruncatedTraceError } from '@moqtap/trace'
@@ -121,11 +173,21 @@ try {
 } catch (error) {
   if (error instanceof TruncatedTraceError) {
     console.warn(`truncated at byte ${error.offset}`)
-    console.log(error.trace?.events.length, 'events survived')
+    const survived = error.segments.reduce((n, segment) => n + segment.events.length, 0)
+    console.log(survived, 'events survived')
   }
 }
 
-const whatSurvived = readMoqtraceSegments(bytes, { recover: true })
+const whatSurvived = readMoqtraceSegments(bytes, {
+  recover: true,
+  onRecovered: ({ offset, kind, resumedAt }) => {
+    console.warn(
+      resumedAt == null
+        ? `${kind} damage at ${offset}: nothing readable followed, rest discarded`
+        : `${kind} damage at ${offset}, resumed at ${resumedAt}`,
+    )
+  },
+})
 ```
 
 ## Reading a trace you did not write
@@ -135,6 +197,12 @@ knows. An unrecognised event type arrives as an `UnknownEvent` with its fields
 intact, so it survives a read-modify-write round trip rather than being dropped
 or relabelled; an unrecognised perspective, detail level, role, side, drop
 policy or derivation kind is kept verbatim.
+
+Keys are kept on the same terms. One this version does not recognise — on the
+header, on `segment`, on `sampling`, or on any event — is preserved verbatim in
+an `extra` map beside the fields and written back unchanged. Ignoring a key is
+permitted; dropping one is not, or a redaction pass, a filter or an annotated
+download emits a file that looks as though it never carried the key.
 
 The one place that refuses is `createRecorder`, which cannot honour a detail
 level it does not implement: it would either capture less than you asked for
@@ -166,7 +234,27 @@ const json = traceToJSON(trace)
 console.log(json)
 ```
 
-## Upgrading from 0.2.0
+## Upgrading
+
+### To 0.4.0 (from 0.3.0)
+
+Two changes to what a reader accepts:
+
+- `ControlMessageEvent.message` is `unknown` rather than
+  `Record<string, unknown>`, so anything reading a key straight off it stops
+  compiling. Narrow with `controlMessageFields()` first. The old type was a
+  claim the runtime did not keep — every real capture carries a text rendering
+  there, so `event.message.request_id` typechecked and read `undefined`.
+- A header with no usable value for a required key throws
+  `MalformedHeaderError` instead of returning a header with `undefined`, `NaN`
+  or `0` standing in for it. Pass `recover` to skip that segment instead. No
+  file either implementation writes is affected.
+
+Everything else is additive: `extra` on the header and its two sub-maps, the
+stream-header identifiers on Event 1, the error fields on Event 6, and
+`createMoqtraceReader`.
+
+### To 0.3.0 (from 0.2.0)
 
 The package now writes format version 2. A 0.2.0 reader rejects those files at
 byte 8, which is the point of the bump: it turns what would have been silent

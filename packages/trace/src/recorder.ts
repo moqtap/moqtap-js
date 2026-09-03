@@ -1,5 +1,84 @@
 import type { SessionState } from '@moqtap/codec/session'
-import type { DetailLevel, RecorderOptions, Trace, TraceEvent, TraceHeader } from './types.js'
+import type {
+  DetailLevel,
+  ErrorKind,
+  RecorderOptions,
+  Trace,
+  TraceErrorEvent,
+  TraceEvent,
+  TraceHeader,
+} from './types.js'
+
+/**
+ * The most bytes a recorder may put in an error event's `raw`.
+ *
+ * A MUST in the format, and a fixed number rather than a suggestion, because
+ * an error event is one of the types sampling must not drop: every other
+ * high-volume field is bounded by sampling, so if this one is not bounded here
+ * it is not bounded at all. A peer that opens ten thousand streams and sends
+ * garbage on each is what a fuzzer does to a relay, and the trace of it should
+ * not be larger than the attack.
+ *
+ * It lives here, in the recorder, and appears nowhere in `binary.ts`. The cap
+ * is addressed to the party deciding what to say about traffic it has just
+ * observed — {@link TraceRecorder.recordError}, and nothing else. A serializer
+ * cannot tell a freshly recorded event from one that arrived by being read, so
+ * a cap applied there would either truncate evidence on a rewrite or refuse a
+ * file the reader was required to accept. `writeMoqtrace` therefore writes a
+ * `raw` of any length, and {@link TraceRecorder.record} — which inserts an
+ * event a caller may well have read out of a file — does not apply it either.
+ */
+export const MAX_ERROR_RAW_BYTES = 4096
+
+/**
+ * What a recorder knows about an error beyond its code and reason.
+ *
+ * Every field is optional and each is gated at its own detail level, so one
+ * call site can hand over everything it has and let the recorder keep what its
+ * level allows.
+ */
+export interface ErrorDetails {
+  /**
+   * QUIC stream the error was observed on.
+   *
+   * Omit it when there was no stream or none is known — that is what its
+   * absence says, and a reader must not read it as stream `0`.
+   */
+  readonly streamId?: bigint
+  /** What sort of failure this was. An open vocabulary; any string is legal. */
+  readonly errorKind?: ErrorKind
+  /**
+   * The offending bytes, in full and untruncated.
+   *
+   * Hand over everything held: the recorder applies {@link
+   * MAX_ERROR_RAW_BYTES} and reports the untruncated length in `rawLength`,
+   * so a caller that pre-truncates loses the one signal saying the capture is
+   * partial. Recorded only at `'full'`, and only once per flow.
+   */
+  readonly raw?: Uint8Array
+  /**
+   * The length to report, where the caller already holds less than it saw.
+   *
+   * Defaults to `raw.length`, which is right whenever `raw` is everything
+   * there was. Set it to state a length larger than the bytes on hand — a
+   * caller that hit a cap of its own upstream, or one that knows a message's
+   * declared length without having kept it.
+   *
+   * **Set it to `null` when the true length is unknown**, and the key is
+   * omitted. SPEC.md requires that rather than a guess, because the guess is
+   * not neutral: `rawlen` equal to the bytes present is this format's signal
+   * for *not truncated*, so defaulting it would assert a complete capture
+   * exactly where the caller knows least about whether the input was
+   * complete. Absent, a reader treats a `raw` of exactly
+   * {@link MAX_ERROR_RAW_BYTES} as possibly truncated, which is the truth.
+   *
+   * The caller this exists for is real rather than hypothetical: a recorder
+   * that stops *reading* a stream once it will not parse — the sensible thing
+   * to do with such a stream — never holds more than its own cap and cannot
+   * know what it did not read.
+   */
+  readonly rawLength?: number | null
+}
 
 export interface TraceRecorder {
   /** Wrap a SessionState to auto-record control messages and state changes. */
@@ -7,7 +86,16 @@ export interface TraceRecorder {
     session: SessionState<M, T>,
   ): SessionState<M, T>
 
-  /** Record an arbitrary event manually. */
+  /**
+   * Record an arbitrary event manually.
+   *
+   * A passthrough: no detail-level gate, and no cap on an error event's
+   * `raw`, because an event handed here may have been read out of a file
+   * rather than built from observed bytes, and shortening that one would
+   * destroy evidence to enforce a rule addressed to whoever recorded it.
+   * Callers building an event from bytes they just saw want
+   * {@link recordError}.
+   */
   record(event: TraceEvent): void
 
   /** Record a stream-opened event. Ignored at 'control' detail level. */
@@ -34,8 +122,15 @@ export interface TraceRecorder {
     payload?: Uint8Array,
   ): void
 
-  /** Record a protocol error. */
-  recordError(errorCode: number, reason: string): void
+  /**
+   * Record a protocol error.
+   *
+   * Recorded at every detail level — an error event is non-droppable — but
+   * `details` is gated key by key: `streamId` and `errorKind` at every
+   * level, `rawLength` from `'headers+sizes'`, and `raw` at `'full'`
+   * alone, capped at {@link MAX_ERROR_RAW_BYTES} and written once per flow.
+   */
+  recordError(errorCode: number, reason: string, details?: ErrorDetails): void
 
   /** Record a user-defined annotation. */
   annotate(label: string, data?: unknown): void
@@ -73,6 +168,20 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
   const messageTypeId = options.messageTypeId ?? (() => 0)
 
   const events: TraceEvent[] = []
+  /**
+   * Flows whose bytes have already been recorded.
+   *
+   * The format allows `"raw"` once per flow — per stream where the error
+   * names one, per peer where it does not, and this recorder writes no peer
+   * identifier, so every error naming no stream shares one flow.
+   *
+   * The latch is on the field and not on the event: later errors on a flow are
+   * still recorded in full, they simply carry no bytes. Suppressing the events
+   * would discard the causal record precisely when a peer is misbehaving
+   * repeatedly, which is when it matters most. What grows without bound is the
+   * bytes, so that is what is bounded.
+   */
+  const rawRecorded = new Set<string>()
   let _recording = true
   let _seq = 0
   const startTime = Date.now()
@@ -87,6 +196,18 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
 
   function nextSeq(): number {
     return _seq++
+  }
+
+  /** The flow an error belongs to, for the one-`raw`-per-flow latch. */
+  function rawFlow(streamId: bigint | undefined): string {
+    return streamId == null ? 'no-stream' : `stream:${streamId}`
+  }
+
+  /** Take a flow's one slot for recording bytes, or answer that it is spent. */
+  function claimRawSlot(flow: string): boolean {
+    if (rawRecorded.has(flow)) return false
+    rawRecorded.add(flow)
+    return true
   }
 
   function wrapSession<M extends { type: string }, T extends string>(
@@ -231,14 +352,40 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
       addEvent(event)
     },
 
-    recordError(errorCode, reason) {
-      addEvent({
+    recordError(errorCode, reason, details) {
+      const streamId = details?.streamId
+      const raw = details?.raw
+      // What the recorder held, before the cap below — the whole point of the
+      // key, since a reader compares it against the bytes it got to learn that
+      // the capture is partial and by how much. An explicit `null` means the
+      // caller does not know, and omits the key rather than claiming the bytes
+      // present are all there were.
+      const rawLength =
+        details?.rawLength === null ? undefined : (details?.rawLength ?? raw?.length)
+      // Claimed only when the bytes are actually going to be written, so a
+      // recording below 'full' does not spend a flow's one slot on an event
+      // that carried nothing.
+      const writeRaw =
+        raw != null && detailRank >= DETAIL_RANK.full && claimRawSlot(rawFlow(streamId))
+
+      const event: TraceErrorEvent = {
         type: 'error',
         seq: nextSeq(),
         timestamp: clock(),
         errorCode,
         reason,
-      })
+        ...(streamId != null ? { streamId } : {}),
+        ...(details?.errorKind != null ? { errorKind: details.errorKind } : {}),
+        // A size, gated with the other sizes and one level below the bytes: an
+        // error may name a data stream, so at 'control' this length would be a
+        // fact about media volume in a trace whose declared level excludes it.
+        // Written whether or not the bytes are, which is most of its value.
+        ...(rawLength != null && detailRank >= DETAIL_RANK['headers+sizes'] ? { rawLength } : {}),
+        ...(writeRaw && raw != null
+          ? { raw: raw.length > MAX_ERROR_RAW_BYTES ? raw.slice(0, MAX_ERROR_RAW_BYTES) : raw }
+          : {}),
+      }
+      addEvent(event)
     },
 
     annotate(label, data) {

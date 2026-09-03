@@ -1,5 +1,6 @@
 import { Encoder, Tag } from 'cbor-x'
 import { describe, expect, it } from 'vitest'
+import type { RecoveredRegion } from '../binary.js'
 import {
   cborToEvent,
   cborToHeader,
@@ -10,6 +11,7 @@ import {
   readMoqtraceSegments,
   writeMoqtrace,
 } from '../binary.js'
+import { MAX_ERROR_RAW_BYTES } from '../recorder.js'
 import type {
   ControlMessageEvent,
   ObjectPayloadEvent,
@@ -18,6 +20,7 @@ import type {
   StreamOpenedEvent,
   SubscriptionDerivationEvent,
   Trace,
+  TraceErrorEvent,
   TraceEvent,
   TraceHeader,
 } from '../types.js'
@@ -762,7 +765,7 @@ describe('unrecognised keys on a recognised event type', () => {
 
   // `x-` keys: the range SPEC.md reserves for private use and promises never to
   // define, which is the whole requirement for a test about keys the format
-  // does not know. These used `ta` and `sg` until §2 made those real Event 1
+  // does not know. These used `ta` and `sg` until those became real Event 1
   // keys and turned the tests red, then `zz` and `note`, which are merely
   // unclaimed — a key the format might plausibly want later has the same
   // failure ahead of it.
@@ -1141,6 +1144,213 @@ describe('a defined key whose value has an unusable type', () => {
     expect(derivation.traceId).toBeUndefined()
     expect(derivation.upstream).toEqual({ peer: 'peer-up', requestId: 1n })
     expect(new Uint8Array(derivation.extra?.traceId as Uint8Array)).toEqual(short)
+  })
+})
+
+describe('the stream, the kind and the bytes behind an error event', () => {
+  const failed: TraceErrorEvent = {
+    type: 'error',
+    seq: 0,
+    timestamp: 100,
+    errorCode: 4,
+    reason: 'SUBSCRIBE_OK did not parse',
+  }
+
+  /** The one error event of a trace, or a failure naming what came instead. */
+  function onlyError(trace: Trace): TraceErrorEvent {
+    expect(trace.events).toHaveLength(1)
+    const event = trace.events[0]
+    if (event?.type !== 'error') throw new Error(`expected an error event, got ${event?.type}`)
+    return event
+  }
+
+  /** The event map of a one-event file whose only event is an error. */
+  function errorMap(fields: Record<string, unknown>): Record<string, unknown> {
+    return { n: 0, t: 100, e: 6, ec: 4, reason: 'SUBSCRIBE_OK did not parse', ...fields }
+  }
+
+  const bytes = new Uint8Array([0x02, 0x0b, 0xff, 0x00])
+
+  it('reads a stream id back as a bigint', () => {
+    // The same wire identifier Event 0 carries, and held the same way: as a
+    // `number` it stops being exact at 2^53, so this reader and the Rust one
+    // would disagree about large stream ids silently and only there.
+    const event = onlyError(roundTrip([{ ...failed, streamId: 12n }]))
+    expect(event.streamId).toBe(12n)
+    expect(typeof event.streamId).toBe('bigint')
+  })
+
+  it('distinguishes an absent stream id from stream 0', () => {
+    // Absent means there was no stream, or that the recorder knew of none —
+    // exactly as on Event 0. Read as `0`, it would attribute the error to a
+    // real stream, and stream 0 is the client-initiated bidirectional one the
+    // session control plane sits on through draft-16.
+    expect(onlyError(roundTrip([failed])).streamId).toBeUndefined()
+    expect(Object.hasOwn(eventMapIn(writeMoqtrace(makeTrace([failed]))), 'sid')).toBe(false)
+    expect(onlyError(roundTrip([{ ...failed, streamId: 0n }])).streamId).toBe(0n)
+  })
+
+  it('reads back each of the three error kinds this revision names', () => {
+    for (const kind of ['protocol', 'transport', 'decode'] as const) {
+      expect(onlyError(roundTrip([{ ...failed, errorKind: kind }])).errorKind).toBe(kind)
+    }
+  })
+
+  it('keeps an error kind this version has never heard of', () => {
+    // An open vocabulary: values may be added without a version bump, so a
+    // reader that refused one would refuse a file it can otherwise read in
+    // full — the contract `"perspective"` already has.
+    const event = onlyError(roundTrip([{ ...failed, errorKind: 'x-vendor-overload' }]))
+    expect(event.errorKind).toBe('x-vendor-overload')
+    // In its field, not in the store: it is a value the field can hold.
+    expect(event.extra).toBeUndefined()
+  })
+
+  it('round-trips a length and the bytes it describes', () => {
+    const event = onlyError(roundTrip([{ ...failed, rawLength: 9, raw: bytes }]))
+    expect(event.rawLength).toBe(9)
+    expect(event.raw).toEqual(bytes)
+    // A length larger than the bytes is the definition of a truncated
+    // capture, and it has to survive as such rather than being reconciled.
+    expect(event.rawLength).toBeGreaterThan(event.raw?.length ?? 0)
+  })
+
+  it("reads the four keys out of another writer's narrow integers", () => {
+    // ciborium writes an identifier in the fewest bytes that hold it, so a
+    // file from `moqtap-trace` carries `"sid"` and `"rawlen"` as CBOR
+    // integers that cbor-x hands back as JS numbers.
+    const event = onlyError(
+      readMoqtrace(fileWithEventMap(errorMap({ sid: 12, ek: 'decode', rawlen: 9, raw: bytes }))),
+    )
+    expect(event.streamId).toBe(12n)
+    expect(typeof event.streamId).toBe('bigint')
+    expect(event.errorKind).toBe('decode')
+    expect(event.rawLength).toBe(9)
+    expect(event.raw).toEqual(bytes)
+  })
+
+  it('round-trips an event carrying none of them', () => {
+    // All four are optional, and every error event recorded before they
+    // existed has none. Absent has to stay absent rather than become a zero,
+    // an empty byte string or an empty kind.
+    expect(onlyError(roundTrip([failed]))).toEqual(failed)
+    const map = eventMapIn(writeMoqtrace(makeTrace([failed])))
+    for (const key of ['sid', 'ek', 'rawlen', 'raw']) {
+      expect(Object.hasOwn(map, key)).toBe(false)
+    }
+  })
+
+  it('writes each key exactly once, and collects none of them into `extra`', () => {
+    // The bug this is here for: a key read into a named field but still
+    // counted unrecognised lands in `extra` as well, and writing the event
+    // back then emits it twice. Only the genuinely unknown key belongs there.
+    const file = writeMoqtrace(
+      makeTrace([
+        {
+          ...failed,
+          streamId: 12n,
+          errorKind: 'protocol',
+          rawLength: 9,
+          raw: bytes,
+          extra: { 'x-zz': 'from the future' },
+        },
+      ]),
+    )
+
+    // Sorted, because the assertion is about which keys were written and how
+    // many times, not the order the encoder chose to put them in.
+    expect(Object.keys(eventMapIn(file)).sort()).toEqual(
+      ['n', 't', 'e', 'ec', 'reason', 'sid', 'ek', 'rawlen', 'raw', 'x-zz'].sort(),
+    )
+    // The decoded object cannot show a repeat; the map header can.
+    expect(declaredEventMapEntries(file)).toBe(10)
+    expect(onlyError(readMoqtrace(file)).extra).toEqual({ 'x-zz': 'from the future' })
+  })
+
+  // Every one of the four is optional, so an unusable value costs the key and
+  // never the event: the error code and the reason are what the event is for,
+  // and they decoded fine. SPEC.md, "Versioning and Compatibility": a defined
+  // key whose value has an unusable type "goes to the unrecognised-key store,
+  // is ignored for meaning, and is written back unchanged".
+  const unusable: [
+    key: string,
+    value: unknown,
+    field: 'streamId' | 'errorKind' | 'rawLength' | 'raw',
+  ][] = [
+    ['sid', 'nope', 'streamId'],
+    ['sid', -1, 'streamId'],
+    ['ek', 42, 'errorKind'],
+    ['rawlen', 1.5, 'rawLength'],
+    ['rawlen', -1, 'rawLength'],
+    ['raw', 'not bytes', 'raw'],
+  ]
+
+  it.each(
+    unusable,
+  )('keeps a "%s" carrying %o in `extra`, verbatim and across a rewrite', (key, value, field) => {
+    const event = onlyError(readMoqtrace(fileWithEventMap(errorMap({ [key]: value }))))
+
+    // Not in the field, not coerced into one, not gone.
+    expect(event[field]).toBeUndefined()
+    expect(event.extra).toEqual({ [key]: value })
+    // The rest of the event decoded, which is the point of not throwing.
+    expect(event.errorCode).toBe(4)
+    expect(event.reason).toBe('SUBSCRIBE_OK did not parse')
+
+    // Read, modify, write: what a redaction pass, a filter or a
+    // re-segmentation does to a file on its way to someone else.
+    const rewritten = writeMoqtrace(makeTrace([event]))
+    expect(readMoqtrace(rewritten).events).toEqual([event])
+    expect(eventMapIn(rewritten)[key]).toEqual(value)
+  })
+
+  it('writes and reads back a "raw" longer than the recorder cap', () => {
+    // The gate on the cap staying out of the serializer. A cap in
+    // `writeMoqtrace` cannot tell an event a recorder just built from observed
+    // bytes from one that arrived by being read, so it would truncate evidence
+    // on every rewrite — and no test of the recorder's own truncation can
+    // detect that, because both layers would cut and the assertion would only
+    // see the result. This one fails the moment the cap migrates.
+    const long = new Uint8Array(MAX_ERROR_RAW_BYTES + 1000)
+    for (let i = 0; i < long.length; i++) long[i] = i % 251
+
+    const file = writeMoqtrace(
+      makeTrace([{ ...failed, streamId: 12n, rawLength: long.length, raw: long }]),
+    )
+    // Off the wire, before any decode of ours: what the file actually carries.
+    expect((eventMapIn(file).raw as Uint8Array).length).toBe(5096)
+
+    const event = onlyError(readMoqtrace(file))
+    expect(event.raw?.length).toBe(5096)
+    expect(event.rawLength).toBe(5096)
+    expect(Array.from(event.raw ?? [])).toEqual(Array.from(long))
+  })
+
+  it('reads a "raw" longer than the recorder cap, and rewrites it unshortened', () => {
+    // The 4096-byte cap binds a recorder, and nothing else. A reader meeting a
+    // longer value MUST NOT reject the event and a rewrite MUST NOT shorten
+    // it: re-truncating someone else's file destroys evidence in order to make
+    // it conform to a rule that was never addressed to the tool doing the
+    // truncating. This is the case the reader-outranks-the-writer rule exists
+    // for, and a serializer that enforced the cap would fail it silently.
+    const long = new Uint8Array(5000)
+    for (let i = 0; i < long.length; i++) long[i] = i % 251
+    const file = fileWithEventMap(errorMap({ sid: 12, rawlen: 5000, raw: long }))
+
+    const event = onlyError(readMoqtrace(file))
+    expect(event.raw?.length).toBe(5000)
+    expect(event.rawLength).toBe(5000)
+    // Bytes past the cap, spot-checked against the literal the file carries
+    // rather than against anything this test encoded.
+    expect(event.raw?.[4096]).toBe(4096 % 251)
+    expect(event.raw?.[4999]).toBe(4999 % 251)
+
+    // Off the wire of the rewritten file, so the assertion is about what the
+    // file says and not about what a decode of our own encode gives back.
+    const rewritten = writeMoqtrace(makeTrace([event]))
+    const written = eventMapIn(rewritten).raw as Uint8Array
+    expect(written.length).toBe(5000)
+    expect(Array.from(written)).toEqual(Array.from(long))
   })
 })
 
@@ -2076,5 +2286,66 @@ describe('a required header key with no usable value', () => {
     // malformed segment's are gone, along with the header that could not be
     // built.
     expect(recovered.map((segment) => segment.events.length)).toEqual([1, 1])
+  })
+
+  it('names the segment recovery dropped instead of dropping it quietly', () => {
+    const good = (sequence: number): Uint8Array =>
+      fileWithHeaderMap({ ...REQUIRED_HEADER_MAP, segment: { sequence } })
+    const parts = [
+      good(0),
+      fileWithHeaderMap({ ...REQUIRED_HEADER_MAP, segment: { streamId: 'abc' } }),
+      good(2),
+    ]
+    const file = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0))
+    let offset = 0
+    for (const part of parts) {
+      file.set(part, offset)
+      offset += part.length
+    }
+
+    const regions: RecoveredRegion[] = []
+    const recovered = readMoqtraceSegments(file, {
+      recover: true,
+      onRecovered: (region) => regions.push(region),
+    })
+
+    // Two segments back and three in the file: without this report, nothing in
+    // the return value distinguishes that from a file that only ever had two.
+    expect(recovered).toHaveLength(2)
+    expect(regions).toHaveLength(1)
+    expect(regions[0]?.kind).toBe('header')
+    expect(regions[0]?.offset).toBe(parts[0]?.length)
+    expect(regions[0]?.resumedAt).toBe((parts[0]?.length ?? 0) + (parts[1]?.length ?? 0))
+    expect(regions[0]?.cause).toBeInstanceOf(MalformedHeaderError)
+  })
+
+  it('reports an undefined resume point when recovery discards the rest of the file', () => {
+    // The largest loss recovery can inflict: with no segment left to
+    // resynchronize to, the reader returns what it has — which without the
+    // report is indistinguishable from a clean end of file.
+    const whole = fileWithHeaderMap({ ...REQUIRED_HEADER_MAP, segment: { sequence: 0 } })
+    const cut = whole.subarray(0, whole.length - 1)
+
+    const regions: RecoveredRegion[] = []
+    const recovered = readMoqtraceSegments(cut, {
+      recover: true,
+      onRecovered: (region) => regions.push(region),
+    })
+
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0]?.events).toHaveLength(0)
+    expect(regions).toHaveLength(1)
+    expect(regions[0]?.kind).toBe('truncated')
+    expect(regions[0]?.resumedAt).toBeUndefined()
+    expect(regions[0]?.cause).toBeUndefined()
+  })
+
+  it('reports nothing when a file reads cleanly', () => {
+    const regions: RecoveredRegion[] = []
+    readMoqtraceSegments(fileWithHeaderMap({ ...REQUIRED_HEADER_MAP, segment: { sequence: 0 } }), {
+      recover: true,
+      onRecovered: (region) => regions.push(region),
+    })
+    expect(regions).toEqual([])
   })
 })

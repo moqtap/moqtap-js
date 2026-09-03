@@ -55,7 +55,7 @@
   },
   "devDependencies": {
     "@moqtap/codec": "workspace:*",
-    "@moqtap/test-traces": "^0.1.0",
+    "@moqtap/test-traces": "^0.1.1",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.0.0"

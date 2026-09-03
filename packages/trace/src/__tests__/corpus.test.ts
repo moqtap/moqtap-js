@@ -127,15 +127,13 @@ function eventTypeCounts(segments: Trace[]): Record<string, number> {
 
 /**
  * A checkout that cannot reach the corpus is a wiring gap, not a conformance
- * failure: the corpus ships in `@moqtap/test-vectors`, and until the release
- * that carries `trace/`, CI resolves a version without it. Failing there would
- * paint every build red for a missing dependency rather than for anything this
- * package got wrong.
+ * failure: it ships in `@moqtap/test-traces`, so a checkout with no
+ * dependencies installed has nothing to read. Failing there would paint every
+ * build red for a missing dependency rather than for anything this package got
+ * wrong.
  *
  * So the suite skips, and its name carries the reason — a skipped suite in the
- * reporter with no explanation is how a corpus quietly stops being run. It
- * self-heals: the moment the dependency carries `trace/`, every test below
- * becomes live with no change here.
+ * reporter with no explanation is how a corpus quietly stops being run.
  */
 const SUITE =
   CORPUS == null ? `.moqtrace corpus — SKIPPED: ${CORPUS_MISSING_MESSAGE}` : '.moqtrace corpus'
@@ -199,9 +197,9 @@ describe.skipIf(CORPUS == null)(SUITE, () => {
   })
 
   describe('the two encoding conventions SPEC.md makes normative', () => {
-    // Both were broken, in opposite directions, by the two implementations,
-    // and neither test suite could see it: each read only bytes it had written
-    // itself. These two files are the shapes each used to write.
+    // A suite that reads only bytes it wrote itself cannot see either: an
+    // encoder always agrees with its own decoder. These two files are shapes
+    // cbor-x produces, which a conformant reader has to take.
     const canonical = () => readMoqtrace(bytesOf(root, 'v2-basic', 'js.moqtrace'))
 
     it('accepts integers written as floats', () => {
@@ -257,12 +255,11 @@ describe.skipIf(CORPUS == null)(SUITE, () => {
 
       const [opened, header, failure] = trace.events
       // Every key is `x-` prefixed, the range SPEC.md reserves for private use
-      // and promises never to define. The fixture used to borrow keys from this
-      // proposal's own sections instead, until §2 shipped and claimed two of
-      // them — turning these assertions red, which invited weakening them
-      // rather than replacing the fixture.
-      // Reading them back off a file the other implementation wrote is what
-      // makes "an unrecognised key survives" a checked claim.
+      // and promises never to define. A key a later revision can claim leaves
+      // these assertions passing while measuring less, which is what the
+      // reservation is for. Reading them back off a file the other
+      // implementation wrote is what makes "an unrecognised key survives" a
+      // checked claim.
       expect(opened?.extra).toEqual({ 'x-ta': 7, 'x-sg': 2 })
       expect(header?.extra?.['x-ta']).toBe(7)
       expect(failure?.extra?.['x-ek']).toBe('decode')
@@ -426,9 +423,10 @@ describe.skipIf(CORPUS == null)(SUITE, () => {
 
       // Draft-18 gives each request its own bidirectional stream, so these are
       // four distinct QUIC streams. The recorder does not see stream IDs and
-      // writes 0 for all of them, which is the gap PROPOSAL-v3 §1 closes. The
-      // assertion pins today's behaviour so the change is visible when it
-      // lands, not so that it is correct.
+      // writes 0 for all of them, which is why a stream id alone cannot key a
+      // flow and why Event 1 carries the stream header's identifiers. The
+      // assertion pins today's behaviour so a change to it is visible, not
+      // because 0 is correct.
       expect(opened).toHaveLength(4)
       expect(opened.every((event) => event.type === 'stream-opened' && event.streamId === 0n)).toBe(
         true,

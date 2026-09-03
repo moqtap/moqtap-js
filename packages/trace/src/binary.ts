@@ -560,6 +560,18 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
     case 'error': {
       base.ec = int(event.errorCode)
       base.reason = event.reason
+      if (event.streamId != null) base.sid = event.streamId
+      if (event.errorKind != null) base.ek = event.errorKind
+      if (event.rawLength != null) base.rawlen = int(event.rawLength)
+      // Written at whatever length it arrived. The format caps `"raw"` at 4096
+      // bytes and this is deliberately not where that happens: a serializer
+      // cannot tell an event a recorder just built from observed bytes from one
+      // that arrived by being read, so a cap here would either truncate
+      // evidence on a rewrite or refuse a file the reader was required to
+      // accept — whichever it did, it would do to the wrong events. The cap
+      // belongs where the event is constructed from bytes, which in this
+      // package is `recordError` in `recorder.ts`.
+      if (event.raw != null) base.raw = event.raw
       break
     }
     case 'annotation': {
@@ -1007,6 +1019,22 @@ function decodeEvent(src: Decoding): TraceEvent {
         ...peerFields,
         errorCode: Number(take(src, 'ec') ?? 0),
         reason: (take(src, 'reason') ?? '') as string,
+        // Optional, so an unusable value costs the key and not the event: the
+        // error code and reason are the point of the event and are fine.
+        // `asUint` rather than a conversion, for the reason Event 1 gives —
+        // `BigInt(true)` is `1n`, a stream this file never named.
+        ...optional(src, 'sid', 'streamId', asUint),
+        // An error kind this version has never heard of is still text, and
+        // still kept: the vocabulary is open and `ErrorKind` widens to any
+        // string for exactly that. What `asText` refuses is a value that is
+        // not text at all.
+        ...optional(src, 'ek', 'errorKind', asText),
+        ...optional(src, 'rawlen', 'rawLength', asUintNumber),
+        // No length check. The 4096-byte cap binds a recorder; a reader that
+        // refused a longer value — or shortened it — would reject a file it was
+        // required to accept, or destroy the evidence the field exists to
+        // carry.
+        ...optional(src, 'raw', 'raw', asByteString),
       }
 
     case 'annotation':
@@ -1144,6 +1172,36 @@ export interface ReadOptions {
    * segment, so a damaged one still ends the read, just without an error.
    */
   readonly recover?: boolean
+
+  /**
+   * Called once for each region `recover` skipped.
+   *
+   * Without it a recovered read cannot be told from a clean one: the return
+   * type carries no error channel, so a trace that lost a segment and a trace
+   * that never had one are the same value.
+   */
+  readonly onRecovered?: (region: RecoveredRegion) => void
+}
+
+/** A region `recover` could not read. */
+export interface RecoveredRegion {
+  /** Byte offset the unreadable region began at. */
+  readonly offset: number
+
+  /**
+   * What was lost: `header` drops the whole segment, `event` cuts the segment
+   * in progress short, `truncated` means the item ran past end of file.
+   */
+  readonly kind: 'header' | 'event' | 'truncated'
+
+  /**
+   * Offset the read resumed at, or `undefined` when no further segment
+   * followed — everything from `offset` on was then discarded.
+   */
+  readonly resumedAt: number | undefined
+
+  /** The decode failure, absent when the region was merely truncated. */
+  readonly cause?: unknown
 }
 
 function flatten(segments: Trace[]): Trace | undefined {
@@ -1167,6 +1225,15 @@ function readSegments(bytes: Uint8Array, options?: ReadOptions): Trace[] {
   let events: TraceEvent[] = []
   let offset = 0
 
+  // Reports the skip before resuming, including the case where nothing follows
+  // it: discarding the tail of a file is the largest loss recovery can inflict
+  // and the one a caller most needs told about.
+  const skip = (from: number, kind: RecoveredRegion['kind'], cause?: unknown): number => {
+    const next = findNextSegment(bytes, from + 1)
+    options?.onRecovered?.({ offset: from, kind, resumedAt: next < 0 ? undefined : next, cause })
+    return next
+  }
+
   // The first thing in the buffer must be a preamble; failing that, the
   // errors below name why rather than reporting a stray byte.
   validatePreamble(bytes, 0)
@@ -1189,7 +1256,7 @@ function readSegments(bytes: Uint8Array, options?: ReadOptions): Trace[] {
         // from a real one. `recover` skips to the next segment, on the same
         // terms as a malformed event; without it the read stops here.
         if (!recover) throw error
-        const next = findNextSegment(bytes, offset + 1)
+        const next = skip(offset, 'header', error)
         if (next < 0) return segments
         offset = next
         continue
@@ -1201,11 +1268,13 @@ function readSegments(bytes: Uint8Array, options?: ReadOptions): Trace[] {
     }
 
     let length: number | null
+    let failure: unknown
     try {
       length = cborItemLength(bytes, offset)
     } catch (error) {
       if (!recover || !(error instanceof MalformedCborError)) throw error
       length = null
+      failure = error
     }
 
     if (length != null) {
@@ -1216,12 +1285,15 @@ function readSegments(bytes: Uint8Array, options?: ReadOptions): Trace[] {
         continue
       } catch (error) {
         if (!recover) throw error
+        failure = error
       }
     } else if (!recover) {
       throw new TruncatedTraceError(offset, segments)
     }
 
-    const next = findNextSegment(bytes, offset + 1)
+    // No failure means `cborItemLength` returned null: the item runs past the
+    // end of the file rather than being malformed where it sits.
+    const next = skip(offset, failure === undefined ? 'truncated' : 'event', failure)
     if (next < 0) return segments
     offset = next
   }

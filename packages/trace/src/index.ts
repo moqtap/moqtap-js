@@ -1,6 +1,6 @@
 // Binary .moqtrace format
 
-export type { MoqtraceWriter, ReadOptions } from './binary.js'
+export type { MoqtraceWriter, ReadOptions, RecoveredRegion } from './binary.js'
 export {
   createMoqtraceWriter,
   FORMAT_VERSION,
@@ -15,9 +15,12 @@ export {
 } from './binary.js'
 // JSON (convenience)
 export { traceToJSON } from './json.js'
-export type { TraceRecorder } from './recorder.js'
+// Incremental reader, for a stream that arrives in pieces
+export type { MoqtraceReader, ReadItem } from './reader.js'
+export { createMoqtraceReader, TruncatedStreamError } from './reader.js'
+export type { ErrorDetails, TraceRecorder } from './recorder.js'
 // Recorder
-export { createRecorder } from './recorder.js'
+export { createRecorder, MAX_ERROR_RAW_BYTES } from './recorder.js'
 
 // Types
 export type {
@@ -26,6 +29,7 @@ export type {
   DerivationKind,
   DetailLevel,
   DropPolicy,
+  ErrorKind,
   ObjectHeaderEvent,
   ObjectPayloadEvent,
   PeerConnectedEvent,

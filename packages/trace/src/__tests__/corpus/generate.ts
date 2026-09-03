@@ -1,7 +1,16 @@
 /**
  * Writes this package's half of the shared `.moqtrace` corpus.
  *
- *     bun run src/__tests__/corpus/generate.ts
+ *     bun run src/__tests__/corpus/generate.ts [output-dir]
+ *
+ * Takes an optional output directory. Without one it writes wherever
+ * `findCorpusDir()` points, which in an installed checkout is the copy inside
+ * `node_modules` - readable, but thrown away by the next install and not in
+ * any repository you can commit from. Corpus development therefore names the
+ * `test-traces` clone explicitly, and both generators take the same path so
+ * the two halves of a case land in one directory:
+ *
+ *     bun run src/__tests__/corpus/generate.ts ../../test-traces/moqtrace
  *
  * The Rust half comes from `cargo run -p moqtap-trace --example
  * generate_corpus`. Run both after changing `cases.ts`, and commit the bytes:
@@ -33,6 +42,9 @@ import { writeMoqtrace, writeMoqtraceSegments } from '../../binary.js'
 import { cborItemLength } from '../../cbor-scan.js'
 import { AUTHORED_CASES, SEGMENTED_CASES, v2Basic, v2ControlMsgMap } from './cases.js'
 import { CORPUS_MISSING_MESSAGE, findCorpusDir } from './locate.js'
+
+/** Where to write: the argument if given, else wherever the corpus is found. */
+const outputDir = (): string | undefined => process.argv[2] ?? findCorpusDir()
 
 /** Byte offset of the format version in a segment preamble. */
 const VERSION_OFFSET = 8
@@ -146,7 +158,7 @@ function stripMsg(value: unknown): unknown {
 }
 
 function main(): void {
-  const dir = findCorpusDir()
+  const dir = outputDir()
   if (dir == null) throw new Error(CORPUS_MISSING_MESSAGE)
   console.log(`corpus: ${dir}`)
 

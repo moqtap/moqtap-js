@@ -336,10 +336,86 @@ export interface StateChangeEvent extends BaseEvent {
   readonly to: string
 }
 
+/**
+ * What sort of failure an error event records.
+ *
+ * An open vocabulary: this revision names the three below, others may be added
+ * without a format version bump, and a reader must preserve a value it does not
+ * recognise rather than reject the event — the same contract as {@link
+ * Perspective} and {@link DetailLevel}, which is why all three widen with
+ * `OtherString` instead of being closed unions.
+ */
+export type ErrorKind =
+  /** The peer violated the protocol. */
+  | 'protocol'
+  /** The QUIC or WebTransport layer failed. */
+  | 'transport'
+  /** Bytes that would not parse as any message this recorder knows. */
+  | 'decode'
+  | OtherString
+
 export interface TraceErrorEvent extends BaseEvent {
   readonly type: 'error'
   readonly errorCode: number
   readonly reason: string
+  /**
+   * QUIC stream the error was observed on.
+   *
+   * Optional on the same terms as {@link ControlMessageEvent.streamId}: absent
+   * means there was no stream, or that the recorder knew of none, which a
+   * reader MUST distinguish from stream `0`. `bigint` for the reason given
+   * there — it is the same wire identifier, and `number` stops being exact at
+   * 2^53, which would make this reader disagree with the Rust one silently and
+   * only for large values.
+   *
+   * It may name a *data* stream, which is why {@link rawLength} is gated a
+   * level above this event rather than travelling with it: the length behind an
+   * error on a subgroup stream is the size of a run of media framing.
+   */
+  readonly streamId?: bigint
+  /**
+   * What sort of failure this was.
+   *
+   * Spelt out rather than `kind` because {@link SubscriptionDerivationEvent}
+   * already owns that name with the unrelated vocabulary `'created'` /
+   * `'shared'`. Two vocabularies under one name survive in a typed reader and
+   * break in every flat projection of a trace — a JSONL export, a warehouse
+   * load, this package's own {@link traceToJSON} — where they become one column
+   * holding both. The wire key is `"ek"` for the same reason.
+   */
+  readonly errorKind?: ErrorKind
+  /**
+   * How many bytes the recorder held for this error, before any truncation.
+   *
+   * Not the length of {@link raw}: where the two differ the capture is partial,
+   * and this is how a reader learns how much is missing. A `raw` of exactly
+   * `MAX_ERROR_RAW_BYTES` with no `rawLength` beside it must be treated as
+   * possibly truncated, that being the one length the cap makes ambiguous.
+   *
+   * Recorded from `'headers+sizes'` up — one level below {@link raw} and
+   * deliberately not with it. It is a size and carries no content, so it is
+   * available in every trace where the bytes themselves must not appear, and
+   * how large a malformed message was often separates a truncated message from
+   * a mistyped one on its own.
+   */
+  readonly rawLength?: number
+  /**
+   * The bytes behind the error.
+   *
+   * Payload-bearing, and recorded only at `'full'`: an error naming a data
+   * stream has subgroup framing and object payload behind it, so inheriting
+   * this event's own `control`+ level would have put media into traces whose
+   * declared level excludes payloads entirely.
+   *
+   * The 4096-byte cap on this field binds a *recorder* — see
+   * `MAX_ERROR_RAW_BYTES` in `recorder.ts`, which is where it is applied and
+   * the only place it appears. It does not bind this type, the reader or the
+   * writer: a longer value read out of a file is handed over whole and written
+   * back whole. Re-truncating it would destroy evidence to make someone else's
+   * file conform to a rule that was never addressed to the tool doing the
+   * truncating.
+   */
+  readonly raw?: Uint8Array
 }
 
 export interface AnnotationEvent extends BaseEvent {

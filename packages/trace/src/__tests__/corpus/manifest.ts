@@ -1,7 +1,9 @@
 /**
  * Rebuilds `manifest.json`, the corpus index.
  *
- *     bun run src/__tests__/corpus/manifest.ts
+ *     bun run src/__tests__/corpus/manifest.ts [corpus-dir]
+ *
+ * Takes the same optional directory as the generators, for the same reason.
  *
  * Run it after either generator. The counts are read back off the files
  * rather than declared, so the manifest cannot claim a shape the bytes do not
@@ -33,7 +35,7 @@ const DESCRIPTIONS: Record<string, string> = {
   'v2-unknown-perspective':
     'A perspective ("sidecar") and protocol identifier ("moq-transport-rfc9999") outside the sets this revision names. Both may change without a version bump, so both must read.',
   'v2-extra-keys':
-    'Known event types carrying keys no reader knows, and no reader ever will: every key is "x-" prefixed, the range SPEC.md reserves for private use. The fixture borrowed keys from PROPOSAL-v3 until §2 shipped and claimed two of them, turning the dedicated assertions red — which invited weakening them rather than replacing the fixture. One value is a nested map holding a byte string, a further map and an array, because preservation has to be structural — a shallow copy passes every flat assertion and loses that one.',
+    'Known event types carrying keys no reader knows, and no reader ever will: every key is "x-" prefixed, the range SPEC.md reserves for private use, so no revision can claim one and turn this fixture into a test of something else. One value is a nested map holding a byte string, a further map and an array, because preservation has to be structural — a shallow copy passes every flat assertion and loses that one.',
   'v2-truncated':
     'A file that stops mid-event, as a capture killed at the wrong moment does. Readers must report the truncation distinctly and still return everything that decoded before the cut.',
   'v2-control-msg-map':
@@ -42,16 +44,18 @@ const DESCRIPTIONS: Record<string, string> = {
     'A headers-level trace where the stream-header identifiers are the only way to group anything: "sg" on a subgroup stream, "fri" on a fetch, "g" on a datagram, and "ta" on each. Before those keys a "headers" recording could not say which track a stream belonged to, which is most of what the level is for. The three streams share a track alias deliberately — legal, ordinary, and why "ta" alone cannot key a flow.',
   'v2-header-extra':
     'The only file in the corpus carrying an unrecognised key in the *header*. Without it the three header stores — the header map, "segment" and "sampling" — could be deleted outright and every corpus test would stay green, a round trip being a reader checked against its own encoder. "x-scope" sits in all three maps with three different values, so a reader that merged them emits the segment private key at the top level and is caught here; "transport": 42 reaches a store through the ordinary field path, being a defined key whose value no reader can use; and "x-scale" (an integral float) and "x-blob" (a byte string under tag 64) are the two shapes SPEC.md requires a writer to normalise inside a store — the one place the two implementations could silently differ, cbor-x being unable to represent either distinction.',
+  'v2-error-with-raw':
+    'The only file in the corpus where the cap on the "raw" key of Event 6 is applied rather than described. Its first error event carries exactly ERROR_RAW_CAP bytes with a "rawlen" of 9000: the two numbers disagree, which is the entire mechanism by which a reader learns a capture is partial and by how much. It is also the only case reaching the 16-bit CBOR byte-string length form (0x59 and two bytes) - every other byte string in the corpus is under 256 bytes and takes the 0x58 form, so no other case would catch two encoders disagreeing about the longer prefix. The second error carries no stream and no bytes, which is what the transport-side emission sites produce; the third carries a kind outside the vocabulary this revision names, and a complete capture whose "rawlen" equals its own length - the signal meaning not-truncated, which says something only because the first event can say otherwise.',
   'v2-msg-absent':
-    'Control messages with no "msg" key at all, which SPEC.md now forbids a writer to produce. Readers must keep the events regardless: Event 0 is a type sampling MUST NOT drop, so rejecting the omission discards exactly what the format promises to keep. The shipped Rust reader did that until this case existed. JavaScript-authored only, since neither writer emits it.',
+    'Control messages with no "msg" key at all, which SPEC.md forbids a writer to produce. Readers must keep the events regardless: Event 0 is a type sampling MUST NOT drop, so rejecting the omission discards exactly what the format promises to keep. JavaScript-authored only, since neither writer emits it.',
   'v2-float-ints':
     'The v2-basic content with integers past 2^32 written as CBOR float64 — what cbor-x emits by default. SPEC.md requires readers to accept this form because files carrying it exist. JavaScript-authored only: ciborium will not emit it.',
   'v2-tag64':
-    'The v2-basic content with byte strings wrapped in RFC 8746 tag 64 — what cbor-x emitted before this package configured it not to. Readers must accept it, for the same reason. JavaScript-authored only.',
+    'The v2-basic content with byte strings wrapped in RFC 8746 tag 64 — what cbor-x emits unless configured not to. Readers must accept it, for the same reason. JavaScript-authored only.',
   'capture-client-draft16-moq-rs':
     'A real client-perspective session against cloudflare/moq-rs on draft-16, recorded by `moqtap peek`. Control messages, state changes and annotations, none of it designed to be readable.',
   'capture-observer-draft16-moq-rs':
-    'A real proxy-perspective capture of a subgroup delivery from moq-rs on draft-16, recorded by `moqtap intercept`: 52 object headers on one track. Every data event declares stream 0, which is what PROPOSAL-v3 §1 is about.',
+    'A real proxy-perspective capture of a subgroup delivery from moq-rs on draft-16, recorded by `moqtap intercept`: 52 object headers on one track, every data event declaring stream 0. A real file in which the stream id keys nothing.',
   'capture-observer-draft18-moq-rs':
     'The same against moq-rs on draft-18, where each request takes its own bidirectional stream: four stream-opened events all declaring stream 0, plus an error event. The unified SETUP message type (0x2F00) appears here and nowhere else in the corpus.',
   'capture-client-draft19-imquic':
@@ -161,7 +165,7 @@ function describe(id: string, dir: string): CaseEntry {
 }
 
 function main(): void {
-  const root = findCorpusDir()
+  const root = process.argv[2] ?? findCorpusDir()
   if (root == null) throw new Error(CORPUS_MISSING_MESSAGE)
 
   const cases = readdirSync(root)
