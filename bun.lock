@@ -29,7 +29,7 @@
       },
       "devDependencies": {
         "@moqtap/codec": "workspace:*",
-        "@moqtap/test-traces": "^0.1.0",
+        "@moqtap/test-traces": "^0.1.1",
         "tsup": "^8.0.0",
         "typescript": "^5.5.0",
         "vitest": "^3.0.0",
@@ -132,7 +132,7 @@
 
     "@moqtap/codec": ["@moqtap/codec@workspace:packages/codec"],
 
-    "@moqtap/test-traces": ["@moqtap/test-traces@0.1.0", "", {}, "sha512-nfzOqdzcYBT6MexN2rXUlLZhoN+18Xhb/m6Zu59dfgSUIAShCUlJjv99gmyyGrMEFXHWfz7zxl1kSCbv054XyQ=="],
+    "@moqtap/test-traces": ["@moqtap/test-traces@0.1.1", "", {}, "sha512-KA7EX98xtwdCntENa0H9sansK+PlnFuI2/W76umTlZwBK+Aq4rNL2bagp1cAqzs5C+yl9UybZPhxSCT1sGo3TA=="],
 
     "@moqtap/test-vectors": ["@moqtap/test-vectors@0.13.0", "", {}, "sha512-U12L/cICJBp0jXqnZ2RZ3J8GRMrp7zIKYPW8DrmYnN5+5lyCcn8XZy7/coDPM+o4X4GoILfZwwpFW+Wm1DsM0w=="],
 
