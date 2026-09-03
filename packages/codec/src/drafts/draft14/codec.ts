@@ -78,7 +78,7 @@ function encodeSetupParams(params: Draft14Params, writer: BufferWriter): void {
   if (params.role !== undefined) count++
   if (params.path !== undefined) count++
   if (params.max_request_id !== undefined) count++
-  if (params.authorization_token !== undefined) count++
+  count += params.authorization_token?.length ?? 0
   if (params.authority !== undefined) count++
   if (params.max_auth_token_cache_size !== undefined) count++
   if (params.moqt_implementation !== undefined) count++
@@ -100,9 +100,9 @@ function encodeSetupParams(params: Draft14Params, writer: BufferWriter): void {
     writer.writeVarInt(PARAM_MAX_REQUEST_ID)
     writer.writeVarInt(params.max_request_id)
   }
-  if (params.authorization_token !== undefined) {
+  for (const token of params.authorization_token ?? []) {
     writer.writeVarInt(PARAM_AUTHORIZATION_TOKEN)
-    const tok = params.authorization_token
+    const tok = token
     const tmpWriter = new BufferWriter(64)
     tmpWriter.writeVarInt(tok.alias_type)
     if (tok.token_type !== undefined) {
@@ -187,7 +187,10 @@ function decodeSetupParams(reader: BufferReader): Draft14Params {
             tok.token_value = new Uint8Array(tokenValue)
           }
         }
-        result.authorization_token = tok as unknown as AuthorizationToken
+        result.authorization_token = [
+          ...(result.authorization_token ?? []),
+          tok as unknown as AuthorizationToken,
+        ]
       } else if (paramType === PARAM_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
       } else if (paramType === PARAM_MOQT_IMPLEMENTATION) {
@@ -209,7 +212,7 @@ function decodeSetupParams(reader: BufferReader): Draft14Params {
 function encodeMessageParams(params: Draft14Params, writer: BufferWriter): void {
   let count = 0
   if (params.delivery_timeout !== undefined) count++
-  if (params.authorization_token !== undefined) count++
+  count += params.authorization_token?.length ?? 0
   if (params.max_cache_duration !== undefined) count++
   if (params.unknown) count += params.unknown.length
 
@@ -219,9 +222,9 @@ function encodeMessageParams(params: Draft14Params, writer: BufferWriter): void 
     writer.writeVarInt(PARAM_DELIVERY_TIMEOUT)
     writer.writeVarInt(params.delivery_timeout)
   }
-  if (params.authorization_token !== undefined) {
+  for (const token of params.authorization_token ?? []) {
     writer.writeVarInt(PARAM_AUTHORIZATION_TOKEN)
-    const tok = params.authorization_token
+    const tok = token
     const tmpWriter = new BufferWriter(64)
     tmpWriter.writeVarInt(tok.alias_type)
     if (tok.token_type !== undefined) {
@@ -290,7 +293,10 @@ function decodeMessageParams(reader: BufferReader): Draft14Params {
             tok.token_value = new Uint8Array(tokenValue)
           }
         }
-        result.authorization_token = tok as unknown as AuthorizationToken
+        result.authorization_token = [
+          ...(result.authorization_token ?? []),
+          tok as unknown as AuthorizationToken,
+        ]
       } else {
         unknown.push({
           id: `0x${paramType.toString(16)}`,

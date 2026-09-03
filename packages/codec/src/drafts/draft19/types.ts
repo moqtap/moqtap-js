@@ -18,7 +18,7 @@ export interface AuthorizationToken {
 // Setup options (KVP encoding, no count prefix)
 export interface Draft19SetupOptions {
   path?: string // 0x01 odd
-  authorization_token?: AuthorizationToken // 0x03 odd
+  authorization_token?: readonly AuthorizationToken[] // 0x03 odd
   max_auth_token_cache_size?: bigint // 0x04 even
   authority?: string // 0x05 odd
   max_filter_ranges?: bigint // 0x06 even (NEW in draft-19)
@@ -58,7 +58,7 @@ export interface LargestObject {
 // Version-specific parameters (delta-encoded types, count-prefixed)
 export interface Draft19Params {
   object_delivery_timeout?: bigint // 0x02 varint (renamed from delivery_timeout in draft-17)
-  authorization_token?: AuthorizationToken // 0x03 length-prefixed nested
+  authorization_token?: readonly AuthorizationToken[] // 0x03 length-prefixed nested
   rendezvous_timeout?: bigint // 0x04 varint
   subgroup_delivery_timeout?: bigint // 0x06 varint (NEW in draft-18)
   expires?: bigint // 0x08 varint
@@ -68,11 +68,14 @@ export interface Draft19Params {
   subscriber_priority?: bigint // 0x20 uint8
   location_filter?: LocationFilter // 0x21 length-prefixed (renamed from subscription_filter in draft-19)
   group_order?: bigint // 0x22 uint8
-  subgroup_filter?: RangeFilter // 0x25 length-prefixed (NEW in draft-19)
-  objectid_filter?: RangeFilter // 0x26 length-prefixed (NEW in draft-19)
-  priority_filter?: RangeFilter // 0x27 length-prefixed (NEW in draft-19)
-  object_property_filter?: RangeFilter // 0x28 length-prefixed (NEW in draft-19)
-  track_property_filter?: RangeFilter // 0x29 length-prefixed (NEW in draft-19)
+  // Section 5.1.3 permits each of the five more than once in a message: a
+  // filter parameter carries one SetID, so two alternatives over the same
+  // field need two parameters. A single filter is a one-element list.
+  subgroup_filter?: readonly RangeFilter[] // 0x25 length-prefixed (NEW in draft-19)
+  objectid_filter?: readonly RangeFilter[] // 0x26 length-prefixed (NEW in draft-19)
+  priority_filter?: readonly RangeFilter[] // 0x27 length-prefixed (NEW in draft-19)
+  object_property_filter?: readonly RangeFilter[] // 0x28 length-prefixed (NEW in draft-19)
+  track_property_filter?: readonly RangeFilter[] // 0x29 length-prefixed (NEW in draft-19)
   new_group_request?: bigint // 0x32 varint
   track_namespace_prefix?: string[] // 0x34 Track Namespace encoding (NEW in draft-18)
   unknown?: UnknownParam[]

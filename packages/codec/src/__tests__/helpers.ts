@@ -143,3 +143,71 @@ export function normalizeParams(params: Record<string, unknown>): Record<string,
 
   return result
 }
+
+/**
+ * A vector's Key-Value-Pair block, collapsed to the map this codec decodes into.
+ *
+ * The corpus spells a block as a list of entries in wire order,
+ * `{ type, name?, value | raw_hex }`, which is what the wire carries. This
+ * codec keys its parameters by name, so the two are reconciled here.
+ *
+ * A name with one slot cannot hold a type that arrives twice. `repeated` names
+ * any that do, and the runners assert it is empty, so a parameter this codec
+ * cannot represent fails rather than overwriting itself.
+ */
+/**
+ * The parameter names this codec decodes into a list rather than a single value.
+ *
+ * Two definitions permit a repeat: AUTHORIZATION_TOKEN on drafts 11 and later,
+ * and the five Range Filters on drafts 19 and 20.
+ */
+const REPEATABLE_PARAMS = new Set([
+  'authorization_token',
+  'subgroup_filter',
+  'objectid_filter',
+  'priority_filter',
+  'object_property_filter',
+  'track_property_filter',
+])
+
+export function vectorParamsToMap(entries: unknown): {
+  named: Record<string, unknown>
+  repeated: string[]
+} {
+  const named: Record<string, unknown> = {}
+  const unknown: Array<Record<string, unknown>> = []
+  const seen = new Set<string>()
+  const repeated: string[] = []
+
+  for (const raw of (entries ?? []) as Array<Record<string, unknown>>) {
+    const name = raw.name as string | undefined
+    if (name === undefined) {
+      // An entry with no name is a type the draft assigns nothing. This codec
+      // keeps those in an `unknown` array, with the length the old shape spelled
+      // out and this one leaves to the bytes.
+      const rawHex = (raw.raw_hex as string | undefined) ?? ''
+      unknown.push({
+        id: raw.type as string,
+        length: String(rawHex.length / 2),
+        raw_hex: rawHex,
+      })
+      continue
+    }
+    const value = 'value' in raw ? raw.value : raw.raw_hex
+    if (REPEATABLE_PARAMS.has(name)) {
+      // This codec models the repeatable types as lists, so a single instance
+      // is a one-element list and a repeat needs no special case here either.
+      named[name] = [...((named[name] as unknown[]) ?? []), value]
+      continue
+    }
+    if (seen.has(name)) {
+      repeated.push(name)
+      continue
+    }
+    seen.add(name)
+    named[name] = value
+  }
+
+  if (unknown.length > 0) named.unknown = unknown
+  return { named, repeated }
+}

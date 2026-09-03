@@ -65,7 +65,7 @@ function encodeSetupParams(params: Draft16SetupParams, writer: BufferWriter): vo
   let count = 0
   if (params.path !== undefined) count++
   if (params.max_request_id !== undefined) count++
-  if (params.authorization_token !== undefined) count++
+  count += params.authorization_token?.length ?? 0
   if (params.max_auth_token_cache_size !== undefined) count++
   if (params.authority !== undefined) count++
   if (params.moqt_implementation !== undefined) count++
@@ -88,10 +88,10 @@ function encodeSetupParams(params: Draft16SetupParams, writer: BufferWriter): vo
   }
 
   // AUTHORIZATION_TOKEN (0x03) - odd, length-prefixed with nested structure
-  if (params.authorization_token !== undefined) {
+  for (const token of params.authorization_token ?? []) {
     writer.writeVarInt(SETUP_PARAM_AUTHORIZATION_TOKEN)
     const tmpW = new BufferWriter(64)
-    encodeAuthorizationToken(params.authorization_token, tmpW)
+    encodeAuthorizationToken(token, tmpW)
     const raw = tmpW.finish()
     writer.writeVarInt(raw.byteLength)
     writer.writeBytes(raw)
@@ -168,7 +168,10 @@ function decodeSetupParams(reader: BufferReader): Draft16SetupParams {
       if (paramType === SETUP_PARAM_PATH) {
         result.path = textDecoder.decode(bytes)
       } else if (paramType === SETUP_PARAM_AUTHORIZATION_TOKEN) {
-        result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
+        result.authorization_token = [
+          ...(result.authorization_token ?? []),
+          decodeAuthorizationToken(new BufferReader(bytes)),
+        ]
       } else if (paramType === SETUP_PARAM_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
       } else if (paramType === SETUP_PARAM_MOQT_IMPLEMENTATION) {
@@ -324,12 +327,12 @@ function encodeParams(params: Draft16Params, writer: BufferWriter): void {
       encode: (w) => w.writeVarInt(params.delivery_timeout!),
     })
   }
-  if (params.authorization_token !== undefined) {
+  for (const token of params.authorization_token ?? []) {
     entries.push({
       type: PARAM_AUTHORIZATION_TOKEN,
       encode: (w) => {
         const tmpW = new BufferWriter(64)
-        encodeAuthorizationToken(params.authorization_token!, tmpW)
+        encodeAuthorizationToken(token, tmpW)
         const raw = tmpW.finish()
         w.writeVarInt(raw.byteLength)
         w.writeBytes(raw)
@@ -457,7 +460,10 @@ function decodeParams(reader: BufferReader): Draft16Params {
     } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
       const length = Number(reader.readVarInt())
       const tokenBytes = reader.readBytes(length)
-      result.authorization_token = decodeAuthorizationToken(new BufferReader(tokenBytes))
+      result.authorization_token = [
+        ...(result.authorization_token ?? []),
+        decodeAuthorizationToken(new BufferReader(tokenBytes)),
+      ]
     } else if (paramType === PARAM_MAX_CACHE_DURATION) {
       result.max_cache_duration = reader.readVarInt()
     } else if (paramType === PARAM_EXPIRES) {

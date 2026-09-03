@@ -18,7 +18,7 @@ export interface AuthorizationToken {
 // Setup options (KVP encoding, no count prefix)
 export interface Draft18SetupOptions {
   path?: string // 0x01 odd
-  authorization_token?: AuthorizationToken // 0x03 odd
+  authorization_token?: readonly AuthorizationToken[] // 0x03 odd
   max_auth_token_cache_size?: bigint // 0x04 even
   authority?: string // 0x05 odd
   moqt_implementation?: string // 0x07 odd
@@ -42,7 +42,7 @@ export interface LargestObject {
 // Version-specific parameters (delta-encoded types, count-prefixed)
 export interface Draft18Params {
   object_delivery_timeout?: bigint // 0x02 varint (renamed from delivery_timeout in draft-17)
-  authorization_token?: AuthorizationToken // 0x03 length-prefixed nested
+  authorization_token?: readonly AuthorizationToken[] // 0x03 length-prefixed nested
   rendezvous_timeout?: bigint // 0x04 varint
   subgroup_delivery_timeout?: bigint // 0x06 varint (NEW in draft-18)
   expires?: bigint // 0x08 varint

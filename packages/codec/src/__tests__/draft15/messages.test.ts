@@ -6,6 +6,7 @@ import {
   hexToBytes,
   loadVectorDir,
   normalizeDecoded,
+  vectorParamsToMap,
 } from '../helpers.js'
 
 const codec = createDraft15Codec()
@@ -78,11 +79,15 @@ function assertFieldsMatch(
   const flatActual = messageType === 'fetch' ? flattenFetch(actual) : actual
 
   for (const [key, expectedValue] of Object.entries(expected)) {
-    if (key === 'parameters') {
-      assertParamsMatch(
-        flatActual.parameters as Record<string, unknown> | undefined,
-        expectedValue as Record<string, unknown>,
-      )
+    // Every Key-Value-Pair block is a list of entries in the corpus and a map
+    // keyed by name in this codec, so they all go through the same collapse.
+    if (
+      key === 'parameters' ||
+      key === 'options' ||
+      key === 'track_properties' ||
+      key === 'track_extensions'
+    ) {
+      assertParamsMatch(flatActual[key] as Record<string, unknown> | undefined, expectedValue)
       continue
     }
 
@@ -98,8 +103,10 @@ function assertFieldsMatch(
 
 function assertParamsMatch(
   actualParams: Record<string, unknown> | undefined,
-  expectedParams: Record<string, unknown>,
+  expectedEntries: unknown,
 ): void {
+  const { named: expectedParams, repeated } = vectorParamsToMap(expectedEntries)
+  expect(repeated, 'this codec has one slot per parameter name').toEqual([])
   // Normalize: empty params {} should match missing params
   if (Object.keys(expectedParams).length === 0) {
     if (actualParams) {

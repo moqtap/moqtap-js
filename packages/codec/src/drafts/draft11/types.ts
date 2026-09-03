@@ -24,7 +24,7 @@ export interface Draft11SetupParams {
 
 // Version-specific parameters — even/odd convention
 export interface Draft11Params {
-  authorization_token?: AuthorizationToken // 0x01 odd
+  authorization_token?: readonly AuthorizationToken[] // 0x01 odd
   delivery_timeout?: bigint // 0x02 even
   max_cache_duration?: bigint // 0x04 even
   unknown?: UnknownParam[]

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [0.10.0] - 2026-09-03
+
+### Changed
+
+- **Breaking.** `authorization_token` is `readonly AuthorizationToken[]` on
+  drafts 11 through 20, on message parameters and on setup options. A single
+  token is a one-element array.
+
+  Section 10.2.2 and its equivalents: "The AUTHORIZATION TOKEN parameter MAY be
+  repeated within a message as long as the combination of Token Type and Token
+  Value are unique after resolving any aliases."
+
+- **Breaking.** `subgroup_filter`, `objectid_filter`, `priority_filter`,
+  `object_property_filter` and `track_property_filter` are
+  `readonly RangeFilter[]` on drafts 19 and 20, on message parameters and on
+  draft-20's `FILL_PARAMETERS`. A single filter is a one-element array.
+
+  Section 5.1.3 on draft-19 and 5.1.4 on draft-20: "All other filter parameters
+  MAY appear multiple times in a FETCH, SUBSCRIBE, SUBSCRIBE_TRACKS, or
+  REQUEST_UPDATE". One filter parameter carries one SetID and the sets are ORed,
+  so two alternatives over the same field need two parameters.
+
+- `@moqtap/test-vectors` raised to `^0.15.0`, where a `decoded` message spells
+  each Key-Value-Pair block as a list of entries in wire order rather than as a
+  map keyed by parameter name.
+
 ## [0.9.0] - 2026-09-03
 
 Draft-20 support, and a fix to draft-19 that changes which state machine a

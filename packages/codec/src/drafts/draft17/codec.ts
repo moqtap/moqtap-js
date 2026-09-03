@@ -68,12 +68,12 @@ function encodeSetupOptions(opts: Draft17SetupOptions, writer: BufferWriter): vo
       },
     })
   }
-  if (opts.authorization_token !== undefined) {
+  for (const token of opts.authorization_token ?? []) {
     entries.push({
       type: SETUP_OPT_AUTHORIZATION_TOKEN,
       encode: (w) => {
         const tmpW = new BufferWriter(64)
-        encodeAuthorizationToken(opts.authorization_token!, tmpW)
+        encodeAuthorizationToken(token, tmpW)
         const raw = tmpW.finish()
         w.writeVarInt(BigInt(raw.byteLength))
         w.writeBytes(raw)
@@ -168,7 +168,10 @@ function decodeSetupOptions(reader: BufferReader, payloadEnd: number): Draft17Se
       if (optType === SETUP_OPT_PATH) {
         result.path = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_AUTHORIZATION_TOKEN) {
-        result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
+        result.authorization_token = [
+          ...(result.authorization_token ?? []),
+          decodeAuthorizationToken(new BufferReader(bytes)),
+        ]
       } else if (optType === SETUP_OPT_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_MOQT_IMPLEMENTATION) {
@@ -283,12 +286,12 @@ function encodeParams(params: Draft17Params, writer: BufferWriter): void {
       encode: (w) => w.writeVarInt(params.delivery_timeout!),
     })
   }
-  if (params.authorization_token !== undefined) {
+  for (const token of params.authorization_token ?? []) {
     entries.push({
       type: PARAM_AUTHORIZATION_TOKEN,
       encode: (w) => {
         const tmpW = new BufferWriter(64)
-        encodeAuthorizationToken(params.authorization_token!, tmpW)
+        encodeAuthorizationToken(token, tmpW)
         const raw = tmpW.finish()
         w.writeVarInt(BigInt(raw.byteLength))
         w.writeBytes(raw)
@@ -411,7 +414,10 @@ function decodeParams(reader: BufferReader, messageType: string): Draft17Params 
     } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
       const length = Number(reader.readVarInt())
       const bytes = reader.readBytes(length)
-      result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
+      result.authorization_token = [
+        ...(result.authorization_token ?? []),
+        decodeAuthorizationToken(new BufferReader(bytes)),
+      ]
     } else if (paramType === PARAM_RENDEZVOUS_TIMEOUT) {
       result.rendezvous_timeout = reader.readVarInt()
     } else if (paramType === PARAM_EXPIRES) {

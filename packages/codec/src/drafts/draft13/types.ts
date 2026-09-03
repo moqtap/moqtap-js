@@ -21,7 +21,7 @@ export interface AuthorizationToken {
 export interface Draft13SetupParams {
   path?: string // 0x01 odd
   max_request_id?: bigint // 0x02 even
-  authorization_token?: AuthorizationToken // 0x03 odd
+  authorization_token?: readonly AuthorizationToken[] // 0x03 odd
   max_auth_token_cache_size?: bigint // 0x04 even
   unknown?: UnknownParam[]
 }
@@ -29,7 +29,7 @@ export interface Draft13SetupParams {
 // Version-specific parameters — even/odd convention
 export interface Draft13Params {
   delivery_timeout?: bigint // 0x02 even
-  authorization_token?: AuthorizationToken // 0x03 odd
+  authorization_token?: readonly AuthorizationToken[] // 0x03 odd
   max_cache_duration?: bigint // 0x04 even
   unknown?: UnknownParam[]
 }

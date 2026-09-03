@@ -47,7 +47,7 @@ export interface Draft14Params {
   moqt_implementation?: string // 0x07 odd, length-prefixed UTF-8
   // Message parameters (SUBSCRIBE, PUBLISH, etc.)
   delivery_timeout?: bigint
-  authorization_token?: AuthorizationToken
+  authorization_token?: readonly AuthorizationToken[]
   max_cache_duration?: bigint
   // Unknown / extension
   unknown?: UnknownParam[]

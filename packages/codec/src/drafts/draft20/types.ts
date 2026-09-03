@@ -18,7 +18,7 @@ export interface AuthorizationToken {
 // Setup options (KVP encoding, no count prefix) — unchanged from draft-19
 export interface Draft20SetupOptions {
   path?: string // 0x01 odd
-  authorization_token?: AuthorizationToken // 0x03 odd
+  authorization_token?: readonly AuthorizationToken[] // 0x03 odd
   max_auth_token_cache_size?: bigint // 0x04 even
   authority?: string // 0x05 odd
   max_filter_ranges?: bigint // 0x06 even
@@ -95,16 +95,19 @@ export interface Draft20FillParameters {
   subscriber_priority?: bigint // 0x20 uint8
   location_filter?: LocationFilter // 0x21 length-prefixed — selects the FILL range
   group_order?: bigint // 0x22 uint8
-  subgroup_filter?: RangeFilter // 0x25 length-prefixed
-  objectid_filter?: RangeFilter // 0x26 length-prefixed
-  priority_filter?: RangeFilter // 0x27 length-prefixed
-  object_property_filter?: RangeFilter // 0x28 length-prefixed
+  // Section 5.1.4 permits each of the five more than once in a message: a
+  // filter parameter carries one SetID, so two alternatives over the same
+  // field need two parameters. A single filter is a one-element list.
+  subgroup_filter?: readonly RangeFilter[] // 0x25 length-prefixed
+  objectid_filter?: readonly RangeFilter[] // 0x26 length-prefixed
+  priority_filter?: readonly RangeFilter[] // 0x27 length-prefixed
+  object_property_filter?: readonly RangeFilter[] // 0x28 length-prefixed
 }
 
 // Message Parameters (delta-encoded types, count-prefixed)
 export interface Draft20Params {
   object_delivery_timeout?: bigint // 0x02 varint
-  authorization_token?: AuthorizationToken // 0x03 length-prefixed nested
+  authorization_token?: readonly AuthorizationToken[] // 0x03 length-prefixed nested
   rendezvous_timeout?: bigint // 0x04 varint
   subgroup_delivery_timeout?: bigint // 0x06 varint
   expires?: bigint // 0x08 varint
@@ -115,11 +118,14 @@ export interface Draft20Params {
   location_filter?: LocationFilter // 0x21 length-prefixed (restructured in draft-20)
   group_order?: bigint // 0x22 uint8
   fill_parameters?: Draft20FillParameters // 0x23 length-prefixed nested (NEW in draft-20)
-  subgroup_filter?: RangeFilter // 0x25 length-prefixed
-  objectid_filter?: RangeFilter // 0x26 length-prefixed
-  priority_filter?: RangeFilter // 0x27 length-prefixed
-  object_property_filter?: RangeFilter // 0x28 length-prefixed
-  track_property_filter?: RangeFilter // 0x29 length-prefixed
+  // Section 5.1.4 permits each of the five more than once in a message: a
+  // filter parameter carries one SetID, so two alternatives over the same
+  // field need two parameters. A single filter is a one-element list.
+  subgroup_filter?: readonly RangeFilter[] // 0x25 length-prefixed
+  objectid_filter?: readonly RangeFilter[] // 0x26 length-prefixed
+  priority_filter?: readonly RangeFilter[] // 0x27 length-prefixed
+  object_property_filter?: readonly RangeFilter[] // 0x28 length-prefixed
+  track_property_filter?: readonly RangeFilter[] // 0x29 length-prefixed
   new_group_request?: bigint // 0x32 varint
   track_namespace_prefix?: string[] // 0x34 Track Namespace encoding
   include_properties?: bigint // 0x35 uint8, 0 or 1, default 1 (NEW in draft-20)

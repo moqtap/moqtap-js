@@ -146,15 +146,15 @@ function decodeSetupParams(r: BufferReader): Draft11SetupParams {
 
 function encodeParams(params: Draft11Params, w: BufferWriter): void {
   let count = params.unknown ? params.unknown.length : 0
-  if (params.authorization_token !== undefined) count++
+  count += params.authorization_token?.length ?? 0
   if (params.delivery_timeout !== undefined) count++
   if (params.max_cache_duration !== undefined) count++
   w.writeVarInt(count)
 
-  if (params.authorization_token !== undefined) {
+  for (const token of params.authorization_token ?? []) {
     // AUTHORIZATION_TOKEN = 0x01 (odd → length-prefixed)
     w.writeVarInt(PARAM_AUTHORIZATION_TOKEN)
-    const at = params.authorization_token
+    const at = token
     const tmpW = new BufferWriter(64)
     tmpW.writeVarInt(at.alias_type)
     tmpW.writeVarInt(at.token_type)
@@ -227,11 +227,14 @@ function decodeParams(r: BufferReader): Draft11Params {
         const token_type = r.readVarInt()
         const tokenBytesLen = length - (r.offset - startOff)
         const tokenBytes = r.readBytes(tokenBytesLen)
-        result.authorization_token = {
-          alias_type,
-          token_type,
-          token_value: tokenBytes,
-        }
+        result.authorization_token = [
+          ...(result.authorization_token ?? []),
+          {
+            alias_type,
+            token_type,
+            token_value: tokenBytes,
+          },
+        ]
       } else {
         const bytes = r.readBytes(length)
         unknown.push({

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { createDraft20Codec, UNKNOWN_STREAM_COUNT } from '../../drafts/draft20/codec.js'
 import type { Draft20Message } from '../../drafts/draft20/types.js'
-import { bytesToHex, hexToBytes, loadVectorDir, normalizeDecoded } from '../helpers.js'
+import {
+  bytesToHex,
+  hexToBytes,
+  loadVectorDir,
+  normalizeDecoded,
+  vectorParamsToMap,
+} from '../helpers.js'
 
 const codec = createDraft20Codec()
 
@@ -10,11 +16,11 @@ const vectorEntries = loadVectorDir('transport/draft20/codec/messages')
 /**
  * Guard against the silent failure mode: a vector file that stops being found,
  * or a vector inside one that no assertion reaches. Both counts are the
- * published contents of @moqtap/test-vectors 0.13.0
- * (transport/draft20/codec/messages), and both have to be updated deliberately.
+ * published contents of transport/draft20/codec/messages, and both have to be
+ * updated deliberately.
  */
 const EXPECTED_FILES = 21
-const EXPECTED_VECTORS = 229
+const EXPECTED_VECTORS = 235
 
 describe('draft-20 message vector corpus', () => {
   it('loads every published message vector file', () => {
@@ -110,7 +116,31 @@ for (const { file, data: vectorFile } of vectorEntries) {
  * stringified an object would pass on "[object Object]" without looking at
  * anything.
  */
+/** Whether this path names a Key-Value-Pair block. */
+function isKvpBlockPath(path: string): boolean {
+  const last = path.split('.').pop() ?? ''
+  return (
+    last === 'parameters' ||
+    last === 'options' ||
+    last === 'track_properties' ||
+    last === 'track_extensions' ||
+    last === 'fill_parameters' ||
+    last === 'value'
+  )
+}
+
 function assertMatches(actual: unknown, expected: unknown, path: string): void {
+  // A Key-Value-Pair block is a list of entries in the corpus and a map keyed
+  // by name in this codec, so it is collapsed before the trees are compared.
+  // Nested blocks are the same shape, which is what makes `value` one of the
+  // paths worth checking: draft-20's FILL_PARAMETERS holds one.
+  if (Array.isArray(expected) && isKvpBlockPath(path)) {
+    const { named, repeated } = vectorParamsToMap(expected)
+    expect(repeated, `${path}: this codec has one slot per parameter name`).toEqual([])
+    assertMatches(actual, named, path)
+    return
+  }
+
   if (Array.isArray(expected)) {
     expect(Array.isArray(actual), path).toBe(true)
     const actualArray = actual as unknown[]

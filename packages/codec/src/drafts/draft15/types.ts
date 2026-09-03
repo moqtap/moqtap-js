@@ -20,7 +20,7 @@ export interface AuthorizationToken {
 export interface Draft15SetupParams {
   path?: string // 0x01 odd
   max_request_id?: bigint // 0x02 even
-  authorization_token?: AuthorizationToken // 0x03 odd (length-prefixed, nested)
+  authorization_token?: readonly AuthorizationToken[] // 0x03 odd (length-prefixed, nested)
   max_auth_token_cache_size?: bigint // 0x04 even
   authority?: string // 0x05 odd
   moqt_implementation?: string // 0x07 odd
@@ -44,7 +44,7 @@ export interface LargestObject {
 // Version-specific parameters (well-known + unknown)
 export interface Draft15Params {
   delivery_timeout?: bigint // 0x02 even
-  authorization_token?: AuthorizationToken // 0x03 odd (length-prefixed, nested)
+  authorization_token?: readonly AuthorizationToken[] // 0x03 odd (length-prefixed, nested)
   max_cache_duration?: bigint // 0x04 even
   expires?: bigint // 0x08 even
   largest_object?: LargestObject // 0x09 odd (length-prefixed)

@@ -75,12 +75,12 @@ function encodeSetupOptions(opts: Draft19SetupOptions, writer: BufferWriter): vo
       },
     })
   }
-  if (opts.authorization_token !== undefined) {
+  for (const token of opts.authorization_token ?? []) {
     entries.push({
       type: SETUP_OPT_AUTHORIZATION_TOKEN,
       encode: (w) => {
         const tmpW = new BufferWriter(64)
-        encodeAuthorizationToken(opts.authorization_token!, tmpW)
+        encodeAuthorizationToken(token, tmpW)
         const raw = tmpW.finish()
         w.writeVarInt(BigInt(raw.byteLength))
         w.writeBytes(raw)
@@ -191,7 +191,10 @@ function decodeSetupOptions(reader: BufferReader, payloadEnd: number): Draft19Se
       if (optType === SETUP_OPT_PATH) {
         result.path = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_AUTHORIZATION_TOKEN) {
-        result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
+        result.authorization_token = [
+          ...(result.authorization_token ?? []),
+          decodeAuthorizationToken(new BufferReader(bytes)),
+        ]
       } else if (optType === SETUP_OPT_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_MOQT_IMPLEMENTATION) {
@@ -403,12 +406,12 @@ function encodeParams(params: Draft19Params, writer: BufferWriter): void {
       encode: (w) => w.writeVarInt(params.object_delivery_timeout!),
     })
   }
-  if (params.authorization_token !== undefined) {
+  for (const token of params.authorization_token ?? []) {
     entries.push({
       type: PARAM_AUTHORIZATION_TOKEN,
       encode: (w) => {
         const tmpW = new BufferWriter(64)
-        encodeAuthorizationToken(params.authorization_token!, tmpW)
+        encodeAuthorizationToken(token, tmpW)
         const raw = tmpW.finish()
         w.writeVarInt(BigInt(raw.byteLength))
         w.writeBytes(raw)
@@ -489,34 +492,34 @@ function encodeParams(params: Draft19Params, writer: BufferWriter): void {
       encode: (w) => w.writeUint8(Number(params.group_order!)),
     })
   }
-  if (params.subgroup_filter !== undefined) {
+  for (const filter of params.subgroup_filter ?? []) {
     entries.push({
       type: PARAM_SUBGROUP_FILTER,
-      encode: (w) => encodeRangeFilter(params.subgroup_filter!, false, w),
+      encode: (w) => encodeRangeFilter(filter, false, w),
     })
   }
-  if (params.objectid_filter !== undefined) {
+  for (const filter of params.objectid_filter ?? []) {
     entries.push({
       type: PARAM_OBJECTID_FILTER,
-      encode: (w) => encodeRangeFilter(params.objectid_filter!, false, w),
+      encode: (w) => encodeRangeFilter(filter, false, w),
     })
   }
-  if (params.priority_filter !== undefined) {
+  for (const filter of params.priority_filter ?? []) {
     entries.push({
       type: PARAM_PRIORITY_FILTER,
-      encode: (w) => encodeRangeFilter(params.priority_filter!, false, w),
+      encode: (w) => encodeRangeFilter(filter, false, w),
     })
   }
-  if (params.object_property_filter !== undefined) {
+  for (const filter of params.object_property_filter ?? []) {
     entries.push({
       type: PARAM_OBJECT_PROPERTY_FILTER,
-      encode: (w) => encodeRangeFilter(params.object_property_filter!, true, w),
+      encode: (w) => encodeRangeFilter(filter, true, w),
     })
   }
-  if (params.track_property_filter !== undefined) {
+  for (const filter of params.track_property_filter ?? []) {
     entries.push({
       type: PARAM_TRACK_PROPERTY_FILTER,
-      encode: (w) => encodeRangeFilter(params.track_property_filter!, true, w),
+      encode: (w) => encodeRangeFilter(filter, true, w),
     })
   }
   if (params.new_group_request !== undefined) {
@@ -587,7 +590,10 @@ function decodeParams(reader: BufferReader, messageType: string): Draft19Params 
     } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
       const length = Number(reader.readVarInt())
       const bytes = reader.readBytes(length)
-      result.authorization_token = decodeAuthorizationToken(new BufferReader(bytes))
+      result.authorization_token = [
+        ...(result.authorization_token ?? []),
+        decodeAuthorizationToken(new BufferReader(bytes)),
+      ]
     } else if (paramType === PARAM_RENDEZVOUS_TIMEOUT) {
       result.rendezvous_timeout = reader.readVarInt()
     } else if (paramType === PARAM_SUBGROUP_DELIVERY_TIMEOUT) {
@@ -632,15 +638,21 @@ function decodeParams(reader: BufferReader, messageType: string): Draft19Params 
       // uint8: single raw byte
       result.group_order = BigInt(reader.readUint8())
     } else if (paramType === PARAM_SUBGROUP_FILTER) {
-      result.subgroup_filter = decodeRangeFilter(reader, false)
+      result.subgroup_filter = [...(result.subgroup_filter ?? []), decodeRangeFilter(reader, false)]
     } else if (paramType === PARAM_OBJECTID_FILTER) {
-      result.objectid_filter = decodeRangeFilter(reader, false)
+      result.objectid_filter = [...(result.objectid_filter ?? []), decodeRangeFilter(reader, false)]
     } else if (paramType === PARAM_PRIORITY_FILTER) {
-      result.priority_filter = decodeRangeFilter(reader, false)
+      result.priority_filter = [...(result.priority_filter ?? []), decodeRangeFilter(reader, false)]
     } else if (paramType === PARAM_OBJECT_PROPERTY_FILTER) {
-      result.object_property_filter = decodeRangeFilter(reader, true)
+      result.object_property_filter = [
+        ...(result.object_property_filter ?? []),
+        decodeRangeFilter(reader, true),
+      ]
     } else if (paramType === PARAM_TRACK_PROPERTY_FILTER) {
-      result.track_property_filter = decodeRangeFilter(reader, true)
+      result.track_property_filter = [
+        ...(result.track_property_filter ?? []),
+        decodeRangeFilter(reader, true),
+      ]
     } else if (paramType === PARAM_NEW_GROUP_REQUEST) {
       result.new_group_request = reader.readVarInt()
     } else if (paramType === PARAM_TRACK_NAMESPACE_PREFIX) {

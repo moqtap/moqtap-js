@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { createDraft07Codec } from '../../drafts/draft07/codec.js'
-import { bytesToHex, hexToBytes, loadVectorDir, normalizeDecoded } from '../helpers.js'
+import {
+  bytesToHex,
+  hexToBytes,
+  loadVectorDir,
+  normalizeDecoded,
+  vectorParamsToMap,
+} from '../helpers.js'
 
 const codec = createDraft07Codec()
 
@@ -59,6 +65,18 @@ function assertFieldsMatch(
   expected: Record<string, unknown>,
 ): void {
   for (const [key, expectedValue] of Object.entries(expected)) {
+    // Every Key-Value-Pair block is a list of entries in the corpus and a map
+    // keyed by name in this codec, so they all go through the same collapse.
+    if (
+      key === 'parameters' ||
+      key === 'options' ||
+      key === 'track_properties' ||
+      key === 'track_extensions'
+    ) {
+      assertParamsMatch(actual[key] as Record<string, unknown> | undefined, expectedValue)
+      continue
+    }
+
     if (key === 'parameters') {
       assertParamsMatch(
         actual.parameters as Record<string, unknown> | undefined,
@@ -79,8 +97,10 @@ function assertFieldsMatch(
 
 function assertParamsMatch(
   actualParams: Record<string, unknown> | undefined,
-  expectedParams: Record<string, unknown>,
+  expectedEntries: unknown,
 ): void {
+  const { named: expectedParams, repeated } = vectorParamsToMap(expectedEntries)
+  expect(repeated, 'this codec has one slot per parameter name').toEqual([])
   // Normalize: empty params {} should match missing params
   if (Object.keys(expectedParams).length === 0) {
     if (actualParams) {
