@@ -41,14 +41,14 @@ export interface LargestObject {
 
 // Version-specific parameters (delta-encoded types, count-prefixed)
 export interface Draft18Params {
-  object_delivery_timeout?: bigint // 0x02 varint (renamed from delivery_timeout in draft-17)
+  object_delivery_timeout?: bigint // 0x02 varint; drafts 11-17 name the same codepoint DELIVERY_TIMEOUT
   authorization_token?: readonly AuthorizationToken[] // 0x03 length-prefixed nested
   rendezvous_timeout?: bigint // 0x04 varint
   subgroup_delivery_timeout?: bigint // 0x06 varint (NEW in draft-18)
   expires?: bigint // 0x08 varint
   largest_object?: LargestObject // 0x09 Location (2 bare varints)
   fill_timeout?: bigint // 0x0a varint (NEW in draft-18)
-  forward?: bigint // 0x10 uint8 (was varint in draft-17)
+  forward?: bigint // 0x10 uint8; drafts 15 and 16 encode this parameter as a varint
   subscriber_priority?: bigint // 0x20 uint8
   subscription_filter?: SubscriptionFilter // 0x21 length-prefixed
   group_order?: bigint // 0x22 uint8
@@ -59,7 +59,7 @@ export interface Draft18Params {
 
 // Track properties (KVP encoding, no count prefix, read until end of payload)
 export interface Draft18TrackProperties {
-  object_delivery_timeout?: bigint // 0x02 even varint (renamed from delivery_timeout)
+  object_delivery_timeout?: bigint // 0x02 even varint; drafts 11-17 name the same codepoint DELIVERY_TIMEOUT
   max_cache_duration?: bigint // 0x04 even varint
   subgroup_delivery_timeout?: bigint // 0x06 even varint (NEW in draft-18)
   immutable_properties?: Uint8Array // 0x0b odd length-prefixed
@@ -101,7 +101,7 @@ export interface Draft18Setup extends Draft18BaseMessage {
   readonly options: Draft18SetupOptions
 }
 
-// Subscribe — Required Request ID Delta REMOVED in draft-18
+// Subscribe — draft-18 Section 10.7. No Required Request ID Delta; draft-17 alone carries that field.
 export interface Draft18Subscribe extends Draft18BaseMessage {
   readonly type: 'subscribe'
   readonly request_id: bigint
@@ -159,7 +159,7 @@ export interface Draft18NamespaceDone extends Draft18BaseMessage {
   readonly namespace_suffix: string[]
 }
 
-// SUBSCRIBE_NAMESPACE — type 0x50, subscribe_options field removed in draft-18
+// SUBSCRIBE_NAMESPACE — type 0x50; no Subscribe Options field in draft-18.
 export interface Draft18SubscribeNamespace extends Draft18BaseMessage {
   readonly type: 'subscribe_namespace'
   readonly request_id: bigint
@@ -167,7 +167,7 @@ export interface Draft18SubscribeNamespace extends Draft18BaseMessage {
   readonly parameters: Draft18Params
 }
 
-// SUBSCRIBE_TRACKS — NEW in draft-18, type 0x51
+// SUBSCRIBE_TRACKS — type 0x51.
 export interface Draft18SubscribeTracks extends Draft18BaseMessage {
   readonly type: 'subscribe_tracks'
   readonly request_id: bigint
@@ -214,7 +214,7 @@ export interface Draft18FetchOk extends Draft18BaseMessage {
   readonly track_properties: Draft18TrackProperties
 }
 
-// Track Status — same format as subscribe in draft-18 (without required_request_id_delta)
+// Track Status — format identical to SUBSCRIBE (Section 10.7), minus the subscriber parameters related to Track delivery (Section 10.14).
 export interface Draft18TrackStatus extends Draft18BaseMessage {
   readonly type: 'track_status'
   readonly request_id: bigint
@@ -223,7 +223,7 @@ export interface Draft18TrackStatus extends Draft18BaseMessage {
   readonly parameters: Draft18Params
 }
 
-// REQUEST_OK — gained trailing Track Properties in draft-18
+// REQUEST_OK — carries trailing Track Properties after the parameters.
 export interface Draft18RequestOk extends Draft18BaseMessage {
   readonly type: 'request_ok'
   readonly parameters: Draft18Params
@@ -332,10 +332,18 @@ export type Draft18DataStream = SubgroupStream | DatagramObject | FetchStream
 // Streaming data stream decoder types
 export interface SubgroupStreamHeader {
   readonly type: 'subgroup_header'
+  /**
+   * The stream Type Flags, the same value `SubgroupStream.headerType` carries.
+   * It is reported so the incremental decoder does not drop the flags the
+   * header encodes, which is what lets a consumer tell the modes apart.
+   */
+  readonly headerType: number
   readonly trackAlias: bigint
   readonly groupId: bigint
   readonly subgroupId: bigint
   readonly publisherPriority: number
+  readonly endOfGroup?: boolean
+  readonly firstObject?: boolean
 }
 
 export interface FetchStreamHeader {

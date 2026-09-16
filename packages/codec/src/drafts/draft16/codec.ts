@@ -1,3 +1,4 @@
+import { type AuthRedaction, recordAuthValueSpan, redactWith } from '../../core/auth-redaction.js'
 import { BufferReader } from '../../core/buffer-reader.js'
 import { BufferWriter } from '../../core/buffer-writer.js'
 import { bytesToHex, hexToBytes } from '../../core/hex.js'
@@ -62,79 +63,110 @@ const textDecoder = /* @__PURE__ */ new TextDecoder()
 // ─── Setup Parameter Encoding/Decoding ──────────────────────────────────────────
 
 function encodeSetupParams(params: Draft16SetupParams, writer: BufferWriter): void {
-  let count = 0
-  if (params.path !== undefined) count++
-  if (params.max_request_id !== undefined) count++
-  count += params.authorization_token?.length ?? 0
-  if (params.max_auth_token_cache_size !== undefined) count++
-  if (params.authority !== undefined) count++
-  if (params.moqt_implementation !== undefined) count++
-  if (params.unknown) count += params.unknown.length
-
-  writer.writeVarInt(count)
+  // Draft-16 Section 9.2: "Parameters are serialized as Key-Value-Pairs." That
+  // includes Setup Parameters, so Section 1.4.2 applies here exactly as it does
+  // in encodeParams: "Key-Value-Pairs encode a Type value as a delta from the
+  // previous Type value, or from 0 if there is no previous Type value." A Delta
+  // Type is an unsigned varint, so ascending order is the only order the wire
+  // format can express. The entries are collected, sorted, and written as
+  // differences. Drafts 15 and earlier wrote the Type absolutely.
+  const entries: Array<{ type: bigint; encode: (w: BufferWriter) => void }> = []
 
   // PATH (0x01) - odd, length-prefixed bytes
   if (params.path !== undefined) {
-    writer.writeVarInt(SETUP_PARAM_PATH)
-    const encoded = textEncoder.encode(params.path)
-    writer.writeVarInt(encoded.byteLength)
-    writer.writeBytes(encoded)
+    entries.push({
+      type: SETUP_PARAM_PATH,
+      encode: (w) => {
+        const encoded = textEncoder.encode(params.path!)
+        w.writeVarInt(encoded.byteLength)
+        w.writeBytes(encoded)
+      },
+    })
   }
 
   // MAX_REQUEST_ID (0x02) - even, varint value
   if (params.max_request_id !== undefined) {
-    writer.writeVarInt(SETUP_PARAM_MAX_REQUEST_ID)
-    writer.writeVarInt(params.max_request_id)
+    entries.push({
+      type: SETUP_PARAM_MAX_REQUEST_ID,
+      encode: (w) => w.writeVarInt(params.max_request_id!),
+    })
   }
 
   // AUTHORIZATION_TOKEN (0x03) - odd, length-prefixed with nested structure
   for (const token of params.authorization_token ?? []) {
-    writer.writeVarInt(SETUP_PARAM_AUTHORIZATION_TOKEN)
-    const tmpW = new BufferWriter(64)
-    encodeAuthorizationToken(token, tmpW)
-    const raw = tmpW.finish()
-    writer.writeVarInt(raw.byteLength)
-    writer.writeBytes(raw)
+    entries.push({
+      type: SETUP_PARAM_AUTHORIZATION_TOKEN,
+      encode: (w) => {
+        const tmpW = new BufferWriter(64)
+        encodeAuthorizationToken(token, tmpW)
+        const raw = tmpW.finish()
+        w.writeVarInt(raw.byteLength)
+        w.writeBytes(raw)
+      },
+    })
   }
 
   // MAX_AUTH_TOKEN_CACHE_SIZE (0x04) - even, varint value
   if (params.max_auth_token_cache_size !== undefined) {
-    writer.writeVarInt(SETUP_PARAM_MAX_AUTH_TOKEN_CACHE_SIZE)
-    writer.writeVarInt(params.max_auth_token_cache_size)
+    entries.push({
+      type: SETUP_PARAM_MAX_AUTH_TOKEN_CACHE_SIZE,
+      encode: (w) => w.writeVarInt(params.max_auth_token_cache_size!),
+    })
   }
 
   // AUTHORITY (0x05) - odd, length-prefixed bytes
   if (params.authority !== undefined) {
-    writer.writeVarInt(SETUP_PARAM_AUTHORITY)
-    const encoded = textEncoder.encode(params.authority)
-    writer.writeVarInt(encoded.byteLength)
-    writer.writeBytes(encoded)
+    entries.push({
+      type: SETUP_PARAM_AUTHORITY,
+      encode: (w) => {
+        const encoded = textEncoder.encode(params.authority!)
+        w.writeVarInt(encoded.byteLength)
+        w.writeBytes(encoded)
+      },
+    })
   }
 
   // MOQT_IMPLEMENTATION (0x07) - odd, length-prefixed bytes
   if (params.moqt_implementation !== undefined) {
-    writer.writeVarInt(SETUP_PARAM_MOQT_IMPLEMENTATION)
-    const encoded = textEncoder.encode(params.moqt_implementation)
-    writer.writeVarInt(encoded.byteLength)
-    writer.writeBytes(encoded)
+    entries.push({
+      type: SETUP_PARAM_MOQT_IMPLEMENTATION,
+      encode: (w) => {
+        const encoded = textEncoder.encode(params.moqt_implementation!)
+        w.writeVarInt(encoded.byteLength)
+        w.writeBytes(encoded)
+      },
+    })
   }
 
   // Unknown params
   if (params.unknown) {
     for (const u of params.unknown) {
       const id = BigInt(u.id)
-      writer.writeVarInt(id)
-      if (id % 2n === 0n) {
-        const raw = hexToBytes(u.raw_hex)
-        const tmpReader = new BufferReader(raw)
-        const value = tmpReader.readVarInt()
-        writer.writeVarInt(value)
-      } else {
-        const raw = hexToBytes(u.raw_hex)
-        writer.writeVarInt(raw.byteLength)
-        writer.writeBytes(raw)
-      }
+      entries.push({
+        type: id,
+        encode: (w) => {
+          const raw = hexToBytes(u.raw_hex)
+          if (id % 2n === 0n) {
+            w.writeVarInt(new BufferReader(raw).readVarInt())
+          } else {
+            w.writeVarInt(raw.byteLength)
+            w.writeBytes(raw)
+          }
+        },
+      })
     }
+  }
+
+  // Stable, so a repeated AUTHORIZATION_TOKEN keeps the order it was given in
+  // and encodes as a Delta Type of 0.
+  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
+
+  writer.writeVarInt(entries.length)
+  let prevType = 0n
+  for (const entry of entries) {
+    writer.writeVarInt(entry.type - prevType)
+    entry.encode(writer)
+    prevType = entry.type
   }
 }
 
@@ -142,9 +174,15 @@ function decodeSetupParams(reader: BufferReader): Draft16SetupParams {
   const count = Number(reader.readVarInt())
   const result: Draft16SetupParams = {}
   const unknown: UnknownParam[] = []
+  let prevType = 0n
 
   for (let i = 0; i < count; i++) {
-    const paramType = reader.readVarInt()
+    // Draft-16 Section 1.4.2: the Type is a delta from the previous Type, or
+    // from 0 for the first pair. Parity -- "Length: Only present when Type is
+    // odd" -- is decided by the resolved Type, never by the delta.
+    const delta = reader.readVarInt()
+    const paramType = prevType + delta
+    prevType = paramType
 
     if (paramType % 2n === 0n) {
       const value = reader.readVarInt()
@@ -168,10 +206,9 @@ function decodeSetupParams(reader: BufferReader): Draft16SetupParams {
       if (paramType === SETUP_PARAM_PATH) {
         result.path = textDecoder.decode(bytes)
       } else if (paramType === SETUP_PARAM_AUTHORIZATION_TOKEN) {
-        result.authorization_token = [
-          ...(result.authorization_token ?? []),
-          decodeAuthorizationToken(new BufferReader(bytes)),
-        ]
+        const token = decodeAuthorizationToken(new BufferReader(bytes))
+        noteAuthTokenValue(reader.offset - length, length, token.token_value)
+        result.authorization_token = [...(result.authorization_token ?? []), token]
       } else if (paramType === SETUP_PARAM_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
       } else if (paramType === SETUP_PARAM_MOQT_IMPLEMENTATION) {
@@ -460,10 +497,9 @@ function decodeParams(reader: BufferReader): Draft16Params {
     } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
       const length = Number(reader.readVarInt())
       const tokenBytes = reader.readBytes(length)
-      result.authorization_token = [
-        ...(result.authorization_token ?? []),
-        decodeAuthorizationToken(new BufferReader(tokenBytes)),
-      ]
+      const token = decodeAuthorizationToken(new BufferReader(tokenBytes))
+      noteAuthTokenValue(reader.offset - length, length, token.token_value)
+      result.authorization_token = [...(result.authorization_token ?? []), token]
     } else if (paramType === PARAM_MAX_CACHE_DURATION) {
       result.max_cache_duration = reader.readVarInt()
     } else if (paramType === PARAM_EXPIRES) {
@@ -1267,4 +1303,62 @@ export function createDraft16Codec(): Draft16Codec {
     createFetchStreamDecoder,
     createDataStreamDecoder,
   }
+}
+
+/**
+ * Record where a Token Value sits, so it can be overwritten before the frame
+ * reaches anything that keeps it.
+ *
+ * The span falls out of the decode with no second walk. The Token Value is the
+ * last field of the Token structure, so its start is the parameter value's end
+ * minus the value's own length. The fields before it are left alone
+ * deliberately: Alias Type, Token Alias and Token Type are structure rather
+ * than secret, and they are what distinguishes a session that failed to
+ * authenticate from one that never tried.
+ *
+ * A token carrying no value at all -- DELETE and USE_ALIAS -- records nothing,
+ * and its frame passes through untouched.
+ */
+function noteAuthTokenValue(
+  valueStart: number,
+  valueLength: number,
+  value: Uint8Array | undefined,
+): void {
+  if (value === undefined || value.byteLength === 0) return
+  recordAuthValueSpan(valueStart + valueLength - value.byteLength, value.byteLength)
+}
+
+/**
+ * Overwrite every Authorization Token value in a draft-16 control frame.
+ *
+ * One decode, whose *output is discarded*: the point is not to read the
+ * message, it is to learn where the credentials were so the caller never has to
+ * hold a frame that contains one. A caller that also wants the message should
+ * decode the **redacted** frame with {@link decodeMessage}, which then cannot
+ * produce a value because there is no longer one in the bytes.
+ *
+ * A frame that fails to decode is still redacted as far as the decode got. That
+ * is the useful direction to fail in: a value that was read is a value that was
+ * exposed, whatever went wrong after it.
+ *
+ * See {@link AuthRedaction.incomplete} for the one result a caller must not
+ * treat as clean, and {@link AuthRedaction.decoded} for the residual it cannot
+ * close.
+ */
+export function redactAuthTokens(bytes: Uint8Array): AuthRedaction {
+  let payloadStart: number
+  try {
+    const probe = new BufferReader(bytes)
+    probe.readVarInt()
+    probe.readUint8()
+    probe.readUint8()
+    payloadStart = probe.offset
+  } catch {
+    // Too short to carry a message header, and so too short for the parameters
+    // that carry a credential. Reported as not decoded rather than as clean: a
+    // framer only ever emits complete frames, so a caller that gets here is
+    // holding something this function did not check.
+    return { bytes, redacted: 0, incomplete: false, decoded: false }
+  }
+  return redactWith(bytes, payloadStart, () => decodeMessage(bytes).ok)
 }

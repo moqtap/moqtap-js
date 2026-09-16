@@ -1,5 +1,7 @@
 export const DRAFT_VERSION = 0xff00000dn
 
+export type { AuthRedaction } from '../../core/auth-redaction.js'
+export { REDACTION_FILL } from '../../core/auth-redaction.js'
 export type { Draft13Codec } from './codec.js'
 export {
   createDraft13Codec,
@@ -13,7 +15,28 @@ export {
   encodeFetchStream,
   encodeMessage,
   encodeSubgroupStream,
+  redactAuthTokens,
 } from './codec.js'
+export type {
+  AnnounceErrorCodeValue,
+  FetchErrorCodeValue,
+  PublishErrorCodeValue,
+  SessionErrorCodeValue,
+  StreamResetErrorCodeValue,
+  SubscribeDoneStatusCodeValue,
+  SubscribeErrorCodeValue,
+  SubscribeNamespaceErrorCodeValue,
+} from './error-codes.js'
+export {
+  AnnounceErrorCode,
+  FetchErrorCode,
+  PublishErrorCode,
+  SessionErrorCode,
+  StreamResetErrorCode,
+  SubscribeDoneStatusCode,
+  SubscribeErrorCode,
+  SubscribeNamespaceErrorCode,
+} from './error-codes.js'
 export {
   MESSAGE_ID_MAP,
   MESSAGE_TYPE_MAP,

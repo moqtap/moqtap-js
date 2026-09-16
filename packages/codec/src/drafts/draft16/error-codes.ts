@@ -1,4 +1,6 @@
-export const SessionTerminationCode = {
+// Draft-16 error, status and termination code registries.
+
+export const SessionErrorCode = {
   NoError: 0x0n,
   InternalError: 0x1n,
   Unauthorized: 0x2n,
@@ -6,6 +8,7 @@ export const SessionTerminationCode = {
   InvalidRequestId: 0x4n,
   DuplicateTrackAlias: 0x5n,
   KeyValueFormattingError: 0x6n,
+  TooManyRequests: 0x7n,
   InvalidPath: 0x8n,
   MalformedPath: 0x9n,
   GoawayTimeout: 0x10n,
@@ -19,10 +22,8 @@ export const SessionTerminationCode = {
   ExpiredAuthToken: 0x18n,
   InvalidAuthority: 0x19n,
   MalformedAuthority: 0x1an,
-  TooManyRequestUpdates: 0x1bn, // NEW in draft-19
 } as const
-export type SessionTerminationCodeValue =
-  (typeof SessionTerminationCode)[keyof typeof SessionTerminationCode]
+export type SessionErrorCodeValue = (typeof SessionErrorCode)[keyof typeof SessionErrorCode]
 
 export const RequestErrorCode = {
   InternalError: 0x0n,
@@ -31,50 +32,37 @@ export const RequestErrorCode = {
   NotSupported: 0x3n,
   MalformedAuthToken: 0x4n,
   ExpiredAuthToken: 0x5n,
-  GoingAway: 0x6n,
-  ExcessiveLoad: 0x9n,
   DoesNotExist: 0x10n,
   InvalidRange: 0x11n,
   MalformedTrack: 0x12n,
-  // 0x19 is unassigned in draft-19: Section 5.1 lets an endpoint hold multiple concurrent
-  // subscriptions to the same Track, so there is no DuplicateSubscription error. Draft-18
-  // binds 0x19 to DUPLICATE_SUBSCRIPTION.
+  DuplicateSubscription: 0x19n,
   Uninterested: 0x20n,
   PrefixOverlap: 0x30n,
-  NamespaceTooLarge: 0x31n,
   InvalidJoiningRequestId: 0x32n,
-  UnsupportedExtension: 0x33n,
-  Redirect: 0x34n,
-  ConflictingFilters: 0x35n, // NEW in draft-19
-  InvalidFilter: 0x36n, // NEW in draft-19
 } as const
 export type RequestErrorCodeValue = (typeof RequestErrorCode)[keyof typeof RequestErrorCode]
 
-export const PublishDoneCode = {
+export const PublishDoneStatusCode = {
   InternalError: 0x0n,
   Unauthorized: 0x1n,
   TrackEnded: 0x2n,
   SubscriptionEnded: 0x3n,
   GoingAway: 0x4n,
-  TooFarBehind: 0x5n,
-  Expired: 0x6n,
+  Expired: 0x5n,
+  TooFarBehind: 0x6n,
   UpdateFailed: 0x8n,
-  ExcessiveLoad: 0x9n,
   MalformedTrack: 0x12n,
 } as const
-export type PublishDoneCodeValue = (typeof PublishDoneCode)[keyof typeof PublishDoneCode]
+export type PublishDoneStatusCodeValue =
+  (typeof PublishDoneStatusCode)[keyof typeof PublishDoneStatusCode]
 
-export const DataStreamResetCode = {
+export const DataStreamResetErrorCode = {
   InternalError: 0x0n,
   Cancelled: 0x1n,
   DeliveryTimeout: 0x2n,
   SessionClosed: 0x3n,
-  GoingAway: 0x4n,
-  TooFarBehind: 0x5n,
-  UnknownObjectStatus: 0x6n,
-  ExpiredAuthToken: 0x7n,
-  ExcessiveLoad: 0x9n,
+  UnknownObjectStatus: 0x4n,
   MalformedTrack: 0x12n,
 } as const
-export type DataStreamResetCodeValue =
-  (typeof DataStreamResetCode)[keyof typeof DataStreamResetCode]
+export type DataStreamResetErrorCodeValue =
+  (typeof DataStreamResetErrorCode)[keyof typeof DataStreamResetErrorCode]

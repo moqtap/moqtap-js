@@ -1,3 +1,4 @@
+import { type AuthRedaction, recordAuthValueSpan, redactWith } from '../../core/auth-redaction.js'
 import { MoqtBufferReader as BufferReader } from '../../core/buffer-reader.js'
 import { MoqtBufferWriter as BufferWriter } from '../../core/buffer-writer.js'
 import { bytesToHex, hexToBytes } from '../../core/hex.js'
@@ -191,10 +192,9 @@ function decodeSetupOptions(reader: BufferReader, payloadEnd: number): Draft19Se
       if (optType === SETUP_OPT_PATH) {
         result.path = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_AUTHORIZATION_TOKEN) {
-        result.authorization_token = [
-          ...(result.authorization_token ?? []),
-          decodeAuthorizationToken(new BufferReader(bytes)),
-        ]
+        const token = decodeAuthorizationToken(new BufferReader(bytes))
+        noteAuthTokenValue(reader.offset - length, length, token)
+        result.authorization_token = [...(result.authorization_token ?? []), token]
       } else if (optType === SETUP_OPT_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_MOQT_IMPLEMENTATION) {
@@ -230,6 +230,32 @@ function encodeAuthorizationToken(token: AuthorizationToken, w: BufferWriter): v
     const tv = token.token_value ?? new Uint8Array(0)
     w.writeBytes(tv)
   }
+}
+
+/**
+ * Record where a Token Value sits, so it can be overwritten before the frame
+ * reaches anything that keeps it (Section 1.6).
+ *
+ * The span falls out of the decode with no second walk. The Token Value is the
+ * tail of the Token structure — draft-19 Section 10.2.2, Figure 5: it is NOT
+ * length-prefixed inside the Token and consumes the remainder of the outer
+ * length-prefixed parameter value. So its start is the parameter value's end
+ * minus the value's own length, and the fields before it (Alias Type, Token
+ * Alias, Token Type) are left alone deliberately: they are structure, not
+ * secret, and they are what distinguishes a session that failed to
+ * authenticate from one that never tried.
+ *
+ * DELETE (0x0) and USE_ALIAS (0x2) carry no value at all, so they record
+ * nothing and their frames pass through untouched.
+ */
+function noteAuthTokenValue(
+  valueStart: number,
+  valueLength: number,
+  token: AuthorizationToken,
+): void {
+  const value = token.token_value
+  if (value === undefined || value.byteLength === 0) return
+  recordAuthValueSpan(valueStart + valueLength - value.byteLength, value.byteLength)
 }
 
 function decodeAuthorizationToken(r: BufferReader): AuthorizationToken {
@@ -282,7 +308,7 @@ const PARAM_LARGEST_OBJECT = 0x09n
 const PARAM_FILL_TIMEOUT = 0x0an
 const PARAM_FORWARD = 0x10n
 const PARAM_SUBSCRIBER_PRIORITY = 0x20n
-const PARAM_LOCATION_FILTER = 0x21n // renamed from SUBSCRIPTION_FILTER in draft-19
+const PARAM_LOCATION_FILTER = 0x21n // LOCATION_FILTER (draft-19 Section 10.2.9); drafts 15-18 name 0x21 SUBSCRIPTION_FILTER
 const PARAM_GROUP_ORDER = 0x22n
 const PARAM_SUBGROUP_FILTER = 0x25n // NEW in draft-19
 const PARAM_OBJECTID_FILTER = 0x26n // NEW in draft-19
@@ -590,10 +616,9 @@ function decodeParams(reader: BufferReader, messageType: string): Draft19Params 
     } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
       const length = Number(reader.readVarInt())
       const bytes = reader.readBytes(length)
-      result.authorization_token = [
-        ...(result.authorization_token ?? []),
-        decodeAuthorizationToken(new BufferReader(bytes)),
-      ]
+      const token = decodeAuthorizationToken(new BufferReader(bytes))
+      noteAuthTokenValue(reader.offset - length, length, token)
+      result.authorization_token = [...(result.authorization_token ?? []), token]
     } else if (paramType === PARAM_RENDEZVOUS_TIMEOUT) {
       result.rendezvous_timeout = reader.readVarInt()
     } else if (paramType === PARAM_SUBGROUP_DELIVERY_TIMEOUT) {
@@ -608,7 +633,7 @@ function decodeParams(reader: BufferReader, messageType: string): Draft19Params 
     } else if (paramType === PARAM_FILL_TIMEOUT) {
       result.fill_timeout = reader.readVarInt()
     } else if (paramType === PARAM_FORWARD) {
-      // uint8 in draft-18 (was varint in draft-17)
+      // uint8 (Section 10.2.17); drafts 15 and 16 encode this as a varint
       result.forward = BigInt(reader.readUint8())
     } else if (paramType === PARAM_SUBSCRIBER_PRIORITY) {
       // uint8: single raw byte
@@ -1477,4 +1502,39 @@ export function createDraft19Codec(): Draft19Codec {
     createFetchStreamDecoder,
     createDataStreamDecoder,
   }
+}
+
+/**
+ * Overwrite every Authorization Token value in a draft-19 control frame.
+ *
+ * One decode, whose *output is discarded*: the point is not to read the
+ * message, it is to learn where the tokens were so the caller never has to hold
+ * a frame that contains one. A caller that also wants the message should decode
+ * the **redacted** frame with {@link decodeMessage}, which then cannot produce a
+ * token value because there is no longer one in the bytes.
+ *
+ * A frame that fails to decode is still redacted as far as the decode got. That
+ * is the useful direction to fail in: a value that was read is a value that was
+ * exposed, whatever went wrong after it.
+ *
+ * See {@link AuthRedaction.incomplete} for the one result a caller must not
+ * treat as clean, and {@link AuthRedaction.decoded} for the residual it cannot
+ * close.
+ */
+export function redactAuthTokens(bytes: Uint8Array): AuthRedaction {
+  let payloadStart: number
+  try {
+    const probe = new BufferReader(bytes)
+    probe.readVarInt()
+    probe.readUint8()
+    probe.readUint8()
+    payloadStart = probe.offset
+  } catch {
+    // Too short to carry a message header, and so too short for the parameters
+    // that carry a token. Reported as not decoded rather than as clean: the
+    // framer only ever emits complete frames, so a caller that gets here is
+    // holding something this function did not check.
+    return { bytes, redacted: 0, incomplete: false, decoded: false }
+  }
+  return redactWith(bytes, payloadStart, () => decodeMessage(bytes).ok)
 }

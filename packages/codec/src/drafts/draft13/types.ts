@@ -181,7 +181,7 @@ export interface Draft13AnnounceCancel extends Draft13BaseMessage {
   readonly reason_phrase: string
 }
 
-// Subscribe Namespace (renamed from subscribe_announces in draft-12)
+// Subscribe Namespace — type 0x11; drafts 07-12 name the same codepoint SUBSCRIBE_ANNOUNCES
 export interface Draft13SubscribeNamespace extends Draft13BaseMessage {
   readonly type: 'subscribe_namespace'
   readonly request_id: bigint

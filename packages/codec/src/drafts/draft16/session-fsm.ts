@@ -370,7 +370,6 @@ export class Draft16SessionFSM {
     return { ok: true, phase: this._phase, sideEffects }
   }
 
-  // Renamed from handleSubscribeUpdate in draft-15
   private handleRequestUpdate(
     message: Draft16Message,
     sideEffects: SideEffect[],

@@ -1,5 +1,7 @@
 export const DRAFT_VERSION = 0xff000010n
 
+export type { AuthRedaction } from '../../core/auth-redaction.js'
+export { REDACTION_FILL } from '../../core/auth-redaction.js'
 export type { Draft16Codec } from './codec.js'
 export {
   createDataStreamDecoder,
@@ -16,7 +18,20 @@ export {
   encodeFetchStream,
   encodeMessage,
   encodeSubgroupStream,
+  redactAuthTokens,
 } from './codec.js'
+export type {
+  DataStreamResetErrorCodeValue,
+  PublishDoneStatusCodeValue,
+  RequestErrorCodeValue,
+  SessionErrorCodeValue,
+} from './error-codes.js'
+export {
+  DataStreamResetErrorCode,
+  PublishDoneStatusCode,
+  RequestErrorCode,
+  SessionErrorCode,
+} from './error-codes.js'
 export {
   MESSAGE_ID_MAP,
   MESSAGE_TYPE_MAP,

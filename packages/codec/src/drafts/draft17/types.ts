@@ -322,10 +322,17 @@ export type Draft17DataStream = SubgroupStream | DatagramObject | FetchStream
 // Streaming data stream decoder types
 export interface SubgroupStreamHeader {
   readonly type: 'subgroup_header'
+  /**
+   * The stream Type Flags, the same value `SubgroupStream.headerType` carries.
+   * Without it the incremental decoder discarded every flag the header
+   * encodes and a consumer could not tell the modes apart.
+   */
+  readonly headerType: number
   readonly trackAlias: bigint
   readonly groupId: bigint
   readonly subgroupId: bigint
   readonly publisherPriority: number
+  readonly endOfGroup?: boolean
 }
 
 export interface FetchStreamHeader {

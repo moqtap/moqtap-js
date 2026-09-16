@@ -15,7 +15,9 @@ export const MSG_GOAWAY = 0x10n
 export const MSG_FETCH = 0x16n
 export const MSG_FETCH_OK = 0x18n
 export const MSG_PUBLISH = 0x1dn
-// In draft-18 PUBLISH_OK is an alias for REQUEST_OK (0x07). Kept as alias.
+// PUBLISH_OK is not a codepoint of its own: it is a REQUEST_OK (0x07) sent in
+// reply to a PUBLISH (draft-19 Section 10.5). 0x1E is RESERVED (Section 10,
+// Table 5).
 export const MSG_PUBLISH_OK = MSG_REQUEST_OK
 export const MSG_SUBSCRIBE_NAMESPACE = 0x50n
 export const MSG_SUBSCRIBE_TRACKS = 0x51n

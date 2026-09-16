@@ -28,7 +28,7 @@ export interface Draft20SetupOptions {
 }
 
 /**
- * LOCATION_FILTER (0x21) — restructured in draft-20 (Section 5.1.2).
+ * LOCATION_FILTER (0x21) — draft-20 Section 5.1.2.
  *
  * The draft-19 `Filter Type` discriminator (0x1 Next Group Start / 0x2 Largest
  * Object / 0x3 AbsoluteStart / 0x4 AbsoluteRange) is gone; the shape is the
@@ -115,7 +115,7 @@ export interface Draft20Params {
   fill_timeout?: bigint // 0x0a varint
   forward?: bigint // 0x10 uint8
   subscriber_priority?: bigint // 0x20 uint8
-  location_filter?: LocationFilter // 0x21 length-prefixed (restructured in draft-20)
+  location_filter?: LocationFilter // 0x21 length-prefixed; see LocationFilter for the draft-20 shape
   group_order?: bigint // 0x22 uint8
   fill_parameters?: Draft20FillParameters // 0x23 length-prefixed nested (NEW in draft-20)
   // Section 5.1.4 permits each of the five more than once in a message: a
@@ -446,10 +446,22 @@ export type Draft20DataStream = SubgroupStream | DatagramObject | FetchStream
 // Streaming data stream decoder types
 export interface SubgroupStreamHeader {
   readonly type: 'subgroup_header'
+  /**
+   * SUBGROUP_HEADER `Type Flags`, the same value `SubgroupStream.headerType`
+   * carries. It is reported so the incremental decoder does not drop the flags
+   * the header encodes, which is what lets a consumer tell the modes apart.
+   */
+  readonly headerType: number
   readonly trackAlias: bigint
   readonly groupId: bigint
+  /**
+   * Under Subgroup Mode 0b01 this is the first Object's ID, which is why the
+   * header is not emitted until that Object has been read.
+   */
   readonly subgroupId: bigint
   readonly publisherPriority: number
+  readonly endOfGroup?: boolean
+  readonly firstObject?: boolean
 }
 
 export interface FetchStreamHeader {

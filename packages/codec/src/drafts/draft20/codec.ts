@@ -1,3 +1,9 @@
+import {
+  type AuthRedaction,
+  recordAuthValueSpan,
+  redactWith,
+  withoutAuthValueSpans,
+} from '../../core/auth-redaction.js'
 import { MoqtBufferReader as BufferReader } from '../../core/buffer-reader.js'
 import { MoqtBufferWriter as BufferWriter } from '../../core/buffer-writer.js'
 import { bytesToHex, hexToBytes } from '../../core/hex.js'
@@ -216,10 +222,9 @@ function decodeSetupOptions(reader: BufferReader, payloadEnd: number): Draft20Se
       if (optType === SETUP_OPT_PATH) {
         result.path = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_AUTHORIZATION_TOKEN) {
-        result.authorization_token = [
-          ...(result.authorization_token ?? []),
-          decodeAuthorizationToken(new BufferReader(bytes)),
-        ]
+        const token = decodeAuthorizationToken(new BufferReader(bytes))
+        noteAuthTokenValue(reader.offset - length, length, token)
+        result.authorization_token = [...(result.authorization_token ?? []), token]
       } else if (optType === SETUP_OPT_AUTHORITY) {
         result.authority = textDecoder.decode(bytes)
       } else if (optType === SETUP_OPT_MOQT_IMPLEMENTATION) {
@@ -255,6 +260,32 @@ function encodeAuthorizationToken(token: AuthorizationToken, w: BufferWriter): v
     const tv = token.token_value ?? new Uint8Array(0)
     w.writeBytes(tv)
   }
+}
+
+/**
+ * Record where a Token Value sits, so it can be overwritten before the frame
+ * reaches anything that keeps it (Section 1.6).
+ *
+ * The span falls out of the decode with no second walk. The Token Value is the
+ * tail of the Token structure — draft-20 Section 10.2.2, Figure 5: it is NOT
+ * length-prefixed inside the Token and consumes the remainder of the outer
+ * length-prefixed parameter value. So its start is the parameter value's end
+ * minus the value's own length, and the fields before it (Alias Type, Token
+ * Alias, Token Type) are left alone deliberately: they are structure, not
+ * secret, and they are what distinguishes a session that failed to
+ * authenticate from one that never tried.
+ *
+ * DELETE (0x0) and USE_ALIAS (0x2) carry no value at all, so they record
+ * nothing and their frames pass through untouched.
+ */
+function noteAuthTokenValue(
+  valueStart: number,
+  valueLength: number,
+  token: AuthorizationToken,
+): void {
+  const value = token.token_value
+  if (value === undefined || value.byteLength === 0) return
+  recordAuthValueSpan(valueStart + valueLength - value.byteLength, value.byteLength)
 }
 
 function decodeAuthorizationToken(r: BufferReader): AuthorizationToken {
@@ -395,7 +426,7 @@ function decodeRangeFilter(reader: BufferReader, hasProperty: boolean): RangeFil
   return property_type !== undefined ? { set_id, property_type, ranges } : { set_id, ranges }
 }
 
-// ─── LOCATION_FILTER (0x21) — restructured in draft-20 (Section 5.1.2) ──────
+// ─── LOCATION_FILTER (0x21) — draft-20 Section 5.1.2 ───────────────────────
 
 /**
  * Encode a LOCATION_FILTER value.
@@ -517,9 +548,11 @@ function decodeLocationFilter(reader: BufferReader): LocationFilter {
  * Read out of draft-20's per-parameter sections, not carried over from
  * draft-19. The biggest delta is that `request_ok` — which is also PUBLISH_OK,
  * REQUEST_UPDATE_OK, TRACK_STATUS_OK, SUBSCRIBE_NAMESPACE_OK,
- * SUBSCRIBE_TRACKS_OK and PUBLISH_NAMESPACE_OK — lost every subscription
- * parameter it used to carry. Only EXPIRES (0x08) and LARGEST_OBJECT (0x09)
- * still name it. Subscription parameters travel on PUBLISH (initial values) and
+ * SUBSCRIBE_TRACKS_OK and PUBLISH_NAMESPACE_OK — carries almost no subscription
+ * parameter. Only EXPIRES (0x08) names it, where draft-19 also lists it on
+ * OBJECT_DELIVERY_TIMEOUT (0x02), SUBGROUP_DELIVERY_TIMEOUT (0x06), FORWARD
+ * (0x10), SUBSCRIBER_PRIORITY (0x20), LOCATION_FILTER (0x21) and
+ * NEW_GROUP_REQUEST (0x32). Subscription parameters travel on PUBLISH (initial values) and
  * REQUEST_UPDATE (changes) instead.
  *
  * `fill_parameters` in a set means the type is one of the eight Table 6 permits
@@ -549,24 +582,24 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
   [PARAM_SUBGROUP_DELIVERY_TIMEOUT, new Set(['subscribe', 'publish', 'request_update'])],
   // 0x08 EXPIRES (10.2.16) — the one parameter that still names PUBLISH_OK.
   [PARAM_EXPIRES, new Set(['subscribe_ok', 'publish', 'request_ok'])],
-  // 0x09 LARGEST_OBJECT (10.2.17) — gained PUBLISH_STATE_NOTIFY in draft-20.
+  // 0x09 LARGEST_OBJECT (10.2.17) — PUBLISH_STATE_NOTIFY here; draft-19 (10.2.16) omits it.
   [
     PARAM_LARGEST_OBJECT,
     new Set(['subscribe_ok', 'publish', 'request_ok', 'publish_state_notify']),
   ],
   // 0x0A FILL_TIMEOUT (10.2.5) — FETCH, or nested inside FILL_PARAMETERS.
   [PARAM_FILL_TIMEOUT, new Set(['fetch', FILL_SCOPE])],
-  // 0x10 FORWARD (10.2.18) — lost PUBLISH_OK, gained PUBLISH_STATE_NOTIFY.
+  // 0x10 FORWARD (10.2.18) — PUBLISH_STATE_NOTIFY here where draft-19 (10.2.17) lists PUBLISH_OK.
   [
     PARAM_FORWARD,
     new Set(['subscribe', 'request_update', 'publish', 'subscribe_tracks', 'publish_state_notify']),
   ],
-  // 0x20 SUBSCRIBER_PRIORITY (10.2.7) — lost PUBLISH_OK, gained PUBLISH.
+  // 0x20 SUBSCRIBER_PRIORITY (10.2.7) — PUBLISH here where draft-19 lists PUBLISH_OK.
   [
     PARAM_SUBSCRIBER_PRIORITY,
     new Set(['subscribe', 'publish', 'fetch', 'request_update', FILL_SCOPE]),
   ],
-  // 0x21 LOCATION_FILTER (10.2.9) — lost PUBLISH_OK, gained PUBLISH and PUBLISH_STATE_NOTIFY.
+  // 0x21 LOCATION_FILTER (10.2.9) — PUBLISH and PUBLISH_STATE_NOTIFY here where draft-19 lists PUBLISH_OK.
   [
     PARAM_LOCATION_FILTER,
     new Set([
@@ -578,12 +611,12 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
       FILL_SCOPE,
     ]),
   ],
-  // 0x22 GROUP_ORDER (10.2.8) — gained PUBLISH and FILL_PARAMETERS nesting.
+  // 0x22 GROUP_ORDER (10.2.8) — PUBLISH and FILL_PARAMETERS nesting here; draft-19 has neither.
   [PARAM_GROUP_ORDER, new Set(['subscribe', 'publish', 'subscribe_tracks', 'fetch', FILL_SCOPE])],
   // 0x23 FILL_PARAMETERS (10.2.15) — NEW. Subscriptions only, and never nested
   // in itself: a FETCH already is a fetch, so it has nothing to fill.
   [PARAM_FILL_PARAMETERS, new Set(['subscribe', 'request_update'])],
-  // 0x25-0x28 range filters (5.1.4) — lost PUBLISH_OK, gained FILL_PARAMETERS nesting.
+  // 0x25-0x28 range filters (5.1.4) — permitted inside FILL_PARAMETERS (Table 6).
   [
     PARAM_SUBGROUP_FILTER,
     new Set(['fetch', 'subscribe', 'subscribe_tracks', 'request_update', FILL_SCOPE]),
@@ -600,11 +633,11 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
     PARAM_OBJECT_PROPERTY_FILTER,
     new Set(['fetch', 'subscribe', 'subscribe_tracks', 'request_update', FILL_SCOPE]),
   ],
-  // 0x29 TRACK_PROPERTY_FILTER (10.2.14) — lost PUBLISH_OK; NOT permitted
-  // inside FILL_PARAMETERS. A relay forwarding a downstream FILL_PARAMETERS
-  // upstream has to strip it rather than trip this rule.
+  // 0x29 TRACK_PROPERTY_FILTER (10.2.14) — NOT permitted inside
+  // FILL_PARAMETERS: Table 6 omits it. A relay forwarding a downstream
+  // FILL_PARAMETERS upstream has to strip it rather than trip this rule.
   [PARAM_TRACK_PROPERTY_FILTER, new Set(['subscribe_tracks', 'request_update'])],
-  // 0x32 NEW_GROUP_REQUEST (10.2.19) — lost PUBLISH_OK.
+  // 0x32 NEW_GROUP_REQUEST (10.2.19) — draft-19 (10.2.18) also lists PUBLISH_OK.
   [PARAM_NEW_GROUP_REQUEST, new Set(['subscribe', 'request_update'])],
   // 0x34 TRACK_NAMESPACE_PREFIX (10.2.20) — REQUEST_UPDATE for a namespace subscription.
   [PARAM_TRACK_NAMESPACE_PREFIX, new Set(['request_update'])],
@@ -826,10 +859,9 @@ function decodeParams(reader: BufferReader, messageType: string): Draft20Params 
     } else if (paramType === PARAM_AUTHORIZATION_TOKEN) {
       const length = Number(reader.readVarInt())
       const bytes = reader.readBytes(length)
-      result.authorization_token = [
-        ...(result.authorization_token ?? []),
-        decodeAuthorizationToken(new BufferReader(bytes)),
-      ]
+      const token = decodeAuthorizationToken(new BufferReader(bytes))
+      noteAuthTokenValue(reader.offset - length, length, token)
+      result.authorization_token = [...(result.authorization_token ?? []), token]
     } else if (paramType === PARAM_RENDEZVOUS_TIMEOUT) {
       result.rendezvous_timeout = reader.readVarInt()
     } else if (paramType === PARAM_SUBGROUP_DELIVERY_TIMEOUT) {
@@ -926,7 +958,7 @@ function decodeFillParameters(reader: BufferReader): Draft20FillParameters {
   const length = Number(reader.readVarInt())
   const valueBytes = reader.readBytes(length)
   const nested = new BufferReader(valueBytes)
-  const params = decodeParams(nested, FILL_SCOPE)
+  const params = withoutAuthValueSpans(() => decodeParams(nested, FILL_SCOPE))
   if (nested.remaining > 0) {
     // The parameter count and the byte length disagree. The draft does not say
     // what to do; leaving the slack unread would let a sender smuggle bytes no
@@ -1746,4 +1778,39 @@ export function createDraft20Codec(): Draft20Codec {
     createFetchStreamDecoder,
     createDataStreamDecoder,
   }
+}
+
+/**
+ * Overwrite every Authorization Token value in a draft-20 control frame.
+ *
+ * One decode, whose *output is discarded*: the point is not to read the
+ * message, it is to learn where the tokens were so the caller never has to hold
+ * a frame that contains one. A caller that also wants the message should decode
+ * the **redacted** frame with {@link decodeMessage}, which then cannot produce a
+ * token value because there is no longer one in the bytes.
+ *
+ * A frame that fails to decode is still redacted as far as the decode got. That
+ * is the useful direction to fail in: a value that was read is a value that was
+ * exposed, whatever went wrong after it.
+ *
+ * See {@link AuthRedaction.incomplete} for the one result a caller must not
+ * treat as clean, and {@link AuthRedaction.decoded} for the residual it cannot
+ * close.
+ */
+export function redactAuthTokens(bytes: Uint8Array): AuthRedaction {
+  let payloadStart: number
+  try {
+    const probe = new BufferReader(bytes)
+    probe.readVarInt()
+    probe.readUint8()
+    probe.readUint8()
+    payloadStart = probe.offset
+  } catch {
+    // Too short to carry a message header, and so too short for the parameters
+    // that carry a token. Reported as not decoded rather than as clean: the
+    // framer only ever emits complete frames, so a caller that gets here is
+    // holding something this function did not check.
+    return { bytes, redacted: 0, incomplete: false, decoded: false }
+  }
+  return redactWith(bytes, payloadStart, () => decodeMessage(bytes).ok)
 }

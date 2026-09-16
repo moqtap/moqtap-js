@@ -1,21 +1,21 @@
 // Draft-16 message type wire IDs
 
-export const MSG_REQUEST_UPDATE = 0x02n // renamed from SUBSCRIBE_UPDATE
+export const MSG_REQUEST_UPDATE = 0x02n
 export const MSG_SUBSCRIBE = 0x03n
 export const MSG_SUBSCRIBE_OK = 0x04n
 export const MSG_REQUEST_ERROR = 0x05n
 export const MSG_PUBLISH_NAMESPACE = 0x06n
 export const MSG_REQUEST_OK = 0x07n
-export const MSG_NAMESPACE = 0x08n // new in draft-16
+export const MSG_NAMESPACE = 0x08n // NAMESPACE (draft-16 Section 9.21); draft-15 has no 0x8 control message
 export const MSG_PUBLISH_NAMESPACE_DONE = 0x09n
 export const MSG_UNSUBSCRIBE = 0x0an
 export const MSG_PUBLISH_DONE = 0x0bn
 export const MSG_PUBLISH_NAMESPACE_CANCEL = 0x0cn
 export const MSG_TRACK_STATUS = 0x0dn
-export const MSG_NAMESPACE_DONE = 0x0en // new in draft-16
+export const MSG_NAMESPACE_DONE = 0x0en // NAMESPACE_DONE (draft-16 Section 9.23); draft-15 has no 0xE control message
 export const MSG_GOAWAY = 0x10n
 export const MSG_SUBSCRIBE_NAMESPACE = 0x11n
-// 0x14 (UNSUBSCRIBE_NAMESPACE) removed in draft-16
+// 0x14 is unassigned in draft-16 (Section 9, Table 1); draft-15 binds it to UNSUBSCRIBE_NAMESPACE.
 export const MSG_MAX_REQUEST_ID = 0x15n
 export const MSG_FETCH = 0x16n
 export const MSG_FETCH_CANCEL = 0x17n

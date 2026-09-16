@@ -1,5 +1,7 @@
 export const DRAFT_VERSION = 0xff000007n
 
+export type { AuthRedaction } from '../../core/auth-redaction.js'
+export { REDACTION_FILL } from '../../core/auth-redaction.js'
 export type { DecodeErrorCode, DecodeResult } from '../../core/types.js'
 // Re-export types consumers need
 export { DecodeError } from '../../core/types.js'
@@ -12,7 +14,20 @@ export {
   encodeDatagram,
   encodeFetchStream,
   encodeSubgroupStream,
+  redactAuthTokens,
 } from './codec.js'
+export type {
+  SessionErrorCodeValue,
+  SubscribeDoneStatusCodeValue,
+  SubscribeErrorCodeValue,
+  TrackStatusCodeValue,
+} from './error-codes.js'
+export {
+  SessionErrorCode,
+  SubscribeDoneStatusCode,
+  SubscribeErrorCode,
+  TrackStatusCode,
+} from './error-codes.js'
 export {
   MESSAGE_ID_MAP,
   MESSAGE_TYPE_MAP,

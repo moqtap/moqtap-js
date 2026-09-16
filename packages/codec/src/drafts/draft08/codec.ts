@@ -1,3 +1,4 @@
+import { type AuthRedaction, recordAuthValueSpan, redactWith } from '../../core/auth-redaction.js'
 import { BufferReader } from '../../core/buffer-reader.js'
 import { BufferWriter } from '../../core/buffer-writer.js'
 import { bytesToHex, hexToBytes } from '../../core/hex.js'
@@ -183,6 +184,11 @@ function decodeParams(r: BufferReader): Draft08Params {
 
     if (paramType === PARAM_AUTHORIZATION_INFO) {
       const bytes = r.readBytes(length)
+      // The credential is the whole value in this draft: a bare UTF-8 string,
+      // with no alias and no token type around it. What survives the overwrite
+      // is the parameter's presence, which is what says authorization was
+      // attempted at all.
+      recordAuthValueSpan(r.offset - length, length)
       result.authorization_info = textDecoder.decode(bytes)
     } else if (paramType === PARAM_DELIVERY_TIMEOUT) {
       const blob = r.readBytes(length)
@@ -982,4 +988,38 @@ export function createDraft08Codec(): Draft08Codec {
     decodeDataStream,
     createStreamDecoder,
   }
+}
+
+/**
+ * Overwrite every AUTHORIZATION_INFO value in a draft-08 control frame.
+ *
+ * One decode, whose *output is discarded*: the point is not to read the
+ * message, it is to learn where the credentials were so the caller never has to
+ * hold a frame that contains one. A caller that also wants the message should
+ * decode the **redacted** frame with {@link decodeMessage}, which then cannot
+ * produce a value because there is no longer one in the bytes.
+ *
+ * A frame that fails to decode is still redacted as far as the decode got. That
+ * is the useful direction to fail in: a value that was read is a value that was
+ * exposed, whatever went wrong after it.
+ *
+ * See {@link AuthRedaction.incomplete} for the one result a caller must not
+ * treat as clean, and {@link AuthRedaction.decoded} for the residual it cannot
+ * close.
+ */
+export function redactAuthTokens(bytes: Uint8Array): AuthRedaction {
+  let payloadStart: number
+  try {
+    const probe = new BufferReader(bytes)
+    probe.readVarInt()
+    probe.readVarInt()
+    payloadStart = probe.offset
+  } catch {
+    // Too short to carry a message header, and so too short for the parameters
+    // that carry a credential. Reported as not decoded rather than as clean: a
+    // framer only ever emits complete frames, so a caller that gets here is
+    // holding something this function did not check.
+    return { bytes, redacted: 0, incomplete: false, decoded: false }
+  }
+  return redactWith(bytes, payloadStart, () => decodeMessage(bytes).ok)
 }

@@ -27,7 +27,7 @@ export interface Draft19SetupOptions {
   unknown?: UnknownParam[]
 }
 
-// Location filter parameter (renamed from SubscriptionFilter in draft-19)
+// Location Filter parameter, 0x21; drafts 15 through 18 name that parameter SUBSCRIPTION_FILTER
 export interface LocationFilter {
   readonly filter_type: bigint
   readonly start_group?: bigint
@@ -57,16 +57,16 @@ export interface LargestObject {
 
 // Version-specific parameters (delta-encoded types, count-prefixed)
 export interface Draft19Params {
-  object_delivery_timeout?: bigint // 0x02 varint (renamed from delivery_timeout in draft-17)
+  object_delivery_timeout?: bigint // 0x02 varint; drafts 11-17 name this parameter DELIVERY TIMEOUT
   authorization_token?: readonly AuthorizationToken[] // 0x03 length-prefixed nested
   rendezvous_timeout?: bigint // 0x04 varint
   subgroup_delivery_timeout?: bigint // 0x06 varint (NEW in draft-18)
   expires?: bigint // 0x08 varint
   largest_object?: LargestObject // 0x09 Location (2 bare varints)
   fill_timeout?: bigint // 0x0a varint (NEW in draft-18)
-  forward?: bigint // 0x10 uint8 (was varint in draft-17)
+  forward?: bigint // 0x10 uint8; drafts 15 and 16 encode this parameter as a varint
   subscriber_priority?: bigint // 0x20 uint8
-  location_filter?: LocationFilter // 0x21 length-prefixed (renamed from subscription_filter in draft-19)
+  location_filter?: LocationFilter // 0x21 length-prefixed; SUBSCRIPTION_FILTER on drafts 15-18
   group_order?: bigint // 0x22 uint8
   // Section 5.1.3 permits each of the five more than once in a message: a
   // filter parameter carries one SetID, so two alternatives over the same
@@ -83,7 +83,7 @@ export interface Draft19Params {
 
 // Track properties (KVP encoding, no count prefix, read until end of payload)
 export interface Draft19TrackProperties {
-  object_delivery_timeout?: bigint // 0x02 even varint (renamed from delivery_timeout)
+  object_delivery_timeout?: bigint // 0x02 even varint; drafts 11-17 name this parameter DELIVERY TIMEOUT
   max_cache_duration?: bigint // 0x04 even varint
   subgroup_delivery_timeout?: bigint // 0x06 even varint (NEW in draft-18)
   immutable_properties?: Uint8Array // 0x0b odd length-prefixed
@@ -125,7 +125,8 @@ export interface Draft19Setup extends Draft19BaseMessage {
   readonly options: Draft19SetupOptions
 }
 
-// Subscribe — Required Request ID Delta REMOVED in draft-18
+// SUBSCRIBE — type 0x3; draft-17 is the only draft that carries a Required Request ID Delta
+// after the request_id, there and on every other request message (draft-17 Section 9.2)
 export interface Draft19Subscribe extends Draft19BaseMessage {
   readonly type: 'subscribe'
   readonly request_id: bigint
@@ -183,7 +184,7 @@ export interface Draft19NamespaceDone extends Draft19BaseMessage {
   readonly namespace_suffix: string[]
 }
 
-// SUBSCRIBE_NAMESPACE — type 0x50, subscribe_options field removed in draft-18
+// SUBSCRIBE_NAMESPACE — type 0x50; only drafts 16 and 17 carry a subscribe_options field here
 export interface Draft19SubscribeNamespace extends Draft19BaseMessage {
   readonly type: 'subscribe_namespace'
   readonly request_id: bigint
@@ -191,7 +192,7 @@ export interface Draft19SubscribeNamespace extends Draft19BaseMessage {
   readonly parameters: Draft19Params
 }
 
-// SUBSCRIBE_TRACKS — NEW in draft-18, type 0x51
+// SUBSCRIBE_TRACKS — type 0x51; no draft before 18 carries this message
 export interface Draft19SubscribeTracks extends Draft19BaseMessage {
   readonly type: 'subscribe_tracks'
   readonly request_id: bigint
@@ -238,7 +239,8 @@ export interface Draft19FetchOk extends Draft19BaseMessage {
   readonly track_properties: Draft19TrackProperties
 }
 
-// Track Status — same format as subscribe in draft-18 (without required_request_id_delta)
+// Track Status — format identical to SUBSCRIBE (Section 10.7), minus the subscriber
+// parameters related to Track delivery (e.g. SUBSCRIBER_PRIORITY, Section 10.2.7).
 export interface Draft19TrackStatus extends Draft19BaseMessage {
   readonly type: 'track_status'
   readonly request_id: bigint
@@ -247,7 +249,7 @@ export interface Draft19TrackStatus extends Draft19BaseMessage {
   readonly parameters: Draft19Params
 }
 
-// REQUEST_OK — gained trailing Track Properties in draft-18
+// REQUEST_OK — carries trailing Track Properties after the parameters (Section 10.5); drafts 15-17 have no such field
 export interface Draft19RequestOk extends Draft19BaseMessage {
   readonly type: 'request_ok'
   readonly parameters: Draft19Params
@@ -274,7 +276,8 @@ export interface Draft19GoAway extends Draft19BaseMessage {
   readonly type: 'goaway'
   readonly new_session_uri: string
   readonly timeout: bigint
-  // Request ID removed from GOAWAY in draft-19 — control and request streams share one format
+  // Draft-18 is the only draft that puts a Request ID on GOAWAY, and carries it only when the
+  // message goes on the control stream; on every other draft the message has no such field
 }
 
 // Union of all draft-18 control messages
@@ -356,10 +359,18 @@ export type Draft19DataStream = SubgroupStream | DatagramObject | FetchStream
 // Streaming data stream decoder types
 export interface SubgroupStreamHeader {
   readonly type: 'subgroup_header'
+  /**
+   * The stream Type Flags, the same value `SubgroupStream.headerType` carries.
+   * Without it the incremental decoder drops every flag the header encodes
+   * and a consumer cannot tell the modes apart.
+   */
+  readonly headerType: number
   readonly trackAlias: bigint
   readonly groupId: bigint
   readonly subgroupId: bigint
   readonly publisherPriority: number
+  readonly endOfGroup?: boolean
+  readonly firstObject?: boolean
 }
 
 export interface FetchStreamHeader {

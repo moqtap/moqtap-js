@@ -41,7 +41,9 @@ export interface LargestObject {
   readonly object: bigint
 }
 
-// Track extensions (separate parameter set in draft-16)
+// Track Extensions — a trailing sequence of Extension Headers on SUBSCRIBE_OK, PUBLISH and
+// FETCH_OK, carried alongside the parameters rather than among them; draft-16 is the only
+// draft that carries it
 export interface Draft16TrackExtensions {
   delivery_timeout?: bigint // 0x02 even
   max_cache_duration?: bigint // 0x04 even
@@ -109,7 +111,8 @@ export interface Draft16ServerSetup extends Draft16BaseMessage {
   readonly parameters: Draft16SetupParams
 }
 
-// Subscribe — fields moved to parameters
+// SUBSCRIBE — type 0x3; drafts 07-14 carry the subscriber priority, group order, filter and
+// (from draft-11) forward flag as fields of the message, drafts 15 and 16 as parameters
 export interface Draft16Subscribe extends Draft16BaseMessage {
   readonly type: 'subscribe'
   readonly request_id: bigint
@@ -126,7 +129,7 @@ export interface Draft16SubscribeOk extends Draft16BaseMessage {
   readonly track_extensions?: Draft16TrackExtensions
 }
 
-// Renamed from subscribe_update in draft-15
+// Request Update — type 0x2; drafts 07-15 name the same codepoint SUBSCRIBE_UPDATE
 export interface Draft16RequestUpdate extends Draft16BaseMessage {
   readonly type: 'request_update'
   readonly request_id: bigint
@@ -172,13 +175,17 @@ export interface Draft16PublishNamespace extends Draft16BaseMessage {
   readonly parameters: Draft16Params
 }
 
-// Simplified in draft-16: just request_id
+// PUBLISH_NAMESPACE_DONE — type 0x9, keyed by request_id here; drafts 07-15 carry the Track
+// Namespace in that position and name the codepoint UNANNOUNCE before draft-14; no draft from
+// 17 on carries the message
 export interface Draft16PublishNamespaceDone extends Draft16BaseMessage {
   readonly type: 'publish_namespace_done'
   readonly request_id: bigint
 }
 
-// Changed in draft-16: request_id + error_code + reason_phrase
+// PUBLISH_NAMESPACE_CANCEL — type 0xC, keyed by request_id here; drafts 07-15 carry the Track
+// Namespace in that position with the same error_code + reason_phrase after it, and name the
+// codepoint ANNOUNCE_CANCEL before draft-14; no draft from 17 on carries the message
 export interface Draft16PublishNamespaceCancel extends Draft16BaseMessage {
   readonly type: 'publish_namespace_cancel'
   readonly request_id: bigint
@@ -186,7 +193,7 @@ export interface Draft16PublishNamespaceCancel extends Draft16BaseMessage {
   readonly reason_phrase: string
 }
 
-// subscribe_namespace gains subscribe_options in draft-16
+// Only drafts 16 and 17 carry a subscribe_options field on SUBSCRIBE_NAMESPACE
 export interface Draft16SubscribeNamespace extends Draft16BaseMessage {
   readonly type: 'subscribe_namespace'
   readonly request_id: bigint
@@ -207,7 +214,7 @@ export interface Draft16NamespaceDone extends Draft16BaseMessage {
   readonly namespace_suffix: string[]
 }
 
-// unsubscribe_namespace is REMOVED in draft-16
+// No draft from 16 on carries UNSUBSCRIBE_NAMESPACE; drafts 13 through 15 do
 
 // Fetch — same structure as draft-15
 export interface StandaloneFetch {
@@ -264,7 +271,7 @@ export interface Draft16RequestOk extends Draft16BaseMessage {
   readonly parameters: Draft16Params
 }
 
-// request_error gains retry_interval in draft-16
+// REQUEST_ERROR — type 0x5; draft-15's carries no retry_interval, every draft from 16 on does
 export interface Draft16RequestError extends Draft16BaseMessage {
   readonly type: 'request_error'
   readonly request_id: bigint
@@ -371,10 +378,17 @@ export type Draft16DataStream = SubgroupStream | DatagramObject | FetchStream
 // Streaming data stream decoder types
 export interface SubgroupStreamHeader {
   readonly type: 'subgroup_header'
+  /**
+   * The stream Type Flags, the same value `SubgroupStream.headerType` carries.
+   * Without it the incremental decoder drops every flag the header encodes
+   * and a consumer cannot tell the modes apart.
+   */
+  readonly headerType: number
   readonly trackAlias: bigint
   readonly groupId: bigint
   readonly subgroupId: bigint
   readonly publisherPriority: number
+  readonly endOfGroup?: boolean
 }
 
 export interface FetchStreamHeader {
