@@ -10,6 +10,32 @@ This file starts at 0.4.0. Earlier releases are in the git history. Versions
 published; their contents are folded into the 0.4.0 below, so every "before"
 in it describes 0.3.0 — the last version anyone can install.
 
+## [0.4.1] - 2026-09-17
+
+**0.4.0 was tagged but never reached the registry.** `trace-v0.4.0` is on the
+remote and no npm release came out of it, so 0.3.0 is still the last version
+anyone can install and 0.4.1 is the first to carry the 0.4.0 section below —
+including its two breaking changes. Read that section as well when upgrading.
+
+### Fixed
+
+- **The recorder says what it dropped.** `maxEvents` is a ring, and reaching it
+  discarded the oldest event and recorded nothing about the discard. A trace
+  that lost four hundred thousand events was indistinguishable from one that
+  only ever had the last hundred thousand, so a reader could not tell a short
+  session from a clipped one. The header now carries `sampling` with
+  `dropPolicy: "head"` and `droppedTotal` whenever anything was dropped, and
+  carries no `sampling` key at all when nothing was — writing a zero would make
+  every complete trace look sampled.
+
+- **Dropping is no longer O(n) per event.** The ring dropped with
+  `Array.shift()`, which moves the whole backlog; at the default hundred
+  thousand retained events, every recorded event moved every retained one, and
+  it bit hardest exactly when the recorder was already under pressure. A head
+  index advances instead and the dead prefix is spliced away in one pass every
+  few thousand drops, which is O(1) amortised. The retained window is
+  unchanged.
+
 ## [0.4.0] - 2026-09-03
 
 **Breaking, which is why this is 0.4.0 and not 0.3.1.** Two changes to what

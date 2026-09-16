@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/trace",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "MoQT session trace format — record, serialize, and analyze .moqtrace files",
   "type": "module",
   "license": "MIT",
@@ -58,6 +58,6 @@
     "@moqtap/test-traces": "^0.1.1",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.2.7"
   }
 }

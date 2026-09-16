@@ -285,6 +285,62 @@ describe('TraceRecorder', () => {
     expect(labels).toEqual(['c', 'd', 'e'])
   })
 
+  it('reports what it dropped, rather than truncating silently', () => {
+    // A clipped trace and a short one look identical unless the drop is
+    // declared, and the format has a key for saying so. Without it, a trace
+    // that lost its first 400,000 events reads as one that only ever had the
+    // last few.
+    const recorder = createRecorder({
+      detail: 'control',
+      protocol: 'moq-transport-14',
+      perspective: 'client',
+      maxEvents: 3,
+      clock: () => 0,
+    })
+    for (const label of ['a', 'b', 'c', 'd', 'e']) recorder.annotate(label, null)
+
+    const trace = recorder.finalize()
+    expect(trace.header.sampling?.droppedTotal).toBe(2)
+    expect(trace.header.sampling?.dropPolicy).toBe('head')
+  })
+
+  it('says nothing about sampling when nothing was dropped', () => {
+    // Writing the key with a zero would make every complete trace look
+    // sampled, which is the same loss of information in the other direction.
+    const recorder = createRecorder({
+      detail: 'control',
+      protocol: 'moq-transport-14',
+      perspective: 'client',
+      maxEvents: 10,
+      clock: () => 0,
+    })
+    recorder.annotate('only', null)
+
+    expect(recorder.finalize().header.sampling).toBeUndefined()
+  })
+
+  it('keeps the newest window and an exact count across many drops', () => {
+    // Enough drops to cross the internal compaction threshold repeatedly, so
+    // the head-index bookkeeping is exercised rather than merely entered.
+    const recorder = createRecorder({
+      detail: 'control',
+      protocol: 'moq-transport-14',
+      perspective: 'client',
+      maxEvents: 3,
+      clock: () => 0,
+    })
+    for (let i = 0; i < 10_000; i++) recorder.annotate(`e${i}`, null)
+
+    const trace = recorder.finalize()
+    expect(trace.events).toHaveLength(3)
+    expect(trace.events.map((e) => (e.type === 'annotation' ? e.label : ''))).toEqual([
+      'e9997',
+      'e9998',
+      'e9999',
+    ])
+    expect(trace.header.sampling?.droppedTotal).toBe(9997)
+  })
+
   it('stops recording after finalize', () => {
     const recorder = createRecorder({
       detail: 'control',

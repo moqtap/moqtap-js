@@ -169,6 +169,18 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
 
   const events: TraceEvent[] = []
   /**
+   * Index of the oldest event still live in {@link events}.
+   *
+   * Dropping used to be `events.shift()`, which moves the whole backlog on
+   * every call; at a hundred thousand retained events that is O(n) per
+   * recorded event, and it bites hardest exactly when the recorder is already
+   * under pressure. The head advances instead, and the dead prefix is spliced
+   * away in one pass every few thousand drops, which is O(1) amortised.
+   */
+  let head = 0
+  /** Events dropped to stay under `maxEvents`, reported as `SamplingInfo`. */
+  let dropped = 0
+  /**
    * Flows whose bytes have already been recorded.
    *
    * The format allows `"raw"` once per flow — per stream where the error
@@ -188,8 +200,15 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
 
   function addEvent(event: TraceEvent): void {
     if (!_recording) return
-    if (events.length >= maxEvents) {
-      events.shift()
+    if (events.length - head >= maxEvents) {
+      head++
+      dropped++
+      // Compact in one pass rather than per drop. Bounded both ways so a small
+      // `maxEvents` does not accumulate a long dead prefix.
+      if (head >= 4096 || head >= maxEvents) {
+        events.splice(0, head)
+        head = 0
+      }
     }
     events.push(event)
   }
@@ -415,8 +434,14 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
         // same shape as one it reads. `writeMoqtrace` writes the store after
         // the keys above and drops any entry naming one of them.
         ...(options.extra != null ? { extra: options.extra } : {}),
+        // Only when something was actually dropped: the key's presence is
+        // what tells a reader this trace is incomplete, so writing it with a
+        // zero would make every complete trace look sampled.
+        ...(dropped > 0
+          ? { sampling: { dropPolicy: 'head' as const, droppedTotal: dropped } }
+          : {}),
       }
-      return { header, events: [...events] }
+      return { header, events: events.slice(head) }
     },
 
     get recording() {
