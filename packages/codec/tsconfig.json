@@ -1,15 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    // `tsc --build` typechecks; it does not emit. tsup owns `dist` -- it emits
+    // `tsc --build` typechecks and emits nothing. tsup owns `dist` -- it writes
     // the bundle, the .d.ts and the .cjs, and `clean: true` wipes the directory
-    // first. Pointing `outDir` here as well meant the two tools wrote the same
-    // filenames, and `typecheck` after `build` replaced the bundle with an
-    // unbundled compilation of the same sources plus a nested tree and a .map
-    // beside every file. A consumer then got two incompatible declarations for
-    // the same symbol, and the tarball -- which excludes `dist/*/` -- lost the
-    // subtree the surviving entry imported. Emitting nothing is what makes the
-    // collision impossible; a second output directory would only move it.
+    // first. An `outDir` here would put two tools on the same filenames, and
+    // the tarball excludes `dist/*/`, so the surviving entry point would import
+    // a subtree that is not in it.
     "noEmit": true,
     "composite": true
   },

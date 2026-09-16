@@ -72,3 +72,4 @@ samples/
 # `git add` can sweep one in by accident.
 packages/*/PROPOSAL-*.md
 packages/*/CORPUS-PLAN.md
+packages/*/BUNDLE-BUDGET.md

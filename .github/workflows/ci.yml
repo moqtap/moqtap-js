@@ -38,3 +38,106 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build
+
+      # The same check `publish-collector.yml` gates the release on, run here so
+      # a packaging break arrives with the pull request that caused it rather
+      # than at the tag. It reads `dist/`, so it has to follow `build` — and
+      # this is the only job that runs `build` at all.
+      - name: Smoke-test the built artefact
+        run: bun run smoke
+        working-directory: packages/collector
+
+  # Spec §7.1, decided: **no hard cap.** "10 KB was drawn before anything was
+  # built; it is a target worth keeping in view, not a limit worth shipping a
+  # worse collector to hit. What is not optional is *measuring* it… a standing
+  # dev-loop metric from day one, not a release-time audit. A change that moves
+  # it should be visible in the diff that caused it."
+  #
+  # So this job has no threshold and cannot fail on a number. It prints the
+  # table into the log and the step summary on every push, and on a pull request
+  # it measures the base commit too and leaves the delta as a comment, so a size
+  # change and the diff that caused it end up on the same page.
+  size:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      # Measured once, rendered three ways. `size` bundles from `src/` rather
+      # than from `dist/` — spec §7's method, because the published per-draft
+      # files are thin re-exports over shared chunks and measure nothing alone —
+      # so this job needs no build.
+      - name: Measure this commit
+        working-directory: packages/collector
+        run: bun run size --json --out "$RUNNER_TEMP/size-head.json" > /dev/null
+
+      - name: Check out the base commit
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      # A base commit from before this script landed has nothing to measure, and
+      # that is not a failure: the first pull request after this merges would
+      # otherwise report red for a reason nobody can act on. No baseline simply
+      # means absolute numbers and no delta column.
+      - name: Measure the base commit
+        if: github.event_name == 'pull_request'
+        working-directory: base
+        run: |
+          if [ ! -f packages/collector/scripts/size.ts ]; then
+            echo "base commit has no size script — reporting absolute sizes only"
+            exit 0
+          fi
+          bun install --frozen-lockfile
+          cd packages/collector
+          bun run size --json --out "$RUNNER_TEMP/size-base.json" > /dev/null
+
+      - name: Report
+        working-directory: packages/collector
+        run: |
+          COMPARE=""
+          if [ -f "$RUNNER_TEMP/size-base.json" ]; then
+            COMPARE="--compare $RUNNER_TEMP/size-base.json"
+          fi
+          bun run size --from "$RUNNER_TEMP/size-head.json" $COMPARE
+          bun run size --from "$RUNNER_TEMP/size-head.json" $COMPARE --markdown \
+            --out "$RUNNER_TEMP/size.md" > /dev/null
+          cat "$RUNNER_TEMP/size.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # A sticky comment: one marker, found and edited in place, so a busy pull
+      # request ends with one size comment rather than one per push.
+      #
+      # `continue-on-error` because a pull request from a fork gets a read-only
+      # `GITHUB_TOKEN` and this step cannot succeed there. The step summary
+      # above is written unconditionally and is the fallback — on a fork the
+      # number is still reported, it just loses its place next to the diff.
+      - name: Comment the delta on the pull request
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          MARKER: '<!-- moqtap-collector-size -->'
+        run: |
+          { echo "$MARKER"; cat "$RUNNER_TEMP/size.md"; } > "$RUNNER_TEMP/comment.md"
+          # `env.MARKER` inside the jq filter rather than shell interpolation:
+          # the marker is an HTML comment and would otherwise need escaping
+          # through two layers of quoting to land intact.
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+                 --jq '.[] | select(.body | startswith(env.MARKER)) | .id' | head -n1)
+          # `--input -` takes a JSON body on stdin, which is the one form that
+          # cannot mangle a markdown table full of backticks and pipes. The body
+          # is encoded with `bun`, which this job already installed, rather than
+          # with `jq`, which it would merely be assuming.
+          BODY=$(bun -e 'process.stdout.write(JSON.stringify({ body: require("fs").readFileSync(process.argv[1], "utf8") }))' "$RUNNER_TEMP/comment.md")
+          if [ -n "$ID" ]; then
+            echo "$BODY" | gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$ID" --input -
+          else
+            echo "$BODY" | gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --input -
+          fi
