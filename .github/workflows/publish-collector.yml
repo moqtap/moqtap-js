@@ -1,0 +1,70 @@
+name: Publish @moqtap/collector
+
+on:
+  push:
+    tags:
+      - 'collector-v*'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify package.json version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#collector-v}"
+          PKG_VERSION=$(node -p "require('./packages/collector/package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - run: bun install --frozen-lockfile
+
+      # Scoped to this package. A sibling's failing test must not block this
+      # release: the packages share a repository, not a release cadence.
+      # The build runs first because the checks below resolve this package by
+      # bare specifier through its `exports` map, which points at `dist/` --
+      # there is nothing to resolve until it has been built.
+      - run: bun run --cwd packages/codec build
+      - run: bun run --cwd packages/collector build
+      - run: ./node_modules/.bin/biome check packages/collector
+      - run: ./node_modules/.bin/tsc --build packages/collector
+      - run: bun run --cwd packages/collector test
+
+      # The checks above read `src/`. This one is the only thing in the repo
+      # that touches the artefact npm is about to upload: it
+      # packs the tarball, extracts it into a throwaway consumer's
+      # `node_modules`, resolves every `exports` entry by bare specifier in both
+      # ESM and CJS, typechecks the emitted `.d.ts` in a program holding none of
+      # this package's source, and asserts the §3.1 side-effect boundary — the
+      # main entry patches `globalThis.WebTransport`, the draft entries do not.
+      #
+      # It must run AFTER `build` and immediately BEFORE `publish`: `npm publish`
+      # re-packs from the same directory this step just read, so anything that
+      # writes to `dist/` in between would ship files this step never checked.
+      - name: Smoke-test the built artefact
+        run: bun run smoke
+        working-directory: packages/collector
+
+      # §7.1 wants the number on the record for every release too, not only on
+      # every pull request. Reported, never enforced — there is no cap.
+      - name: Report bundle size
+        run: bun run size
+        working-directory: packages/collector
+
+      - name: Publish @moqtap/collector
+        run: npm publish --access public
+        working-directory: packages/collector

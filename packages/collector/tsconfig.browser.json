@@ -1,0 +1,25 @@
+{
+  // The browser surface, kept honest.
+  //
+  // `tsconfig.json` typechecks this package together with its fault-injection
+  // harness, so `@types/node` is in that program: a `node:http` import pulls
+  // the whole package in, and its ambient `globals.d.ts` declares `Buffer`,
+  // `process`, `setImmediate` and `global` for every file, shipped source
+  // included. Nothing would then stop `src/envelope/body.ts` reaching for
+  // `Buffer.from` and typechecking clean — in a browser that is a runtime
+  // error. `"types": []` alone does not prevent it; the option governs only
+  // automatic inclusion.
+  //
+  // So the shipped source is typechecked a second time, alone, with no ambient
+  // type packages at all. The root `tsconfig.json` references this file, so
+  // `bun run typecheck` fails on a Node global in browser code. It emits
+  // nothing; `tsconfig.json` owns `dist`.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["src"],
+  "exclude": ["src/__tests__"]
+}

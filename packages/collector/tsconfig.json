@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // `tsc --build` typechecks and emits nothing. tsup owns `dist` -- it writes
+    // the bundle, the .d.ts and the .cjs, and `clean: true` wipes the directory
+    // first. An `outDir` here would put two tools on the same filenames, and
+    // the tarball excludes `dist/*/`, so the surviving entry point would import
+    // a subtree that is not in it.
+    "noEmit": true,
+    "composite": true
+  },
+  // Every test is typechecked, the fault-injection harness included, following
+  // `packages/trace` rather than `packages/codec` (which excludes all of
+  // `src/__tests__`). The harness starts an HTTP server and reads built bundles
+  // off disk, so `@types/node` is a devDependency here and its `node:` imports
+  // resolve.
+  //
+  // `tsconfig.browser.json` exists to pay the cost of that: one
+  // `import … from 'node:http'` anywhere in the program drags all of
+  // `@types/node` in, `globals.d.ts` included, so `Buffer`, `process`,
+  // `setImmediate` and `global` become visible to the *browser* source too.
+  // `"types": []` here cannot prevent it -- the option governs only automatic
+  // inclusion, not what a module import pulls in.
+  "include": ["src"]
+}

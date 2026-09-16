@@ -1,0 +1,16 @@
+# The `files` array in package.json is the whitelist that governs the tarball.
+# These two patterns are defence in depth for the directories it lets through
+# wholesale: a test tree added under either would otherwise ship, and that is
+# how a fixture holding real capture bytes escapes.
+src/__tests__/
+dist/__tests__/
+
+# Build state, never publishable.
+*.tsbuildinfo
+
+# tsup owns `dist` and the typecheck program emits nothing, so neither of these
+# should exist. They stay because an `outDir` pointed here would otherwise
+# publish a tarball whose entry point imports a subtree the `files` allowlist
+# filtered out of it.
+dist/**/*.map
+dist/*/

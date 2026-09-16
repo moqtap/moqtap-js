@@ -1,0 +1,213 @@
+{
+  "$comment": "Error-code wording for @moqtap/collector. Not imported by src/, so none of this text reaches a consumer's bundle. `bun run codes` regenerates ERROR-CODES.md from it.",
+  "package": "@moqtap/collector",
+  "schema": 1,
+  "blocks": {
+    "1": "configuration — init() and resolveConfig",
+    "2": "envelope — framing, body, idempotency, gzip",
+    "3": "ring and flight recorder",
+    "4": "customer metrics — defineMetric / observe",
+    "5": "flush, upload and the beacon tail",
+    "6": "transport seam and draft negotiation"
+  },
+  "codes": {
+    "MQ1001": {
+      "summary": "init() needs a config object",
+      "fatal": true,
+      "value": "the typeof what was passed",
+      "detail": "`init()` takes one argument and it must be an object. This is one of only three fatal configuration errors — it throws rather than reporting, because there is no useful collector to hand back and returning a silently inert one would hide the mistake until someone went looking for data that was never collected."
+    },
+    "MQ1002": {
+      "summary": "init() needs an apiKey",
+      "fatal": true,
+      "value": "none",
+      "detail": "There is no default and there cannot be one: without a key there is nothing to authorise the upload with. Fatal for the same reason as MQ1001 — a collector that cannot ever deliver is worse than a loud failure at the call site."
+    },
+    "MQ1003": {
+      "summary": "init() was given an endpoint that is not a usable string",
+      "fatal": true,
+      "value": "none",
+      "detail": "`endpoint` is optional: omit it and uploads go to the hosted ingest. Supplying one that is not a non-empty string is fatal rather than defaulted, because that is a typo in an override and quietly falling back would send traffic to an origin nobody chose. Whichever origin is in force is the one `connect-src` entry the page needs."
+    },
+    "MQ1004": {
+      "summary": "init() called while an earlier collector was still running",
+      "value": "none",
+      "detail": "`init()` was called again without `stop()` or `abort()` on the collector it returned last time. There is one hook on `globalThis.WebTransport` and one observer attached to it, so the newer collector takes over — your most recent intent — and the older one stops seeing traffic from that moment, reporting only what it had already buffered. Calling `init()` twice is supported when the first collector was stopped: a single-page application that switches channel may `stop()` and re-`init()` freely, and it need not await the `stop()` promise first. This code says only that nobody stopped the previous one, which is worth knowing because the older collector's session will look truncated for no reason visible in its own data."
+    },
+    "MQ1101": {
+      "summary": "expected a finite number at or above the minimum",
+      "value": "the rejected value, JSON-encoded",
+      "detail": "A numeric option was not a finite number, or fell below the minimum for that key. The default is used and the session continues. It is reported rather than clamped on purpose: a caller who wrote `intervalMs: -1` has a bug, and a collector that quietly runs at 60 s has hidden it from them."
+    },
+    "MQ1102": {
+      "summary": "expected a boolean",
+      "value": "the rejected value, JSON-encoded",
+      "detail": "A boolean option was not a boolean. This matters most for `privacy.maskAuthParams`, where a string `\"false\"` arriving out of JSON or an environment variable must not read as off — the safety default stays on and the problem is reported."
+    },
+    "MQ1103": {
+      "summary": "expected a string",
+      "value": "the typeof what was passed",
+      "detail": "A string option was not a string. The default is used and the session continues."
+    },
+    "MQ1104": {
+      "summary": "expected an object",
+      "value": "none",
+      "detail": "An option that groups other options — `metrics`, `upload`, `limits`, `flightRecorder`, `privacy` — was not an object. Every key under it falls back to its default."
+    },
+    "MQ1105": {
+      "summary": "expected a detail level on the lattice",
+      "value": "none",
+      "detail": "`detail` must be one of `baseline`, `headers`, `headers+sizes`, `headers+data`. Anything else is reported and the session stays at `baseline`. Nothing is guessed: `headers+size` is not silently read as `headers+sizes`, because a level is billable and a guess would spend money you did not agree to."
+    },
+    "MQ1106": {
+      "summary": "expected an array of draft numbers",
+      "value": "none",
+      "detail": "`drafts` pins which draft adapters are loaded eagerly. It must be an array; anything else is reported and the pin is treated as absent, which means one chunk is fetched at session time for whatever draft was actually negotiated."
+    },
+    "MQ1107": {
+      "summary": "unsupported draft in the pin; dropped",
+      "value": "the rejected draft, JSON-encoded",
+      "detail": "A draft number in `drafts` is not one this build ships an adapter for. It is dropped and the rest of the pin is kept. The pin is deliberately not emptied: an empty array reads as \"no pin\" to the loader, so emptying it would turn a typo into \"load anything\" — the opposite of what a pin is for."
+    },
+    "MQ1108": {
+      "summary": "flightRecorder.triggers must be an object keyed by trigger kind, not an array",
+      "value": "none",
+      "detail": "Both shapes have been documented at one time or another — `['stall','trackSwitch','cadence']` in one place and `{ multiple: 3 }` in another. The object won, because an array cannot carry the cadence trigger's `{ multiple, minSamples }`. An array is reported rather than ignored, so that a caller who copied the older form is told which one survived."
+    },
+    "MQ1109": {
+      "summary": "unknown trigger kind; ignored",
+      "value": "none",
+      "detail": "A key under `flightRecorder.triggers` is not `stall`, `trackSwitch` or `cadence`. It is ignored. Reported because a mistyped trigger is a trigger that silently never fires, which looks identical to a trigger that never had cause to."
+    },
+    "MQ1110": {
+      "summary": "expected an array of positive millisecond offsets",
+      "value": "none",
+      "detail": "`upload.earlyFlushesMs` is the front-loaded flush schedule — by default `ready`, then +5 s, +15 s and +45 s. It must be an array of positive millisecond offsets from `ready`."
+    },
+    "MQ1111": {
+      "summary": "expected a size string like '32MB' or a byte count",
+      "value": "none",
+      "detail": "`flightRecorder.depth` bounds the ring in bytes. It accepts either a byte count or a size string such as `'32MB'`. It is deliberately never expressed in seconds: how many seconds a given depth buys depends on object rate and bitrate, which vary per session."
+    },
+    "MQ1112": {
+      "summary": "unknown config key; ignored",
+      "value": "none",
+      "detail": "A top-level key on the config object is not one `CollectorConfig` accepts. It is ignored, and reported because a config typo is otherwise completely silent — `detial: 'headers'` type-checks against an excess-property check only at a literal call site, and not at all when the object arrives from JSON."
+    },
+    "MQ2001": {
+      "summary": "frame payload exceeds what a 31-bit length can carry",
+      "value": "the payload length in bytes",
+      "detail": "Bit 31 of a frame's u32 length prefix is the type tag — set means raw bytes, clear means JSON — so a frame length must stay below 2^31. This is unreachable in normal operation: a batch seals at about 32 KB and the beacon caps near 64 KB."
+    },
+    "MQ2002": {
+      "summary": "readFrames was given a whole body, not a frame stream",
+      "value": "none",
+      "detail": "The bytes still carry the 8-byte body preamble. Skip `BODY_PREAMBLE_BYTES` first, and gunzip first if the preamble's gzip flag is set."
+    },
+    "MQ2003": {
+      "summary": "truncated frame prefix",
+      "value": "the offset, then the bytes remaining",
+      "detail": "Fewer than four bytes remain where a frame's length prefix should start. The body was cut short or is not a frame stream."
+    },
+    "MQ2004": {
+      "summary": "truncated frame",
+      "value": "the offset, the declared length, then the bytes remaining",
+      "detail": "A frame's length prefix declares more bytes than the body still holds."
+    },
+    "MQ2101": {
+      "summary": "segmentSeq must be a non-negative safe integer",
+      "value": "the rejected value",
+      "detail": "The idempotency key is `sha256(sessionId:segmentSeq)` and ingest dedupes on it exactly. A non-numeric or fractional sequence collapses every chunk onto one key, so ingest keeps the first body and silently discards the rest — the session is under-reported and nothing anywhere says so. Rejected at the call site instead."
+    },
+    "MQ2102": {
+      "summary": "crypto.subtle is unavailable",
+      "value": "none",
+      "detail": "Usually an insecure context: `crypto.subtle` is absent outside HTTPS and localhost. Use `idempotencyKeySync` and set `BatchRecord.keyFallback`, which tells ingest the key came from the weaker synchronous derivation and should be treated accordingly."
+    },
+    "MQ2201": {
+      "summary": "CompressionStream('gzip') is unavailable",
+      "value": "none",
+      "detail": "Compression is an optimisation, not a correctness requirement, so the caller that catches this ships the body uncompressed with the preamble's gzip flag clear. Losing a batch to a missing compressor would trade a measurement for a compression ratio."
+    },
+    "MQ3001": {
+      "summary": "maxBytes must be a positive byte count",
+      "value": "the rejected value",
+      "detail": "The ring is bounded in bytes and the bound has to be a positive count."
+    },
+    "MQ3002": {
+      "summary": "maxEntries must be at least 1",
+      "value": "the rejected value",
+      "detail": "Entry slots default to `maxBytes / 512` clamped to [64, 65536], on an assumed 512-byte mean chunk. An explicit value must still leave room for one entry."
+    },
+    "MQ3003": {
+      "summary": "byte depth must be a positive byte count",
+      "value": "the rejected value",
+      "detail": "A depth given as a number must be a positive count of bytes. Zero and negatives are refused rather than treated as \"unbounded\" or \"disabled\": a ring with no bound is the one thing the memory budget exists to rule out, and there are explicit ways to turn the recorder off."
+    },
+    "MQ3004": {
+      "summary": "byte depth must be a size string or a byte count",
+      "value": "the rejected value, JSON-encoded",
+      "detail": "Accepts a byte count, or a string such as `'32MB'`. Anything else is refused rather than guessed at."
+    },
+    "MQ3005": {
+      "summary": "unknown byte-depth unit",
+      "value": "the unrecognised unit, JSON-encoded",
+      "detail": "The numeric part parsed but the suffix is not a unit this parser knows. Refused rather than assumed, because assuming the wrong unit is a ring three orders of magnitude off the size that was asked for."
+    },
+    "MQ4001": {
+      "summary": "defineMetric: name must be a non-empty string",
+      "value": "none",
+      "detail": "A metric is identified by its name on the wire; an empty one cannot be joined to anything at ingest."
+    },
+    "MQ4002": {
+      "summary": "defineMetric: agg must be sum, gauge or histogram",
+      "value": "the metric name",
+      "detail": "There is deliberately no `percentile` aggregation. One device's p95 cannot be merged with another's at any later point, so a pre-computed percentile is unusable fleet-wide — the histogram is what merges, by elementwise addition. This is a runtime refusal as well as a type error, because a JavaScript caller has no types to stop them."
+    },
+    "MQ4003": {
+      "summary": "defineMetric: already defined with different terms",
+      "value": "the metric name, then the existing agg/unit",
+      "detail": "Re-registering the same name with the same unit and aggregation is accepted and does nothing. Changing either mid-session is refused: it would produce one series whose meaning changes halfway through, which no downstream merge can repair and nothing downstream can detect."
+    },
+    "MQ4004": {
+      "summary": "defineMetric: metric cap reached",
+      "value": "the metric name, then the cap",
+      "detail": "Bounded so that a caller generating metric names from data — a name per track, per user, per URL — costs a fixed amount rather than an unbounded one. Past the cap new metrics are refused; those already registered keep working."
+    },
+    "MQ4005": {
+      "summary": "defineMetric: buckets must be finite and strictly ascending",
+      "value": "the metric name",
+      "detail": "Histogram boundaries have to be a valid ladder. An unusable ladder is refused outright rather than silently replaced by the default one, because a silently substituted ladder produces a series that looks right and merges wrong."
+    },
+    "MQ4006": {
+      "summary": "observe: no metric registered under that name",
+      "value": "the metric name",
+      "detail": "Registration is mandatory. `observe()` may be called per group, per object, per frame, so it cannot afford to infer a shape from the first sample — and a metric whose aggregation was inferred from one sample is a metric that means something different on the next device."
+    },
+    "MQ4007": {
+      "summary": "observe: too many labels",
+      "value": "the metric name, then the cap",
+      "detail": "Each distinct label set is its own series, so unbounded labels are unbounded cost. The extra labels are dropped and the observation is kept."
+    },
+    "MQ4008": {
+      "summary": "further metric errors suppressed for this session",
+      "value": "none",
+      "detail": "Appended once when the per-session error-report budget is spent. `observe()` sits on a hot path, so a mistake there repeats thousands of times a session; reporting each one would turn a small bug into a flood in the host application's error channel."
+    },
+    "MQ5001": {
+      "summary": "tail segment refused by both sendBeacon and keepalive fetch",
+      "value": "the segment size in bytes",
+      "detail": "The last segment of a session is delivered on `pagehide`, when the page is going away and an ordinary `fetch` will not survive. Both paths refused it — usually because it exceeds the platform's beacon cap, around 64 KB. It is not persisted, so it is lost; everything already sealed and queued is unaffected and goes out on the next page load."
+    },
+    "MQ5002": {
+      "summary": "drain deadline expired",
+      "value": "the deadline in milliseconds",
+      "detail": "`stop()` is awaited by a page tearing down, so the drain is bounded. Expiry is not data loss: the chunk stays queued and persisted, and the next page load sends it. The deadline gives up on the attempt, never on the data."
+    },
+    "MQ6001": {
+      "summary": "WebTransport collection exposes no values()",
+      "value": "none",
+      "detail": "A collection the hook needs to iterate is not iterable in the way the platform specifies. Reported rather than thrown into the page, and that seam goes uninstrumented for the session."
+    }
+  }
+}

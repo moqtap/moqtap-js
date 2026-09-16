@@ -1,0 +1,154 @@
+{
+  "name": "@moqtap/collector",
+  "version": "0.1.0",
+  "description": "MoQT session collector \u2014 dormant WebTransport hook, counting decoder, and metered upload envelope",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "moqtap",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moqtap/moqtap-js.git",
+    "directory": "packages/collector"
+  },
+  "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/collector",
+  "bugs": "https://github.com/moqtap/moqtap-js/issues",
+  "keywords": [
+    "moqt",
+    "moq",
+    "media-over-quic",
+    "webtransport",
+    "collector",
+    "observability",
+    "telemetry",
+    "rum",
+    "streaming",
+    "monitoring"
+  ],
+  "sideEffects": [
+    "./src/index.ts",
+    "./dist/index.js",
+    "./dist/index.cjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./draft07": {
+      "bun": "./src/drafts/draft07/entry.ts",
+      "types": "./dist/draft07.d.ts",
+      "import": "./dist/draft07.js",
+      "require": "./dist/draft07.cjs"
+    },
+    "./draft08": {
+      "bun": "./src/drafts/draft08/entry.ts",
+      "types": "./dist/draft08.d.ts",
+      "import": "./dist/draft08.js",
+      "require": "./dist/draft08.cjs"
+    },
+    "./draft09": {
+      "bun": "./src/drafts/draft09/entry.ts",
+      "types": "./dist/draft09.d.ts",
+      "import": "./dist/draft09.js",
+      "require": "./dist/draft09.cjs"
+    },
+    "./draft10": {
+      "bun": "./src/drafts/draft10/entry.ts",
+      "types": "./dist/draft10.d.ts",
+      "import": "./dist/draft10.js",
+      "require": "./dist/draft10.cjs"
+    },
+    "./draft11": {
+      "bun": "./src/drafts/draft11/entry.ts",
+      "types": "./dist/draft11.d.ts",
+      "import": "./dist/draft11.js",
+      "require": "./dist/draft11.cjs"
+    },
+    "./draft12": {
+      "bun": "./src/drafts/draft12/entry.ts",
+      "types": "./dist/draft12.d.ts",
+      "import": "./dist/draft12.js",
+      "require": "./dist/draft12.cjs"
+    },
+    "./draft13": {
+      "bun": "./src/drafts/draft13/entry.ts",
+      "types": "./dist/draft13.d.ts",
+      "import": "./dist/draft13.js",
+      "require": "./dist/draft13.cjs"
+    },
+    "./draft14": {
+      "bun": "./src/drafts/draft14/entry.ts",
+      "types": "./dist/draft14.d.ts",
+      "import": "./dist/draft14.js",
+      "require": "./dist/draft14.cjs"
+    },
+    "./draft15": {
+      "bun": "./src/drafts/draft15/entry.ts",
+      "types": "./dist/draft15.d.ts",
+      "import": "./dist/draft15.js",
+      "require": "./dist/draft15.cjs"
+    },
+    "./draft16": {
+      "bun": "./src/drafts/draft16/entry.ts",
+      "types": "./dist/draft16.d.ts",
+      "import": "./dist/draft16.js",
+      "require": "./dist/draft16.cjs"
+    },
+    "./draft17": {
+      "bun": "./src/drafts/draft17/entry.ts",
+      "types": "./dist/draft17.d.ts",
+      "import": "./dist/draft17.js",
+      "require": "./dist/draft17.cjs"
+    },
+    "./draft18": {
+      "bun": "./src/drafts/draft18/entry.ts",
+      "types": "./dist/draft18.d.ts",
+      "import": "./dist/draft18.js",
+      "require": "./dist/draft18.cjs"
+    },
+    "./draft19": {
+      "bun": "./src/drafts/draft19/entry.ts",
+      "types": "./dist/draft19.d.ts",
+      "import": "./dist/draft19.js",
+      "require": "./dist/draft19.cjs"
+    },
+    "./draft20": {
+      "bun": "./src/drafts/draft20/entry.ts",
+      "types": "./dist/draft20.d.ts",
+      "import": "./dist/draft20.js",
+      "require": "./dist/draft20.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/__tests__",
+    "!dist/__tests__",
+    "CHANGELOG.md",
+    "ERROR-CODES.md",
+    "error-codes.json"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "size": "bun run scripts/size.ts",
+    "smoke": "bun run scripts/smoke.ts",
+    "codes": "bun run scripts/error-codes.ts"
+  },
+  "peerDependencies": {
+    "@moqtap/codec": "*"
+  },
+  "devDependencies": {
+    "@moqtap/codec": "workspace:*",
+    "@moqtap/test-vectors": "^0.16.0",
+    "@types/node": "^24.13.3",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.7"
+  }
+}
