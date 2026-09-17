@@ -1,13 +1,11 @@
 # @moqtap/codec
 
-MoQT (Media over QUIC Transport) wire-format codec and session state machine for JavaScript/TypeScript.
+MoQT (Media over QUIC Transport) wire-format codec and session state machine for
+JavaScript and TypeScript. Stateless encode and decode of every control message
+and data stream, plus an FSM that validates message ordering per draft.
 
-- Multi-draft support (drafts 07 through 20)
-- Stateless encode/decode of all MoQT control messages and data streams
-- Protocol session state machine with FSM-based validation per draft
-- Zero runtime dependencies
-- Works in Node.js, Bun, and browsers
-- Full TypeScript types with discriminated unions
+Drafts 07 through 21, zero runtime dependencies, full TypeScript types with
+discriminated unions. Runs in Node.js, Bun, and browsers.
 
 ## Install
 
@@ -17,91 +15,66 @@ npm install @moqtap/codec
 
 ## Quick Start
 
-MoQT is pre-RFC, so a draft version must always be specified. Use draft-scoped imports for the best experience:
+MoQT is pre-RFC, so a draft version is always explicit. Draft-scoped imports
+give the tightest types and pull in only that draft:
 
 ```typescript
-import { createDraft07Codec, DRAFT_VERSION } from '@moqtap/codec/draft07'
+import { createDraft21Codec } from '@moqtap/codec/draft21'
 
-const codec = createDraft07Codec()
+const codec = createDraft21Codec()
 
-// Decode a message from bytes
+const bytes = codec.encodeMessage({
+  type: 'setup',
+  options: { moqt_implementation: 'my-app/1.0' },
+})
+
 const result = codec.decodeMessage(bytes)
 if (result.ok) {
-  console.log(result.value.type) // e.g. 'subscribe'
+  console.log(result.value.type) // 'setup'
+} else {
+  console.error(result.error)
 }
-
-// Encode a message to bytes
-const encoded = codec.encodeMessage({
-  type: 'client_setup',
-  supportedVersions: [DRAFT_VERSION],
-  parameters: new Map(),
-})
 ```
 
-Or use the factory if your application supports multiple drafts:
+If your application supports several drafts, the root factory picks one at
+runtime:
 
 ```typescript
-import { createCodec, DRAFT_VERSIONS } from '@moqtap/codec'
+import { createCodec } from '@moqtap/codec'
 
-const codec = createCodec({ draft: '20' }) // '07' through '20'
-
-// DRAFT_VERSIONS provides version identifiers under short aliases:
-//   DRAFT_VERSIONS['07'] — 0xff000007n, a real draft-07 wire value
-//   DRAFT_VERSIONS['20'] — 0xff000014n, derived; see the note below
+const codec = createCodec({ draft: '21' }) // '07' through '21'
 ```
 
-## Subpath Exports
+## Exports
 
-Each draft is available as a subpath import with its own codec and session state machine:
+| Import path                           | Contents                                                      |
+| ------------------------------------- | ------------------------------------------------------------- |
+| `@moqtap/codec`                       | `createCodec({ draft })`, cross-draft accessors, shared types  |
+| `@moqtap/codec/session`               | `createSessionState({ codec: { draft }, role })`               |
+| `@moqtap/codec/draft{07..21}`         | One draft's codec, message types and constants                 |
+| `@moqtap/codec/draft{07..21}/session` | One draft's session state machine                              |
 
-| Import path                      | Description                                       |
-| -------------------------------- | ------------------------------------------------- |
-| `@moqtap/codec`                  | Factory + shared types (`createCodec({ draft })`) |
-| `@moqtap/codec/draft07`          | Draft-07 codec                                    |
-| `@moqtap/codec/draft08`          | Draft-08 codec                                    |
-| `@moqtap/codec/draft09`          | Draft-09 codec                                    |
-| `@moqtap/codec/draft10`          | Draft-10 codec                                    |
-| `@moqtap/codec/draft11`          | Draft-11 codec                                    |
-| `@moqtap/codec/draft12`          | Draft-12 codec                                    |
-| `@moqtap/codec/draft13`          | Draft-13 codec                                    |
-| `@moqtap/codec/draft14`          | Draft-14 codec                                    |
-| `@moqtap/codec/draft15`          | Draft-15 codec                                    |
-| `@moqtap/codec/draft16`          | Draft-16 codec                                    |
-| `@moqtap/codec/draft17`          | Draft-17 codec                                    |
-| `@moqtap/codec/draft18`          | Draft-18 codec                                    |
-| `@moqtap/codec/draft19`          | Draft-19 codec                                    |
-| `@moqtap/codec/draft20`          | Draft-20 codec                                    |
-| `@moqtap/codec/draft21`          | Draft-21 codec                                    |
-| `@moqtap/codec/draft{N}/session` | Session state machine for draft N                 |
+Each draft module exports `createDraft{NN}Codec()`, `DRAFT_VERSION`, and that
+draft's message types.
 
-> **Note:** A default (versionless) codec will be available once the MoQT specification reaches RFC status. Until then, always specify a draft version.
+## Draft versions
 
-`DRAFT_VERSIONS` is a table of numeric keys, and only the entries up to `'14'` are values a peer
-ever puts on the wire. From draft-15 the version is negotiated by ALPN (raw QUIC) or
-`WT-Available-Protocols` (WebTransport) as the string `moqt-NN`, and no version number is sent at
-all — so `DRAFT_VERSIONS['21']` is a derived identifier, not something observed. Each draft module
-from 15 on exports the real one:
+Through draft-14 the version is negotiated in band and `0xff0000NN` travels on
+the wire; those are the `DRAFT_VERSIONS['07']` through `DRAFT_VERSIONS['14']`
+entries. From draft-15 the version is negotiated by ALPN (raw QUIC) or
+`WT-Available-Protocols` (WebTransport) as the string `moqt-NN`, and no version
+number is sent at all — so the entries above `'14'` are derived identifiers, not
+values a peer ever puts on the wire. Report the protocol string instead:
 
 ```typescript
 import { PROTOCOL_STRING } from '@moqtap/codec/draft21' // 'moqt-21'
 ```
 
-## Draft-Specific Imports
+## Reading across drafts
 
-For applications targeting a single draft version:
-
-```typescript
-import { createDraft17Codec } from '@moqtap/codec/draft17'
-import { createDraft17SessionState } from '@moqtap/codec/draft17/session'
-```
-
-## Reading Across Drafts
-
-Each draft gets its own message model, because the drafts genuinely differ — a
-track alias travels in SUBSCRIBE through draft-11 and in SUBSCRIBE_OK from
-draft-12; a request is a `subscribe_id` through draft-10 and a `request_id`
-after it. Code that spans drafts can ask for the answer instead of tracking
-where each version keeps it:
+A field moves between messages as the drafts evolve — a track alias travels in
+SUBSCRIBE through draft-11 and in SUBSCRIBE_OK from draft-12. Code spanning
+drafts can ask for the answer instead of tracking where each version keeps it:
 
 ```typescript
 import { joiningRequestIdOf, requestIdOf, trackAliasOf, trackOf } from '@moqtap/codec'
@@ -110,8 +83,8 @@ const decoded = codec.decodeMessage(bytes)
 if (decoded.ok) {
   requestIdOf(decoded.value) // bigint, whichever name this draft uses
   trackAliasOf(decoded.value) // bigint, or undefined if not assigned yet
-  trackOf(decoded.value) // { namespace, name }, or undefined if none is named
-  joiningRequestIdOf(decoded.value) // for a joining FETCH: the request it continues
+  trackOf(decoded.value) // the track this message names, or undefined
+  joiningRequestIdOf(decoded.value) // for a joining FETCH, the request it continues
 }
 ```
 
@@ -119,20 +92,24 @@ Each returns `undefined` when the message does not carry the field, including
 when the draft has not assigned it yet — `trackAliasOf` on a draft-14 SUBSCRIBE
 is `undefined` because the publisher chooses the alias in SUBSCRIBE_OK.
 
-## Session State Machine
+## Session state machine
 
-Validate protocol message sequences without transport coupling:
+Validates protocol message sequences without transport coupling:
 
 ```typescript
-import { createDraft17SessionState } from '@moqtap/codec/draft17/session'
+import { createDraft21SessionState } from '@moqtap/codec/draft21/session'
 
-const session = createDraft17SessionState('client')
+const session = createDraft21SessionState('client')
 
 const result = session.receive(incomingMessage)
 if (!result.ok) {
   console.error('Protocol violation:', result.violation)
 }
 ```
+
+## Documentation
+
+<https://moqtap.com/npm-packages/moqtap-codec/>
 
 ## License
 
