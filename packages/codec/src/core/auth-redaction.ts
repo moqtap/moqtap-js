@@ -46,8 +46,6 @@
  * the capture, runs one decode to completion, and closes it in a `finally`.
  * There is no `await` between those points, so no second capture can interleave
  * with the first.
- *
- * Spec of record: `wt-logging-1-collector.md` Section 1.6.
  */
 
 /**

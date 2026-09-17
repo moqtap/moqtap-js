@@ -41,6 +41,8 @@ import * as draft19Codes from '../drafts/draft19/error-codes.js'
 import * as draft19Entry from '../drafts/draft19/index.js'
 import * as draft20Codes from '../drafts/draft20/error-codes.js'
 import * as draft20Entry from '../drafts/draft20/index.js'
+import * as draft21Codes from '../drafts/draft21/error-codes.js'
+import * as draft21Entry from '../drafts/draft21/index.js'
 
 type Module = Record<string, unknown>
 
@@ -65,6 +67,7 @@ const CASES: Case[] = [
   { draft: '18', entry: draft18Entry, codes: draft18Codes },
   { draft: '19', entry: draft19Entry, codes: draft19Codes },
   { draft: '20', entry: draft20Entry, codes: draft20Codes },
+  { draft: '21', entry: draft21Entry, codes: draft21Codes },
 ]
 
 /** A registry is a frozen object of code points; draft-20 also exports Sets. */
@@ -89,6 +92,7 @@ describe('error-code registries', () => {
       '18',
       '19',
       '20',
+      '21',
     ])
   })
 

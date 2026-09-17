@@ -264,7 +264,7 @@ function encodeAuthorizationToken(token: AuthorizationToken, w: BufferWriter): v
 
 /**
  * Record where a Token Value sits, so it can be overwritten before the frame
- * reaches anything that keeps it (Section 1.6).
+ * reaches anything that keeps it.
  *
  * The span falls out of the decode with no second walk. The Token Value is the
  * tail of the Token structure — draft-20 Section 10.2.2, Figure 5: it is NOT

@@ -64,6 +64,7 @@ import * as draft17 from '../drafts/draft17/index.js'
 import * as draft18 from '../drafts/draft18/index.js'
 import * as draft19 from '../drafts/draft19/index.js'
 import * as draft20 from '../drafts/draft20/index.js'
+import * as draft21 from '../drafts/draft21/index.js'
 import { DRAFT_VERSIONS } from '../index.js'
 import { loadVectorDir } from './helpers.js'
 
@@ -101,6 +102,7 @@ const DRAFTS: readonly Draft[] = [
   { draft: '18', types: draft18.MESSAGE_TYPE_MAP, ids: draft18.MESSAGE_ID_MAP },
   { draft: '19', types: draft19.MESSAGE_TYPE_MAP, ids: draft19.MESSAGE_ID_MAP },
   { draft: '20', types: draft20.MESSAGE_TYPE_MAP, ids: draft20.MESSAGE_ID_MAP },
+  { draft: '21', types: draft21.MESSAGE_TYPE_MAP, ids: draft21.MESSAGE_ID_MAP },
 ]
 
 /**
@@ -141,6 +143,7 @@ const ALIASES: readonly Alias[] = [
   { draft: '18', alias: 'publish_ok', canonical: 'request_ok' },
   { draft: '19', alias: 'publish_ok', canonical: 'request_ok' },
   { draft: '20', alias: 'publish_ok', canonical: 'request_ok' },
+  { draft: '21', alias: 'publish_ok', canonical: 'request_ok' },
 ]
 
 /**
@@ -300,15 +303,18 @@ function namesAgreeWithTheCorpus({ draft, types }: Draft): void {
  *
  * A per-draft comparison catches a map wired to the wrong draft only where the
  * two drafts disagree about something, so which drafts agree completely is the
- * measure of what the fourteen tests above cannot see. Drafts 08, 09 and 10
+ * measure of what the fifteen tests above cannot see. Drafts 08, 09 and 10
  * assign exactly the same ids to exactly the same names, so those three tables
- * are interchangeable as far as any corpus check can tell; every other pair in
- * the range differs somewhere and is held apart by its own test.
+ * are interchangeable as far as any corpus check can tell. Draft-21 restructures
+ * draft-20 without changing the wire, so it assigns every id exactly as draft-20
+ * does and the two are told apart only by the protocol string they negotiate,
+ * `moqt-21` against `moqt-20`. Every other pair in the range differs somewhere
+ * and is held apart by its own test.
  *
  * Written down rather than derived, so a draft joining or leaving the run is a
  * change to this list.
  */
-const IDENTICAL_TABLES: readonly string[] = ['08/09', '08/10', '09/10']
+const IDENTICAL_TABLES: readonly string[] = ['08/09', '08/10', '09/10', '20/21']
 
 /** One draft's table as a comparable string, in id order. */
 function tableShape(types: ReadonlyMap<bigint, string>): string {

@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/codec",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "MoQT wire-format codec and session state machine — multi-draft, zero dependencies",
   "type": "module",
   "license": "MIT",
@@ -208,6 +208,18 @@
       "types": "./dist/draft20-session.d.ts",
       "import": "./dist/draft20-session.js",
       "require": "./dist/draft20-session.cjs"
+    },
+    "./draft21": {
+      "bun": "./src/drafts/draft21/index.ts",
+      "types": "./dist/draft21.d.ts",
+      "import": "./dist/draft21.js",
+      "require": "./dist/draft21.cjs"
+    },
+    "./draft21/session": {
+      "bun": "./src/drafts/draft21/session.ts",
+      "types": "./dist/draft21-session.d.ts",
+      "import": "./dist/draft21-session.js",
+      "require": "./dist/draft21-session.cjs"
     }
   },
   "files": [
@@ -221,7 +233,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@moqtap/test-vectors": "^0.16.0",
+    "@moqtap/test-vectors": "^0.17.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.2.7"

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [0.12.0] - 2026-09-17
+
+### Added
+
+- **draft-21, as `@moqtap/codec/draft21` and `createCodec({ draft: '21' })`.**
+  Draft-21 restructures draft-20 and changes nothing on the wire: every code
+  point, every table row and every wire diagram is identical, so the codec, the
+  message and data-stream tables, the wire rules, the error registries and the
+  session FSM are draft-20's. The two are told apart only by what they
+  negotiate, `moqt-21` against `moqt-20`.
+
+  `message-type-names.test.ts` records that as a fact rather than a claim:
+  `20/21` joins the list of draft pairs whose whole name table coincides, which
+  until now held only drafts 08, 09 and 10.
+
+  What did move is where the draft says things -- 200 numbered sections became
+  214 and only 11 keep both their title and their number -- so every citation
+  in the new module is retargeted, two figure references with them. Requires
+  `@moqtap/test-vectors` 0.17.0, which adds the draft-21 corpus.
+
+### Fixed
+
+- **A private path no longer ships in the package.** Three source files carried
+  a "Spec of record" reference to an internal planning document. `files`
+  includes `src`, and the generated `dist/*.d.ts` reproduced it, so the path was
+  in the published tarball. The comments now say why the code is as it is
+  without naming the document.
+
 ## [0.11.0] - 2026-09-17
 
 ### Added

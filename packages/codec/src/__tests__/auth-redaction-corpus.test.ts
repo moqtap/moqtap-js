@@ -80,6 +80,10 @@ import {
   decodeMessage as decodeMessage20,
   redactAuthTokens as redact20,
 } from '../drafts/draft20/index.js'
+import {
+  decodeMessage as decodeMessage21,
+  redactAuthTokens as redact21,
+} from '../drafts/draft21/index.js'
 import { hexToBytes, loadVectorDir, type TestVector } from './helpers.js'
 
 interface SecretBearing {
@@ -159,6 +163,7 @@ const MIN_VECTORS: Readonly<Record<string, number>> = {
   '18': 11,
   '19': 11,
   '20': 11,
+  '21': 11,
 }
 
 const DRAFTS = [
@@ -176,6 +181,7 @@ const DRAFTS = [
   { draft: '18', redact: redact18, decode: decodeMessage18 },
   { draft: '19', redact: redact19, decode: decodeMessage19 },
   { draft: '20', redact: redact20, decode: decodeMessage20 },
+  { draft: '21', redact: redact21, decode: decodeMessage21 },
 ].map((d) => ({ ...d, name: `draft-${d.draft}`, vectors: secretBearingVectors(d.draft) }))
 
 describe.each(DRAFTS)('$name corpus', ({ draft, vectors, redact, decode }) => {

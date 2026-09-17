@@ -11,11 +11,10 @@
  * authenticate and one that never tried, which is the distinction the control
  * plane is being collected for in the first place.
  *
- * Both drafts the collector loads are covered, because the parameter numbering
- * and the option numbering are per-draft facts, and a shared implementation is
- * exactly the thing that drifts.
- *
- * Spec of record: `wt-logging-1-collector.md` Section 1.6.
+ * Two drafts are covered here at fixture level, because the parameter numbering
+ * and the option numbering are per-draft facts and a shared implementation is
+ * exactly the thing that drifts. `auth-redaction-corpus.test.ts` runs the same
+ * property over every draft the package ships.
  */
 
 import { describe, expect, it } from 'vitest'
