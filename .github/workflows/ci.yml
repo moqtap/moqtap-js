@@ -69,8 +69,15 @@ jobs:
 
       # Measured once, rendered three ways. `size` bundles from `src/` rather
       # than from `dist/` — spec §7's method, because the published per-draft
-      # files are thin re-exports over shared chunks and measure nothing alone —
-      # so this job needs no build.
+      # files are thin re-exports over shared chunks and measure nothing alone.
+      #
+      # It still has to build first. The static entry is measured with the codec
+      # external, but the per-draft entries are measured with it *inlined*, so
+      # `bun build` resolves `@moqtap/codec/draftNN` through the codec's exports
+      # map into `dist/`, which a fresh checkout does not have. Without this the
+      # job dies on `Could not resolve: "@moqtap/codec/draft07"`.
+      - run: bun run build
+
       - name: Measure this commit
         working-directory: packages/collector
         run: bun run size --json --out "$RUNNER_TEMP/size-head.json" > /dev/null
@@ -95,6 +102,7 @@ jobs:
             exit 0
           fi
           bun install --frozen-lockfile
+          bun run build
           cd packages/collector
           bun run size --json --out "$RUNNER_TEMP/size-base.json" > /dev/null
 
