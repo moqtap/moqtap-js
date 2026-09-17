@@ -1,5 +1,5 @@
 /**
- * The hand-rolled data-stream header walks, shared by all fourteen draft
+ * The hand-rolled data-stream header walks, shared by all fifteen draft
  * adapters.
  *
  * No exported `@moqtap/codec` function reports a header's byte length without
@@ -21,7 +21,7 @@
  * up to that cap. Parsing on regardless would mean plausible wrong numbers
  * rather than a gap.
  *
- * One file for fourteen drafts because duplicating a wire-format constant has
+ * One file for fifteen drafts because duplicating a wire-format constant has
  * already cost this workspace months
  * (`extension/src/detect/uni-control-prefix.ts`, where a duplicated `6f 00`
  * meant no draft-17+ control stream ever matched). Every delta is a named field
@@ -78,7 +78,7 @@ export const PRESENT_ALWAYS = 1
 export const PRESENT_BIT0 = 2
 
 /**
- * Every place the fourteen drafts disagree on a data stream.
+ * Every place the fifteen drafts disagree on a data stream.
  *
  * One row per draft lives in `src/drafts/draftNN/index.ts`. Each field names the
  * codec decoder it was verified against; none was inferred from a neighbour.
@@ -127,10 +127,10 @@ export interface WalkDialect {
   /**
    * Whether a value is one of this draft's SUBGROUP_HEADER types.
    *
-   * Five distinct shapes across the fourteen: `0x04` exactly (07-10),
+   * Five distinct shapes across the fifteen: `0x04` exactly (07-10),
    * `0x08-0x0D` (11), `0x10-0x15` plus `0x18-0x1D` (12-14), `0x10-0x1F` plus
    * `0x30-0x3F` with the reserved SUBGROUP_ID_MODE excluded (15-16), and
-   * "under 0x80, bit 4 set, mode not reserved" (17-20).
+   * "under 0x80, bit 4 set, mode not reserved" (17-21).
    */
   readonly isSubgroupType: (v: number) => boolean
   /**
@@ -245,7 +245,7 @@ const FETCH_STREAM_TYPE = 0x05
  * First-byte stream sniff. **Heuristic, not authoritative** — `'unknown'` is an
  * ordinary outcome.
  *
- * `0x05` opens a FETCH_HEADER in every draft 07 through 20. The subgroup set is
+ * `0x05` opens a FETCH_HEADER in every draft 07 through 21. The subgroup set is
  * per draft. {@link WalkDialect.controlOpener} is `0xaf` from draft-17 and `-1`
  * before it, where control travels bidirectionally and the dispatcher knows that
  * from the seam rather than from a byte.

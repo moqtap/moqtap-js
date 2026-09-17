@@ -15,7 +15,7 @@
  *    here would move 5.3 KB gz per draft into the static graph and, with both
  *    drafts named, defeat the entire per-draft split.
  *  - Anything from `@moqtap/codec` itself. The root and `/session` entries
- *    statically import all fourteen drafts (39.6 KB gz against 5.3 KB); only
+ *    statically import every draft (39.6 KB gz against 5.3 KB); only
  *    `src/drafts/draftNN/index.ts` may name a codec entry, and only a per-draft
  *    one, and only as a static string literal. `tsup.config.ts` scans for the
  *    violation at config load.

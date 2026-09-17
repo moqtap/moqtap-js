@@ -9,8 +9,8 @@
  * **This module is the boundary of the draft-15 chunk.** It is reached only
  * through `DRAFT_LOADERS[15]`'s `() => import('../drafts/draft15/index.js')`, and
  * the `@moqtap/codec/draft15` specifier below is a **static string literal** on
- * purpose: a template literal would defeat bundler analysis and pull all
- * fourteen drafts -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
+ * purpose: a template literal would defeat bundler analysis and pull every
+ * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.
  *
  * Two codec functions are used and the streaming decoders are deliberately not:

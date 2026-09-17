@@ -32,9 +32,10 @@
  * Two constraints on how this package may reach `@moqtap/codec`:
  *
  *  - `trackAliasOf`/`requestIdOf` are reachable only through the root entry,
- *    which statically imports all fourteen drafts. They must be copied, never
- *    imported; only `@moqtap/codec/draft19` and `@moqtap/codec/draft20` may be
- *    imported, and only through static literal specifiers.
+ *    which statically imports every draft. They must be copied, never
+ *    imported; only the per-draft entries `@moqtap/codec/draft07` through
+ *    `@moqtap/codec/draft21` may be imported -- never the root or
+ *    `@moqtap/codec/session` -- and only through static literal specifiers.
  *  - `MoqtBufferReader` is exported from no public subpath, so
  *    {@link VarintReader} is the collector's own.
  *
@@ -246,12 +247,12 @@ export interface HookOptions {
 /* ── drafts ─────────────────────────────────────────────── */
 
 /**
- * The drafts this package parses: all fourteen `@moqtap/codec` speaks.
+ * The drafts this package parses: all fifteen `@moqtap/codec` speaks.
  *
- * Fourteen entries, **one chunk each**. Each is behind a static literal
+ * Fifteen entries, **one chunk each**. Each is behind a static literal
  * `import()` specifier in `DRAFT_LOADERS`, and a session downloads the one its
  * peer negotiated and no others — the root `@moqtap/codec` entry, which
- * statically imports all fourteen at 39.6 KB gz against 5.3 KB for one, must
+ * statically imports every draft at 39.6 KB gz against 5.3 KB for one, must
  * never be reachable from any collector module.
  *
  * The range starts at 07 because that is where `@moqtap/codec` starts. Drafts 04
@@ -259,7 +260,7 @@ export interface HookOptions {
  * so they degrade to transport-only metrics like any other unrecognised
  * protocol.
  */
-export type SupportedDraft = 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20
+export type SupportedDraft = 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21
 
 /**
  * Any decoded control message, from any draft.
@@ -580,9 +581,9 @@ export function bucketKeyString(k: BucketKey): BucketKeyString {
 
 /**
  * Abstract exchange kinds. Latencies key on these, never on wire message
- * names: draft-20 unifies `request_ok`/`request_error` where earlier drafts have
+ * names: draft-15 unifies `request_ok`/`request_error` where earlier drafts have
  * per-request-type responses, so a metric keyed on message names fragments
- * across fourteen drafts and cannot be compared.
+ * across fifteen drafts and cannot be compared.
  */
 export type ExchangeKind =
   | 'subscribe'
@@ -600,7 +601,7 @@ export type ExchangeKind =
  * carry no request id** — draft-20's SUBSCRIBE_OK has `track_alias` and
  * parameters and no id at all. The
  * stream is the only thing tying a response to its request, so without this map
- * *no* latency is computable on drafts 17-20.
+ * *no* latency is computable on drafts 17-21.
  */
 export interface PendingRequest {
   readonly requestId: bigint

@@ -242,7 +242,7 @@ export class RollupEngine implements CountingSink, MedianSource {
    * Keyed on an **abstract exchange kind**, never on wire message names:
    * draft-20 unifies `request_ok`/`request_error` where earlier drafts have
    * per-request-type responses, so a metric keyed on message names fragments
-   * across fourteen drafts and cannot be compared.
+   * across fifteen drafts and cannot be compared.
    *
    * It is a separate entry point rather than something derived inside
    * {@link onControlFrame} because {@link ControlFrameEvent} carries neither a

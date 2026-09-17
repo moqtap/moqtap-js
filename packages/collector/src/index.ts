@@ -19,7 +19,7 @@
  * reason; the dormancy is the safeguard.**
  *
  * `@moqtap/codec` and `@moqtap/codec/session` are deliberately not imported
- * here. Both statically import all fourteen drafts — 39.6 KB gz against 5.3 KB
+ * here. Both statically import every draft — 39.6 KB gz against 5.3 KB
  * for one draft's decoder — and the import line looks like every other import
  * line in review. One draft's chunk is fetched at session time behind a static
  * literal specifier in `src/draft/loaders.ts`, and `tsup.config.ts` refuses to

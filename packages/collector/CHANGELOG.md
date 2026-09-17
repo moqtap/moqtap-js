@@ -5,11 +5,34 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-17
 
-Nothing has been published under this name, so there is no released version to
-compare against and nothing here has ever been fixed for a consumer. This
-section describes what the first release contains.
+### Added
+
+- **Draft-21.** The counting decoder, adapter and session probe now cover
+  drafts 07 through 21, with `@moqtap/collector/draft21` as its own entry
+  point. Draft-21 is wire-identical to draft-20 — the change is
+  renumbering — so a draft-21 session is measured exactly as a draft-20
+  one is. A session still downloads only the draft its peer negotiated.
+
+### Changed
+
+- **`@moqtap/codec` is an ordinary dependency, not a peer.** `npm install
+  @moqtap/collector` is the whole install; nothing else has to be named.
+  Nobody using this package imports the codec themselves, so requiring them
+  to resolve a peer range was asking for a decision they have no basis to
+  make. The range is `>=0.11.0`, the first version carrying the token
+  redaction every adapter calls.
+
+### Fixed
+
+- **The `license` field reads `FSL-1.1-MIT`.** It was `SEE LICENSE IN
+  LICENSE`, which npm renders verbatim instead of naming the licence.
+
+## [0.1.0] - 2026-09-17
+
+The first release. There is no earlier version to compare against, so nothing
+here has ever been fixed for a consumer; this is what 0.1.0 contains.
 
 ### Added
 
@@ -18,9 +41,7 @@ section describes what the first release contains.
   ship it to your users — the one thing withheld is publishing a competing
   product built from this code, and each release becomes MIT on its second
   anniversary. `@moqtap/codec` and `@moqtap/trace` stay MIT: they are the
-  interop surface and are already published under it. `package.json` reads
-  `SEE LICENSE IN LICENSE`, npm's documented form for a licence with no SPDX
-  identifier.
+  interop surface and are already published under it.
 
 - **A dormant WebTransport hook.** Importing the package patches
   `globalThis.WebTransport` at module-evaluation time, because the hook has to
@@ -55,8 +76,8 @@ section describes what the first release contains.
   entry** from `src/`. Both statically import all fourteen drafts: 39.6 KB gz
   against 5.3 KB for one draft's decoder. The guard is a source scan in
   `tsup.config.ts` rather than the `external` allowlist, because tsup
-  externalises `peerDependencies` automatically and registers that plugin ahead
-  of user plugins, so a root import would have been silently externalised
+  externalises declared dependencies automatically and registers that plugin
+  ahead of user plugins, so a root import would have been silently externalised
   rather than refused.
 
 - **`resolve()` on the public surface.** A flat verb beside `escalate()` that

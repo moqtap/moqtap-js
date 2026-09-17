@@ -4,13 +4,13 @@
  * A {@link DraftAdapter} is three codec calls and six walk calls. The codec calls
  * differ only in *which* per-draft entry they came from, the walk calls only in
  * the {@link WalkDialect} they are handed, so the body is written once here and
- * each `draftNN/index.ts` supplies its codec binding and its dialect. Fourteen
- * copies would be fourteen places for a `try`/`catch` to go missing.
+ * each `draftNN/index.ts` supplies its codec binding and its dialect. Fifteen
+ * copies would be fifteen places for a `try`/`catch` to go missing.
  *
  * **This file must never import `@moqtap/codec`.** The codec functions arrive as
  * arguments and the static string literal specifier stays in the per-draft
  * module, which is what keeps each draft's decoder in its own chunk: the root
- * `@moqtap/codec` entry statically imports all fourteen drafts at 39.6 KB gz
+ * `@moqtap/codec` entry statically imports every draft at 39.6 KB gz
  * against 5.3 KB for one, and `tsup.config.ts` scans every source file at config
  * load to enforce it.
  *
@@ -47,9 +47,9 @@ import {
 } from './data-walk.js'
 
 /**
- * A decoded datagram, as the fourteen drafts spell it.
+ * A decoded datagram, as the drafts spell it.
  *
- * The ids are stable across all fourteen. Two other fields are not, and both
+ * The ids are stable across all fifteen. Two other fields are not, and both
  * differences are invisible until the wrong draft reports zeroes:
  *
  *  - **The status.** draft-07 calls it `status`; every draft from 08 on calls it

@@ -7,8 +7,8 @@
  * **This module is the boundary of the draft-19 chunk.** It is reached only
  * through `DRAFT_LOADERS[19]`'s `() => import('../drafts/draft19/index.js')`, and
  * the `@moqtap/codec/draft19` specifier below is a **static string literal** on
- * purpose: a template literal would defeat bundler analysis and pull all
- * fourteen drafts -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
+ * purpose: a template literal would defeat bundler analysis and pull every
+ * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.
  *
  * Two codec functions are used and the streaming decoders are deliberately not:

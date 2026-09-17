@@ -3,9 +3,8 @@
  *
  * Every message on a control or request stream is
  * `Message Type (vi64) + Message Length (16) + Message Body`, in every draft
- * this package supports — draft-20 §10, Figure 3
- * (`.draft20-work/draft-20.clean.txt`), matching the codec's own `decodeMessage`
- * and `encodeMessage` (`drafts/draft20/codec.ts`). **That fixed shape is the
+ * this package supports — draft-20 §10, Figure 3, matching the codec's own
+ * `decodeMessage` and `encodeMessage` (`drafts/draft20/codec.ts`). **That fixed shape is the
  * entire reason this file exists**: the framer can measure a frame it cannot
  * decode, so an unknown or extension codepoint is counted, shipped raw and
  * skipped rather than ending the control plane for the session.

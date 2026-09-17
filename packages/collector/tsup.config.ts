@@ -137,6 +137,7 @@ export default defineConfig({
     draft18: 'src/drafts/draft18/entry.ts',
     draft19: 'src/drafts/draft19/entry.ts',
     draft20: 'src/drafts/draft20/entry.ts',
+    draft21: 'src/drafts/draft21/entry.ts',
   },
   external: CODEC_ALLOWED,
 })

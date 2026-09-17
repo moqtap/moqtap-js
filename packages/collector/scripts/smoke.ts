@@ -63,7 +63,14 @@ import { fileURLToPath } from 'node:url'
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(PKG, '..', '..')
 const NODE = process.platform === 'win32' ? 'node.exe' : 'node'
-const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+/**
+ * `npm`, never `npm.cmd`, on every platform. Node and Bun both refuse to spawn a
+ * `.bat` or `.cmd` without `shell: true`, failing with EINVAL before the process
+ * starts -- which surfaces as an empty stdout and stderr and reads as a packing
+ * failure rather than a launch that never happened. Bun resolves the
+ * extensionless name against PATHEXT on Windows.
+ */
+const NPM = 'npm'
 
 interface PackageJson {
   readonly name: string
@@ -119,7 +126,11 @@ function pack(dest: string): PackResult {
     cwd: PKG,
     encoding: 'utf8',
   })
-  if (r.status !== 0) throw new Error(`npm pack failed\n${r.stdout ?? ''}\n${r.stderr ?? ''}`)
+  // `error` is set when the process never launched; `status` is then null, so
+  // testing only the exit code reports a launch failure as an empty pack failure.
+  if (r.error) throw new Error(`npm pack could not start: ${r.error.message}`)
+  if (r.status !== 0)
+    throw new Error(`npm pack failed (exit ${r.status})\n${r.stdout ?? ''}\n${r.stderr ?? ''}`)
   // npm prints notices on stdout ahead of the JSON on some versions.
   const start = r.stdout.indexOf('[')
   const parsed = JSON.parse(r.stdout.slice(start)) as [
@@ -145,9 +156,9 @@ function pack(dest: string): PackResult {
  *
  * The collector is **extracted from the tarball**, because that is the artefact
  * under test. `@moqtap/codec` is **symlinked from the workspace**: it is a
- * `peerDependency` that a real consumer installs from the registry, it is not
- * what this script is checking, and reaching for the registry here would make a
- * publish gate depend on the network.
+ * dependency npm installs for the consumer anyway, it is not what this script
+ * is checking, and reaching for the registry here would make a publish gate
+ * depend on the network.
  */
 function buildFixture(root: string, tarball: string): string {
   const consumer = join(root, 'consumer')
@@ -167,6 +178,7 @@ function buildFixture(root: string, tarball: string): string {
     ['-xzf', relative(dest, tarball).replaceAll('\\', '/'), '--strip-components=1'],
     { cwd: dest, encoding: 'utf8' },
   )
+  if (untar.error) throw new Error(`tar could not start: ${untar.error.message}`)
   if (untar.status !== 0) {
     throw new Error(`tar failed\n${untar.stdout ?? ''}\n${untar.stderr ?? ''}`)
   }

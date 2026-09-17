@@ -23,7 +23,7 @@
  *
  * `requestIdOf` and `trackAliasOf` are **copied** from
  * `packages/codec/src/core/accessors.ts`, not imported: they are reachable only
- * through the codec's root entry, which statically imports all fourteen drafts
+ * through the codec's root entry, which statically imports every draft
  * (`packages/codec/src/index.ts`) at 39.6 KB gz against 5.3 KB for one draft's
  * decoder. Both spellings are read because the codec emits **snake_case** on
  * control messages and camelCase on data-stream types
@@ -42,11 +42,11 @@ import type { AnyMessage, ExchangeKind, SupportedDraft } from '../types.js'
  * The drafts this package parses, newest first — the order a pin should prefer
  * them in. Each is behind a static literal `import()` specifier in
  * {@link DRAFT_LOADERS} and lands in its own chunk; the root `@moqtap/codec`
- * entry, which statically imports all fourteen, is never reachable from any
+ * entry, which statically imports every draft, is never reachable from any
  * collector module.
  */
 export const SUPPORTED_DRAFTS: readonly SupportedDraft[] = /*#__PURE__*/ Object.freeze([
-  20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7,
+  21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7,
 ])
 
 /**
@@ -56,7 +56,7 @@ export const SUPPORTED_DRAFTS: readonly SupportedDraft[] = /*#__PURE__*/ Object.
  * […] Note: Draft versions prior to -15 all used moq-00 ALPN, followed by
  * version negotiation"*.
  *
- * So `moqt-15` through `moqt-20` each name one draft, and **`moq-00` names
+ * So `moqt-15` through `moqt-21` each name one draft, and **`moq-00` names
  * eight**; {@link LEGACY_PROTOCOL} and `../draft/setup-probe.ts` resolve the
  * latter from the wire rather than guessing.
  */
@@ -76,6 +76,7 @@ export const PROTOCOL_STRINGS: Readonly<Record<SupportedDraft, string>> =
     18: 'moqt-18',
     19: 'moqt-19',
     20: 'moqt-20',
+    21: 'moqt-21',
   })
 
 /**
@@ -93,6 +94,7 @@ const DRAFT_OF_PROTOCOL: ReadonlyMap<string, SupportedDraft> = new Map([
   ['moqt-18', 18 as SupportedDraft],
   ['moqt-19', 19 as SupportedDraft],
   ['moqt-20', 20 as SupportedDraft],
+  ['moqt-21', 21 as SupportedDraft],
 ])
 
 /**
@@ -199,7 +201,7 @@ export function trackAliasOf(msg: AnyMessage): bigint | undefined {
  * Latencies key on these four kinds plus `publish` and `setup`, never on wire
  * message names: draft-20 unifies `request_ok` / `request_error` where earlier
  * drafts have a response per request type, so a metric keyed on message names
- * fragments across fourteen drafts and cannot be compared.
+ * fragments across fifteen drafts and cannot be compared.
  *
  * Draft-20 §10 lists exactly seven messages that may open a request stream —
  * `subscribe`, `publish`, `fetch`, `track_status`, `publish_namespace`,

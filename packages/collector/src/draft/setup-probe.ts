@@ -40,7 +40,7 @@
  * the control stream, so a frame at offset 0 beginning with one of them is a
  * SETUP frame or is not a MoQT control stream at all.
  *
- * The version itself is then matched against a table of the fourteen the codec
+ * The version itself is then matched against a table of the drafts the codec
  * speaks. Not arithmetic on `0xff000000`: that would accept `0xff000063` as
  * draft-99 and turn a clean "unsupported" into a chunk load for a module that
  * does not exist.

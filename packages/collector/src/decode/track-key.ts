@@ -11,7 +11,7 @@
  * *simultaneous* reuse — "The same Track Alias MUST NOT be used by a publisher
  * to refer to two different Tracks simultaneously in the same session" — and
  * explicitly permits sequential rebinding once the prior subscription "has been
- * completely closed" (`.draft20-work/draft-20.clean.txt`). Two tracks summed
+ * completely closed" (draft-20 §2.3). Two tracks summed
  * into one interval row under one raw alias are unrecoverable at ingest, and the
  * same mixing poisons the per-track median.
  *

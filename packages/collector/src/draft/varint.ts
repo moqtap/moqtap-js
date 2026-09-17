@@ -16,7 +16,7 @@
  * exported from no public `@moqtap/codec` subpath — its `exports` map has
  * entries for `.`, `./session` and `./draftNN[/session]` and nothing for
  * `./core`. The only reachable copy is behind the root entry, which statically
- * imports all fourteen drafts at 39.6 KB gz against 5.3 KB for one draft.
+ * imports every draft at 39.6 KB gz against 5.3 KB for one draft.
  * Twenty lines is the cheaper of the two.
  *
  * These readers are incremental: they take a buffer and an offset, they never
@@ -101,7 +101,7 @@ function vi64(b: Uint8Array, i: number, allowSevenByte: boolean): VarintValue | 
  * The top two bits of the first byte are `log2(length)`; the remaining six are
  * the high bits of the value.
  *
- * Ten of the fourteen supported drafts read every field with this, and it is the
+ * Ten of the fifteen supported drafts read every field with this, and it is the
  * older half of the pair the whole refusal exists for: the two families
  * **disagree on the same bytes** and the loser returns a plausible wrong number
  * rather than an error. Transcribed from `BufferReader.readVarInt` in

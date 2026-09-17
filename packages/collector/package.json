@@ -1,9 +1,9 @@
 {
   "name": "@moqtap/collector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MoQT session collector \u2014 dormant WebTransport hook, counting decoder, and metered upload envelope",
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "FSL-1.1-MIT",
   "author": "moqtap",
   "repository": {
     "type": "git",
@@ -122,6 +122,12 @@
       "types": "./dist/draft20.d.ts",
       "import": "./dist/draft20.js",
       "require": "./dist/draft20.cjs"
+    },
+    "./draft21": {
+      "bun": "./src/drafts/draft21/entry.ts",
+      "types": "./dist/draft21.d.ts",
+      "import": "./dist/draft21.js",
+      "require": "./dist/draft21.cjs"
     }
   },
   "files": [
@@ -140,12 +146,12 @@
     "smoke": "bun run scripts/smoke.ts",
     "codes": "bun run scripts/error-codes.ts"
   },
-  "peerDependencies": {
-    "@moqtap/codec": "*"
+  "dependencies": {
+    "@moqtap/codec": ">=0.11.0"
   },
   "devDependencies": {
     "@moqtap/codec": "workspace:*",
-    "@moqtap/test-vectors": "^0.16.0",
+    "@moqtap/test-vectors": "^0.17.0",
     "@types/node": "^24.13.3",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",

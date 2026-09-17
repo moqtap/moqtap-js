@@ -48,7 +48,7 @@
     "corpus": "bun run src/__tests__/corpus/generate.ts && bun run src/__tests__/corpus/manifest.ts"
   },
   "peerDependencies": {
-    "@moqtap/codec": "*"
+    "@moqtap/codec": ">=0.11.0"
   },
   "dependencies": {
     "cbor-x": "^1.6.0"

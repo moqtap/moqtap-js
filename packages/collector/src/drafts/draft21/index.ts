@@ -1,13 +1,13 @@
 /**
- * The draft-20 adapter.
+ * The draft-21 adapter.
  *
- * Fetch delta arithmetic reached the End-of-Range markers and the Object ID
- * Delta field, and `0x20C` Timed-Out joined the marker set. The subgroup
- * stream type is a varint again.
+ * Draft-21 restructures draft-20 and changes nothing on the wire, so this
+ * dialect is draft-20's field for field. The two are told apart only by the
+ * ALPN they negotiate.
  *
- * **This module is the boundary of the draft-20 chunk.** It is reached only
- * through `DRAFT_LOADERS[20]`'s `() => import('../drafts/draft20/index.js')`, and
- * the `@moqtap/codec/draft20` specifier below is a **static string literal** on
+ * **This module is the boundary of the draft-21 chunk.** It is reached only
+ * through `DRAFT_LOADERS[21]`'s `() => import('../drafts/draft21/index.js')`, and
+ * the `@moqtap/codec/draft21` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.
@@ -17,7 +17,7 @@
  * payload, which is the whole economics of this package. See `../data-walk.ts`.
  */
 
-import { decodeDatagram, decodeMessage, redactAuthTokens } from '@moqtap/codec/draft20'
+import { decodeDatagram, decodeMessage, redactAuthTokens } from '@moqtap/codec/draft21'
 import { PROTOCOL_STRINGS } from '../../draft/protocol.js'
 import { readVi64, VI64_READER } from '../../draft/varint.js'
 import type { DraftAdapter, SupportedDraft } from '../../types.js'
@@ -25,7 +25,8 @@ import { makeAdapter } from '../adapter.js'
 import { BLOCK_LENGTH, BLOCK_NONE, PRESENT_BIT0, type WalkDialect } from '../data-walk.js'
 
 /**
- * draft-20's data-stream dialect, read off `drafts/draft20/data-streams.ts`.
+ * draft-21's data-stream dialect, read off `drafts/draft21/data-streams.ts`
+ * in `@moqtap/codec`, which is draft-20's unchanged.
  *
  * Field-by-field reasoning is on {@link WalkDialect}.
  */
@@ -60,15 +61,15 @@ const DIALECT: WalkDialect = /*#__PURE__*/ Object.freeze({
  * The draft this chunk parses. Present so the module namespace object
  * structurally satisfies `DraftModule` with no wrapper allocation.
  */
-export const draft: SupportedDraft = 20
+export const draft: SupportedDraft = 21
 
-/** The one adapter instance for draft-20. Stateless, so one is enough. */
-export const DRAFT20_ADAPTER: DraftAdapter = /*#__PURE__*/ Object.freeze(
-  makeAdapter(draft, PROTOCOL_STRINGS[20], VI64_READER, DIALECT, {
+/** The one adapter instance for draft-21. Stateless, so one is enough. */
+export const DRAFT21_ADAPTER: DraftAdapter = /*#__PURE__*/ Object.freeze(
+  makeAdapter(draft, PROTOCOL_STRINGS[21], VI64_READER, DIALECT, {
     decodeMessage,
     decodeDatagram,
     redactAuthTokens,
   }),
 )
 
-export { DRAFT20_ADAPTER as adapter }
+export { DRAFT21_ADAPTER as adapter }

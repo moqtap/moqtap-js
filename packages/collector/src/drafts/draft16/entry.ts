@@ -8,7 +8,7 @@
  * `sideEffects` and this one is not.
  *
  * `draft16` rather than `d16`: every entry in this workspace is zero-padded,
- * and `@moqtap/codec` ships `./draft07` through `./draft20`.
+ * and `@moqtap/codec` ships `./draft07` through `./draft21`.
  *
  * Draft-16 negotiates the ALPN `moqt-16`, which from draft-15 is the only
  * draft identifier a session carries: the version appears nowhere on the wire.
