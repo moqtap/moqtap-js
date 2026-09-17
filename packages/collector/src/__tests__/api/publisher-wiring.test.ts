@@ -50,8 +50,26 @@ async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
   return out
 }
 
-const settle = async (times = 40): Promise<void> => {
-  for (let i = 0; i < times; i += 1) {
+/**
+ * Let init()'s async setup, the schedule's zero-delay timers and the pump run.
+ *
+ * Bare `settle()` is a duration with a turn floor, not a turn count alone. These
+ * tests pin `metrics.intervalMs` and assert on records that exist only once a
+ * rollup interval has elapsed, and turns do not measure time: `setTimeout(r, 0)`
+ * costs ~15 ms on Windows against ~1 ms on Linux, so forty turns are ~600 ms on
+ * one and ~60 ms on the other. Turn-based, these passed on Windows and failed in
+ * CI reporting an absent rollup — which reads as the collector having recorded
+ * nothing, rather than as the interval never having come round.
+ *
+ * `settle(n)` keeps the pure turn count for the places that only need the session
+ * to attach before the next step.
+ */
+const SETTLE_MS = 300
+
+const settle = async (times?: number): Promise<void> => {
+  const turns = times ?? 40
+  const until = times === undefined ? Date.now() + SETTLE_MS : 0
+  for (let i = 0; i < turns || Date.now() < until; i += 1) {
     await Promise.resolve()
     await new Promise((r) => setTimeout(r, 0))
   }
