@@ -116,7 +116,7 @@ reach the network leaves the backlog for the next page load.
 
 ## Drafts
 
-Drafts 07 through 21, negotiated per session. Only the negotiated draft's
+Drafts 07 through 22, negotiated per session. Only the negotiated draft's
 decoder is loaded, behind a static literal specifier a bundler can follow.
 
 > **Never import the `@moqtap/codec` root or `@moqtap/codec/session` yourself.**
@@ -134,7 +134,7 @@ init:
 init({ apiKey, drafts: [20, 18] })
 ```
 
-`@moqtap/collector/draft07` through `@moqtap/collector/draft21` are the
+`@moqtap/collector/draft07` through `@moqtap/collector/draft22` are the
 draft-partitioned entry points for referencing one draft's adapter directly.
 
 ## Workers

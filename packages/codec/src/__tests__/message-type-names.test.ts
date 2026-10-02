@@ -24,7 +24,7 @@
  * The comparison is per draft rather than over the union, because the ids are
  * reused. 0x07 is `announce_ok` through draft-13, `publish_namespace_ok` on
  * draft-14 and `request_ok` from draft-15 on; 0x0e and 0x11 move the same way.
- * A table checked against the union of all fourteen corpora would accept every
+ * A table checked against the union of every draft's corpus would accept every
  * one of those spellings on every draft, which is a draft-blind lookup wearing
  * a per-draft table's clothes.
  *
@@ -65,6 +65,7 @@ import * as draft18 from '../drafts/draft18/index.js'
 import * as draft19 from '../drafts/draft19/index.js'
 import * as draft20 from '../drafts/draft20/index.js'
 import * as draft21 from '../drafts/draft21/index.js'
+import * as draft22 from '../drafts/draft22/index.js'
 import { DRAFT_VERSIONS } from '../index.js'
 import { loadVectorDir } from './helpers.js'
 
@@ -103,6 +104,7 @@ const DRAFTS: readonly Draft[] = [
   { draft: '19', types: draft19.MESSAGE_TYPE_MAP, ids: draft19.MESSAGE_ID_MAP },
   { draft: '20', types: draft20.MESSAGE_TYPE_MAP, ids: draft20.MESSAGE_ID_MAP },
   { draft: '21', types: draft21.MESSAGE_TYPE_MAP, ids: draft21.MESSAGE_ID_MAP },
+  { draft: '22', types: draft22.MESSAGE_TYPE_MAP, ids: draft22.MESSAGE_ID_MAP },
 ]
 
 /**
@@ -144,6 +146,7 @@ const ALIASES: readonly Alias[] = [
   { draft: '19', alias: 'publish_ok', canonical: 'request_ok' },
   { draft: '20', alias: 'publish_ok', canonical: 'request_ok' },
   { draft: '21', alias: 'publish_ok', canonical: 'request_ok' },
+  { draft: '22', alias: 'publish_ok', canonical: 'request_ok' },
 ]
 
 /**
@@ -303,18 +306,19 @@ function namesAgreeWithTheCorpus({ draft, types }: Draft): void {
  *
  * A per-draft comparison catches a map wired to the wrong draft only where the
  * two drafts disagree about something, so which drafts agree completely is the
- * measure of what the fifteen tests above cannot see. Drafts 08, 09 and 10
+ * measure of what the sixteen tests above cannot see. Drafts 08, 09 and 10
  * assign exactly the same ids to exactly the same names, so those three tables
- * are interchangeable as far as any corpus check can tell. Draft-21 restructures
- * draft-20 without changing the wire, so it assigns every id exactly as draft-20
- * does and the two are told apart only by the protocol string they negotiate,
- * `moqt-21` against `moqt-20`. Every other pair in the range differs somewhere
- * and is held apart by its own test.
+ * are interchangeable as far as any corpus check can tell. Drafts 20, 21 and 22
+ * are the same: draft-21 restructures draft-20 without changing the wire, and
+ * draft-22 changes only how the LOCATION_FILTER parameter is encoded, so all
+ * three assign every message id alike and are told apart by the protocol
+ * string they negotiate, `moqt-20`, `moqt-21` or `moqt-22`. Every other pair
+ * in the range differs somewhere and is held apart by its own test.
  *
  * Written down rather than derived, so a draft joining or leaving the run is a
  * change to this list.
  */
-const IDENTICAL_TABLES: readonly string[] = ['08/09', '08/10', '09/10', '20/21']
+const IDENTICAL_TABLES: readonly string[] = ['08/09', '08/10', '09/10', '20/21', '20/22', '21/22']
 
 /** One draft's table as a comparable string, in id order. */
 function tableShape(types: ReadonlyMap<bigint, string>): string {
@@ -332,7 +336,7 @@ describe('message type names', () => {
   //
   // Neither is a list written in this file. A list here could only be compared
   // against the list above it, which is the same list, and two copies of one
-  // list agree with each other no matter what the package does — so a fifteenth
+  // list agree with each other no matter what the package does — so a new
   // draft would ship ungated and every test here would stay green.
   it('covers every draft the package ships', () => {
     const walked = DRAFTS.map((d) => d.draft).sort()

@@ -71,7 +71,7 @@ describe('readVi64 — MoQT leading-1-bits, drafts 17+', () => {
   })
 
   it('accepts the seven-byte form, which draft-18 restored', () => {
-    // Legal in 18, 19 and 20, which are the drafts this reader serves. draft-17
+    // Legal in every draft from 18, which are the drafts this reader serves. draft-17
     // is the exception and has its own reader below.
     expect(readVi64(bytes(0xfd, 1, 2, 3, 4, 5, 6), 0)).toEqual({
       value: 0x01010203040506n,
@@ -164,7 +164,7 @@ describe('readVi64Draft17 — the one draft with no seven-byte form', () => {
     // desynchronises everything after it on the stream.
     expect(readVi64Draft17(bytes(0xfd, 1, 2, 3, 4, 5, 6), 0)).toBe(NEED)
     expect(readVi64Draft17(bytes(0xfc, 1, 2, 3, 4, 5, 6), 0)).toBe(NEED)
-    // And the reader that serves 18-20 takes it, which is what makes the
+    // And the reader that serves 18 on takes it, which is what makes the
     // refusal above a real difference rather than a stricter reading.
     expect(readVi64(bytes(0xfd, 1, 2, 3, 4, 5, 6), 0)).not.toBe(NEED)
   })

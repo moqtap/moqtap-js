@@ -560,9 +560,9 @@ function decodeLocationFilter(reader: BufferReader): LocationFilter {
  * deliberately not among them.
  */
 const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
-  // 0x02 OBJECT_DELIVERY_TIMEOUT (10.2.4) — d19 also listed PUBLISH_OK; d20 added PUBLISH.
+  // 0x02 OBJECT_DELIVERY_TIMEOUT (9.20.5) — d19 also listed PUBLISH_OK; d20 added PUBLISH.
   [PARAM_OBJECT_DELIVERY_TIMEOUT, new Set(['subscribe', 'publish', 'request_update'])],
-  // 0x03 AUTHORIZATION_TOKEN (10.2.2) — any request or response that needs authorization.
+  // 0x03 AUTHORIZATION_TOKEN (9.20.3) — any request or response that needs authorization.
   [
     PARAM_AUTHORIZATION_TOKEN,
     new Set([
@@ -576,30 +576,30 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
       'fetch',
     ]),
   ],
-  // 0x04 RENDEZVOUS_TIMEOUT (10.2.6) — "MAY appear in a SUBSCRIBE message", nothing else.
+  // 0x04 RENDEZVOUS_TIMEOUT (9.20.7) — "MAY appear in a SUBSCRIBE message", nothing else.
   [PARAM_RENDEZVOUS_TIMEOUT, new Set(['subscribe'])],
-  // 0x06 SUBGROUP_DELIVERY_TIMEOUT (10.2.3) — d19 also listed PUBLISH_OK; d20 added PUBLISH.
+  // 0x06 SUBGROUP_DELIVERY_TIMEOUT (9.20.4) — d19 also listed PUBLISH_OK; d20 added PUBLISH.
   [PARAM_SUBGROUP_DELIVERY_TIMEOUT, new Set(['subscribe', 'publish', 'request_update'])],
-  // 0x08 EXPIRES (10.2.16) — the one parameter that still names PUBLISH_OK.
+  // 0x08 EXPIRES (9.20.17) — the one parameter that still names PUBLISH_OK.
   [PARAM_EXPIRES, new Set(['subscribe_ok', 'publish', 'request_ok'])],
-  // 0x09 LARGEST_OBJECT (10.2.17) — PUBLISH_STATE_NOTIFY here; draft-19 (10.2.16) omits it.
+  // 0x09 LARGEST_OBJECT (9.20.18) — PUBLISH_STATE_NOTIFY here; draft-19 (10.2.16) omits it.
   [
     PARAM_LARGEST_OBJECT,
     new Set(['subscribe_ok', 'publish', 'request_ok', 'publish_state_notify']),
   ],
-  // 0x0A FILL_TIMEOUT (10.2.5) — FETCH, or nested inside FILL_PARAMETERS.
+  // 0x0A FILL_TIMEOUT (9.20.6) — FETCH, or nested inside FILL_PARAMETERS.
   [PARAM_FILL_TIMEOUT, new Set(['fetch', FILL_SCOPE])],
-  // 0x10 FORWARD (10.2.18) — PUBLISH_STATE_NOTIFY here where draft-19 (10.2.17) lists PUBLISH_OK.
+  // 0x10 FORWARD (9.20.19) — PUBLISH_STATE_NOTIFY here where draft-19 (10.2.17) lists PUBLISH_OK.
   [
     PARAM_FORWARD,
     new Set(['subscribe', 'request_update', 'publish', 'subscribe_tracks', 'publish_state_notify']),
   ],
-  // 0x20 SUBSCRIBER_PRIORITY (10.2.7) — PUBLISH here where draft-19 lists PUBLISH_OK.
+  // 0x20 SUBSCRIBER_PRIORITY (9.20.8) — PUBLISH here where draft-19 lists PUBLISH_OK.
   [
     PARAM_SUBSCRIBER_PRIORITY,
     new Set(['subscribe', 'publish', 'fetch', 'request_update', FILL_SCOPE]),
   ],
-  // 0x21 LOCATION_FILTER (10.2.9) — PUBLISH and PUBLISH_STATE_NOTIFY here where draft-19 lists PUBLISH_OK.
+  // 0x21 LOCATION_FILTER (9.20.10) — PUBLISH and PUBLISH_STATE_NOTIFY here where draft-19 lists PUBLISH_OK.
   [
     PARAM_LOCATION_FILTER,
     new Set([
@@ -611,12 +611,12 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
       FILL_SCOPE,
     ]),
   ],
-  // 0x22 GROUP_ORDER (10.2.8) — PUBLISH and FILL_PARAMETERS nesting here; draft-19 has neither.
+  // 0x22 GROUP_ORDER (9.20.9) — PUBLISH and FILL_PARAMETERS nesting here; draft-19 has neither.
   [PARAM_GROUP_ORDER, new Set(['subscribe', 'publish', 'subscribe_tracks', 'fetch', FILL_SCOPE])],
-  // 0x23 FILL_PARAMETERS (10.2.15) — NEW. Subscriptions only, and never nested
+  // 0x23 FILL_PARAMETERS (9.20.16) — NEW. Subscriptions only, and never nested
   // in itself: a FETCH already is a fetch, so it has nothing to fill.
   [PARAM_FILL_PARAMETERS, new Set(['subscribe', 'request_update'])],
-  // 0x25-0x28 range filters (5.1.4) — permitted inside FILL_PARAMETERS (Table 6).
+  // 0x25-0x28 range filters (3.3.2) — permitted inside FILL_PARAMETERS (Table 6).
   [
     PARAM_SUBGROUP_FILTER,
     new Set(['fetch', 'subscribe', 'subscribe_tracks', 'request_update', FILL_SCOPE]),
@@ -633,15 +633,15 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
     PARAM_OBJECT_PROPERTY_FILTER,
     new Set(['fetch', 'subscribe', 'subscribe_tracks', 'request_update', FILL_SCOPE]),
   ],
-  // 0x29 TRACK_PROPERTY_FILTER (10.2.14) — NOT permitted inside
+  // 0x29 TRACK_PROPERTY_FILTER (9.20.15) — NOT permitted inside
   // FILL_PARAMETERS: Table 6 omits it. A relay forwarding a downstream
   // FILL_PARAMETERS upstream has to strip it rather than trip this rule.
   [PARAM_TRACK_PROPERTY_FILTER, new Set(['subscribe_tracks', 'request_update'])],
-  // 0x32 NEW_GROUP_REQUEST (10.2.19) — draft-19 (10.2.18) also lists PUBLISH_OK.
+  // 0x32 NEW_GROUP_REQUEST (9.20.20) — draft-19 (10.2.18) also lists PUBLISH_OK.
   [PARAM_NEW_GROUP_REQUEST, new Set(['subscribe', 'request_update'])],
-  // 0x34 TRACK_NAMESPACE_PREFIX (10.2.20) — REQUEST_UPDATE for a namespace subscription.
+  // 0x34 TRACK_NAMESPACE_PREFIX (9.20.21) — REQUEST_UPDATE for a namespace subscription.
   [PARAM_TRACK_NAMESPACE_PREFIX, new Set(['request_update'])],
-  // 0x35 INCLUDE_PROPERTIES (10.2.21) — NEW in draft-20.
+  // 0x35 INCLUDE_PROPERTIES (9.20.22) — NEW in draft-20.
   [PARAM_INCLUDE_PROPERTIES, new Set(['subscribe', 'track_status', 'fetch', 'subscribe_tracks'])],
 ])
 

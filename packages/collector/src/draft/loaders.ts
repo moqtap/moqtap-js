@@ -20,7 +20,7 @@
  *     a bare `@moqtap/codec` or `@moqtap/codec/session` specifier and throws at
  *     config load.
  *  3. **`draftNN`, never `dNN`.** Every package in this workspace uses the
- *     zero-padded form (`@moqtap/codec` ships `./draft07` through `./draft21`).
+ *     zero-padded form, as `@moqtap/codec`'s draft entries do.
  *
  * The `pin` option in {@link LoadOptions} is not build-time substitution: it
  * **selects among literal specifiers the bundler can already see**. A single-file
@@ -44,13 +44,13 @@ export interface DraftModule {
 }
 
 /**
- * The map. Frozen, fifteen entries, static literal specifiers.
+ * The map. Frozen, one entry per supported draft, static literal specifiers.
  *
  * Keyed by draft number so `DRAFT_LOADERS[draftOfProtocol(p)]` is the whole
  * dispatch. Adding a draft is adding a literal line here plus its
  * `src/drafts/draftNN/index.ts`; no form of this file computes the specifier.
- * The fifteen lines a loop would shorten to three are the trade this file
- * exists to refuse: the loop costs 40 KB gz and looks like an improvement.
+ * Shortening these lines to a three-line loop is the trade this file exists to
+ * refuse: the loop costs 40 KB gz and looks like an improvement.
  */
 export const DRAFT_LOADERS: Readonly<Record<SupportedDraft, () => Promise<DraftModule>>> =
   /*#__PURE__*/ Object.freeze({
@@ -69,4 +69,5 @@ export const DRAFT_LOADERS: Readonly<Record<SupportedDraft, () => Promise<DraftM
     19: () => import('../drafts/draft19/index.js'),
     20: () => import('../drafts/draft20/index.js'),
     21: () => import('../drafts/draft21/index.js'),
+    22: () => import('../drafts/draft22/index.js'),
   })

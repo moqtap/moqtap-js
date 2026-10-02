@@ -269,7 +269,7 @@ describe('DRAFT_LOADERS — the 7.5x file', () => {
 
   it('uses static literal specifiers, never a template literal', () => {
     // A template literal here type-checks, passes every other test in this file
-    // and pulls all fourteen drafts: 39.6 KB gz against 5.3 KB. The source
+    // and pulls every draft: 39.6 KB gz against 5.3 KB. The source
     // shape is the only thing that distinguishes them.
     for (const [draft, load] of Object.entries(DRAFT_LOADERS)) {
       const source = load.toString()
@@ -283,7 +283,7 @@ describe('DRAFT_LOADERS — the 7.5x file', () => {
   })
 
   it('never names the codec root or /session entry', async () => {
-    // Both statically import all fourteen drafts. Only `src/drafts/draftNN/`
+    // Both statically import every draft. Only `src/drafts/draftNN/`
     // may name a codec entry, and only a per-draft one; the build scans for the
     // violation, and this is the runtime half of the same check.
     for (const load of Object.values(DRAFT_LOADERS)) {

@@ -15,7 +15,7 @@
 export const PROTOCOL_STRING = 'moqt-21'
 
 /**
- * The `0xff000000 + N` identifier for draft 20.
+ * The `0xff000000 + N` identifier for draft 21.
  *
  * **This is a derived identifier, not an observed wire value.** No draft-21
  * peer ever sends it. The `0xff0000NN` scheme belonged to the SETUP-time

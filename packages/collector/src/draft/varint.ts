@@ -101,7 +101,7 @@ function vi64(b: Uint8Array, i: number, allowSevenByte: boolean): VarintValue | 
  * The top two bits of the first byte are `log2(length)`; the remaining six are
  * the high bits of the value.
  *
- * Ten of the fifteen supported drafts read every field with this, and it is the
+ * Drafts 07 through 16 read every field with this, and it is the
  * older half of the pair the whole refusal exists for: the two families
  * **disagree on the same bytes** and the loser returns a plausible wrong number
  * rather than an error. Transcribed from `BufferReader.readVarInt` in
@@ -119,7 +119,7 @@ export function readRfc9000(b: Uint8Array, i: number): VarintValue | Need {
   return { value, next: i + length }
 }
 
-/** The reader drafts 18, 19 and 20 use, as a {@link VarintReader}. */
+/** The reader every draft from 18 uses, as a {@link VarintReader}. */
 export const VI64_READER: VarintReader = /*#__PURE__*/ Object.freeze({ read: readVi64 })
 
 /** draft-17's reader, one length short of the others. See {@link readVi64Draft17}. */

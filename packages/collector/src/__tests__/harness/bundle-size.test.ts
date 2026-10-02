@@ -2,7 +2,7 @@
  * The bundle-budget guard.
  *
  * The budget is why this package is split per draft at all: `@moqtap/codec`'s
- * root entry is 39.6 KB gz because it statically imports all fourteen drafts
+ * root entry is 39.6 KB gz because it statically imports every draft
  * (`packages/codec/src/index.ts`), against 5.3 KB for one draft. The `external`
  * allowlist in `tsup.config.ts` and its source scan make that regression
  * *refusable* at build time; this file makes the resulting size *observed*.
@@ -69,17 +69,17 @@ const ENTRY_CEILING_GZ = 40_000
 /**
  * The largest single draft chunk, which is what one session actually fetches.
  *
- * A session negotiates one draft, fetches one chunk, and the other thirteen are
+ * A session negotiates one draft, fetches one chunk, and the others are
  * never requested, so "entry plus every lazy chunk" is a number nobody pays:
  * guarding the sum would make adding a draft look like a regression while the
  * number every page actually pays did not move.
  *
  * So the two numbers that mean something are guarded — the always-loaded entry
  * above and the worst single chunk here — and the sum is reported rather than
- * asserted on. Measured across all fourteen: 1914 B gz.
+ * asserted on. Measured across every draft: 1842 B gz.
  */
 const CHUNK_CEILING_GZ = 2_200
-const MEASURED_MAX_CHUNK_GZ = 1_914
+const MEASURED_MAX_CHUNK_GZ = 1_842
 const SPEC_TARGET_GZ = 10_240
 
 /**
@@ -117,27 +117,15 @@ const DRAFT_CEILING_GZ = 9 * 1024
 /**
  * Drafts that must never be reachable.
  *
- * The whole 7.5x saving is that the root entry — which statically imports all
- * fourteen (`packages/codec/src/index.ts`) — cannot be reached from here.
+ * The whole 7.5x saving is that the root entry — which statically imports every
+ * draft (`packages/codec/src/index.ts`) — cannot be reached from here.
  * The static build cannot show this, because there the codec is external and
  * every draft is equally absent; the per-draft build can, because there the
  * codec is inlined and a leak would arrive with it.
  */
-const FOREIGN_DRAFTS = [
-  'draft07',
-  'draft08',
-  'draft09',
-  'draft10',
-  'draft11',
-  'draft12',
-  'draft13',
-  'draft14',
-  'draft15',
-  'draft16',
-  'draft17',
-  'draft18',
-  'draft19',
-] as const
+const FOREIGN_DRAFTS: readonly string[] = SUPPORTED_DRAFTS.filter((d) => d !== 20).map(
+  (d) => `draft${d < 10 ? `0${d}` : d}`,
+)
 
 interface Built {
   readonly entry: string
@@ -269,9 +257,9 @@ describe('the bundle is actually the whole bundle', () => {
 
   it('emits the draft adapters as separate lazily-loaded chunks', () => {
     // src/draft/loaders.ts uses static literal specifiers, so a splitting
-    // bundler emits one chunk per draft rather than inlining all fourteen into
+    // bundler emits one chunk per draft rather than inlining every draft into
     // the entry. If this fails, look for a template literal in loaders.ts.
-    expect(built.chunks.length).toBeGreaterThanOrEqual(14)
+    expect(built.chunks.length).toBeGreaterThanOrEqual(SUPPORTED_DRAFTS.length)
     expect(built.entry).not.toContain('@moqtap/codec')
   })
 })
@@ -282,7 +270,7 @@ describe('the codec is only ever reached per draft', () => {
       m[0].slice(1, -1),
     )
     expect(specifiers.length).toBeGreaterThan(0)
-    // One per draft, all fourteen, and nothing else — no root entry, no
+    // One per draft, every draft, and nothing else — no root entry, no
     // `/session`, and no specifier built from a variable.
     expect([...new Set(specifiers)].sort()).toEqual(
       SUPPORTED_DRAFTS.map((d) => `@moqtap/codec/draft${d < 10 ? `0${d}` : d}`).sort(),
@@ -321,11 +309,11 @@ describe('gzipped size', () => {
   })
 
   it('emits one chunk per draft and shares the walk between them', () => {
-    // Fourteen draft chunks plus the modules they share — `data-walk.ts` and
-    // `adapter.ts`, which are one copy between all fourteen rather than
-    // fourteen copies. If this drops to fourteen, the shared walk has been
-    // inlined into every draft and the sum below will say so.
-    expect(built.chunks.length).toBeGreaterThanOrEqual(14)
+    // One chunk per draft plus the modules they share — `data-walk.ts` and
+    // `adapter.ts`, which are one copy between every draft rather than a copy
+    // each. If this drops to one per draft, the shared walk has been inlined
+    // into every draft and the sum below will say so.
+    expect(built.chunks.length).toBeGreaterThan(SUPPORTED_DRAFTS.length)
   })
 
   it('reports the numbers even when it passes', () => {
@@ -344,7 +332,7 @@ describe('the other half of the budget: per negotiated draft', () => {
   // draft adapter plus the codec decoder it imports, bundled together, because
   // that pair is one network fetch at `session.protocol` time.
   //
-  // All fourteen, not a sample. The bands were set from drafts 19 and 20, and
+  // Every draft, not a sample. The bands were set from drafts 19 and 20, and
   // the older drafts are a different shape — draft-07's decoder has no
   // Authorization Token structure and no factored stream types at all — so it is
   // worth knowing whether one of them blows the budget.
@@ -376,7 +364,7 @@ describe('the other half of the budget: per negotiated draft', () => {
     for (const other of FOREIGN_DRAFTS) {
       expect(m.readable, `${other} reached the draft-20 chunk`).not.toContain(other)
     }
-    // The root entry's fourteen-draft registry. Anywhere in here it would mean
+    // The root entry's every-draft registry. Anywhere in here it would mean
     // the root was reached and the chunk is 39.6 KB rather than 5.3.
     expect(m.readable).not.toContain('DRAFT_VERSIONS')
     // And the decoders that are supposed to be there, so the greps above are

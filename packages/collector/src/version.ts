@@ -6,4 +6,4 @@
  * and importing it from `session.ts` would pull the entire live session into a
  * graph whose whole point is to be small until `init()` is called.
  */
-export const COLLECTOR_VERSION = '0.1.0'
+export const COLLECTOR_VERSION = '0.3.0'

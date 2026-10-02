@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [0.13.0] - 2026-10-02
+
+### Added
+
+- **draft-22, as `@moqtap/codec/draft22` and `createCodec({ draft: '22' })`.**
+  Its `LocationFilter` carries a required `filter_type` and has no `removed`:
+  the Location Filter Type decides which fields follow, `{0, 0}` under type 2
+  is an absolute start, and the Next Object is type 5. `Draft` gains `'22'`,
+  so an exhaustive `switch` over it needs the new case.
+
 ## [0.12.0] - 2026-09-17
 
 ### Added

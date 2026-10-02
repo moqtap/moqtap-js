@@ -60,29 +60,17 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
+import { SUPPORTED_DRAFTS } from '../src/draft/protocol.js'
 
 /** Package root — this file is `<root>/scripts/`. */
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const BUN = process.platform === 'win32' ? 'bun.exe' : 'bun'
 
-/** The fourteen drafts, zero-padded as the entry points and the codec spell them. */
-const DRAFTS = [
-  '07',
-  '08',
-  '09',
-  '10',
-  '11',
-  '12',
-  '13',
-  '14',
-  '15',
-  '16',
-  '17',
-  '18',
-  '19',
-  '20',
-] as const
+/** Every supported draft, zero-padded as the entry points and the codec spell them. */
+const DRAFTS: readonly string[] = [...SUPPORTED_DRAFTS]
+  .sort((a, b) => a - b)
+  .map((d) => String(d).padStart(2, '0'))
 
 /**
  * The published entry points, from `package.json`'s `exports` map.
@@ -99,7 +87,7 @@ const DRAFTS = [
  *
  * **Read the per-draft rows as alternatives, never as a sum.** A session
  * negotiates one draft and fetches one of them. Adding them up describes a
- * consumer who imports all fourteen entry points by hand, which is not a thing
+ * consumer who imports every entry point by hand, which is not a thing
  * anyone does and not a number anyone pays.
  */
 const ENTRIES = [
@@ -158,7 +146,7 @@ interface EntryMeasure extends Measure {
    *
    * The number a page actually pays on top of the entry, because a session
    * negotiates one draft and fetches one chunk. {@link totalGz} is the sum of
-   * all fourteen plus what they share, which nothing downloads — it is reported
+   * every draft chunk plus what they share, which nothing downloads — it is reported
    * because a jump in it means a shared module stopped being shared, and for no
    * other reason.
    */

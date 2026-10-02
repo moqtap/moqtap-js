@@ -5,6 +5,20 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-02
+
+### Added
+
+- **Draft-22**, with `@moqtap/collector/draft22` as its own entry point. Its
+  data streams are draft-21's; the LOCATION_FILTER change is decoded by
+  `@moqtap/codec` 0.13.0, now the minimum `@moqtap/codec` version.
+
+### Fixed
+
+- **A `drafts` pin keeps every supported draft.** It kept only 19 and 20 and
+  dropped the rest with `MQ1107`.
+- **`COLLECTOR_VERSION` names the installed version.** It read `0.1.0`.
+
 ## [0.2.0] - 2026-09-17
 
 ### Added

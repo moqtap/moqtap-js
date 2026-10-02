@@ -8,7 +8,7 @@
  * `sideEffects` and this one is not.
  *
  * `draft08` rather than `d8`: every entry in this workspace is zero-padded,
- * and `@moqtap/codec` ships `./draft07` through `./draft21`.
+ * and `@moqtap/codec` spells its draft entries the same way.
  *
  * Draft-08 negotiates the ALPN `moq-00`, which it shares with every draft
  * before -15. The ALPN alone therefore does not say which draft a session

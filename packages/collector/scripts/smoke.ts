@@ -58,6 +58,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { SUPPORTED_DRAFTS } from '../src/draft/protocol.js'
 
 /** Package root — this file is `<root>/scripts/`. */
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -264,6 +265,15 @@ function probe(consumer: string, name: string, specifier: string, cjs: boolean):
 /* ── the entry contract ──────────────────────────────────────────────────── */
 
 /**
+ * One entry per supported draft, spelled as the export map spells it. Taken
+ * from `SUPPORTED_DRAFTS` rather than from `package.json`, so a draft whose
+ * export entry was never added fails to import instead of going unchecked.
+ */
+const DRAFT_ENTRIES: readonly string[] = [...SUPPORTED_DRAFTS]
+  .sort((a, b) => a - b)
+  .map((d) => `draft${String(d).padStart(2, '0')}`)
+
+/**
  * A handful of names per entry, chosen so that resolving to the *wrong* file
  * fails rather than passes. An export map that points `./draft19` at the main
  * entry would resolve, import, and be caught only by `DRAFT19_ADAPTER`.
@@ -284,14 +294,15 @@ const EXPECTED: Readonly<
     // two files in the `sideEffects` allowlist.
     patches: true,
   },
-  './draft19': {
-    names: ['adapter', 'DRAFT19_ADAPTER', 'draft', 'PROTOCOL_STRINGS', 'NEED'],
-    patches: false,
-  },
-  './draft20': {
-    names: ['adapter', 'DRAFT20_ADAPTER', 'draft', 'PROTOCOL_STRINGS', 'NEED'],
-    patches: false,
-  },
+  ...Object.fromEntries(
+    DRAFT_ENTRIES.map((e) => [
+      `./${e}`,
+      {
+        names: ['adapter', `${e.toUpperCase()}_ADAPTER`, 'draft', 'PROTOCOL_STRINGS', 'NEED'],
+        patches: false,
+      },
+    ]),
+  ),
 }
 
 /* ── main ────────────────────────────────────────────────────────────────── */
@@ -365,7 +376,7 @@ function main(): void {
 
     // And the positive backstop: the built output and the declarations are
     // there in both module formats.
-    for (const base of ['index', 'draft19', 'draft20']) {
+    for (const base of ['index', ...DRAFT_ENTRIES]) {
       for (const ext of ['js', 'cjs', 'd.ts']) {
         check(files.has(`dist/${base}.${ext}`), `dist/${base}.${ext} ships`)
       }
@@ -433,7 +444,7 @@ function main(): void {
             : expected.patches
               ? 'Importing the main entry installs the dormant hook, and the ' +
                 'sideEffects allowlist is written on that promise. It did not fire.'
-              : 'A draft entry patched a global. Both draft entries document "no module-eval ' +
+              : 'A draft entry patched a global. Every draft entry documents "no module-eval ' +
                 'side effect", and package.json omits them from sideEffects — so a bundler is ' +
                 'free to tree-shake away a patch a consumer is now relying on.',
         )

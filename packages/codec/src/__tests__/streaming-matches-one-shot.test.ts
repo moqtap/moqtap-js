@@ -67,9 +67,14 @@ import {
   encodeSubgroupStream as enc21,
   decodeSubgroupStream as one21,
 } from '../drafts/draft21/index.js'
+import {
+  createSubgroupStreamDecoder as create22,
+  encodeSubgroupStream as enc22,
+  decodeSubgroupStream as one22,
+} from '../drafts/draft22/index.js'
 
 // Each draft's SubgroupStream is a distinct nominal type with the same shape,
-// and the whole point here is to run one body against all seven.
+// and the whole point here is to run one body against all of them.
 // biome-ignore lint/suspicious/noExplicitAny: see the note above
 type AnyStream = any
 
@@ -89,6 +94,7 @@ const DRAFTS: readonly Draft[] = [
   { name: 'draft-19', encode: enc19, oneShot: one19, create: create19 },
   { name: 'draft-20', encode: enc20, oneShot: one20, create: create20 },
   { name: 'draft-21', encode: enc21, oneShot: one21, create: create21 },
+  { name: 'draft-22', encode: enc22, oneShot: one22, create: create22 },
 ]
 
 /**
@@ -353,6 +359,11 @@ import {
   encodeFetchStream as fenc21,
   decodeFetchStream as fone21,
 } from '../drafts/draft21/index.js'
+import {
+  createFetchStreamDecoder as fcreate22,
+  encodeFetchStream as fenc22,
+  decodeFetchStream as fone22,
+} from '../drafts/draft22/index.js'
 
 const FETCH_DRAFTS: readonly Draft[] = [
   { name: 'draft-14', encode: fenc14, oneShot: fone14, create: fcreate14 },
@@ -363,6 +374,7 @@ const FETCH_DRAFTS: readonly Draft[] = [
   { name: 'draft-19', encode: fenc19, oneShot: fone19, create: fcreate19 },
   { name: 'draft-20', encode: fenc20, oneShot: fone20, create: fcreate20 },
   { name: 'draft-21', encode: fenc21, oneShot: fone21, create: fcreate21 },
+  { name: 'draft-22', encode: fenc22, oneShot: fone22, create: fcreate22 },
 ]
 
 function fetchFixture(flags: number): AnyStream {

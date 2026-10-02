@@ -159,7 +159,7 @@ export function normalizeParams(params: Record<string, unknown>): Record<string,
  * The parameter names this codec decodes into a list rather than a single value.
  *
  * Two definitions permit a repeat: AUTHORIZATION_TOKEN on drafts 11 and later,
- * and the five Range Filters on drafts 19 and 20.
+ * and the five Range Filters on drafts 19 and later.
  */
 const REPEATABLE_PARAMS = new Set([
   'authorization_token',

@@ -1,6 +1,5 @@
 /**
- * The hand-rolled data-stream header walks, shared by all fifteen draft
- * adapters.
+ * The hand-rolled data-stream header walks, shared by every draft adapter.
  *
  * No exported `@moqtap/codec` function reports a header's byte length without
  * materialising the payload, and this package's shape is "parse an object
@@ -21,14 +20,14 @@
  * up to that cap. Parsing on regardless would mean plausible wrong numbers
  * rather than a gap.
  *
- * One file for fifteen drafts because duplicating a wire-format constant has
+ * One file for every draft because duplicating a wire-format constant has
  * already cost this workspace months
  * (`extension/src/detect/uni-control-prefix.ts`, where a duplicated `6f 00`
  * meant no draft-17+ control stream ever matched). Every delta is a named field
  * on {@link WalkDialect}, each read off that draft's own codec decoder and never
  * inferred from a neighbour: the wire is not monotonic, and the SUBGROUP_HEADER
  * stream type is a varint in draft-17, a single byte in draft-18 and draft-19,
- * and a varint again in draft-20.
+ * and a varint again from draft-20 on.
  * `src/__tests__/drafts/walk-corpus.test.ts` holds every row there, walking
  * `@moqtap/test-vectors` and checking each object's ids, length and status
  * against the corpus — which a fixture built from our own encoder could not do.
@@ -40,7 +39,7 @@
  * | 09-10   | RFC 9000 | `0x04` fixed  | absolute   | length, always   |
  * | 11-13   | RFC 9000 | flag ranges   | absolute   | length, bit 0    |
  * | 14-16   | RFC 9000 | flag ranges   | delta      | length, bit 0    |
- * | 17-20   | MoQT vi64| flag bits     | delta      | properties, bit 0|
+ * | 17 on   | MoQT vi64| flag bits     | delta      | properties, bit 0|
  *
  * Imported **only** by `src/drafts/draftNN/index.ts`, each behind the dynamic
  * `import()` in `DRAFT_LOADERS`. Never re-export it from `src/draft/index.ts`:
@@ -78,7 +77,7 @@ export const PRESENT_ALWAYS = 1
 export const PRESENT_BIT0 = 2
 
 /**
- * Every place the fifteen drafts disagree on a data stream.
+ * Every place the drafts disagree on a data stream.
  *
  * One row per draft lives in `src/drafts/draftNN/index.ts`. Each field names the
  * codec decoder it was verified against; none was inferred from a neighbour.
@@ -110,7 +109,7 @@ export interface WalkDialect {
   readonly controlOpener: number
   /**
    * Control frame length framing: a varint (drafts 07-10) or a 16-bit
-   * big-endian field (drafts 11-20). `draft08/codec.ts` reads a varint payload
+   * big-endian field (drafts 11 on). `draft08/codec.ts` reads a varint payload
    * length; `draft11/codec.ts` reads two bytes and combines them. Reading one as
    * the other truncates or over-reads every control frame on the session.
    */
@@ -120,17 +119,17 @@ export interface WalkDialect {
 
   /**
    * The stream type field's width. **Not monotonic across drafts** — varint in
-   * 07-17, a single byte in 18 and 19, varint again in 20 (verified against each
+   * 07-17, a single byte in 18 and 19, varint again from 20 (verified against each
    * draft's `readSubgroupHeader` / `decodeSubgroupStream`).
    */
   readonly subgroupTypeIsVarint: boolean
   /**
    * Whether a value is one of this draft's SUBGROUP_HEADER types.
    *
-   * Five distinct shapes across the fifteen: `0x04` exactly (07-10),
+   * Five distinct shapes across the drafts: `0x04` exactly (07-10),
    * `0x08-0x0D` (11), `0x10-0x15` plus `0x18-0x1D` (12-14), `0x10-0x1F` plus
    * `0x30-0x3F` with the reserved SUBGROUP_ID_MODE excluded (15-16), and
-   * "under 0x80, bit 4 set, mode not reserved" (17-21).
+   * "under 0x80, bit 4 set, mode not reserved" (17 on).
    */
   readonly isSubgroupType: (v: number) => boolean
   /**
@@ -138,7 +137,7 @@ export interface WalkDialect {
    * no type flags to make it conditional).
    *
    * From draft-11 it is present when bit 2 of the type is set. That single rule
-   * covers 11 through 20: draft-17 onward spells it as SUBGROUP_ID_MODE `0b10`
+   * covers every draft from 11: draft-17 onward spells it as SUBGROUP_ID_MODE `0b10`
    * in bits 2:1, which is `(t & 0x04) !== 0` for every value those drafts admit,
    * because the `0b11` mode is reserved and excluded by {@link isSubgroupType}.
    */
@@ -157,7 +156,7 @@ export interface WalkDialect {
   /**
    * Whether each object carries the optional block, and on what condition:
    * {@link PRESENT_NEVER} (07), {@link PRESENT_ALWAYS} (08-10) or
-   * {@link PRESENT_BIT0} (11-20).
+   * {@link PRESENT_BIT0} (11 on).
    */
   readonly objectBlock: number
   /**
@@ -168,7 +167,7 @@ export interface WalkDialect {
    */
   readonly blockShape: number
   /**
-   * The Object ID field is a **delta** (drafts 14-20) rather than an absolute
+   * The Object ID field is a **delta** (drafts 14 on) rather than an absolute
    * Object ID (07-13). `draft14/data-streams.ts` resolves
    * `isFirst ? delta : prevObjectId + 1n + delta`; `draft13` reads the id
    * outright. Reading one as the other gives object ids that are wrong and
@@ -179,7 +178,7 @@ export interface WalkDialect {
   /* ── fetch streams ────────────────────────────────────────────────────── */
 
   /**
-   * Fetch objects carry a Serialization Flags field (drafts 15-20).
+   * Fetch objects carry a Serialization Flags field (drafts 15 on).
    *
    * Drafts 07-14 write every field on every object — Group ID, Subgroup ID,
    * Object ID, Publisher Priority — with no flags byte at all.
@@ -194,7 +193,7 @@ export interface WalkDialect {
    * test).
    */
   readonly fetchPlainBlock: number
-  /** Fetch Serialization Flags are a varint (16-20) rather than one byte (15). */
+  /** Fetch Serialization Flags are a varint (16 on) rather than one byte (15). */
   readonly fetchFlagsIsVarint: boolean
   /**
    * End-of-Range marker values. Empty for draft-15, which reserves the top two
@@ -203,7 +202,7 @@ export interface WalkDialect {
    * outcome onto it.
    */
   readonly fetchMarkers: ReadonlySet<number>
-  /** Flag bit 6 selects DATAGRAM mode, which omits the Subgroup ID (16-20). */
+  /** Flag bit 6 selects DATAGRAM mode, which omits the Subgroup ID (16 on). */
   readonly fetchDatagramMode: boolean
   /**
    * A fetch object with a zero Payload Length carries an Object Status (07-15);
@@ -214,14 +213,14 @@ export interface WalkDialect {
   readonly fetchHasStatus: boolean
   /**
    * A fetch object's Group ID field is absolute (15-17) rather than a delta
-   * resolved against the prior object (18-20). `draft17/data-streams.ts` reads
+   * resolved against the prior object (18 on). `draft17/data-streams.ts` reads
    * the id outright; `draft18` reads a delta and resolves it — one line apart in
    * two otherwise near-identical files.
    */
   readonly fetchGroupIsAbsolute: boolean
   /**
    * On an End-of-Range marker, the Group ID is absolute (16-19) rather than
-   * delta-resolved (20).
+   * delta-resolved (20 on).
    *
    * Separate from {@link fetchGroupIsAbsolute} because draft-20 changed the two
    * independently: ordinary objects went to deltas at draft-18, markers at
@@ -245,7 +244,7 @@ const FETCH_STREAM_TYPE = 0x05
  * First-byte stream sniff. **Heuristic, not authoritative** — `'unknown'` is an
  * ordinary outcome.
  *
- * `0x05` opens a FETCH_HEADER in every draft 07 through 21. The subgroup set is
+ * `0x05` opens a FETCH_HEADER in every supported draft. The subgroup set is
  * per draft. {@link WalkDialect.controlOpener} is `0xaf` from draft-17 and `-1`
  * before it, where control travels bidirectionally and the dispatcher knows that
  * from the seam rather than from a byte.
@@ -404,8 +403,8 @@ export function readSubgroupObject(
 /* ── fetch streams ───────────────────────────────────────────────────────── */
 
 /**
- * FETCH_HEADER: stream type `0x05` and one id, nothing else, in every draft from
- * 07 to 20.
+ * FETCH_HEADER: stream type `0x05` and one id, nothing else, in every supported
+ * draft.
  *
  * The id is spelled `subscribe_id` through draft-10 and `request_id` from
  * draft-11, and it is **not necessarily a FETCH's**: from draft-19 a fill fetch
@@ -431,7 +430,7 @@ export function readFetchHeader(d: WalkDialect, b: Uint8Array, i: number): Fetch
  * One object on a fetch stream.
  *
  * Two shapes, split by {@link WalkDialect.fetchFlagged}. Drafts 07-14 write
- * every field on every object. Drafts 15-20 put a Serialization Flags field
+ * every field on every object. Drafts 15 on put a Serialization Flags field
  * first and make the rest conditional on it.
  *
  * As with the subgroup walk, `next` may point past `b.length` and `prev` is
@@ -503,7 +502,7 @@ function readPlainFetchObject(
 }
 
 /**
- * Drafts 15-20, behind one Serialization Flags field.
+ * Drafts 15 on, behind one Serialization Flags field.
  *
  *  - `>= 0x80` — an End-of-Range marker. Group ID, Object ID and an Object
  *    Payload Length encoded as 0 (the length field IS present; omitting a field

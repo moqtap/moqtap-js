@@ -20,7 +20,7 @@
  * So the whole parameter value is overwritten there, while from draft-11 on only
  * the Token Value goes and the Alias Type, Token Alias and Token Type stay.
  * {@link declaredSecretsIn} reads both shapes out of the corpus, which is why
- * the same assertion covers all fourteen drafts.
+ * the same assertion covers every draft.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -84,6 +84,10 @@ import {
   decodeMessage as decodeMessage21,
   redactAuthTokens as redact21,
 } from '../drafts/draft21/index.js'
+import {
+  decodeMessage as decodeMessage22,
+  redactAuthTokens as redact22,
+} from '../drafts/draft22/index.js'
 import { hexToBytes, loadVectorDir, type TestVector } from './helpers.js'
 
 interface SecretBearing {
@@ -164,6 +168,7 @@ const MIN_VECTORS: Readonly<Record<string, number>> = {
   '19': 11,
   '20': 11,
   '21': 11,
+  '22': 11,
 }
 
 const DRAFTS = [
@@ -182,6 +187,7 @@ const DRAFTS = [
   { draft: '19', redact: redact19, decode: decodeMessage19 },
   { draft: '20', redact: redact20, decode: decodeMessage20 },
   { draft: '21', redact: redact21, decode: decodeMessage21 },
+  { draft: '22', redact: redact22, decode: decodeMessage22 },
 ].map((d) => ({ ...d, name: `draft-${d.draft}`, vectors: secretBearingVectors(d.draft) }))
 
 describe.each(DRAFTS)('$name corpus', ({ draft, vectors, redact, decode }) => {

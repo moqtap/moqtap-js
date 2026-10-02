@@ -46,7 +46,7 @@ import type { AnyMessage, ExchangeKind, SupportedDraft } from '../types.js'
  * collector module.
  */
 export const SUPPORTED_DRAFTS: readonly SupportedDraft[] = /*#__PURE__*/ Object.freeze([
-  21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7,
+  22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7,
 ])
 
 /**
@@ -56,7 +56,7 @@ export const SUPPORTED_DRAFTS: readonly SupportedDraft[] = /*#__PURE__*/ Object.
  * […] Note: Draft versions prior to -15 all used moq-00 ALPN, followed by
  * version negotiation"*.
  *
- * So `moqt-15` through `moqt-21` each name one draft, and **`moq-00` names
+ * So each `moqt-NN` names one draft, and **`moq-00` names
  * eight**; {@link LEGACY_PROTOCOL} and `../draft/setup-probe.ts` resolve the
  * latter from the wire rather than guessing.
  */
@@ -77,6 +77,7 @@ export const PROTOCOL_STRINGS: Readonly<Record<SupportedDraft, string>> =
     19: 'moqt-19',
     20: 'moqt-20',
     21: 'moqt-21',
+    22: 'moqt-22',
   })
 
 /**
@@ -95,6 +96,7 @@ const DRAFT_OF_PROTOCOL: ReadonlyMap<string, SupportedDraft> = new Map([
   ['moqt-19', 19 as SupportedDraft],
   ['moqt-20', 20 as SupportedDraft],
   ['moqt-21', 21 as SupportedDraft],
+  ['moqt-22', 22 as SupportedDraft],
 ])
 
 /**
@@ -118,13 +120,13 @@ export function draftOfProtocol(protocol: string): SupportedDraft | undefined {
  * The draft a wire version number names, or `undefined`.
  *
  * `0xff000000 | draft` is the MoQT draft version scheme, followed by every draft
- * from 07 to 20. Second half of the `moq-00` resolution: the ALPN says "before
- * 15", SERVER_SETUP's selected version says which.
+ * this package supports. Second half of the `moq-00` resolution: the ALPN says
+ * "before 15", SERVER_SETUP's selected version says which.
  *
  * A **table, not arithmetic**: `version - 0xff000000n` would silently accept
  * `0xff000063n` as draft-99 and hand back an adapter that does not exist, and
  * would turn a clean "unsupported" into a load failure for a draft this package
- * cannot parse. A fifteenth entry requires adding a chunk.
+ * cannot parse. A new entry here requires adding a chunk.
  */
 export function draftOfVersion(version: bigint): SupportedDraft | undefined {
   return DRAFT_OF_VERSION.get(version)
@@ -145,6 +147,8 @@ const DRAFT_OF_VERSION: ReadonlyMap<bigint, SupportedDraft> = new Map([
   [0xff000012n, 18 as SupportedDraft],
   [0xff000013n, 19 as SupportedDraft],
   [0xff000014n, 20 as SupportedDraft],
+  [0xff000015n, 21 as SupportedDraft],
+  [0xff000016n, 22 as SupportedDraft],
 ])
 
 /** First defined value among several spellings of one field. */
@@ -201,7 +205,7 @@ export function trackAliasOf(msg: AnyMessage): bigint | undefined {
  * Latencies key on these four kinds plus `publish` and `setup`, never on wire
  * message names: draft-20 unifies `request_ok` / `request_error` where earlier
  * drafts have a response per request type, so a metric keyed on message names
- * fragments across fifteen drafts and cannot be compared.
+ * fragments across drafts and cannot be compared.
  *
  * Draft-20 §10 lists exactly seven messages that may open a request stream —
  * `subscribe`, `publish`, `fetch`, `track_status`, `publish_namespace`,

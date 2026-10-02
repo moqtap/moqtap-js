@@ -11,7 +11,7 @@
  * someone else: each vector is a hex string and the fields it decodes to, so
  * this walks bytes nobody here produced against ids nobody here computed.
  *
- * For every subgroup and fetch vector, in all fourteen drafts:
+ * For every subgroup and fetch vector, in every draft:
  *
  *  - the Track Alias and Group ID off the header,
  *  - **every** object's Group ID, Object ID, payload length and Object Status,
@@ -89,7 +89,7 @@ interface Expected {
 /**
  * The corpus spells the status two ways, and one of them lies.
  *
- * Drafts 07-14 write `object_status`; 15-20 write `status`. Both are read,
+ * Drafts 07-14 write `object_status`; 15 on write `status`. Both are read,
  * because reading one name would silently skip the assertion on seven drafts and
  * a skipped assertion is indistinguishable from a passing one.
  *
@@ -99,7 +99,7 @@ interface Expected {
  * with nowhere for a status to sit. It is the corpus stating a default, not the
  * bytes.
  *
- * So the wire rule decides, and it is the same rule in all fourteen drafts: the
+ * So the wire rule decides, and it is the same rule in every draft: the
  * Object Status occupies the position a payload would, so it is present exactly
  * when the Payload Length is zero. Verified across the whole corpus — no vector
  * in any draft reports a status alongside a non-zero length except those four

@@ -32,6 +32,7 @@ import {
   MQ1111,
   MQ1112,
 } from '../codes.js'
+import { SUPPORTED_DRAFTS } from '../draft/protocol.js'
 import {
   type BudgetConfig,
   type CollectorConfig,
@@ -163,7 +164,7 @@ function draftsOf(v: unknown, report: (p: ConfigProblem) => void): readonly Supp
   }
   const out: SupportedDraft[] = []
   for (const d of v) {
-    if (d === 19 || d === 20) {
+    if (SUPPORTED_DRAFTS.includes(d)) {
       if (!out.includes(d)) out.push(d)
     } else {
       report({ key: 'drafts', code: MQ1107, got: JSON.stringify(d) })
