@@ -20,7 +20,7 @@ const vectorEntries = loadVectorDir('transport/draft22/codec/messages')
  * updated deliberately.
  */
 const EXPECTED_FILES = 21
-const EXPECTED_VECTORS = 246
+const EXPECTED_VECTORS = 253
 
 describe('draft-22 message vector corpus', () => {
   it('loads every published message vector file', () => {
@@ -504,21 +504,22 @@ describe('draft-22 LOCATION_FILTER is led by its Location Filter Type', () => {
   })
 })
 
-describe('draft-22 SUBSCRIBE_TRACKS takes every SUBSCRIBE parameter (Section 3.6.2)', () => {
-  it('round-trips the parameters Section 9.18 omits and Section 3.6.2 admits', () => {
+describe('draft-22 SUBSCRIBE_TRACKS parameter scope (Sections 9.20.1 and 3.6.2)', () => {
+  function subscribeTracksHex(paramsHex: string): string {
+    const payload = `01010a636f6e666572656e6365${paramsHex}`
+    return `51${(payload.length / 2).toString(16).padStart(4, '0')}${payload}`
+  }
+
+  it('round-trips LOCATION_FILTER and FILL_PARAMETERS, which Section 3.6.2 tells the subscriber to send', () => {
     const message: Draft22Message = {
       type: 'subscribe_tracks',
       request_id: 1n,
       namespace_prefix: ['conference'],
       parameters: {
-        object_delivery_timeout: 100n,
-        rendezvous_timeout: 200n,
-        subgroup_delivery_timeout: 300n,
-        subscriber_priority: 16n,
         location_filter: { filter_type: 5n },
-        fill_parameters: { location_filter: { filter_type: 1n, start_group: 2n } },
-        new_group_request: 0n,
-        track_property_filter: [{ set_id: 0n, property_type: 2n, ranges: [{ start: 1n }] }],
+        fill_parameters: {
+          location_filter: { filter_type: 2n, start_group: 100n, start_object: 0n },
+        },
       },
     }
     const bytes = codec.encodeMessage(message)
@@ -527,6 +528,38 @@ describe('draft-22 SUBSCRIBE_TRACKS takes every SUBSCRIBE parameter (Section 3.6
     if (!result.ok) return
     expect(result.value).toEqual(message)
   })
+
+  it('decodes LOCATION_FILTER followed by an empty FILL_PARAMETERS', () => {
+    const hex = subscribeTracksHex('022105020100')
+    const result = codec.decodeMessage(hexToBytes(hex))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(bytesToHex(codec.encodeMessage(result.value))).toBe(hex)
+  })
+
+  // The rest of the SUBSCRIBE parameters: each definition names SUBSCRIBE and
+  // not SUBSCRIBE_TRACKS, which is the "unless otherwise specified" of
+  // Section 3.6.2. The same bytes on a SUBSCRIBE decode, so the refusal is
+  // about scope and not about the encoding.
+  for (const [name, paramHex] of [
+    ['OBJECT_DELIVERY_TIMEOUT', '0205'],
+    ['RENDEZVOUS_TIMEOUT', '0405'],
+    ['SUBGROUP_DELIVERY_TIMEOUT', '0605'],
+    ['SUBSCRIBER_PRIORITY', '2005'],
+    ['NEW_GROUP_REQUEST', '3200'],
+  ] as const) {
+    it(`refuses ${name} on SUBSCRIBE_TRACKS`, () => {
+      const result = codec.decodeMessage(hexToBytes(subscribeTracksHex(`01${paramHex}`)))
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('CONSTRAINT_VIOLATION')
+      expect(result.error.message).toContain('subscribe_tracks')
+
+      const payload = `0101046c69766505766964656f01${paramHex}`
+      const subscribe = `0300${(payload.length / 2).toString(16).padStart(2, '0')}${payload}`
+      expect(codec.decodeMessage(hexToBytes(subscribe)).ok).toBe(true)
+    })
+  }
 
   it('still refuses LOCATION_FILTER on a PUBLISH_OK, which only EXPIRES and LARGEST_OBJECT may reach', () => {
     expect(decodeErrorCode('070006012103050014')).toBe('CONSTRAINT_VIOLATION')

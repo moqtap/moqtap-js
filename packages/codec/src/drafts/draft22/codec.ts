@@ -566,28 +566,6 @@ function decodeLocationFilter(reader: BufferReader): LocationFilter {
 }
 
 /**
- * Every parameter SUBSCRIBE admits, which SUBSCRIBE_TRACKS admits as well (see
- * {@link PARAMETER_SCOPE}).
- */
-const SUBSCRIBE_PARAMETERS: readonly bigint[] = [
-  PARAM_OBJECT_DELIVERY_TIMEOUT,
-  PARAM_AUTHORIZATION_TOKEN,
-  PARAM_RENDEZVOUS_TIMEOUT,
-  PARAM_SUBGROUP_DELIVERY_TIMEOUT,
-  PARAM_FORWARD,
-  PARAM_SUBSCRIBER_PRIORITY,
-  PARAM_LOCATION_FILTER,
-  PARAM_GROUP_ORDER,
-  PARAM_FILL_PARAMETERS,
-  PARAM_SUBGROUP_FILTER,
-  PARAM_OBJECTID_FILTER,
-  PARAM_PRIORITY_FILTER,
-  PARAM_OBJECT_PROPERTY_FILTER,
-  PARAM_NEW_GROUP_REQUEST,
-  PARAM_INCLUDE_PROPERTIES,
-]
-
-/**
  * Which messages each Message Parameter may appear in.
  *
  * Section 9.20.1: "Each Message Parameter definition indicates the message
@@ -596,7 +574,7 @@ const SUBSCRIBE_PARAMETERS: readonly bigint[] = [
  * the receiving endpoint MUST close the connection with a PROTOCOL_VIOLATION."
  *
  * Read out of draft-22's per-parameter sections, which agree with the
- * per-message lists everywhere except SUBSCRIBE_TRACKS (below). `request_ok`
+ * per-message lists. SUBSCRIBE_TRACKS takes two more (below). `request_ok`
  * is also PUBLISH_OK, REQUEST_UPDATE_OK, TRACK_STATUS_OK,
  * SUBSCRIBE_NAMESPACE_OK, SUBSCRIBE_TRACKS_OK and PUBLISH_NAMESPACE_OK, and
  * carries only EXPIRES (0x08) and LARGEST_OBJECT (0x09). Subscription
@@ -609,19 +587,17 @@ const SUBSCRIBE_PARAMETERS: readonly bigint[] = [
  * applies the FILL_PARAMETERS one; the rest are not enforced anywhere in this
  * package.
  *
- * SUBSCRIBE_TRACKS is where draft-22 contradicts itself. Section 9.18 says "The
- * parameters that can appear in a SUBSCRIBE_TRACKS are AUTHORIZATION_TOKEN,
- * FORWARD, GROUP_ORDER, SUBGROUP_FILTER, OBJECTID_FILTER, PRIORITY_FILTER,
- * OBJECT_PROPERTY_FILTER, TRACK_PROPERTY_FILTER and INCLUDE_PROPERTIES."
- * Section 3.6.2 says "Any Parameter that can be specified on a Subscription
- * (ie: in SUBSCRIBE) is valid in SUBSCRIBE_TRACKS, unless otherwise specified",
- * and goes on to say the subscriber "can specify a Location Filter and
- * optionally include FILL_PARAMETERS in the SUBSCRIBE_TRACKS", neither of
- * which Section 9.18 lists. This codec takes the wider reading: every
- * SUBSCRIBE parameter, plus TRACK_PROPERTY_FILTER. Refusing what Section 3.6.2
- * explicitly invites would close sessions with conforming peers, while
- * admitting what Section 9.18 omits only accepts a parameter whose meaning on
- * a subscription is already defined.
+ * SUBSCRIBE_TRACKS also admits LOCATION_FILTER (0x21) and FILL_PARAMETERS
+ * (0x23), which neither Section 9.18's list nor their own definitions name.
+ * Section 3.6.2 says the subscriber "can specify a Location Filter and
+ * optionally include FILL_PARAMETERS in the SUBSCRIBE_TRACKS", and refusing
+ * what the draft tells a subscriber to send would close sessions with
+ * conforming peers. That conflict has been there since draft-20, and it is
+ * the only one: Section 3.6.2's "Any Parameter that can be specified on a
+ * Subscription (ie: in SUBSCRIBE) is valid in SUBSCRIBE_TRACKS, unless
+ * otherwise specified" yields to the per-parameter definitions, which do
+ * specify otherwise for OBJECT_DELIVERY_TIMEOUT, RENDEZVOUS_TIMEOUT,
+ * SUBGROUP_DELIVERY_TIMEOUT, SUBSCRIBER_PRIORITY and NEW_GROUP_REQUEST.
  *
  * `fill_parameters` in a set means the type is one of the eight Table 7 permits
  * inside FILL_PARAMETERS (Section 9.20.15). TRACK_PROPERTY_FILTER (0x29) is
@@ -667,12 +643,13 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
     PARAM_SUBSCRIBER_PRIORITY,
     new Set(['subscribe', 'publish', 'fetch', 'request_update', FILL_SCOPE]),
   ],
-  // 0x21 LOCATION_FILTER (9.20.9).
+  // 0x21 LOCATION_FILTER (9.20.9), and SUBSCRIBE_TRACKS by Section 3.6.2.
   [
     PARAM_LOCATION_FILTER,
     new Set([
       'fetch',
       'subscribe',
+      'subscribe_tracks',
       'publish',
       'request_update',
       'publish_state_notify',
@@ -681,9 +658,10 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
   ],
   // 0x22 GROUP_ORDER (9.20.8).
   [PARAM_GROUP_ORDER, new Set(['subscribe', 'publish', 'subscribe_tracks', 'fetch', FILL_SCOPE])],
-  // 0x23 FILL_PARAMETERS (9.20.15) — subscriptions only, and never nested
-  // in itself: a FETCH already is a fetch, so it has nothing to fill.
-  [PARAM_FILL_PARAMETERS, new Set(['subscribe', 'request_update'])],
+  // 0x23 FILL_PARAMETERS (9.20.15), and SUBSCRIBE_TRACKS by Section 3.6.2 —
+  // subscriptions only, and never nested in itself: a FETCH already is a
+  // fetch, so it has nothing to fill.
+  [PARAM_FILL_PARAMETERS, new Set(['subscribe', 'subscribe_tracks', 'request_update'])],
   // 0x25-0x28 range filters (3.3.2) — permitted inside FILL_PARAMETERS (Table 7).
   [
     PARAM_SUBGROUP_FILTER,
@@ -712,7 +690,6 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
   // 0x35 INCLUDE_PROPERTIES (9.20.21).
   [PARAM_INCLUDE_PROPERTIES, new Set(['subscribe', 'track_status', 'fetch', 'subscribe_tracks'])],
 ])
-for (const type of SUBSCRIBE_PARAMETERS) PARAMETER_SCOPE.get(type)?.add('subscribe_tracks')
 
 function encodeParams(params: Draft22Params, writer: BufferWriter): void {
   // Collect and sort params by type

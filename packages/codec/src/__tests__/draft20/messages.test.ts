@@ -20,7 +20,7 @@ const vectorEntries = loadVectorDir('transport/draft20/codec/messages')
  * updated deliberately.
  */
 const EXPECTED_FILES = 21
-const EXPECTED_VECTORS = 235
+const EXPECTED_VECTORS = 243
 
 describe('draft-20 message vector corpus', () => {
   it('loads every published message vector file', () => {
@@ -280,4 +280,60 @@ describe('draft-20 encoder specifics', () => {
     const result = codec.decodeMessage(draft19JoiningFetch)
     expect(result.ok).toBe(false)
   })
+})
+
+describe('draft-20 SUBSCRIBE_TRACKS parameter scope (Sections 10.2.1 and 10.20.1)', () => {
+  function subscribeTracksHex(paramsHex: string): string {
+    const payload = `01010a636f6e666572656e6365${paramsHex}`
+    return `51${(payload.length / 2).toString(16).padStart(4, '0')}${payload}`
+  }
+
+  it('round-trips LOCATION_FILTER and FILL_PARAMETERS, which Section 10.20.1 tells the subscriber to send', () => {
+    const message: Draft20Message = {
+      type: 'subscribe_tracks',
+      request_id: 1n,
+      namespace_prefix: ['conference'],
+      parameters: {
+        location_filter: { start_group: 0n, start_object: 0n },
+        fill_parameters: { location_filter: { start_group: 100n, start_object: 0n } },
+      },
+    }
+    const bytes = codec.encodeMessage(message)
+    const result = codec.decodeMessage(bytes)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value).toEqual(message)
+  })
+
+  it('decodes LOCATION_FILTER followed by an empty FILL_PARAMETERS', () => {
+    const hex = subscribeTracksHex('0221020000020100')
+    const result = codec.decodeMessage(hexToBytes(hex))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(bytesToHex(codec.encodeMessage(result.value))).toBe(hex)
+  })
+
+  // The rest of the SUBSCRIBE parameters: each definition names SUBSCRIBE and
+  // not SUBSCRIBE_TRACKS, which is the "unless otherwise specified" of
+  // Section 10.20.1. The same bytes on a SUBSCRIBE decode, so the refusal is
+  // about scope and not about the encoding.
+  for (const [name, paramHex] of [
+    ['OBJECT_DELIVERY_TIMEOUT', '0205'],
+    ['RENDEZVOUS_TIMEOUT', '0405'],
+    ['SUBGROUP_DELIVERY_TIMEOUT', '0605'],
+    ['SUBSCRIBER_PRIORITY', '2005'],
+    ['NEW_GROUP_REQUEST', '3200'],
+  ] as const) {
+    it(`refuses ${name} on SUBSCRIBE_TRACKS`, () => {
+      const result = codec.decodeMessage(hexToBytes(subscribeTracksHex(`01${paramHex}`)))
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('CONSTRAINT_VIOLATION')
+      expect(result.error.message).toContain('subscribe_tracks')
+
+      const payload = `0101046c69766505766964656f01${paramHex}`
+      const subscribe = `0300${(payload.length / 2).toString(16).padStart(2, '0')}${payload}`
+      expect(codec.decodeMessage(hexToBytes(subscribe)).ok).toBe(true)
+    })
+  }
 })

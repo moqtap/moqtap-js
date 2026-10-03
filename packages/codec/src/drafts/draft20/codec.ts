@@ -539,7 +539,7 @@ function decodeLocationFilter(reader: BufferReader): LocationFilter {
 }
 
 /**
- * Which messages each Message Parameter's own definition names.
+ * Which messages each Message Parameter may appear in.
  *
  * Section 10.2.1: "Each Message Parameter definition indicates the message
  * types in which it can appear. If it appears in some other type of message,
@@ -554,6 +554,17 @@ function decodeLocationFilter(reader: BufferReader): LocationFilter {
  * (0x10), SUBSCRIBER_PRIORITY (0x20), LOCATION_FILTER (0x21) and
  * NEW_GROUP_REQUEST (0x32). Subscription parameters travel on PUBLISH (initial values) and
  * REQUEST_UPDATE (changes) instead.
+ *
+ * SUBSCRIBE_TRACKS also admits LOCATION_FILTER (0x21) and FILL_PARAMETERS
+ * (0x23), which their own definitions do not name. Section 10.20.1 says the
+ * subscriber "can specify a Location Filter and optionally include
+ * FILL_PARAMETERS", and refusing what the draft tells a subscriber to send
+ * would close sessions with conforming peers. Those two are the only
+ * conflict: the same section's "Any Parameter that can be specified on a
+ * Subscription (ie: in SUBSCRIBE) is valid in SUBSCRIBE_TRACKS, unless
+ * otherwise specified" yields to the per-parameter definitions, which do
+ * specify otherwise for OBJECT_DELIVERY_TIMEOUT, RENDEZVOUS_TIMEOUT,
+ * SUBGROUP_DELIVERY_TIMEOUT, SUBSCRIBER_PRIORITY and NEW_GROUP_REQUEST.
  *
  * `fill_parameters` in a set means the type is one of the eight Table 6 permits
  * inside FILL_PARAMETERS (Section 10.2.15). TRACK_PROPERTY_FILTER (0x29) is
@@ -599,12 +610,14 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
     PARAM_SUBSCRIBER_PRIORITY,
     new Set(['subscribe', 'publish', 'fetch', 'request_update', FILL_SCOPE]),
   ],
-  // 0x21 LOCATION_FILTER (10.2.9) — PUBLISH and PUBLISH_STATE_NOTIFY here where draft-19 lists PUBLISH_OK.
+  // 0x21 LOCATION_FILTER (10.2.9) — PUBLISH and PUBLISH_STATE_NOTIFY here where draft-19 lists PUBLISH_OK;
+  // SUBSCRIBE_TRACKS by Section 10.20.1.
   [
     PARAM_LOCATION_FILTER,
     new Set([
       'fetch',
       'subscribe',
+      'subscribe_tracks',
       'publish',
       'request_update',
       'publish_state_notify',
@@ -613,9 +626,10 @@ const PARAMETER_SCOPE = new Map<bigint, Set<string>>([
   ],
   // 0x22 GROUP_ORDER (10.2.8) — PUBLISH and FILL_PARAMETERS nesting here; draft-19 has neither.
   [PARAM_GROUP_ORDER, new Set(['subscribe', 'publish', 'subscribe_tracks', 'fetch', FILL_SCOPE])],
-  // 0x23 FILL_PARAMETERS (10.2.15) — NEW. Subscriptions only, and never nested
-  // in itself: a FETCH already is a fetch, so it has nothing to fill.
-  [PARAM_FILL_PARAMETERS, new Set(['subscribe', 'request_update'])],
+  // 0x23 FILL_PARAMETERS (10.2.15) — NEW. Subscriptions only (SUBSCRIBE_TRACKS by
+  // Section 10.20.1), and never nested in itself: a FETCH already is a fetch, so
+  // it has nothing to fill.
+  [PARAM_FILL_PARAMETERS, new Set(['subscribe', 'subscribe_tracks', 'request_update'])],
   // 0x25-0x28 range filters (5.1.4) — permitted inside FILL_PARAMETERS (Table 6).
   [
     PARAM_SUBGROUP_FILTER,

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [0.13.1] - 2026-10-03
+
+### Fixed
+
+- **SUBSCRIBE_TRACKS parameter scope on drafts 20, 21 and 22.** All three now
+  admit the parameters each definition names for SUBSCRIBE_TRACKS, plus
+  LOCATION_FILTER (0x21) and FILL_PARAMETERS (0x23), which the SUBSCRIBE_TRACKS
+  section tells a subscriber to send. Drafts 20 and 21 refused those two;
+  draft-22 accepted every SUBSCRIBE parameter, and now refuses
+  OBJECT_DELIVERY_TIMEOUT (0x02), RENDEZVOUS_TIMEOUT (0x04),
+  SUBGROUP_DELIVERY_TIMEOUT (0x06), SUBSCRIBER_PRIORITY (0x20) and
+  NEW_GROUP_REQUEST (0x32) there with `CONSTRAINT_VIOLATION`, as the
+  per-parameter definitions require. Requires `@moqtap/test-vectors` 0.18.1.
+
 ## [0.13.0] - 2026-10-02
 
 ### Added
