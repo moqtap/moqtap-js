@@ -443,10 +443,10 @@ export class Draft21SessionFSM {
    *     Request ID and does not disturb any stream already open on the same
    *     subscription.
    *
-   * The opened stream has no FETCH_OK: per DECISIONS.md D7 (SPEC-DELTA Section
-   * 11 Q9) there is no End Location and no End Of Track for a fill, and stream
-   * FIN is the only completion signal. Nothing here synthesizes one, and the
-   * stream is deliberately absent from {@link fetches}.
+   * The opened stream has no FETCH_OK: there is no End Location and no End Of
+   * Track for a fill, and stream FIN is the only completion signal. Nothing
+   * here synthesizes one, and the stream is deliberately absent from
+   * {@link fetches}.
    */
   private applyFillParameters(
     subscribeId: bigint,
@@ -478,7 +478,7 @@ export class Draft21SessionFSM {
    *
    *  - `'complete'` — the publisher FINed the stream. Section 3.4.1 makes
    *    that the ONLY completion signal; there is no FETCH_OK to read an End
-   *    Location or an End Of Track flag from (DECISIONS.md D7 / Q9).
+   *    Location or an End Of Track flag from.
    *  - `'reset'` — the publisher reset it, which is how a fill failure is
    *    signalled, "because there is no REQUEST_ERROR associated with a fill
    *    fetch stream".
@@ -841,10 +841,9 @@ export class Draft21SessionFSM {
     }
     if (streamRequestId !== undefined) {
       // A FETCH_OK can only answer a FETCH. A fill fetch stream is a FETCH
-      // response without a FETCH request, so it has no FETCH_OK at all
-      // (DECISIONS.md D7 / SPEC-DELTA Section 11 Q9) — its Request ID names a
-      // SUBSCRIBE or REQUEST_UPDATE, and one turning up here means the peer
-      // synthesized a FETCH_OK for a fill.
+      // response without a FETCH request, so it has no FETCH_OK at all — its
+      // Request ID names a SUBSCRIBE or REQUEST_UPDATE, and one turning up here
+      // means the peer synthesized a FETCH_OK for a fill.
       const kind = this._requests.get(requestId)?.kind
       if (kind !== undefined && kind !== 'fetch') {
         return {

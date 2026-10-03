@@ -13,7 +13,7 @@
     },
     "packages/codec": {
       "name": "@moqtap/codec",
-      "version": "0.13.1",
+      "version": "0.13.2",
       "devDependencies": {
         "@moqtap/test-vectors": "^0.18.1",
         "tsup": "^8.0.0",
@@ -38,7 +38,7 @@
     },
     "packages/trace": {
       "name": "@moqtap/trace",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "dependencies": {
         "cbor-x": "^1.6.0",
       },

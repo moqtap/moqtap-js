@@ -101,7 +101,7 @@ describe('draft-22 fill fetch streams (Section 3.4)', () => {
     expect(result.violation.message).toContain('subscribe_tracks')
   })
 
-  it('never shows a fill fetch stream as a FETCH, and rejects a FETCH_OK for one (D7 / Q9)', () => {
+  it('never shows a fill fetch stream as a FETCH, and rejects a FETCH_OK for one', () => {
     const fsm = ready()
     fsm.send(subscribe(1n, { fill_parameters: {} }))
     // A fill is a FETCH *response* with no FETCH request behind it.

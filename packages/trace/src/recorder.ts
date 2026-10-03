@@ -171,10 +171,10 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
   /**
    * Index of the oldest event still live in {@link events}.
    *
-   * Dropping used to be `events.shift()`, which moves the whole backlog on
-   * every call; at a hundred thousand retained events that is O(n) per
-   * recorded event, and it bites hardest exactly when the recorder is already
-   * under pressure. The head advances instead, and the dead prefix is spliced
+   * Dropping is not `events.shift()`, which moves the whole backlog on every
+   * call; at a hundred thousand retained events that is O(n) per recorded
+   * event, and it bites hardest exactly when the recorder is already under
+   * pressure. The head advances instead, and the dead prefix is spliced
    * away in one pass every few thousand drops, which is O(1) amortised.
    */
   let head = 0

@@ -10,6 +10,12 @@ This file starts at 0.4.0. Earlier releases are in the git history. Versions
 published; their contents are folded into the 0.4.0 below, so every "before"
 in it describes 0.3.0 — the last version anyone can install.
 
+## [0.4.2] - 2026-10-03
+
+### Changed
+
+- Source comments only. No API or behaviour change.
+
 ## [0.4.1] - 2026-09-17
 
 **0.4.0 was tagged but never reached the registry.** `trace-v0.4.0` is on the

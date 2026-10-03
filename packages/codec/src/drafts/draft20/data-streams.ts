@@ -110,8 +110,7 @@ function encodeObjectProperties(props: Record<string, bigint>, w: BufferWriter):
 // conditions. They are NOT the datagram rules (Section 11.3.1): bit 4 is
 // required here and forbidden there, and SUBGROUP_HEADER has no "unspecified
 // bit" condition at all, because bits 0 through 6 are all specified for it.
-// SPEC-DELTA Section 10 item 3 flags exactly this conflation as a mistake, so
-// neither rule set is derived from the other.
+// The two rule sets differ, so neither is derived from the other.
 //
 // The resulting valid set — 0x10-0x15, 0x18-0x1D, 0x30-0x35, 0x38-0x3D,
 // 0x50-0x55, 0x58-0x5D, 0x70-0x75, 0x78-0x7D — is byte for byte draft-19's
@@ -184,13 +183,13 @@ const MAX_U64 = 0xffffffffffffffffn
 export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
   const w = new BufferWriter()
   const streamType = stream.headerType
-  // DECISION (DECISIONS.md D5): strict on send. Section 1.4.1 permits
-  // non-minimal encodings, and Section 11.4.2 words its third invalidity rule
-  // as "values of 128 or greater (i.e., any value that requires more than a
-  // one-byte variable-length integer encoding)" — two clauses that come apart
-  // under that allowance. writeVarInt always emits the minimal form, so a
-  // legal Type Flags value below 128 always goes out as one byte and can never
-  // trip a peer that reads the parenthetical literally.
+  // Strict on send. Section 1.4.1 permits non-minimal encodings, and Section
+  // 11.4.2 words its third invalidity rule as "values of 128 or greater (i.e.,
+  // any value that requires more than a one-byte variable-length integer
+  // encoding)" — two clauses that come apart under that allowance. writeVarInt
+  // always emits the minimal form, so a legal Type Flags value below 128 always
+  // goes out as one byte and can never trip a peer that reads the parenthetical
+  // literally.
   w.writeVarInt(BigInt(streamType))
 
   const propertiesPresent = (streamType & 0x01) !== 0
@@ -211,8 +210,8 @@ export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
   for (const obj of stream.objects) {
     // Section 11.4.2: "Object ID = previous Object ID + Object ID Delta + 1",
     // or the delta itself for the first Object on the stream. This +1 is the
-    // subgroup delta encoding, not a range end — nothing to do with the
-    // inclusive/exclusive flip of DECISIONS.md D4.
+    // subgroup delta encoding, not a range end, and unrelated to the
+    // inclusive end of a Location range.
     const delta = prevObjectId < 0n ? obj.objectId : obj.objectId - prevObjectId - 1n
     w.writeVarInt(delta)
     if (propertiesPresent) {
@@ -244,7 +243,7 @@ export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
 export function encodeDatagram(dg: DatagramObject): Uint8Array {
   const w = new BufferWriter()
   const dgType = dg.datagramType
-  // D5: minimal on send. See encodeSubgroupStream.
+  // Minimal on send. See encodeSubgroupStream.
   w.writeVarInt(BigInt(dgType))
   w.writeVarInt(dg.trackAlias)
   w.writeVarInt(dg.groupId)
@@ -299,21 +298,20 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
     if (flags >= 0x80) {
       // End-of-Range marker (0x8C / 0x10C / 0x20C).
       //
-      // DECISION (DECISIONS.md D7, SPEC-DELTA Section 11 Q16): the ordinary
-      // Section 11.4.4.1 delta arithmetic applies to the marker's two fields.
-      // All three marker values carry the low bits 0x0C — the ordinary
-      // "Group ID Delta present, Object ID Delta present" pattern — and
-      // Section 11.4.4.2 says only that "the Group ID and Object ID fields are
-      // present". It does not say whether they are deltas or absolutes; the
+      // The ordinary Section 11.4.4.1 delta arithmetic applies to the marker's
+      // two fields. All three marker values carry the low bits 0x0C — the
+      // ordinary "Group ID Delta present, Object ID Delta present" pattern —
+      // and Section 11.4.4.2 says only that "the Group ID and Object ID fields
+      // are present". It does not say whether they are deltas or absolutes; the
       // flags are literally the normal flags, so they are treated as normal.
       if (first) w.writeVarInt(obj.groupId)
       else w.writeVarInt(obj.groupId - prevGroupId - 1n)
       w.writeVarInt(obj.objectId)
-      // DECISION (D7, Q17): Object Payload Length IS present on a marker,
-      // encoded as 0. Section 11.4.4.2 lists what is absent — "Subgroup ID,
-      // Priority and Properties" — and does not name Object Payload Length,
-      // which Figure 28 marks mandatory. Omitting a field the figure requires
-      // is what desynchronises a fetch stream.
+      // Object Payload Length IS present on a marker, encoded as 0.
+      // Section 11.4.4.2 lists what is absent — "Subgroup ID, Priority and
+      // Properties" — and does not name Object Payload Length, which Figure 28
+      // marks mandatory. Omitting a field the figure requires is what
+      // desynchronises a fetch stream.
       w.writeVarInt(BigInt(obj.payloadLength))
     } else if (flags & 0x40) {
       // DATAGRAM mode: no subgroup_id field
@@ -439,9 +437,9 @@ interface SubgroupHeaderFields {
 }
 
 function readSubgroupHeader(r: BufferReader): SubgroupHeaderFields {
-  // DECISION (DECISIONS.md D5): permissive on receive. The Type Flags are a
-  // vi64 and Section 1.4.1 allows non-minimal encodings, so 0x10 may legally
-  // arrive as the two-byte 0x8010. Read the value, then judge the value.
+  // Permissive on receive. The Type Flags are a vi64 and Section 1.4.1 allows
+  // non-minimal encodings, so 0x10 may legally arrive as the two-byte 0x8010.
+  // Read the value, then judge the value.
   const typeFlags = r.readVarInt()
   const flagsError = subgroupTypeFlagsError(typeFlags)
   if (flagsError !== null) {
@@ -596,7 +594,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
 export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> {
   try {
     const r = new BufferReader(bytes)
-    // D5: permissive on receive — the Type Flags are a vi64 (see
+    // Permissive on receive — the Type Flags are a vi64 (see
     // decodeSubgroupStream).
     const typeFlags = r.readVarInt()
     const flagsError = datagramTypeFlagsError(typeFlags)
@@ -753,13 +751,13 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
         r.offset,
       )
     }
-    // D7 / Q16: ordinary delta arithmetic (see encodeFetchStream).
+    // Ordinary delta arithmetic (see encodeFetchStream).
     const groupDelta = r.readVarInt()
     groupId = resolveGroupId(st.first, groupDelta, st.prevGroupId, r.offset)
     // With a Group ID Delta present, Object ID is the Object ID Delta.
     const objectDelta = r.readVarInt()
     objectId = objectDelta
-    // D7 / Q17: Object Payload Length is present, encoded as 0.
+    // Object Payload Length is present, encoded as 0.
     payloadLength = Number(r.readVarInt())
     payloadByteOffset = base + r.offset
     payload = payloadLength > 0 ? r.readBytesView(payloadLength) : new Uint8Array(0)

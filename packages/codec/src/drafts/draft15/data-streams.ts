@@ -143,11 +143,11 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
 /**
  * The SUBGROUP_HEADER fields, read once for both decoders.
  *
- * `decodeSubgroupStream` and `createSubgroupStreamDecoder` used to parse this
- * header separately and they drifted: the incremental one dropped the header
- * flags, reported no Type Flags, and left the Subgroup ID at zero under the
- * mode that derives it from the first Object. One reader means there is
- * nothing left to keep in sync.
+ * `decodeSubgroupStream` and `createSubgroupStreamDecoder` share it because
+ * two parsers of one header drift: an incremental one can drop the header
+ * flags, report no Type Flags, or leave the Subgroup ID at zero under the mode
+ * that derives it from the first Object. One reader means there is nothing to
+ * keep in sync.
  */
 interface SubgroupHeaderFields {
   readonly streamType: number
@@ -391,11 +391,10 @@ function newFetchObjectState(): FetchObjectState {
 /**
  * One Object off a fetch stream, for both decoders.
  *
- * Lifted out of `decodeFetchStream` unchanged so the incremental decoder
- * cannot report a different shape for the same bytes. It used to return a
- * bare ObjectPayload -- no Serialization Flags, no Group or Subgroup ID, no
- * Priority, no deltas -- with every `byteOffset` zero, and in DATAGRAM mode
- * it resolved the Object ID against state it never carried.
+ * Shared with `decodeFetchStream` so the incremental decoder cannot report a
+ * different shape for the same bytes: the Serialization Flags, Group and
+ * Subgroup ID, Priority, deltas and `byteOffset` come from one place, and in
+ * DATAGRAM mode the Object ID resolves against state both decoders carry.
  *
  * `base` is the absolute offset that `r.offset === 0` corresponds to: 0 for
  * the one-shot decoder, the buffer window's position for the incremental one.
@@ -573,9 +572,9 @@ export function decodeDataStream(
 /**
  * A data stream's bytes, accumulated across chunks.
  *
- * The decoders below used to allocate an array of `unread + chunk.length` and
- * copy both halves into it on *every* chunk. Capacity now grows geometrically,
- * so most chunks are a single `set` into spare room.
+ * Capacity grows geometrically, so most chunks are a single `set` into spare
+ * room rather than an allocation of `unread + chunk.length` and a copy of both
+ * halves on *every* chunk.
  *
  * **It never compacts in place.** Object payloads are handed out as views into
  * this buffer (`readBytesView`), so moving bytes within it would corrupt an
@@ -662,8 +661,8 @@ export function createSubgroupStreamDecoder(): TransformStream<
   return new TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>({
     transform(chunk, controller) {
       b.append(chunk)
-      // One view and one reader per chunk. Both used to be allocated per
-      // object, and an object is the thing there are a great many of.
+      // One view and one reader per chunk, not per object: an object is the
+      // thing there are a great many of.
       const view = b.written()
 
       if (header === null) {
@@ -731,9 +730,8 @@ export function createFetchStreamDecoder(): TransformStream<
   const b = new StreamBuffer()
   let headerEmitted = false
   /**
-   * The delta state the Objects carry between them. This decoder used to keep
-   * none, which is why DATAGRAM-mode Object IDs came out wrong: they resolve
-   * against the previous Object's ID.
+   * The delta state the Objects carry between them. Without it DATAGRAM-mode
+   * Object IDs come out wrong: they resolve against the previous Object's ID.
    */
   const st = newFetchObjectState()
 
@@ -800,15 +798,13 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
   /**
    * Delegation that actually delegates.
    *
-   * This function used to pick an inner decoder and then never write a byte to
-   * it: chunks accumulated in a local buffer and `flush` decoded the whole
-   * stream in one shot. Every event therefore arrived at end-of-stream, which
-   * on a subscription that stays open means no events at all. The inner
-   * decoder's readable is now pumped into this one's controller as the bytes
-   * arrive.
+   * The inner decoder's readable is pumped into this one's controller as the
+   * bytes arrive. Accumulating the chunks and decoding the whole stream in
+   * `flush` would deliver every event at end-of-stream, which on a
+   * subscription that stays open means no events at all.
    *
-   * The first byte still decides which decoder to use, on exactly the range
-   * this draft accepted before.
+   * The first byte decides which decoder to use, on exactly the range this
+   * draft accepts.
    */
   let writer: WritableStreamDefaultWriter<Uint8Array> | null = null
   let pump: Promise<void> = Promise.resolve()

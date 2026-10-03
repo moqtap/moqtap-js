@@ -77,8 +77,8 @@ describe('CBOR interop (Rust/ciborium compatibility)', () => {
   it('encodes a large timestamp as a CBOR integer, not a float', () => {
     // cbor-x writes any JS number past 32 bits as a float64 unless it is
     // handed a BigInt — and every epoch-millisecond timestamp is past 32 bits.
-    // A decoder that reads `startTime` as an integer found it missing and
-    // rejected the file, which is every trace this package used to write.
+    // A decoder that reads `startTime` as an integer finds a float missing and
+    // rejects the file, which would be every trace this package writes.
     const headerBytes = headerBytesOf(writeMoqtrace(trace))
     for (const key of ['startTime', 'endTime']) {
       const value = valueBytesAfterKey(headerBytes, key)

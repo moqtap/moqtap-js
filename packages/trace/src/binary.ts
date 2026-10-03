@@ -110,11 +110,11 @@ const COMMON_EVENT_KEYS = new Set(['n', 't', 'p', 'e'])
  * "A defined key whose value has an unusable type is treated as unrecognised."
  *
  * Only the decode writes to the set, so there is no separate list of owned keys
- * to keep in step with it. The list there used to be is what made adding
- * `"ta"`, `"sg"`, `"fri"` and `"g"` to Event 1 *reduce* what this reader
- * preserved: those keys counted as owned whatever they carried, so a
- * wrong-typed one was kept out of `extra` while the decode either threw on it,
- * losing the whole file, or coerced it into a value the file never carried.
+ * to keep in step with it. A list would make adding a key to an event *reduce*
+ * what this reader preserves: a listed key counts as owned whatever it
+ * carries, so a wrong-typed one would be kept out of `extra` while the decode
+ * either threw on it, losing the whole file, or coerced it into a value the
+ * file never carried.
  */
 interface Decoding {
   readonly obj: Record<string, unknown>
@@ -315,8 +315,8 @@ function segmentToCbor(segment: SegmentInfo): Record<string, unknown> {
  *
  * `"sequence"` is the exception, and the only key inside here that can fail a
  * header: it is the sole ordering key of a segmented stream, so a reader that
- * cannot read it cannot place the segment, and the `0` this function used to
- * default to invents an order the file never had.
+ * cannot read it cannot place the segment, and defaulting it to `0` would
+ * invent an order the file never had.
  */
 function cborToSegment(value: unknown): SegmentInfo | undefined {
   const obj = asMap(value)
@@ -415,10 +415,10 @@ export function cborToHeader(obj: Record<string, unknown>): TraceHeader {
     ...optional(src, 'sessionId', 'sessionId', asText),
     ...optional(src, 'segment', 'segment', cborToSegment),
     ...optional(src, 'sampling', 'sampling', cborToSampling),
-    // Not `Record<string, unknown>` by assertion but by test. A `"custom"`
-    // that is not a map used to reach this field wearing that type, so the
-    // first caller to iterate its keys met a shape it was told could not
-    // occur. The bytes survive either way; only one of the two keeps the
+    // Not `Record<string, unknown>` by assertion but by test. Asserted, a
+    // `"custom"` that is not a map would reach this field wearing that type,
+    // and the first caller to iterate its keys would meet a shape it was told
+    // could not occur. The bytes survive either way; only the test keeps the
     // field's type true.
     ...optional(src, 'custom', 'custom', asMap),
   }
@@ -808,10 +808,10 @@ function requireUint(src: Decoding, key: string): bigint {
 /**
  * Take a required header text key, or fail the header.
  *
- * The reader used to assert the type instead — `obj.protocol as string` — which
- * let a header with no `"protocol"` reach a caller with `undefined` sitting in
- * a field declared `string`, and re-encode as CBOR `undefined`, a shape the
- * format tells writers never to produce.
+ * Asserting the type instead — `obj.protocol as string` — would let a header
+ * with no `"protocol"` reach a caller with `undefined` sitting in a field
+ * declared `string`, and re-encode as CBOR `undefined`, a shape the format
+ * tells writers never to produce.
  */
 function requireHeaderText(src: Decoding, key: string): string {
   const present = Object.hasOwn(src.obj, key)

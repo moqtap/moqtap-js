@@ -332,10 +332,9 @@ describe('the other half of the budget: per negotiated draft', () => {
   // draft adapter plus the codec decoder it imports, bundled together, because
   // that pair is one network fetch at `session.protocol` time.
   //
-  // Every draft, not a sample. The bands were set from drafts 19 and 20, and
-  // the older drafts are a different shape — draft-07's decoder has no
-  // Authorization Token structure and no factored stream types at all — so it is
-  // worth knowing whether one of them blows the budget.
+  // Every draft, not a sample. The older drafts are a different shape —
+  // draft-07's decoder has no Authorization Token structure and no factored
+  // stream types at all — so each one is checked against the budget.
   const drafts = SUPPORTED_DRAFTS
 
   it.each(drafts)('draft-%i stays inside the 4–9 KB band', (n) => {

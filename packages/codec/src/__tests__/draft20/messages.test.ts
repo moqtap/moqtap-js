@@ -184,7 +184,7 @@ describe('draft-20 encoder specifics', () => {
     return bytesToHex(codec.encodeMessage(message))
   }
 
-  it('encodes an empty FILL_PARAMETERS as Length 1 carrying the count byte (D1)', () => {
+  it('encodes an empty FILL_PARAMETERS as Length 1 carrying the count byte', () => {
     // Not Length 0: the value is a parameter block, and a parameter block
     // begins with Number of Parameters.
     const hex = encodeHex({
@@ -197,7 +197,7 @@ describe('draft-20 encoder specifics', () => {
     expect(hex.endsWith('01230100')).toBe(true)
   })
 
-  it('restarts the Type Delta chain inside FILL_PARAMETERS and resumes the outer one from 0x23 (D2)', () => {
+  it('restarts the Type Delta chain inside FILL_PARAMETERS and resumes the outer one from 0x23', () => {
     const hex = encodeHex({
       type: 'subscribe',
       request_id: 1n,
@@ -212,7 +212,7 @@ describe('draft-20 encoder specifics', () => {
     expect(hex.endsWith('02' + '230502204002010f19')).toBe(true)
   })
 
-  it('writes an inclusive four-field LOCATION_FILTER with no +1 on the end (D4)', () => {
+  it('writes an inclusive four-field LOCATION_FILTER with no +1 on the end', () => {
     const hex = encodeHex({
       type: 'fetch',
       request_id: 2n,
@@ -231,7 +231,7 @@ describe('draft-20 encoder specifics', () => {
     expect(hex.endsWith('0121040a030507')).toBe(true)
   })
 
-  it('writes the FETCH_OK End Location verbatim (D4)', () => {
+  it('writes the FETCH_OK End Location verbatim', () => {
     const hex = encodeHex({
       type: 'fetch_ok',
       end_of_track: 0,
@@ -244,7 +244,7 @@ describe('draft-20 encoder specifics', () => {
     expect(hex).toBe('18000400040000')
   })
 
-  it('round-trips the 2^64-1 Stream Count sentinel through bigint (D6)', () => {
+  it('round-trips the 2^64-1 Stream Count sentinel through bigint', () => {
     expect(UNKNOWN_STREAM_COUNT).toBe(2n ** 64n - 1n)
     const hex = encodeHex({
       type: 'publish_done',

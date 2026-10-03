@@ -1099,7 +1099,7 @@ describe('a defined key whose value has an unusable type', () => {
   it('applies to a text key on another event type', () => {
     // Nothing here is a property of those four keys or of Event 1. `"endpoint"`
     // on Event 8 is optional text; a value that is not text is unrecognised in
-    // exactly the same way. Cast rather than converted, it used to reach the
+    // exactly the same way. Cast rather than converted, it would reach the
     // field as a `number` wearing the type `string`, which no compiler catches.
     const event = readOne({ n: 0, t: 0, e: 8, endpoint: 42, transport: 'quic' })
     if (event.type !== 'peer-connected') throw new Error(`got a ${event.type} event`)
@@ -1111,9 +1111,9 @@ describe('a defined key whose value has an unusable type', () => {
   })
 
   it('applies to a byte-string key on another event type', () => {
-    // `"pl"` used to go through `new Uint8Array(value)`, which answers an
-    // empty array for a string rather than throwing: the event kept a payload
-    // field that said the object was empty, and the text was gone.
+    // `new Uint8Array(value)` answers an empty array for a string rather than
+    // throwing, so a `"pl"` put through it would keep a payload field that
+    // said the object was empty, and the text would be gone.
     const event = readOne({ n: 0, t: 0, e: 4, sid: 1, g: 0, o: 0, sz: 3, pl: 'not bytes' })
     if (event.type !== 'object-payload') throw new Error(`got a ${event.type} event`)
     const payload: ObjectPayloadEvent = event
@@ -1890,10 +1890,10 @@ describe('a defined header key whose value has an unusable type', () => {
   // mean preserving it less. `"transport": 42` is not a transport; it is also
   // not nothing."
   //
-  // Every case below used to reach a field through an `as` cast or a
-  // `Number(...)`, so the value arrived wearing a type the runtime did not
-  // keep — or, for `appliesTo`, arrived as a `NaN` the file never carried and
-  // the writer then put back on disk.
+  // Every case below, put through an `as` cast or a `Number(...)`, would reach
+  // its field wearing a type the runtime did not keep — or, for `appliesTo`,
+  // arrive as a `NaN` the file never carried and the writer then puts back on
+  // disk.
 
   const unusableForText: [shape: string, value: unknown][] = [
     ['a number', 42],
@@ -1987,7 +1987,7 @@ describe('a defined header key whose value has an unusable type', () => {
   it('keeps a "custom" carrying an unrecognised CBOR tag in the header store', () => {
     // The trap `typeof value === 'object'` walks into. cbor-x hands a tagged
     // value back as a `Tag` instance, which passes every check short of a
-    // prototype test — so `"custom": 42("abc")` used to reach a field declared
+    // prototype test — so `"custom": 42("abc")` could reach a field declared
     // `Record<string, unknown>` as an object with `value` and `tag` properties,
     // a shape the field's type says cannot occur. The bytes survive either way;
     // only the store keeps the type true.
@@ -2233,10 +2233,10 @@ describe('a required header key with no usable value', () => {
   })
 
   it('returns no header at all rather than one with a hole in it', () => {
-    // What the reader used to do: `obj.protocol as string` handed back
-    // `undefined` in a field declared `string`, and the writer then encoded it
-    // as CBOR `undefined` — a shape the format tells writers never to produce,
-    // in a file that otherwise looks complete.
+    // The alternative: `obj.protocol as string` hands back `undefined` in a
+    // field declared `string`, and the writer then encodes it as CBOR
+    // `undefined` — a shape the format tells writers never to produce, in a
+    // file that otherwise looks complete.
     const file = fileWithHeaderMap({
       perspective: 'client',
       detail: 'control',
@@ -2253,8 +2253,8 @@ describe('a required header key with no usable value', () => {
 
   it('does not invent segment 0 for a segment whose sequence it cannot read', () => {
     // The sharpest case. `sequence` is the sole ordering key of a segmented
-    // stream, and the `0` this reader used to default to does not merely lose
-    // the segment's place — it claims the segment is the first one.
+    // stream, and defaulting it to `0` would not merely lose the segment's
+    // place — it would claim the segment is the first one.
     expect(() =>
       readMoqtraceHeader(fileWithHeaderMap({ ...REQUIRED_HEADER_MAP, segment: { sequence: 'a' } })),
     ).toThrow(MalformedHeaderError)

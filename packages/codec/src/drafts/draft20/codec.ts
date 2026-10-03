@@ -81,10 +81,9 @@ const MAX_U64 = 0xffffffffffffffffn
  * `Number(stream_count)` against this sentinel would be wrong for every value
  * above `2^53`.
  *
- * Note (SPEC-DELTA Section 11 Q14): unlike the old `2^62 - 1` marker, this
- * value is also a well-formed exact count. There is no longer any headroom
- * that separates "unknown" from "absurdly many streams"; the draft does not
- * acknowledge the collision.
+ * Note: unlike draft-19's `2^62 - 1` marker, this value is also a
+ * well-formed exact count. No headroom separates "unknown" from "absurdly
+ * many streams", and the draft does not acknowledge the collision.
  */
 export const UNKNOWN_STREAM_COUNT = 0xffffffffffffffffn
 
@@ -353,12 +352,12 @@ const PARAM_INCLUDE_PROPERTIES = 0x35n // NEW in draft-20
 /**
  * The pseudo message-type used for the parameter scope inside FILL_PARAMETERS.
  *
- * DECISION (DECISIONS.md D2, SPEC-DELTA Section 11 Q2): the nested value is a
- * *separate parameter scope*. draft-20 Section 10.2.15 says "Parameters inside
- * it are not considered to appear in the enclosing message for the purposes of
- * Section 10.2, so a Parameter Type MAY appear both in the message and inside
- * FILL_PARAMETERS." Modelling it as its own scope key falls straight out of
- * that sentence — but the draft never states the consequence explicitly.
+ * The nested value is a *separate parameter scope*. draft-20 Section 10.2.15
+ * says "Parameters inside it are not considered to appear in the enclosing
+ * message for the purposes of Section 10.2, so a Parameter Type MAY appear both
+ * in the message and inside FILL_PARAMETERS." Modelling it as its own scope key
+ * falls straight out of that sentence — but the draft never states the
+ * consequence explicitly.
  */
 const FILL_SCOPE = 'fill_parameters'
 
@@ -440,9 +439,8 @@ function decodeRangeFilter(reader: BufferReader, hasProperty: boolean): RangeFil
  * specifies an inclusive range of Locations", and Section 10.13 repeats it for
  * FETCH. draft-19 Section 10.12.1 encoded a fetch end as "the end Location,
  * plus 1", so an encoder ported forward with its arithmetic intact fetches one
- * object too many. This is DECISIONS.md D4; the change is absent from the
- * draft's own change log, which is why it is called out here rather than
- * assumed obvious.
+ * object too many. The change is absent from the draft's own change log,
+ * which is why it is called out here rather than assumed obvious.
  */
 function encodeLocationFilter(f: LocationFilter, w: BufferWriter): void {
   if (f.removed) {
@@ -463,14 +461,13 @@ function encodeLocationFilter(f: LocationFilter, w: BufferWriter): void {
 /**
  * Decode a LOCATION_FILTER value.
  *
- * DECISION (DECISIONS.md D3, SPEC-DELTA Section 11 Q3): the field count comes
- * from parsing, never from the byte length. draft-20 Section 5.1.2 says
- * "Length (in bytes) determines how many optional vi64 fields are present",
- * which is not implementable as written: MOQT varints are 1-9 bytes and need
- * not be minimally encoded (Section 1.4.1), so a Length of 2 is equally
- * consistent with two 1-byte fields and one 2-byte field. The only rule that
- * round-trips is to decode vi64 values until exactly Length bytes are consumed
- * and then switch on the count.
+ * The field count comes from parsing, never from the byte length. draft-20
+ * Section 5.1.2 says "Length (in bytes) determines how many optional vi64
+ * fields are present", which is not implementable as written: MOQT varints are
+ * 1-9 bytes and need not be minimally encoded (Section 1.4.1), so a Length of 2
+ * is equally consistent with two 1-byte fields and one 2-byte field. The only
+ * rule that round-trips is to decode vi64 values until exactly Length bytes are
+ * consumed and then switch on the count.
  *
  * Two corollaries the draft does not give, chosen here:
  *  - a field that would overrun Length is a PROTOCOL_VIOLATION;
@@ -746,20 +743,19 @@ function encodeParams(params: Draft20Params, writer: BufferWriter): void {
     entries.push({
       type: PARAM_FILL_PARAMETERS,
       encode: (w) => {
-        // DECISION (DECISIONS.md D1, SPEC-DELTA Section 11 Q1): the value is a
-        // full parameter block and therefore BEGINS with Number of Parameters.
-        // Section 10.2.15 calls it "a sequence of Parameters ... encoded as if
-        // they were Parameters for a separate message"; Section 10.2 defines a
-        // parameter block as count-bounded rather than length-bounded, because
-        // unknown parameters cannot be skipped. The draft does not state the
-        // consequence, and the outer length prefix makes the count look
-        // redundant — but a block "encoded as if for a message" is a block
-        // with the count. An empty FILL_PARAMETERS is therefore Length 1
-        // carrying the single byte 0x00, NOT Length 0.
+        // The value is a full parameter block and therefore BEGINS with Number
+        // of Parameters. Section 10.2.15 calls it "a sequence of Parameters ...
+        // encoded as if they were Parameters for a separate message"; Section
+        // 10.2 defines a parameter block as count-bounded rather than
+        // length-bounded, because unknown parameters cannot be skipped. The
+        // draft does not state the consequence, and the outer length prefix
+        // makes the count look redundant — but a block "encoded as if for a
+        // message" is a block with the count. An empty FILL_PARAMETERS is
+        // therefore Length 1 carrying the single byte 0x00, NOT Length 0.
         //
-        // DECISION (D2): encodeParams starts its own Type Delta chain from 0,
-        // and the caller's chain is untouched — the outer parameter after
-        // FILL_PARAMETERS deltas from 0x23, not from the last inner type.
+        // encodeParams starts its own Type Delta chain from 0, and the caller's
+        // chain is untouched — the outer parameter after FILL_PARAMETERS deltas
+        // from 0x23, not from the last inner type.
         const tmpW = new BufferWriter(64)
         encodeParams(params.fill_parameters as Draft20Params, tmpW)
         const raw = tmpW.finish()
@@ -961,8 +957,8 @@ function decodeParams(reader: BufferReader, messageType: string): Draft20Params 
 /**
  * Decode a FILL_PARAMETERS (0x23) value — draft-20 Section 10.2.15.
  *
- * See the encoder for D1 (the value begins with Number of Parameters) and D2
- * (the Type Delta chain restarts here and the enclosing chain is unaffected).
+ * See the encoder: the value begins with Number of Parameters, and the Type
+ * Delta chain restarts here while the enclosing chain is unaffected.
  * The eight permitted inner types are expressed as the {@link FILL_SCOPE} entry
  * in {@link PARAMETER_SCOPE}, so "an endpoint that receives a parameter inside
  * FILL_PARAMETERS that is not listed above MUST close the session with
@@ -1286,7 +1282,7 @@ function encodeFetchOkPayload(msg: Draft20Message & { type: 'fetch_ok' }, w: Buf
   // End Location, written as given. draft-19 wrote "the last Object, plus 1"
   // here and used an Object of 0 to mean the whole group; draft-20 Section
   // 10.14 dropped both, so this is the last Object the response covers and no
-  // arithmetic is applied on the way out (DECISIONS.md D4).
+  // arithmetic is applied on the way out.
   w.writeVarInt(msg.end_group)
   w.writeVarInt(msg.end_object)
   encodeParams(msg.parameters, w)
