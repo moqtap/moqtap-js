@@ -29,6 +29,7 @@ interface SiteRow {
   name: string
   reserved?: boolean
   note: string | null
+  sectionNum: string | null
   specPath: string | null
 }
 
@@ -56,6 +57,7 @@ for (const file of files) {
     name: row.name,
     reserved: row.reserved === true,
     note: row.note,
+    section: row.sectionNum,
     specPath: row.specPath,
   }))
 }

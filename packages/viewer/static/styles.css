@@ -1,44 +1,25 @@
 /*
- * The viewer's own styles. A file, not Tailwind and not inline: the view origin
- * serves `style-src 'self'`, and the bundle carries no build step beyond
- * `bun build`. Colours follow the site's palette so a framed viewer does not
- * look like someone else's page.
+ * The viewer's own layout, on top of moqtap's design system (tokens.css and
+ * bundle.css, vendored unchanged). Colours, type and spacing come only from
+ * the design system's variables; this file arranges the page and nothing
+ * more. A file, not inline: the view origin serves `style-src 'self'`.
  */
-
-:root {
-  color-scheme: light dark;
-  --bg: #ffffff;
-  --surface: #f6f7f9;
-  --border: #e3e6ea;
-  --text: #0f1419;
-  --text-2: #3d4650;
-  --muted: #6b7682;
-  --accent: #00a887;
-  --warn: #b26b00;
-  --error: #c62828;
-  --sent: #1f6feb;
-  --received: #1a7f37;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0f14;
-    --surface: #121821;
-    --border: #232c37;
-    --text: #e6edf3;
-    --text-2: #b4bfca;
-    --muted: #7d8894;
-    --accent: #00d4aa;
-    --warn: #e3a23b;
-    --error: #f47067;
-    --sent: #58a6ff;
-    --received: #56d364;
-  }
-}
 
 [hidden] {
   display: none !important;
+}
+
+/* Scrollbars and form controls follow the theme the page shows. */
+:root {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
 }
 
 * {
@@ -48,299 +29,288 @@
 html,
 body {
   height: 100%;
-  margin: 0;
 }
 
-body {
-  background: var(--bg);
-  color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-
-.app {
+.vw-app {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
-.mono {
-  font-family: var(--mono);
-}
-.small {
-  font-size: 12px;
-}
-.muted {
-  color: var(--muted);
-}
-.warn {
-  color: var(--warn);
-}
-.wrap {
-  white-space: pre-wrap;
-}
+/* -------------------------------------------------------------- header --- */
 
-/* ---------------------------------------------------------------- bar --- */
-
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 48px;
+.vw-header {
   flex-shrink: 0;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
-.mark {
-  width: 20px;
-  height: 20px;
+.vw-title {
+  margin: 0;
 }
-.bar-title {
-  font-weight: 500;
+.vw-logo {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+  color: var(--ink);
 }
-.chip {
+/* The wordmark at the compact header's logo height. */
+.vw-logo svg {
+  display: block;
+  height: 13.47px;
+  width: auto;
+}
+/*
+ * Off screen but still read: the header and its title when the page framing
+ * the viewer already names the trace. Two classes, so it outranks the
+ * header's own size and padding.
+ */
+.vw-header.vw-offscreen,
+.vw-title.vw-offscreen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.vw-facts {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
 }
-.bar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
+.vw-spacer {
+  flex: 1;
 }
-
-.button,
-.button-quiet {
-  cursor: pointer;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-}
-.button {
-  margin-top: 32px;
-  padding: 10px 20px;
-  background: var(--accent);
-  color: var(--bg);
-}
-.button-quiet {
-  padding: 6px 12px;
-  background: none;
-  font-family: inherit;
-  border: 1px solid var(--border);
-  color: var(--text-2);
-}
-.button-quiet:hover {
-  border-color: var(--accent);
-  color: var(--text);
+@media (max-width: 480px) {
+  .vw-facts {
+    display: none;
+  }
 }
 
-/* --------------------------------------------------------------- tabs --- */
+/* ---------------------------------------------------------------- tabs --- */
 
-.tabs {
-  display: flex;
-  gap: 4px;
+.vw-tabs {
   flex-shrink: 0;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
-.tab {
+
+/* ------------------------------------------------------------- surface --- */
+
+.vw-surface {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.vw-results {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.vw-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------- empty state --- */
+
+.vw-empty {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.vw-drop {
+  width: min(32rem, 100%);
+}
+.vw-drop p {
+  margin: 0 0 var(--space-2);
+  max-width: 42ch;
+}
+.vw-error {
+  width: min(32rem, 100%);
+}
+
+.vw-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  pointer-events: none;
+}
+.vw-overlay-target {
+  width: min(32rem, 100%);
+  min-height: 12rem;
+}
+
+/* ------------------------------------------------------------ overview --- */
+
+.vw-overview {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+.vw-card {
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.vw-card > .mq-kv {
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+.vw-card-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+.vw-findings > .mq-finding:last-child {
+  border-bottom: 0;
+}
+
+.vw-heading {
+  display: flex;
   align-items: baseline;
-  margin-bottom: -1px;
-  padding: 8px 12px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--text-2);
-  font: inherit;
-  cursor: pointer;
-}
-.tab:hover {
-  color: var(--text);
-}
-.tab-on {
-  border-bottom-color: var(--accent);
-  color: var(--text);
-  font-weight: 500;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
 }
 
-/* ------------------------------------------------------------ surface --- */
+.vw-id {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+}
+.vw-wrap {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
-.surface {
+/* ----------------------------------------------------------- log panes --- */
+
+@media (min-width: 561px) {
+  .vw-split {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  }
+}
+.vw-split {
+  flex: 1;
+  min-height: 0;
+}
+.mq-split-pane > .vw-logpane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.vw-log {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
 }
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: 0 24px;
-  text-align: center;
-}
-.empty h1 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-}
-.empty p {
-  max-width: 36rem;
-  color: var(--text-2);
-}
-.error {
-  margin-top: 32px;
-  color: var(--error);
+.vw-log:focus-visible {
+  outline-offset: -2px;
 }
 
-.results {
-  max-width: 1600px;
-  margin: 0 auto;
-  padding: 32px 24px;
+.vw-detail {
+  padding: var(--space-3);
+  background: var(--bg);
 }
-.overview > section + section {
-  margin-top: 40px;
+.vw-detail:focus-visible {
+  outline-offset: -2px;
 }
-
-.section-heading {
-  margin: 0 0 16px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.vw-detail > * + * {
+  margin-top: var(--space-2);
 }
-
-/* ------------------------------------------------------------ findings --- */
-
-.findings {
-  display: grid;
-  gap: 12px;
-}
-.finding {
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-}
-.finding-head {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-}
-.finding-label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.finding-error {
-  border-color: color-mix(in srgb, var(--error) 40%, transparent);
-}
-.finding-error .finding-label {
-  color: var(--error);
-}
-.finding-warning {
-  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
-}
-.finding-warning .finding-label {
-  color: var(--warn);
-}
-.finding-title {
-  font-weight: 500;
-}
-.finding-detail {
-  margin: 6px 0 0;
-  color: var(--text-2);
-}
-
-/* ------------------------------------------------------------- summary --- */
-
-.facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px 24px;
-  margin: 0;
-}
-@media (min-width: 640px) {
-  .facts {
-    grid-template-columns: auto 1fr auto 1fr;
-  }
-}
-.facts dt {
-  color: var(--muted);
-}
-.facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-/* ------------------------------------------------------------ messages --- */
-
-.messages {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-}
-.message {
-  padding: 10px 16px;
-}
-.message + .message {
-  border-top: 1px solid var(--border);
-}
-.message-head {
+.vw-detail-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
   align-items: baseline;
-  cursor: pointer;
+  gap: var(--space-1) var(--space-3);
 }
-.message-name {
-  font-weight: 500;
-  color: var(--text);
+.vw-detail-title {
+  margin: 0;
+  font: 600 14px/20px var(--font-mono);
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
-.spec-link {
-  text-decoration: underline dotted;
+.vw-cite {
+  font-size: 12px;
 }
-.dir-sent {
-  color: var(--sent);
-}
-.dir-received {
-  color: var(--received);
-}
-.message-body {
-  margin-top: 8px;
-  overflow-x: auto;
-}
-.spec-address {
-  margin: 0 0 6px;
+.vw-spec-address {
+  margin: 0;
+  font-size: 11px;
+  overflow-wrap: anywhere;
   user-select: all;
 }
-.message-body pre {
+.vw-subhead {
+  margin: var(--space-4) 0 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+}
+.vw-note {
   margin: 0;
-  color: var(--text-2);
+}
+.vw-reserved {
+  color: var(--warning);
+}
+.vw-detail .mq-tree,
+.vw-opaque {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+}
+.vw-opaque {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.vw-hex {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+/* The design system's offset colour is under 4.5:1 on the sunken ground in
+   the light theme, and offsets are information, not decoration. */
+.vw-hex .off {
+  color: var(--ink-muted);
+}
+.vw-objects {
+  max-height: 24rem;
+  overflow: auto;
+}
+.vw-objects .mq-table td {
+  padding: 2px var(--space-3);
 }
 
-/* ---------------------------------------------------------------- drop --- */
-
-.drop-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
+.vw-panel-empty {
+  flex: 1;
   justify-content: center;
-  pointer-events: none;
-  background: color-mix(in srgb, var(--bg) 80%, transparent);
-}
-.drop-target {
-  padding: 32px 48px;
-  border: 2px dashed var(--accent);
-  border-radius: 8px;
-  font-size: 18px;
-  font-weight: 500;
 }

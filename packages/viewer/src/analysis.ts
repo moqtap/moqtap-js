@@ -13,7 +13,9 @@
 
 import type {
   ControlMessageEvent,
+  ObjectHeaderEvent,
   ObjectPayloadEvent,
+  StreamClosedEvent,
   StreamOpenedEvent,
   Trace,
   TraceErrorEvent,
@@ -23,6 +25,7 @@ import type {
 } from '@moqtap/trace'
 
 import { byId, draftOf, idsNamed, type MessageDef, type MessageTables } from './drafts'
+import { draftLabel } from './format'
 
 // --------------------------------------------------------------- results ---
 
@@ -81,6 +84,8 @@ export interface MessageRow {
   readonly seq: number
   /** Microseconds from the containing segment's start. */
   readonly timestamp: number
+  /** Microseconds from the session's start: the first segment's start time. */
+  readonly at: number
   readonly direction: 0 | 1
   readonly messageType: number
   /**
@@ -95,9 +100,15 @@ export interface MessageRow {
   readonly name: string | null
   readonly reserved: boolean
   readonly note: string | null
+  /** The draft section that specifies the message, such as `9.7`. */
+  readonly section: string | null
   readonly specPath: string | null
   readonly peer?: string | undefined
   readonly streamId?: string | undefined
+  /** Length of the message's encoded bytes, when the recorder kept them. */
+  readonly size?: number | undefined
+  /** The first `RAW_PREVIEW_BYTES` of those bytes. */
+  readonly raw?: Uint8Array | undefined
   /** Decoded fields, when the writer recorded a map. */
   readonly fields?: Readonly<Record<string, unknown>> | undefined
   /**
@@ -108,11 +119,60 @@ export interface MessageRow {
   readonly opaque?: string | undefined
 }
 
+/** One object seen on a stream, from its header, its payload, or both. */
+export interface ObjectRow {
+  readonly groupId: string
+  readonly objectId: string
+  /** Microseconds from the session's start, at the first event for this object. */
+  readonly at: number
+  readonly status?: number | undefined
+  readonly priority?: number | undefined
+  /** Declared payload size, when a payload event recorded one. */
+  readonly size?: number | undefined
+  /** The first PAYLOAD_PREVIEW_BYTES of the payload, on the first object of its stream that has one. */
+  readonly payload?: Uint8Array | undefined
+}
+
+/** One QUIC stream (or datagram group) carrying objects, and what went over it. */
+export interface StreamRow {
+  readonly streamId: string
+  /** Microseconds from the session's start, at the first event naming this stream. */
+  readonly at: number
+  readonly direction?: 0 | 1 | undefined
+  /** `0` subgroup, `1` datagram, `2` fetch; absent when no open was recorded. */
+  readonly streamType?: 0 | 1 | 2 | undefined
+  readonly trackAlias?: string | undefined
+  readonly groupId?: string | undefined
+  readonly subgroupId?: string | undefined
+  readonly fetchRequestId?: string | undefined
+  readonly peer?: string | undefined
+  readonly closedAt?: number | undefined
+  readonly closeCode?: number | undefined
+  /** Distinct objects seen, which may exceed `objectRows.length`. */
+  readonly objects: number
+  /** Payload bytes, summed from the declared sizes. */
+  readonly bytes: number
+  /** The first `OBJECT_ROWS_PER_STREAM` objects, in the order they were seen. */
+  readonly objectRows: readonly ObjectRow[]
+}
+
 export interface TraceAnalysis {
   readonly summary: SessionSummary
   readonly findings: readonly Finding[]
   readonly messages: readonly MessageRow[]
+  readonly streams: readonly StreamRow[]
 }
+
+/**
+ * How much of each byte string crosses from the worker to the page.
+ *
+ * A hex view is for reading a header or the start of a payload, and a capture
+ * at `full` detail can hold gigabytes of media; carrying it all to the page to
+ * show its first lines would double what a large file costs in memory.
+ */
+export const RAW_PREVIEW_BYTES = 4096
+export const PAYLOAD_PREVIEW_BYTES = 512
+export const OBJECT_ROWS_PER_STREAM = 500
 
 // ----------------------------------------------------------- CBOR helpers ---
 
@@ -401,7 +461,7 @@ function check(input: CheckInput): Finding[] {
         'no-control-stream-id',
         'warning',
         `${missing} control message${missing === 1 ? ' has' : 's have'} no stream id`,
-        `From draft ${STREAM_PER_REQUEST_FROM} each request gets its own control stream and responses carry no request id, so without the stream a response cannot be tied to its request.`,
+        `From ${draftLabel(STREAM_PER_REQUEST_FROM)} each request gets its own control stream and responses carry no request id, so without the stream a response cannot be tied to its request.`,
       )
     }
   }
@@ -469,8 +529,8 @@ function draftAgreementChecks(
     findings.push({
       id: 'message-id-undefined',
       severity: 'warning',
-      title: `Draft ${draft} does not define ${undefinedIds.length === 1 ? 'this message ID' : 'these message IDs'}`,
-      detail: `${undefinedIds.map(hex).join(', ')}. The file declares "${protocol}", so either the session used a different draft than the recorder was told, or these are private code points. Names on this page come from draft ${draft} and are only as right as that string.`,
+      title: `${draftLabel(draft)} does not define ${undefinedIds.length === 1 ? 'this message ID' : 'these message IDs'}`,
+      detail: `${undefinedIds.map(hex).join(', ')}. The file declares "${protocol}", so either the session used a different draft than the recorder was told, or these are private code points. Names on this page come from ${draftLabel(draft)} and are only as right as that string.`,
     })
   }
 
@@ -485,8 +545,8 @@ function draftAgreementChecks(
     findings.push({
       id: 'message-id-reserved',
       severity: 'note',
-      title: `${reservedIds.length === 1 ? 'A message uses' : 'Messages use'} a code point draft ${draft} reserved`,
-      detail: `${notes}. Draft ${draft} assigns no message here, so the sender is using an ID from an older revision or one of its own.`,
+      title: `${reservedIds.length === 1 ? 'A message uses' : 'Messages use'} a code point ${draftLabel(draft)} reserved`,
+      detail: `${notes}. ${draftLabel(draft)} assigns no message here, so the sender is using an ID from an older revision or one of its own.`,
     })
   }
 
@@ -578,12 +638,146 @@ export function analyze(input: AnalyzeInput): TraceAnalysis {
   const names = byId(defs)
 
   const summary = summarize(header, segments, events, formatVersion, draft)
+  const since = sessionClock(header, segments)
   const messages = events
     .filter((p): p is { segment: number; event: ControlMessageEvent } => p.event.type === 'control')
-    .map(({ segment, event }) => row(segment, event, names))
+    .map(({ segment, event }) => row(segment, event, names, since))
 
   const findings = check({ header, events, messages, summary, defs, draft, truncatedAt })
-  return { summary, findings, messages }
+  return { summary, findings, messages, streams: streamRows(events, since) }
+}
+
+type Clock = (segment: number, timestamp: number) => number
+
+/**
+ * Microseconds from the session's start for an event in a given segment.
+ *
+ * Each segment stamps its events from its own start time, so offsets from two
+ * segments cannot share one column until both are moved onto the first
+ * segment's clock.
+ */
+function sessionClock(header: TraceHeader, segments: readonly Trace[]): Clock {
+  const startOf = new Map<number, number>()
+  segments.forEach((segment, index) => {
+    startOf.set(segment.header.segment?.sequence ?? index, segment.header.startTime)
+  })
+  return (segment, timestamp) =>
+    ((startOf.get(segment) ?? header.startTime) - header.startTime) * 1000 + timestamp
+}
+
+function preview(bytes: Uint8Array | undefined, limit: number): Uint8Array | undefined {
+  if (bytes === undefined) return undefined
+  // A copy, not a view: a view would carry its whole underlying buffer across
+  // to the page with it.
+  return bytes.slice(0, limit)
+}
+
+interface StreamBuilder {
+  streamId: string
+  at: number
+  direction?: 0 | 1
+  streamType?: 0 | 1 | 2
+  trackAlias?: string
+  groupId?: string
+  subgroupId?: string
+  fetchRequestId?: string
+  peer?: string
+  closedAt?: number
+  closeCode?: number
+  bytes: number
+  objects: Map<string, ObjectRow>
+  /**
+   * Whether an object on this stream already carries a payload preview. One
+   * per stream: a stream of thousands of objects would otherwise carry
+   * thousands of previews to the page, and the first shows what the stream
+   * carries.
+   */
+  previewed?: boolean
+}
+
+/** Streams and the objects on them, in the order each stream was first seen. */
+function streamRows(events: readonly Placed[], since: Clock): StreamRow[] {
+  const streams = new Map<string, StreamBuilder>()
+  const streamFor = (id: bigint, at: number, peer: string | undefined): StreamBuilder => {
+    const key = id.toString()
+    let stream = streams.get(key)
+    if (stream === undefined) {
+      stream = { streamId: key, at, bytes: 0, objects: new Map() }
+      if (peer !== undefined) stream.peer = peer
+      streams.set(key, stream)
+    }
+    return stream
+  }
+  const objectIn = (stream: StreamBuilder, groupId: bigint, objectId: bigint, at: number) => {
+    const key = `${groupId}/${objectId}`
+    const row = stream.objects.get(key) ?? {
+      groupId: groupId.toString(),
+      objectId: objectId.toString(),
+      at,
+    }
+    return { key, row }
+  }
+
+  for (const { segment, event } of events) {
+    const at = since(segment, event.timestamp)
+    switch (event.type) {
+      case 'stream-opened': {
+        const opened = event as StreamOpenedEvent
+        const stream = streamFor(opened.streamId, at, opened.peer)
+        stream.direction = opened.direction
+        stream.streamType = opened.streamType
+        if (opened.trackAlias !== undefined) stream.trackAlias = opened.trackAlias.toString()
+        if (opened.groupId !== undefined) stream.groupId = opened.groupId.toString()
+        if (opened.subgroupId !== undefined) stream.subgroupId = opened.subgroupId.toString()
+        if (opened.fetchRequestId !== undefined) {
+          stream.fetchRequestId = opened.fetchRequestId.toString()
+        }
+        break
+      }
+      case 'stream-closed': {
+        const closed = event as StreamClosedEvent
+        const stream = streamFor(closed.streamId, at, closed.peer)
+        stream.closedAt = at
+        stream.closeCode = closed.errorCode
+        break
+      }
+      case 'object-header': {
+        const header = event as ObjectHeaderEvent
+        const stream = streamFor(header.streamId, at, header.peer)
+        const { key, row } = objectIn(stream, header.groupId, header.objectId, at)
+        stream.objects.set(key, {
+          ...row,
+          status: header.objectStatus,
+          priority: header.publisherPriority,
+        })
+        break
+      }
+      case 'object-payload': {
+        const payload = event as ObjectPayloadEvent
+        const stream = streamFor(payload.streamId, at, payload.peer)
+        const { key, row } = objectIn(stream, payload.groupId, payload.objectId, at)
+        stream.bytes += payload.size
+        const kept =
+          row.payload ??
+          (stream.previewed ? undefined : preview(payload.payload, PAYLOAD_PREVIEW_BYTES))
+        if (kept !== undefined) stream.previewed = true
+        stream.objects.set(key, {
+          ...row,
+          size: (row.size ?? 0) + payload.size,
+          ...(kept === undefined ? {} : { payload: kept }),
+        })
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  return [...streams.values()].map(({ objects, previewed: _previewed, ...stream }) => ({
+    ...stream,
+    objects: objects.size,
+    objectRows: [...objects.values()].slice(0, OBJECT_ROWS_PER_STREAM),
+  }))
 }
 
 function summarize(
@@ -678,21 +872,27 @@ function row(
   segment: number,
   event: ControlMessageEvent,
   names: ReadonlyMap<number, MessageDef>,
+  since: Clock,
 ): MessageRow {
   const def = names.get(event.messageType)
   const fields = fieldsOf(event.message)
+  const named = def !== undefined && !def.reserved
   return {
     segment,
     seq: event.seq,
     timestamp: event.timestamp,
+    at: since(segment, event.timestamp),
     direction: event.direction,
     messageType: event.messageType,
-    name: def === undefined || def.reserved ? null : def.name,
+    name: named ? def.name : null,
     reserved: def?.reserved ?? false,
     note: def?.note ?? null,
+    section: named ? def.section : null,
     specPath: def?.specPath ?? null,
     peer: event.peer,
     streamId: event.streamId?.toString(),
+    size: event.raw?.length,
+    raw: preview(event.raw, RAW_PREVIEW_BYTES),
     fields: fields === undefined ? undefined : (display(fields) as Record<string, unknown>),
     opaque:
       fields === undefined && event.message !== undefined && event.message !== null

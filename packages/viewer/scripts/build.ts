@@ -1,5 +1,7 @@
 /**
- * Build the view bundle: `dist/view/{index.html,styles.css,main.js,worker.js}`.
+ * Build the view bundle into `dist/view`: the three scripts, and `static/`
+ * copied as it is (the page, its stylesheets, the fonts, and the fonts' and
+ * icons' licences).
  *
  *     bun run build
  *     bun run build -- --staging-parent https://<name>.workers.dev
@@ -7,19 +9,25 @@
  *
  * A static directory and nothing else, so any static host can serve it; the
  * host supplies the CSP and headers that make it safe. `bun build` rather than
- * tsup because the output is a page, not a library: two self-contained browser
+ * tsup because the output is a page, not a library: self-contained browser
  * entry points, no declarations, no CJS.
  *
  * `@moqtap/trace` resolves to its source through this package's `tsconfig.json`
  * `paths`, the same arrangement the collector's declaration build uses for the
  * codec, so the bundle does not depend on a built `trace/dist`.
  *
+ * The bundle has no network, so everything it shows comes with it: the fonts
+ * are files beside `tokens.css`, which loads them by relative URL, under
+ * `font-src 'self'`. Nothing here depends on the time or the machine, so the
+ * same commit and the same Bun build the same bytes, which is what lets a
+ * deployment check the release's checksums.
+ *
  * Extra parents for non-production deployments are the one build-time input.
  * Each must be an exact `https:` origin on `workers.dev`: accepting anything
  * else would let a mistyped command widen a production bundle.
  */
 
-import { copyFileSync, mkdirSync, rmSync } from 'node:fs'
+import { cpSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -57,12 +65,10 @@ const { out, staging } = parseArgs(process.argv.slice(2))
 rmSync(out, { recursive: true, force: true })
 mkdirSync(out, { recursive: true })
 
-const result = await Bun.build({
-  entrypoints: [join(ROOT, 'src', 'main.ts'), join(ROOT, 'src', 'worker.ts')],
+const common = {
   outdir: out,
   target: 'browser',
-  format: 'esm',
-  // Each entry stands alone: a shared chunk would be a third file the worker
+  // Each entry stands alone: a shared chunk would be one more file the worker
   // imports, for no saving worth the extra request.
   splitting: false,
   minify: true,
@@ -70,16 +76,26 @@ const result = await Bun.build({
   naming: '[name].js',
   define: { __MOQTAP_VIEW_STAGING_PARENTS__: JSON.stringify(staging) },
   tsconfig: join(ROOT, 'tsconfig.json'),
-})
+} as const
 
-if (!result.success) {
+const builds = await Promise.all([
+  Bun.build({
+    ...common,
+    entrypoints: [join(ROOT, 'src', 'main.ts'), join(ROOT, 'src', 'worker.ts')],
+    format: 'esm',
+  }),
+  // A classic script, loaded blocking in <head>, so wrapped rather than left
+  // to declare its minified names as globals.
+  Bun.build({ ...common, entrypoints: [join(ROOT, 'src', 'theme-boot.ts')], format: 'iife' }),
+])
+
+for (const result of builds) {
+  if (result.success) continue
   for (const log of result.logs) console.error(log)
   process.exit(1)
 }
 
-for (const file of ['index.html', 'styles.css']) {
-  copyFileSync(join(ROOT, 'static', file), join(out, file))
-}
+cpSync(join(ROOT, 'static'), out, { recursive: true })
 
 console.log(
   `Built the view bundle into ${out}${staging.length > 0 ? ` (staging parents: ${staging.join(' ')})` : ''}.`,

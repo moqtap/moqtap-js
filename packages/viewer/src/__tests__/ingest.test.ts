@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { type IngestedTrace, type IngestHost, startIngest } from '../ingest'
 import { READY, SHARE_REQUEST } from '../parents'
+import type { Theme } from '../theme'
 
 const TRACE = new TextEncoder().encode('MOQTRACE and the rest')
 const traceMessage = { type: 'moqtrace', bytes: TRACE, name: 'capture.moqtrace' }
@@ -54,11 +55,16 @@ function setup() {
   const frame = new FakeFrame(parent)
   const traces: IngestedTrace[] = []
   const rejects: string[] = []
+  const themes: Theme[] = []
   const ingest = startIngest(
-    { onTrace: (t) => traces.push(t), onReject: (r) => rejects.push(r) },
+    {
+      onTrace: (t) => traces.push(t),
+      onReject: (r) => rejects.push(r),
+      onTheme: (t) => themes.push(t),
+    },
     frame,
   )
-  return { parent, frame, traces, rejects, ingest }
+  return { parent, frame, traces, rejects, themes, ingest }
 }
 
 describe('startIngest', () => {
@@ -248,6 +254,16 @@ describe('startIngest', () => {
     expect(ingest.canOpenLocal(traces[1] ?? null)).toBe(true)
   })
 
+  it('leaves the title to the portal and the shell, and keeps it for a capture read locally', () => {
+    const { parent, frame, traces, ingest } = setup()
+    expect(ingest.showsTitle(null)).toBe(false)
+    frame.deliver('https://moqtap.com', parent, shellTraceMessage)
+    frame.deliver('https://moqtap.com', parent, { ...traceMessage, local: true })
+    expect(ingest.showsTitle(traces[0] ?? null)).toBe(false)
+    expect(ingest.showsTitle(traces[1] ?? null)).toBe(true)
+    expect(ingest.showsTitle({ source: 'file' })).toBe(true)
+  })
+
   it('offers Open capture on the viewer opened on its own', () => {
     const frame = new FakeFrame()
     const ingest = startIngest({ onTrace: () => {}, onReject: () => {} }, frame)
@@ -258,5 +274,63 @@ describe('startIngest', () => {
     const { frame, ingest } = setup()
     ingest.stop()
     expect(frame.listening).toBe(false)
+  })
+})
+
+describe('the theme handshake', () => {
+  const dark = { type: 'moqtap:theme', theme: 'dark' }
+
+  it('takes a theme from an allowlisted parent, and only as a theme', () => {
+    const { parent, frame, themes, traces, rejects } = setup()
+    frame.deliver('https://app.moqtap.com', parent, dark)
+    frame.deliver('https://app.moqtap.com', parent, { type: 'moqtap:theme', theme: 'system' })
+    expect(themes).toEqual(['dark', 'system'])
+    expect(traces).toEqual([])
+    expect(rejects).toEqual([])
+    expect(parent.posts).toEqual([{ message: READY, targetOrigin: '*' }])
+  })
+
+  it('takes one from the site inspector on loopback, the middle of the CLI nest', () => {
+    const { parent, frame, themes } = setup()
+    frame.deliver('http://127.0.0.1:4400', parent, dark)
+    expect(themes).toEqual(['dark'])
+  })
+
+  it('ignores a theme from an origin off the allowlist', () => {
+    const { parent, frame, themes } = setup()
+    frame.deliver('https://evil.example', parent, dark)
+    frame.deliver('https://moqtap.com.evil.com', parent, dark)
+    frame.deliver('https://127.0.0.1:4400', parent, dark)
+    expect(themes).toEqual([])
+  })
+
+  it('ignores a theme from an allowlisted origin that is not its parent', () => {
+    const { frame, themes } = setup()
+    frame.deliver('https://moqtap.com', new FakeWindow(), dark)
+    frame.deliver('https://moqtap.com', null, dark)
+    expect(themes).toEqual([])
+  })
+
+  it('hears themes only from the origin it bound to', () => {
+    const { parent, frame, themes } = setup()
+    frame.deliver('https://app.moqtap.com', parent, traceMessage)
+    frame.deliver('https://moqtap.com', parent, dark)
+    frame.deliver('https://app.moqtap.com', parent, { type: 'moqtap:theme', theme: 'light' })
+    expect(themes).toEqual(['light'])
+  })
+
+  it('ignores a malformed theme without treating it as a failed import', () => {
+    const { parent, frame, themes, rejects } = setup()
+    frame.deliver('https://app.moqtap.com', parent, { type: 'moqtap:theme', theme: 'purple' })
+    expect(themes).toEqual([])
+    expect(rejects).toEqual([])
+    expect(parent.posts).toEqual([{ message: READY, targetOrigin: '*' }])
+  })
+
+  it('works without a theme handler', () => {
+    const parent = new FakeWindow()
+    const frame = new FakeFrame(parent)
+    startIngest({ onTrace: () => {}, onReject: () => {} }, frame)
+    expect(() => frame.deliver('https://app.moqtap.com', parent, dark)).not.toThrow()
   })
 })

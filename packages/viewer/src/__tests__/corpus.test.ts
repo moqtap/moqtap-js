@@ -10,8 +10,9 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { type ObjectHeaderEvent, type TraceEvent, writeMoqtrace } from '@moqtap/trace'
 import { describe, expect, it } from 'vitest'
-import type { TraceAnalysis } from '../analysis'
+import { PAYLOAD_PREVIEW_BYTES, type TraceAnalysis } from '../analysis'
 import { formatVersionOf, readTrace } from '../read'
 import { handle } from '../worker'
 import { CORPUS_MISSING_MESSAGE, findCorpusDir } from './locate'
@@ -40,12 +41,15 @@ function bytesOf(caseId: string, file: string): Uint8Array {
   return new Uint8Array(readFileSync(join(corpusDir, caseId, file)))
 }
 
-function analyse(caseId: string, file = 'js.moqtrace'): TraceAnalysis {
-  const bytes = bytesOf(caseId, file)
+function analyseBytes(bytes: Uint8Array, name: string): TraceAnalysis {
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
   const response = handle({ bytes: buffer as ArrayBuffer })
-  if (!response.ok) throw new Error(`${caseId}/${file}: ${response.message}`)
+  if (!response.ok) throw new Error(`${name}: ${response.message}`)
   return response.analysis
+}
+
+function analyse(caseId: string, file = 'js.moqtrace'): TraceAnalysis {
+  return analyseBytes(bytesOf(caseId, file), `${caseId}/${file}`)
 }
 
 const ids = (a: TraceAnalysis) => a.findings.map((f) => f.id)
@@ -152,12 +156,114 @@ describe('naming against the draft', () => {
     expect(ids(analysis)).toContain('no-control-stream-id')
   })
 
+  it('carries the section the draft specifies a message in, for its § citation', () => {
+    const analysis = analyse('capture-client-draft16-moq-rs', 'capture.moqtrace')
+    for (const message of analysis.messages) expect(message.section).toMatch(/^\d+(\.\d+)*$/)
+    const reserved = analyse('v2-basic').messages.find((m) => m.reserved)
+    expect(reserved?.section).toBeNull()
+  })
+
+  it('carries the bytes a recorder kept for a message, and their length', () => {
+    const [first] = analyse('capture-client-draft16-moq-rs', 'capture.moqtrace').messages
+    expect(first?.size).toBeGreaterThan(0)
+    expect(first?.raw?.length).toBe(first?.size)
+  })
+
   it('orders a segmented trace by (segment, seq), not by seq alone', () => {
     const { summary, messages } = analyse('v2-segmented')
     expect(summary.segments).toBe(3)
     const keys = messages.map((m) => [m.segment, m.seq] as const)
     const sorted = [...keys].sort((a, b) => a[0] - b[0] || a[1] - b[1])
     expect(keys).toEqual(sorted)
+  })
+})
+
+describe('streams and objects', () => {
+  it('lists every stream with the objects seen on it', () => {
+    const { summary, streams } = analyse('capture-observer-draft16-moq-rs', 'capture.moqtrace')
+    expect(streams).toHaveLength(summary.streams)
+    const objects = streams.reduce((n, s) => n + s.objects, 0)
+    expect(objects).toBe(52)
+    for (const stream of streams) expect(stream.objectRows).toHaveLength(stream.objects)
+  })
+
+  it('keeps an object seen as a header and then a payload as one object', () => {
+    const { streams } = analyse('v2-basic')
+    const objects = streams.flatMap((s) => s.objectRows)
+    // One row carrying both the header's status and the payload's size: two
+    // rows would each carry one of them.
+    const merged = objects.filter((o) => o.status !== undefined && o.size !== undefined)
+    expect(merged.length).toBeGreaterThan(0)
+    for (const object of merged) {
+      expect(object.payload?.length).toBeLessThanOrEqual(object.size!)
+    }
+  })
+
+  it("carries each object's publisher priority from its header, for the Priority column", () => {
+    const file = 'capture.moqtrace'
+    const { streams } = analyse('capture-observer-draft16-moq-rs', file)
+    const headers = readTrace(bytesOf('capture-observer-draft16-moq-rs', file))
+      .segments.flatMap((s) => s.events)
+      .filter((e): e is ObjectHeaderEvent => e.type === 'object-header')
+    const want = new Map(
+      headers.map((h) => [`${h.streamId}/${h.groupId}/${h.objectId}`, h.publisherPriority]),
+    )
+    const rows = streams.flatMap((s) =>
+      s.objectRows.map((o) => [`${s.streamId}/${o.groupId}/${o.objectId}`, o.priority] as const),
+    )
+    expect(rows.length).toBeGreaterThan(0)
+    for (const [key, priority] of rows) expect(priority, key).toBe(want.get(key))
+  })
+
+  it('keeps a payload preview on the first object of a stream that has one, and no other', () => {
+    const payload = new Uint8Array(PAYLOAD_PREVIEW_BYTES * 2).fill(0xab)
+    const events: TraceEvent[] = []
+    for (const streamId of [2n, 6n]) {
+      for (const objectId of [0n, 1n, 2n]) {
+        events.push({
+          type: 'object-payload',
+          seq: events.length,
+          timestamp: events.length * 10,
+          streamId,
+          groupId: 0n,
+          objectId,
+          size: payload.length,
+          payload,
+        })
+      }
+    }
+    const bytes = writeMoqtrace({
+      header: {
+        protocol: 'moq-transport-16',
+        perspective: 'client',
+        detail: 'full',
+        startTime: 1_767_225_600_000,
+      },
+      events,
+    })
+    const { streams } = analyseBytes(bytes, 'payloads')
+    expect(streams).toHaveLength(2)
+    for (const stream of streams) {
+      expect(stream.objectRows.map((o) => o.payload?.length)).toEqual([
+        PAYLOAD_PREVIEW_BYTES,
+        undefined,
+        undefined,
+      ])
+      for (const object of stream.objectRows) expect(object.size).toBe(payload.length)
+    }
+  })
+
+  it('places every event on one clock from the session start', () => {
+    // Each segment stamps its events from its own start, so the same raw
+    // timestamp in a later segment is a later moment in the session.
+    const { streams } = analyse('v2-segmented')
+    const segments = readTrace(bytesOf('v2-segmented', 'js.moqtrace')).segments
+    const raw = segments.flatMap((s) => s.events.filter((e) => e.type === 'object-header'))
+    const at = streams.flatMap((s) => s.objectRows.map((o) => o.at))
+    expect(at).toHaveLength(raw.length)
+    expect(at.some((t, i) => t > raw[i]!.timestamp)).toBe(true)
+    for (let i = 1; i < at.length; i++) expect(at[i]).toBeGreaterThanOrEqual(at[i - 1]!)
+    for (const s of streams) expect(s.at).toBeGreaterThanOrEqual(0)
   })
 })
 

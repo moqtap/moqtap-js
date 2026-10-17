@@ -15,6 +15,7 @@
 
 import {
   askParentToShare,
+  asThemeMessage,
   asTraceMessage,
   canOfferLocalOpen,
   canOfferShare,
@@ -22,7 +23,9 @@ import {
   ParentGate,
   READY,
   tellParent,
+  titlesTrace,
 } from './parents'
+import type { Theme } from './theme'
 
 /** Where a trace came from. Shown to the reader, so it is not an internal tag. */
 export type IngestSource = 'file' | 'parent'
@@ -44,6 +47,8 @@ export interface IngestHandlers {
   onTrace(trace: IngestedTrace): void
   /** Called for input that reached us and was refused, with a reason to show. */
   onReject(reason: string): void
+  /** Called when the bound parent's theme changes. */
+  onTheme?(theme: Theme): void
 }
 
 /**
@@ -96,6 +101,12 @@ export interface Ingest {
    * to be read; see `canOfferLocalOpen`.
    */
   canOpenLocal(trace: ShareCandidate | null): boolean
+  /**
+   * Whether the header should carry the page's own title while `trace` is on
+   * screen (`null` for nothing on screen). Not when a framing page names the
+   * trace itself; see `titlesTrace`.
+   */
+  showsTitle(trace: ShareCandidate | null): boolean
 }
 
 /**
@@ -123,11 +134,16 @@ export function startIngest(handlers: IngestHandlers, host: IngestHost = window)
 
   const onMessage = (event: MessageEvent) => {
     if (!gate.admit(event)) return
+    const theme = asThemeMessage(event.data)
+    if (theme !== null) {
+      handlers.onTheme?.(theme)
+      return
+    }
     const msg = asTraceMessage(event.data)
     if (msg === null) return
     if (!looksLikeTrace(msg.bytes)) {
       handlers.onReject(
-        `The page sent ${msg.bytes.length} bytes that do not start a .moqtrace file.`,
+        `The page around this viewer sent ${msg.bytes.length} bytes that aren't a .moqtrace file.`,
       )
       tellParent(gate, host.parent, 'failed')
       return
@@ -159,6 +175,7 @@ export function startIngest(handlers: IngestHandlers, host: IngestHost = window)
       return askParentToShare(gate, host.parent)
     },
     canOpenLocal: (trace) => canOfferLocalOpen(gate, trace),
+    showsTitle: (trace) => titlesTrace(gate, trace),
   }
 }
 
@@ -171,7 +188,9 @@ export function startIngest(handlers: IngestHandlers, host: IngestHost = window)
 export async function ingestFile(file: File): Promise<IngestedTrace> {
   const bytes = new Uint8Array(await file.arrayBuffer())
   if (!looksLikeTrace(bytes)) {
-    throw new Error(`${file.name} does not start with the .moqtrace signature.`)
+    throw new Error(
+      `${file.name} isn't a .moqtrace file: it doesn't start with the MOQTRACE signature.`,
+    )
   }
   return { source: 'file', bytes, name: file.name }
 }

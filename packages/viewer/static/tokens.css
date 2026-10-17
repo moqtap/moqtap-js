@@ -1,0 +1,179 @@
+/* moqtap — generated from tokens.json. Theme: <html data-theme="light|dark">, or no attribute to follow the system. */
+@font-face { font-family: "IBM Plex Sans"; src: url("fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("fonts/ibm-plex-sans-latin-400-italic.woff2") format("woff2"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-style: normal; font-display: swap; }
+
+:root, [data-theme="light"] {
+  --bg: #f6f6f3;
+  --surface: #ffffff;
+  --surface-sunken: #efefeb;
+  --surface-raised: #ffffff;
+  --surface-hover: #eaeae5;
+  --surface-selected: #e1efe8;
+  --line: #e0e0da;
+  --line-strong: #868780;
+  --ink: #16181a;
+  --ink-muted: #575b61;
+  --ink-disabled: #a3a49d;
+  --ink-inverse: #ffffff;
+  --tap: #0d6b52;
+  --tap-hover: #0a5843;
+  --on-tap: #ffffff;
+  --tap-soft: #ddefe7;
+  --link: #0b6148;
+  --focus-ring: #1b5fd1;
+  --danger: #b42318;
+  --danger-hover: #931c13;
+  --on-danger: #ffffff;
+  --danger-soft: #fdebe8;
+  --warning: #8a5a00;
+  --warning-soft: #fdf3dc;
+  --success: #1e6b34;
+  --success-soft: #e3f2e6;
+  --info: #1c58b8;
+  --info-soft: #e6eefb;
+  --dir-c2s: #1c58b8;
+  --dir-c2s-soft: #e6eefb;
+  --dir-s2c: #a1460a;
+  --dir-s2c-soft: #fbeadd;
+  --team: #6a3aa8;
+  --team-soft: #efe7fa;
+  --hex-offset: #7a7d83;
+  --chart-1: #0d6b52;
+  --chart-2: #1c58b8;
+  --chart-3: #a1460a;
+  --chart-grid: #e6e6e0;
+  --scrim: #16181a8c;
+  --shadow-pop: 0 1px 2px rgba(22,24,26,0.06), 0 6px 20px rgba(22,24,26,0.10);
+  --shadow-dialog: 0 20px 48px rgba(22,24,26,0.18);
+}
+[data-theme="dark"] {
+  --bg: #0d0f11;
+  --surface: #15181b;
+  --surface-sunken: #0a0c0e;
+  --surface-raised: #1d2125;
+  --surface-hover: #22272c;
+  --surface-selected: #14302a;
+  --line: #262b31;
+  --line-strong: #646d78;
+  --ink: #e9ebed;
+  --ink-muted: #a2a9b1;
+  --ink-disabled: #545b63;
+  --ink-inverse: #0d0f11;
+  --tap: #3fd3a0;
+  --tap-hover: #6be0b6;
+  --on-tap: #04261b;
+  --tap-soft: #103327;
+  --link: #56ddb0;
+  --focus-ring: #7cb0ff;
+  --danger: #ff8a7a;
+  --danger-hover: #ffab9f;
+  --on-danger: #2b0603;
+  --danger-soft: #3a1511;
+  --warning: #f0bf52;
+  --warning-soft: #33260a;
+  --success: #6fd08f;
+  --success-soft: #13301b;
+  --info: #86b6ff;
+  --info-soft: #15233a;
+  --dir-c2s: #86b6ff;
+  --dir-c2s-soft: #15233a;
+  --dir-s2c: #f5a462;
+  --dir-s2c-soft: #3a1e0b;
+  --team: #c3a6f5;
+  --team-soft: #2a1d40;
+  --hex-offset: #7d858e;
+  --chart-1: #3fd3a0;
+  --chart-2: #86b6ff;
+  --chart-3: #f5a462;
+  --chart-grid: #23282d;
+  --scrim: #000000a6;
+  --shadow-pop: 0 1px 2px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.55);
+  --shadow-dialog: 0 20px 48px rgba(0,0,0,0.7);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #0d0f11;
+    --surface: #15181b;
+    --surface-sunken: #0a0c0e;
+    --surface-raised: #1d2125;
+    --surface-hover: #22272c;
+    --surface-selected: #14302a;
+    --line: #262b31;
+    --line-strong: #646d78;
+    --ink: #e9ebed;
+    --ink-muted: #a2a9b1;
+    --ink-disabled: #545b63;
+    --ink-inverse: #0d0f11;
+    --tap: #3fd3a0;
+    --tap-hover: #6be0b6;
+    --on-tap: #04261b;
+    --tap-soft: #103327;
+    --link: #56ddb0;
+    --focus-ring: #7cb0ff;
+    --danger: #ff8a7a;
+    --danger-hover: #ffab9f;
+    --on-danger: #2b0603;
+    --danger-soft: #3a1511;
+    --warning: #f0bf52;
+    --warning-soft: #33260a;
+    --success: #6fd08f;
+    --success-soft: #13301b;
+    --info: #86b6ff;
+    --info-soft: #15233a;
+    --dir-c2s: #86b6ff;
+    --dir-c2s-soft: #15233a;
+    --dir-s2c: #f5a462;
+    --dir-s2c-soft: #3a1e0b;
+    --team: #c3a6f5;
+    --team-soft: #2a1d40;
+    --hex-offset: #7d858e;
+    --chart-1: #3fd3a0;
+    --chart-2: #86b6ff;
+    --chart-3: #f5a462;
+    --chart-grid: #23282d;
+    --scrim: #000000a6;
+    --shadow-pop: 0 1px 2px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.55);
+    --shadow-dialog: 0 20px 48px rgba(0,0,0,0.7);
+  }
+}
+:root {
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+  --control-editorial: 44px;
+  --control-app: 36px;
+  --control-tool: 24px;
+  --row-tool: 22px;
+  --row-app: 52px;
+  --header-app: 56px;
+  --header-tool: 32px;
+  --measure-prose: 68ch;
+  --width-auth: 400px;
+  --width-app: 1120px;
+  --width-site: 1200px;
+  --width-panel-min: 390px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 999px;
+  --z-header: 20;
+  --z-menu: 40;
+  --z-dialog: 60;
+  --z-toast: 80;
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}

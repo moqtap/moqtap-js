@@ -20,6 +20,8 @@ export interface MessageDef {
   /** A code point the draft set aside. Its `note` says what it was assigned to before. */
   readonly reserved: boolean
   readonly note: string | null
+  /** The section of the draft that specifies it, such as `9.7`. */
+  readonly section: string | null
   /** Where this message is specified, as a path on moqtap.com. */
   readonly specPath: string | null
 }

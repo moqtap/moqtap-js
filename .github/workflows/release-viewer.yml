@@ -50,7 +50,9 @@ jobs:
       - name: Checksums
         working-directory: ${{ runner.temp }}/view
         run: |
-          sha256sum index.html main.js styles.css worker.js > "$RUNNER_TEMP/SHA256SUMS"
+          # Every file in the bundle, fonts and licences included, in a fixed order.
+          find . -type f -printf '%P\n' | LC_ALL=C sort > "$RUNNER_TEMP/FILES"
+          xargs sha256sum < "$RUNNER_TEMP/FILES" > "$RUNNER_TEMP/SHA256SUMS"
           cat "$RUNNER_TEMP/SHA256SUMS"
           {
             echo '```'
@@ -61,7 +63,7 @@ jobs:
           } > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
           tar -czf "$RUNNER_TEMP/moqtap-viewer-${GITHUB_REF_NAME#viewer-v}.tar.gz" \
-            index.html main.js styles.css worker.js
+            -T "$RUNNER_TEMP/FILES"
 
       - name: Create the GitHub release
         env:

@@ -55,10 +55,11 @@
     },
     "packages/viewer": {
       "name": "@moqtap/viewer",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@moqtap/test-traces": "^0.1.1",
         "@moqtap/trace": "workspace:*",
+        "lucide-static": "1.50.0",
         "typescript": "^5.5.0",
         "vitest": "^3.2.7",
       },
@@ -296,6 +297,8 @@
     "load-tsconfig": ["load-tsconfig@0.2.5", "", {}, "sha512-IXO6OCs9yg8tMKzfPZ1YmheJbZCiEsnBdcB03l0OcfK9prKnJb96siuHCr5Fl37/yo9DnKU+TLpxzTUspw9shg=="],
 
     "loupe": ["loupe@3.2.1", "", {}, "sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ=="],
+
+    "lucide-static": ["lucide-static@1.50.0", "", {}, "sha512-Pge6F5Au0bEBvjaeBIjfU5PsmA43FHdM3s5g3rYqSNWvBO3o7WwDSNQSavwX76z/OoSCjwSVbQpGA9lqKud/WA=="],
 
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 

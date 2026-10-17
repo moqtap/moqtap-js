@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   answersShareRequest,
   askParentToShare,
+  asThemeMessage,
   asTraceMessage,
   canOfferLocalOpen,
   DEFAULT_POLICY,
@@ -22,6 +23,7 @@ import {
   SHARE_REQUEST,
   STAGING_PARENTS,
   tellParent,
+  titlesTrace,
 } from '../parents'
 
 const self = { name: 'frame' }
@@ -186,6 +188,31 @@ describe('the message shape', () => {
   })
 })
 
+describe('the theme message', () => {
+  it('reads the shape every moqtap parent passes down', () => {
+    for (const theme of ['light', 'dark', 'system'] as const) {
+      expect(asThemeMessage({ type: 'moqtap:theme', theme })).toBe(theme)
+    }
+  })
+
+  it.each([
+    null,
+    'moqtap:theme',
+    { type: 'moqtap:theme' },
+    { type: 'moqtap:theme', theme: 'Dark' },
+    { type: 'moqtap:theme', theme: ['dark'] },
+    { type: 'theme', theme: 'dark' },
+    { type: 'moqtrace', theme: 'dark', bytes: new Uint8Array(8) },
+  ])('ignores %j', (data) => {
+    expect(asThemeMessage(data)).toBeNull()
+  })
+
+  it('is not a trace, and a trace is not a theme', () => {
+    expect(asTraceMessage({ type: 'moqtap:theme', theme: 'dark' })).toBeNull()
+    expect(asThemeMessage(trace)).toBeNull()
+  })
+})
+
 describe('the share request', () => {
   it('is a type and nothing else, the one the CLI shell and site relay match on', () => {
     expect(SHARE_REQUEST).toEqual({ type: 'moqtrace-share-request' })
@@ -241,6 +268,52 @@ describe('the share request', () => {
     g.admit({ origin: 'https://app.moqtap.com', source: parent, data: trace })
     expect(askParentToShare(g, out)).toBe(false)
     expect(out.posts).toEqual([])
+  })
+})
+
+describe('the header title', () => {
+  const given = { source: 'parent' }
+  const local = { source: 'parent', local: true }
+  const file = { source: 'file' }
+
+  it('is shown on the viewer opened on its own, empty or not', () => {
+    const alone = new ParentGate(self, self)
+    expect(titlesTrace(alone, null)).toBe(true)
+    expect(titlesTrace(alone, file)).toBe(true)
+  })
+
+  it('is left to the parent in a frame with nothing on screen', () => {
+    expect(titlesTrace(gate(), null)).toBe(false)
+  })
+
+  it('is left to the parent for a trace the portal or the CLI shell handed over', () => {
+    for (const origin of [
+      'https://app.moqtap.com',
+      'https://moqtap.com',
+      'http://127.0.0.1:4321',
+    ]) {
+      const g = gate()
+      g.admit({ origin, source: parent, data: trace })
+      expect(titlesTrace(g, given), origin).toBe(false)
+      expect(titlesTrace(g, { source: 'parent', shareable: true } as typeof given), origin).toBe(
+        false,
+      )
+    }
+  })
+
+  it('is shown for a capture read on this machine, here or by the site inspector', () => {
+    for (const origin of ['https://moqtap.com', 'http://localhost:4321']) {
+      const g = gate()
+      g.admit({ origin, source: parent, data: trace })
+      expect(titlesTrace(g, local), origin).toBe(true)
+      expect(titlesTrace(g, file), origin).toBe(true)
+    }
+  })
+
+  it('does not take the local mark from the portal, which names its trace itself', () => {
+    const g = gate()
+    g.admit({ origin: 'https://app.moqtap.com', source: parent, data: trace })
+    expect(titlesTrace(g, local)).toBe(false)
   })
 })
 

@@ -12,6 +12,8 @@
  * wires it to `window`.
  */
 
+import { asTheme, type Theme } from './theme'
+
 /**
  * The parents a production bundle answers.
  *
@@ -186,6 +188,24 @@ export function asTraceMessage(data: unknown): TraceMessage | null {
   }
 }
 
+/** The type of the message a parent posts when its theme changes. */
+export const THEME_MESSAGE = 'moqtap:theme'
+
+/**
+ * Read a theme out of an admitted message, or `null` if it carries none.
+ *
+ * `{ type: 'moqtap:theme', theme: 'light' | 'dark' | 'system' }`, the shape
+ * every moqtap page that frames another passes down. Only an admitted message
+ * is read: a theme is harmless, but a frame that took one from any page would
+ * be a frame any page can talk to, and this one talks only to its parent.
+ */
+export function asThemeMessage(data: unknown): Theme | null {
+  if (typeof data !== 'object' || data === null) return null
+  const msg = data as Record<string, unknown>
+  if (msg.type !== THEME_MESSAGE) return null
+  return asTheme(msg.theme)
+}
+
 /**
  * The announcement, posted once to `window.parent` with target `'*'`.
  *
@@ -308,4 +328,28 @@ export function canOfferLocalOpen(
   if (trace === null) return !gate.framed
   if (trace.source !== 'parent') return true
   return trace.local === true && answersShareRequest(gate.origin)
+}
+
+/**
+ * Should the page's header carry its own title while `trace` is on screen
+ * (`null` for nothing on screen)?
+ *
+ * Only the outermost document draws a full header, and a parent that hands
+ * a trace over to be read names it there: the portal's trace page above the
+ * frame, the CLI shell's bar above the site page relaying its recording. A
+ * second title in this frame would repeat the name directly under the first.
+ * A capture read on this machine, by this page or by the site inspector for
+ * its sample and its bar (marked `local`), is named nowhere else, so it keeps
+ * its title. Framed with nothing on screen, the parent's header names the
+ * tool already.
+ *
+ * The cases are the ones where opening another capture is the point, so the
+ * answer is `canOfferLocalOpen`'s, the `local` mark counting only from the
+ * site relay.
+ */
+export function titlesTrace(
+  gate: ParentGate,
+  trace: { readonly source: string; readonly local?: boolean | undefined } | null,
+): boolean {
+  return canOfferLocalOpen(gate, trace)
 }
