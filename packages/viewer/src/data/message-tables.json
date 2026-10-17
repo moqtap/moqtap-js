@@ -1,0 +1,3037 @@
+{
+  "7": [
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/subscribe_update"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/subscribe_ok"
+    },
+    {
+      "value": 5,
+      "name": "SUBSCRIBE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/subscribe_error"
+    },
+    {
+      "value": 6,
+      "name": "ANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/announce"
+    },
+    {
+      "value": 7,
+      "name": "ANNOUNCE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/announce_ok"
+    },
+    {
+      "value": 8,
+      "name": "ANNOUNCE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/announce_error"
+    },
+    {
+      "value": 9,
+      "name": "UNANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/unannounce"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/unsubscribe"
+    },
+    {
+      "value": 11,
+      "name": "SUBSCRIBE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/subscribe_done"
+    },
+    {
+      "value": 12,
+      "name": "ANNOUNCE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/announce_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS_REQUEST",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/track_status_request"
+    },
+    {
+      "value": 14,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/track_status"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/goaway"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/subscribe_announces"
+    },
+    {
+      "value": 18,
+      "name": "SUBSCRIBE_ANNOUNCES_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/subscribe_announces_ok"
+    },
+    {
+      "value": 19,
+      "name": "SUBSCRIBE_ANNOUNCES_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/subscribe_announces_error"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/unsubscribe_announces"
+    },
+    {
+      "value": 21,
+      "name": "MAX_SUBSCRIBE_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/max_subscribe_id-2"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/fetch"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/fetch_cancel"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/fetch_ok"
+    },
+    {
+      "value": 25,
+      "name": "FETCH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/fetch_error"
+    },
+    {
+      "value": 64,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/client_setup-and-server_set"
+    },
+    {
+      "value": 65,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-07/client_setup-and-server_set"
+    }
+  ],
+  "8": [
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribe_update"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribe_ok"
+    },
+    {
+      "value": 5,
+      "name": "SUBSCRIBE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribe_error"
+    },
+    {
+      "value": 6,
+      "name": "ANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/announce-2"
+    },
+    {
+      "value": 7,
+      "name": "ANNOUNCE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/announce_ok"
+    },
+    {
+      "value": 8,
+      "name": "ANNOUNCE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/announce_error"
+    },
+    {
+      "value": 9,
+      "name": "UNANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/unannounce"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/unsubscribe"
+    },
+    {
+      "value": 11,
+      "name": "SUBSCRIBE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribe_done"
+    },
+    {
+      "value": 12,
+      "name": "ANNOUNCE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/announce_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS_REQUEST",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/track_status_request"
+    },
+    {
+      "value": 14,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/track_status"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/goaway"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribe_announces-2"
+    },
+    {
+      "value": 18,
+      "name": "SUBSCRIBE_ANNOUNCES_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribe_announces_ok"
+    },
+    {
+      "value": 19,
+      "name": "SUBSCRIBE_ANNOUNCES_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribe_announces_error"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/unsubscribe_announces"
+    },
+    {
+      "value": 21,
+      "name": "MAX_SUBSCRIBE_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/max_subscribe_id-2"
+    },
+    {
+      "value": 26,
+      "name": "SUBSCRIBES_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/subscribes_blocked"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/fetch"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/fetch_cancel"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/fetch_ok"
+    },
+    {
+      "value": 25,
+      "name": "FETCH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/fetch_error"
+    },
+    {
+      "value": 64,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/client_setup-and-server_set"
+    },
+    {
+      "value": 65,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-08/client_setup-and-server_set"
+    }
+  ],
+  "9": [
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribe_update"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribe_ok"
+    },
+    {
+      "value": 5,
+      "name": "SUBSCRIBE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribe_error"
+    },
+    {
+      "value": 6,
+      "name": "ANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/announce-2"
+    },
+    {
+      "value": 7,
+      "name": "ANNOUNCE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/announce_ok"
+    },
+    {
+      "value": 8,
+      "name": "ANNOUNCE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/announce_error"
+    },
+    {
+      "value": 9,
+      "name": "UNANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/unannounce"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/unsubscribe"
+    },
+    {
+      "value": 11,
+      "name": "SUBSCRIBE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribe_done"
+    },
+    {
+      "value": 12,
+      "name": "ANNOUNCE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/announce_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS_REQUEST",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/track_status_request"
+    },
+    {
+      "value": 14,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/track_status"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/goaway"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribe_announces-2"
+    },
+    {
+      "value": 18,
+      "name": "SUBSCRIBE_ANNOUNCES_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribe_announces_ok"
+    },
+    {
+      "value": 19,
+      "name": "SUBSCRIBE_ANNOUNCES_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribe_announces_error"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/unsubscribe_announces"
+    },
+    {
+      "value": 21,
+      "name": "MAX_SUBSCRIBE_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/max_subscribe_id-2"
+    },
+    {
+      "value": 26,
+      "name": "SUBSCRIBES_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/subscribes_blocked"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/fetch"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/fetch_cancel"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/fetch_ok"
+    },
+    {
+      "value": 25,
+      "name": "FETCH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/fetch_error"
+    },
+    {
+      "value": 64,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/client_setup-and-server_set"
+    },
+    {
+      "value": 65,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-09/client_setup-and-server_set"
+    }
+  ],
+  "10": [
+    {
+      "value": 64,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/client_setup-and-server_set"
+    },
+    {
+      "value": 65,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/client_setup-and-server_set"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/goaway"
+    },
+    {
+      "value": 21,
+      "name": "MAX_SUBSCRIBE_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/max_subscribe_id-2"
+    },
+    {
+      "value": 26,
+      "name": "SUBSCRIBES_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribes_blocked"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribe_ok"
+    },
+    {
+      "value": 5,
+      "name": "SUBSCRIBE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribe_error"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/unsubscribe"
+    },
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribe_update"
+    },
+    {
+      "value": 11,
+      "name": "SUBSCRIBE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribe_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/fetch_ok"
+    },
+    {
+      "value": 25,
+      "name": "FETCH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/fetch_error"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/fetch_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS_REQUEST",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/track_status_request"
+    },
+    {
+      "value": 14,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/track_status"
+    },
+    {
+      "value": 6,
+      "name": "ANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/announce"
+    },
+    {
+      "value": 7,
+      "name": "ANNOUNCE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/announce_ok"
+    },
+    {
+      "value": 8,
+      "name": "ANNOUNCE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/announce_error"
+    },
+    {
+      "value": 9,
+      "name": "UNANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/unannounce"
+    },
+    {
+      "value": 12,
+      "name": "ANNOUNCE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/announce_cancel"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribe_announces"
+    },
+    {
+      "value": 18,
+      "name": "SUBSCRIBE_ANNOUNCES_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribe_announces_ok"
+    },
+    {
+      "value": 19,
+      "name": "SUBSCRIBE_ANNOUNCES_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/subscribe_announces_error"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-10/unsubscribe_announces"
+    }
+  ],
+  "11": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/client_setup-and-server_set"
+    },
+    {
+      "value": 33,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/client_setup-and-server_set"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/goaway"
+    },
+    {
+      "value": 21,
+      "name": "MAX_REQUEST_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/max_request_id-2"
+    },
+    {
+      "value": 26,
+      "name": "REQUESTS_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/requests_blocked"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/subscribe_ok"
+    },
+    {
+      "value": 5,
+      "name": "SUBSCRIBE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/subscribe_error"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/unsubscribe"
+    },
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/subscribe_update"
+    },
+    {
+      "value": 11,
+      "name": "SUBSCRIBE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/subscribe_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/fetch_ok"
+    },
+    {
+      "value": 25,
+      "name": "FETCH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/fetch_error"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/fetch_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS_REQUEST",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/track_status_request"
+    },
+    {
+      "value": 14,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/track_status"
+    },
+    {
+      "value": 6,
+      "name": "ANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/announce"
+    },
+    {
+      "value": 7,
+      "name": "ANNOUNCE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/announce_ok"
+    },
+    {
+      "value": 8,
+      "name": "ANNOUNCE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/announce_error"
+    },
+    {
+      "value": 9,
+      "name": "UNANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/unannounce"
+    },
+    {
+      "value": 12,
+      "name": "ANNOUNCE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/announce_cancel"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/subscribe_announces"
+    },
+    {
+      "value": 18,
+      "name": "SUBSCRIBE_ANNOUNCES_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/subscribe_announces_ok"
+    },
+    {
+      "value": 19,
+      "name": "SUBSCRIBE_ANNOUNCES_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/subscribe_announces_error"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-11/unsubscribe_announces"
+    }
+  ],
+  "12": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/client_setup-and-server_set"
+    },
+    {
+      "value": 33,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/client_setup-and-server_set"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/goaway"
+    },
+    {
+      "value": 21,
+      "name": "MAX_REQUEST_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/max_request_id-2"
+    },
+    {
+      "value": 26,
+      "name": "REQUESTS_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/requests_blocked"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/subscribe_ok"
+    },
+    {
+      "value": 5,
+      "name": "SUBSCRIBE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/subscribe_error"
+    },
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/subscribe_update"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/unsubscribe"
+    },
+    {
+      "value": 11,
+      "name": "SUBSCRIBE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/subscribe_done"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/publish"
+    },
+    {
+      "value": 30,
+      "name": "PUBLISH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/publish_ok"
+    },
+    {
+      "value": 31,
+      "name": "PUBLISH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/publish_error"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/fetch_ok"
+    },
+    {
+      "value": 25,
+      "name": "FETCH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/fetch_error"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/fetch_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS_REQUEST",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/track_status_request"
+    },
+    {
+      "value": 14,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/track_status"
+    },
+    {
+      "value": 6,
+      "name": "ANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/announce"
+    },
+    {
+      "value": 7,
+      "name": "ANNOUNCE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/announce_ok"
+    },
+    {
+      "value": 8,
+      "name": "ANNOUNCE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/announce_error"
+    },
+    {
+      "value": 9,
+      "name": "UNANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/unannounce"
+    },
+    {
+      "value": 12,
+      "name": "ANNOUNCE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/announce_cancel"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/subscribe_announces"
+    },
+    {
+      "value": 18,
+      "name": "SUBSCRIBE_ANNOUNCES_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/subscribe_announces_ok"
+    },
+    {
+      "value": 19,
+      "name": "SUBSCRIBE_ANNOUNCES_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/subscribe_announces_error"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_ANNOUNCES",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-12/unsubscribe_announces"
+    }
+  ],
+  "13": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/client_setup-and-server_set"
+    },
+    {
+      "value": 33,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/client_setup-and-server_set"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/goaway"
+    },
+    {
+      "value": 21,
+      "name": "MAX_REQUEST_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/max_request_id-2"
+    },
+    {
+      "value": 26,
+      "name": "REQUESTS_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/requests_blocked"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/subscribe_ok"
+    },
+    {
+      "value": 5,
+      "name": "SUBSCRIBE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/subscribe_error"
+    },
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/subscribe_update"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/unsubscribe"
+    },
+    {
+      "value": 11,
+      "name": "SUBSCRIBE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/subscribe_done"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/publish"
+    },
+    {
+      "value": 30,
+      "name": "PUBLISH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/publish_ok"
+    },
+    {
+      "value": 31,
+      "name": "PUBLISH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/publish_error"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/fetch_ok"
+    },
+    {
+      "value": 25,
+      "name": "FETCH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/fetch_error"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/fetch_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/track_status"
+    },
+    {
+      "value": 14,
+      "name": "TRACK_STATUS_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/track_status_ok"
+    },
+    {
+      "value": 15,
+      "name": "TRACK_STATUS_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/track_status_error"
+    },
+    {
+      "value": 6,
+      "name": "ANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/announce"
+    },
+    {
+      "value": 7,
+      "name": "ANNOUNCE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/announce_ok"
+    },
+    {
+      "value": 8,
+      "name": "ANNOUNCE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/announce_error"
+    },
+    {
+      "value": 9,
+      "name": "UNANNOUNCE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/unannounce"
+    },
+    {
+      "value": 12,
+      "name": "ANNOUNCE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/announce_cancel"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/subscribe_namespace"
+    },
+    {
+      "value": 18,
+      "name": "SUBSCRIBE_NAMESPACE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/subscribe_namespace_ok"
+    },
+    {
+      "value": 19,
+      "name": "SUBSCRIBE_NAMESPACE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/subscribe_namespace_error"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-13/unsubscribe_namespace"
+    }
+  ],
+  "14": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/client_setup-and-server_set"
+    },
+    {
+      "value": 33,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/client_setup-and-server_set"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/goaway"
+    },
+    {
+      "value": 21,
+      "name": "MAX_REQUEST_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/max_request_id-2"
+    },
+    {
+      "value": 26,
+      "name": "REQUESTS_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/requests_blocked"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/subscribe_ok"
+    },
+    {
+      "value": 5,
+      "name": "SUBSCRIBE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/subscribe_error"
+    },
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/subscribe_update"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/unsubscribe"
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish_done"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish"
+    },
+    {
+      "value": 30,
+      "name": "PUBLISH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish_ok"
+    },
+    {
+      "value": 31,
+      "name": "PUBLISH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish_error"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/fetch_ok"
+    },
+    {
+      "value": 25,
+      "name": "FETCH_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/fetch_error"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/fetch_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/track_status"
+    },
+    {
+      "value": 14,
+      "name": "TRACK_STATUS_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/track_status_ok"
+    },
+    {
+      "value": 15,
+      "name": "TRACK_STATUS_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/track_status_error"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish_namespace"
+    },
+    {
+      "value": 7,
+      "name": "PUBLISH_NAMESPACE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish_namespace_ok"
+    },
+    {
+      "value": 8,
+      "name": "PUBLISH_NAMESPACE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish_namespace_error"
+    },
+    {
+      "value": 9,
+      "name": "PUBLISH_NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish_namespace_done"
+    },
+    {
+      "value": 12,
+      "name": "PUBLISH_NAMESPACE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/publish_namespace_cancel"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/subscribe_namespace"
+    },
+    {
+      "value": 18,
+      "name": "SUBSCRIBE_NAMESPACE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/subscribe_namespace_ok"
+    },
+    {
+      "value": 19,
+      "name": "SUBSCRIBE_NAMESPACE_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/subscribe_namespace_error"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-14/unsubscribe_namespace"
+    }
+  ],
+  "15": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/client_setup-and-server_set"
+    },
+    {
+      "value": 33,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/client_setup-and-server_set"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/goaway"
+    },
+    {
+      "value": 21,
+      "name": "MAX_REQUEST_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/max_request_id-2"
+    },
+    {
+      "value": 26,
+      "name": "REQUESTS_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/requests_blocked"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/request_error"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/subscribe_ok"
+    },
+    {
+      "value": 2,
+      "name": "SUBSCRIBE_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/subscribe_update"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/unsubscribe"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/publish"
+    },
+    {
+      "value": 30,
+      "name": "PUBLISH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/publish_ok"
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/fetch_ok"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/fetch_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/publish_namespace"
+    },
+    {
+      "value": 9,
+      "name": "PUBLISH_NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/publish_namespace_done"
+    },
+    {
+      "value": 12,
+      "name": "PUBLISH_NAMESPACE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/publish_namespace_cancel"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/subscribe_namespace"
+    },
+    {
+      "value": 20,
+      "name": "UNSUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-15/unsubscribe_namespace"
+    }
+  ],
+  "16": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "CLIENT_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/client_setup-and-server_set"
+    },
+    {
+      "value": 33,
+      "name": "SERVER_SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/client_setup-and-server_set"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/goaway"
+    },
+    {
+      "value": 21,
+      "name": "MAX_REQUEST_ID",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/max_request_id-2"
+    },
+    {
+      "value": 26,
+      "name": "REQUESTS_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/requests_blocked"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/request_error"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/subscribe_ok"
+    },
+    {
+      "value": 2,
+      "name": "REQUEST_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/request_update"
+    },
+    {
+      "value": 10,
+      "name": "UNSUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/unsubscribe"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/publish"
+    },
+    {
+      "value": 30,
+      "name": "PUBLISH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/publish_ok"
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/fetch_ok"
+    },
+    {
+      "value": 23,
+      "name": "FETCH_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/fetch_cancel"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/publish_namespace"
+    },
+    {
+      "value": 8,
+      "name": "NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/namespace"
+    },
+    {
+      "value": 9,
+      "name": "PUBLISH_NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/publish_namespace_done"
+    },
+    {
+      "value": 14,
+      "name": "NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/namespace_done"
+    },
+    {
+      "value": 12,
+      "name": "PUBLISH_NAMESPACE_CANCEL",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/publish_namespace_cancel"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-16/subscribe_namespace"
+    }
+  ],
+  "17": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for versions <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP in versions <= 16",
+      "specPath": null
+    },
+    {
+      "value": 33,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP in versions <= 16",
+      "specPath": null
+    },
+    {
+      "value": 12032,
+      "name": "SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/setup"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/goaway"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/request_error"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/subscribe_ok"
+    },
+    {
+      "value": 2,
+      "name": "REQUEST_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/request_update"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/publish"
+    },
+    {
+      "value": 30,
+      "name": "PUBLISH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/publish_ok"
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/fetch_ok"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/publish_namespace"
+    },
+    {
+      "value": 8,
+      "name": "NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/namespace"
+    },
+    {
+      "value": 14,
+      "name": "NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/namespace_done"
+    },
+    {
+      "value": 17,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/subscribe_namespace"
+    },
+    {
+      "value": 15,
+      "name": "PUBLISH_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-17/publish_blocked"
+    }
+  ],
+  "18": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 33,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 12032,
+      "name": "SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/setup"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/goaway"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/subscribe_ok"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/publish"
+    },
+    {
+      "value": 30,
+      "name": "PUBLISH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/request_ok"
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/fetch_ok"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/publish_namespace"
+    },
+    {
+      "value": 80,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/subscribe_namespace"
+    },
+    {
+      "value": 81,
+      "name": "SUBSCRIBE_TRACKS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/subscribe_tracks"
+    },
+    {
+      "value": 8,
+      "name": "NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/namespace"
+    },
+    {
+      "value": 14,
+      "name": "NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/namespace_done"
+    },
+    {
+      "value": 15,
+      "name": "PUBLISH_BLOCKED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/publish_blocked"
+    },
+    {
+      "value": 2,
+      "name": "REQUEST_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/request_update"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-18/request_error"
+    }
+  ],
+  "19": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 33,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 12032,
+      "name": "SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/setup"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/goaway"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/subscribe_ok"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/publish"
+    },
+    {
+      "value": 30,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "PUBLISH_OK in <= 17",
+      "specPath": null
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/fetch_ok"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/publish_namespace"
+    },
+    {
+      "value": 80,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/subscribe_namespace"
+    },
+    {
+      "value": 81,
+      "name": "SUBSCRIBE_TRACKS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/subscribe_tracks"
+    },
+    {
+      "value": 8,
+      "name": "NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/namespace"
+    },
+    {
+      "value": 14,
+      "name": "NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/namespace_done"
+    },
+    {
+      "value": 15,
+      "name": "PUBLISH_SKIPPED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/publish_skipped"
+    },
+    {
+      "value": 2,
+      "name": "REQUEST_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/request_update"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-19/request_error"
+    }
+  ],
+  "20": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 33,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 12032,
+      "name": "SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/setup"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/goaway"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/subscribe_ok"
+    },
+    {
+      "value": 34,
+      "name": "PUBLISH_STATE_NOTIFY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/publish_state_notify"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/publish"
+    },
+    {
+      "value": 30,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "PUBLISH_OK in <= 17",
+      "specPath": null
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/fetch"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/fetch_ok"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/publish_namespace"
+    },
+    {
+      "value": 80,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/subscribe_namespace"
+    },
+    {
+      "value": 81,
+      "name": "SUBSCRIBE_TRACKS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/subscribe_tracks"
+    },
+    {
+      "value": 8,
+      "name": "NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/namespace"
+    },
+    {
+      "value": 14,
+      "name": "NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/namespace_done"
+    },
+    {
+      "value": 15,
+      "name": "PUBLISH_SKIPPED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/publish_skipped"
+    },
+    {
+      "value": 2,
+      "name": "REQUEST_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/request_update"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-20/request_error"
+    }
+  ],
+  "21": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 33,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 12032,
+      "name": "SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/setup"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/goaway"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/subscribe_ok"
+    },
+    {
+      "value": 34,
+      "name": "PUBLISH_STATE_NOTIFY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/publish_state_notify"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/publish"
+    },
+    {
+      "value": 30,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "PUBLISH_OK in <= 17",
+      "specPath": null
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/fetch-2"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/fetch_ok"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/publish_namespace"
+    },
+    {
+      "value": 80,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/subscribe_namespace"
+    },
+    {
+      "value": 81,
+      "name": "SUBSCRIBE_TRACKS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/subscribe_tracks"
+    },
+    {
+      "value": 8,
+      "name": "NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/namespace"
+    },
+    {
+      "value": 14,
+      "name": "NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/namespace_done"
+    },
+    {
+      "value": 15,
+      "name": "PUBLISH_SKIPPED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/publish_skipped"
+    },
+    {
+      "value": 2,
+      "name": "REQUEST_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/request_update"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-21/request_error"
+    }
+  ],
+  "22": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for <= 10",
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 33,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP in <= 16",
+      "specPath": null
+    },
+    {
+      "value": 12032,
+      "name": "SETUP",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/setup"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/goaway"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/subscribe_ok"
+    },
+    {
+      "value": 34,
+      "name": "PUBLISH_STATE_NOTIFY",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/publish_state_notify"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/publish"
+    },
+    {
+      "value": 30,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "PUBLISH_OK in <= 17",
+      "specPath": null
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/fetch-2"
+    },
+    {
+      "value": 24,
+      "name": "FETCH_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/fetch_ok"
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/publish_namespace"
+    },
+    {
+      "value": 80,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/subscribe_namespace"
+    },
+    {
+      "value": 81,
+      "name": "SUBSCRIBE_TRACKS",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/subscribe_tracks"
+    },
+    {
+      "value": 8,
+      "name": "NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/namespace"
+    },
+    {
+      "value": 14,
+      "name": "NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/namespace_done"
+    },
+    {
+      "value": 15,
+      "name": "PUBLISH_SKIPPED",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/publish_skipped"
+    },
+    {
+      "value": 2,
+      "name": "REQUEST_UPDATE",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/request_update"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "specPath": "/spec/draft-22/request_error"
+    }
+  ]
+}

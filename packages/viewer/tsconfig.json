@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // `tsc --build` typechecks; `scripts/build.ts` owns `dist`.
+    "noEmit": true,
+    "composite": true,
+    "resolveJsonModule": true,
+    // `@moqtap/trace` by source, for the typecheck and for `bun build` alike,
+    // so neither needs a built `packages/trace/dist`. It is the same module the
+    // workspace link resolves to under Bun (`exports["."].bun`).
+    "paths": {
+      "@moqtap/trace": ["../trace/src/index.ts"]
+    }
+  },
+  // The trace sources are listed because `paths` brings them into this
+  // program, and a composite project must list every file it compiles.
+  "include": ["src", "src/data/*.json", "../trace/src"],
+  // The corpus test reads files off disk, and `@types/node` is not installed
+  // for this package. Same exclusion, same reason, as `packages/trace`.
+  "exclude": [
+    "src/__tests__/corpus.test.ts",
+    "src/__tests__/page.test.ts",
+    "src/__tests__/locate.ts",
+    "../trace/src/__tests__"
+  ]
+}

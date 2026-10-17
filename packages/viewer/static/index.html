@@ -1,0 +1,76 @@
+<!doctype html>
+<!--
+  The view bundle's only page. It is served under `script-src 'self';
+  style-src 'self'` with no 'unsafe-inline', so nothing on this page may be
+  inline: no <script> without src, no <style>, no style="" attribute, no on*=
+  handler. `src/__tests__/page.test.ts` holds it to that.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>moqtrace viewer</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="bar">
+        <svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-label="moqtap">
+          <path
+            fill="#00d4aa"
+            d="M27.839 19.742a17.637 17.637 0 0 0-17.676 17.676A17.637 17.637 0 0 0 27.84 55.093h82.486V169.09a17.64 17.64 0 0 0 10.731 16.266 25.924 25.924 0 0 0-18.98 24.976A25.924 25.924 0 0 0 128 236.258a25.924 25.924 0 0 0 25.923-25.925 25.924 25.924 0 0 0-18.98-24.976 17.64 17.64 0 0 0 10.732-16.266V55.093h82.486a17.637 17.637 0 0 0 17.676-17.675 17.637 17.637 0 0 0-17.676-17.676z"
+          ></path>
+        </svg>
+        <span class="bar-title">moqtrace viewer</span>
+        <span id="file-chip" class="mono small muted chip" hidden></span>
+        <div class="bar-actions">
+          <!--
+            Shown only for a trace the site inspector sent and marked as the
+            CLI shell's recording: it asks that page to pass a request for the
+            shell's own share dialog on, and carries nothing.
+          -->
+          <button id="share" class="button-quiet" type="button" hidden>Share…</button>
+          <!--
+            Hidden until the script decides: shown on the viewer's own page
+            and beside a capture the site inspector read itself, never beside
+            a trace a parent handed over to be read (`canOfferLocalOpen`).
+          -->
+          <label id="open-capture" class="button-quiet" hidden>
+            Open capture
+            <input id="file-input" type="file" accept=".moqtrace" hidden />
+          </label>
+        </div>
+      </header>
+
+      <nav id="tabs" class="tabs" role="tablist" hidden></nav>
+
+      <main id="surface" class="surface">
+        <div id="empty" class="empty">
+          <h1>Read a MoQT session capture</h1>
+          <p>
+            Drop a <code class="mono">.moqtrace</code> file anywhere here. It is decoded on this
+            machine and never uploaded.
+          </p>
+          <label class="button">
+            Choose a file
+            <input id="empty-file-input" type="file" accept=".moqtrace" hidden />
+          </label>
+          <p id="error" class="error" hidden></p>
+        </div>
+
+        <div id="results" class="results" hidden></div>
+      </main>
+    </div>
+
+    <!--
+      A drop target the size of the window. Accepting a file only on one small
+      rectangle makes people aim; this accepts it anywhere and draws the target
+      only while a file is over the page.
+    -->
+    <div id="drop-overlay" class="drop-overlay" hidden>
+      <div class="drop-target">Drop to open</div>
+    </div>
+  </body>
+</html>

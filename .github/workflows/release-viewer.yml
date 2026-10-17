@@ -1,0 +1,74 @@
+name: Release @moqtap/viewer
+
+# The viewer is not published to npm and is not deployed from here. A tag
+# proves the tagged commit builds and passes, and attaches the production
+# bundle and its checksums to the GitHub release, so a deployment of the tag
+# can be checked against them.
+
+on:
+  push:
+    tags:
+      - 'viewer-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Verify package.json version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#viewer-v}"
+          PKG_VERSION=$(node -p "require('./packages/viewer/package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - run: bun install --frozen-lockfile
+
+      # Scoped to this package. A sibling's failing test must not block this
+      # release: the packages share a repository, not a release cadence.
+      # The codec is built because the viewer's typecheck reaches the trace
+      # sources, which import the codec by bare specifier, and its types
+      # resolve through the `exports` map into `dist/`.
+      - run: bun run --cwd packages/codec build
+      - run: ./node_modules/.bin/biome check packages/viewer
+      - run: ./node_modules/.bin/tsc --build packages/viewer
+      - run: bun run --cwd packages/viewer test
+
+      # The production bundle: no extra parents. A non-production bundle
+      # differs only by the extra origins passed at build time.
+      - name: Build the production bundle
+        run: bun run --cwd packages/viewer build -- --out "$RUNNER_TEMP/view"
+
+      - name: Checksums
+        working-directory: ${{ runner.temp }}/view
+        run: |
+          sha256sum index.html main.js styles.css worker.js > "$RUNNER_TEMP/SHA256SUMS"
+          cat "$RUNNER_TEMP/SHA256SUMS"
+          {
+            echo '```'
+            cat "$RUNNER_TEMP/SHA256SUMS"
+            echo '```'
+            echo
+            echo "Built with Bun $(bun --version)."
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
+          tar -czf "$RUNNER_TEMP/moqtap-viewer-${GITHUB_REF_NAME#viewer-v}.tar.gz" \
+            index.html main.js styles.css worker.js
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "$RUNNER_TEMP/moqtap-viewer-${GITHUB_REF_NAME#viewer-v}.tar.gz" \
+            "$RUNNER_TEMP/SHA256SUMS"

@@ -1,0 +1,346 @@
+/*
+ * The viewer's own styles. A file, not Tailwind and not inline: the view origin
+ * serves `style-src 'self'`, and the bundle carries no build step beyond
+ * `bun build`. Colours follow the site's palette so a framed viewer does not
+ * look like someone else's page.
+ */
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --border: #e3e6ea;
+  --text: #0f1419;
+  --text-2: #3d4650;
+  --muted: #6b7682;
+  --accent: #00a887;
+  --warn: #b26b00;
+  --error: #c62828;
+  --sent: #1f6feb;
+  --received: #1a7f37;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0f14;
+    --surface: #121821;
+    --border: #232c37;
+    --text: #e6edf3;
+    --text-2: #b4bfca;
+    --muted: #7d8894;
+    --accent: #00d4aa;
+    --warn: #e3a23b;
+    --error: #f47067;
+    --sent: #58a6ff;
+    --received: #56d364;
+  }
+}
+
+[hidden] {
+  display: none !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+.small {
+  font-size: 12px;
+}
+.muted {
+  color: var(--muted);
+}
+.warn {
+  color: var(--warn);
+}
+.wrap {
+  white-space: pre-wrap;
+}
+
+/* ---------------------------------------------------------------- bar --- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  flex-shrink: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.mark {
+  width: 20px;
+  height: 20px;
+}
+.bar-title {
+  font-weight: 500;
+}
+.chip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.button,
+.button-quiet {
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.button {
+  margin-top: 32px;
+  padding: 10px 20px;
+  background: var(--accent);
+  color: var(--bg);
+}
+.button-quiet {
+  padding: 6px 12px;
+  background: none;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.button-quiet:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* --------------------------------------------------------------- tabs --- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: -1px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab-on {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------ surface --- */
+
+.surface {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 24px;
+  text-align: center;
+}
+.empty h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+.empty p {
+  max-width: 36rem;
+  color: var(--text-2);
+}
+.error {
+  margin-top: 32px;
+  color: var(--error);
+}
+
+.results {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+.overview > section + section {
+  margin-top: 40px;
+}
+
+.section-heading {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------ findings --- */
+
+.findings {
+  display: grid;
+  gap: 12px;
+}
+.finding {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.finding-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+.finding-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.finding-error {
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+}
+.finding-error .finding-label {
+  color: var(--error);
+}
+.finding-warning {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.finding-warning .finding-label {
+  color: var(--warn);
+}
+.finding-title {
+  font-weight: 500;
+}
+.finding-detail {
+  margin: 6px 0 0;
+  color: var(--text-2);
+}
+
+/* ------------------------------------------------------------- summary --- */
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 24px;
+  margin: 0;
+}
+@media (min-width: 640px) {
+  .facts {
+    grid-template-columns: auto 1fr auto 1fr;
+  }
+}
+.facts dt {
+  color: var(--muted);
+}
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------ messages --- */
+
+.messages {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.message {
+  padding: 10px 16px;
+}
+.message + .message {
+  border-top: 1px solid var(--border);
+}
+.message-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  cursor: pointer;
+}
+.message-name {
+  font-weight: 500;
+  color: var(--text);
+}
+.spec-link {
+  text-decoration: underline dotted;
+}
+.dir-sent {
+  color: var(--sent);
+}
+.dir-received {
+  color: var(--received);
+}
+.message-body {
+  margin-top: 8px;
+  overflow-x: auto;
+}
+.spec-address {
+  margin: 0 0 6px;
+  user-select: all;
+}
+.message-body pre {
+  margin: 0;
+  color: var(--text-2);
+}
+
+/* ---------------------------------------------------------------- drop --- */
+
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+}
+.drop-target {
+  padding: 32px 48px;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  font-size: 18px;
+  font-weight: 500;
+}

@@ -53,6 +53,16 @@
         "@moqtap/codec": ">=0.11.0",
       },
     },
+    "packages/viewer": {
+      "name": "@moqtap/viewer",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@moqtap/test-traces": "^0.1.1",
+        "@moqtap/trace": "workspace:*",
+        "typescript": "^5.5.0",
+        "vitest": "^3.2.7",
+      },
+    },
   },
   "packages": {
     "@biomejs/biome": ["@biomejs/biome@2.4.8", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.4.8", "@biomejs/cli-darwin-x64": "2.4.8", "@biomejs/cli-linux-arm64": "2.4.8", "@biomejs/cli-linux-arm64-musl": "2.4.8", "@biomejs/cli-linux-x64": "2.4.8", "@biomejs/cli-linux-x64-musl": "2.4.8", "@biomejs/cli-win32-arm64": "2.4.8", "@biomejs/cli-win32-x64": "2.4.8" }, "bin": { "biome": "bin/biome" } }, "sha512-ponn0oKOky1oRXBV+rlSaUlixUxf1aZvWC19Z41zBfUOUesthrQqL3OtiAlSB1EjFjyWpn98Q64DHelhA6jNlA=="],
@@ -154,6 +164,8 @@
     "@moqtap/test-vectors": ["@moqtap/test-vectors@0.18.1", "", {}, "sha512-iHzgT0s/lkscQISS3bWUuPpcV2fKqR1+KiMf2+OTiyFHJi9z5PEC4/PTDAely15mq76w5874KmonDAVMXFN6dw=="],
 
     "@moqtap/trace": ["@moqtap/trace@workspace:packages/trace"],
+
+    "@moqtap/viewer": ["@moqtap/viewer@workspace:packages/viewer"],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.60.0", "", { "os": "android", "cpu": "arm" }, "sha512-WOhNW9K8bR3kf4zLxbfg6Pxu2ybOUbB2AjMDHSQx86LIF4rH4Ft7vmMwNt0loO0eonglSNy4cpD3MKXXKQu0/A=="],
 

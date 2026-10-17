@@ -1,0 +1,31 @@
+{
+  "name": "@moqtap/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The .moqtrace viewer as a static bundle: rendered in a credential-free frame, fed by postMessage from an allowlisted parent or by a local file",
+  "type": "module",
+  "license": "MIT",
+  "author": "moqtap",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moqtap/moqtap-js.git",
+    "directory": "packages/viewer"
+  },
+  "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/viewer",
+  "bugs": "https://github.com/moqtap/moqtap-js/issues",
+  "files": [
+    "dist/view"
+  ],
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "test": "vitest run",
+    "registries": "bun run scripts/registries.ts",
+    "registries:check": "bun run scripts/registries.ts --check"
+  },
+  "devDependencies": {
+    "@moqtap/test-traces": "^0.1.1",
+    "@moqtap/trace": "workspace:*",
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.7"
+  }
+}
