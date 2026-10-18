@@ -55,6 +55,8 @@ export const MQ1110 = 'MQ1110'
 export const MQ1111 = 'MQ1111'
 /** An unrecognised top-level config key. Ignored. */
 export const MQ1112 = 'MQ1112'
+/** A supplied `sessionId` is one ingest cannot store. Replaced by a minted id. */
+export const MQ1113 = 'MQ1113'
 
 /* ── 2xxx — envelope ─────────────────────────────────────────────────────── */
 

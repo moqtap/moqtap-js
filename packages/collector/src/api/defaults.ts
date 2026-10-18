@@ -75,7 +75,7 @@ export const DEFAULT_LIMITS: Limits = /*#__PURE__*/ Object.freeze({
 export const DEFAULT_UPLOAD: UploadConfig = /*#__PURE__*/ Object.freeze({
   intervalMs: 60_000,
   byteThreshold: 32 * 1024,
-  earlyFlushesMs: /*#__PURE__*/ Object.freeze([5_000, 15_000, 45_000]),
+  earlyFlushesMs: /*#__PURE__*/ Object.freeze([45_000]),
   maxAttempts: 5,
   timeoutMs: 10_000,
   stopDrainDeadlineMs: 2_000,
@@ -89,7 +89,7 @@ export const UPLOAD_PROVENANCE: { readonly [K in keyof UploadConfig]: string } =
       'Paired with byteThreshold, whichever comes first. Sets the "a crash loses at most 60 seconds" claim.',
     byteThreshold: 'Flush every 32 KB accumulated, or every intervalMs, whichever comes first.',
     earlyFlushesMs:
-      'Front-loaded at ready, +5 s, +15 s and +45 s, because everything interesting about setup happens in the first seconds and a session that dies during establishment must not be lost.',
+      'Front-loaded at ready and +45 s. The ready seal carries setup and the handshake, so a session that dies during establishment is not lost; +45 s brings the first rollups in before the steady interval. One early seal rather than several, because a steady session carries little new information per interval.',
     maxAttempts:
       "Matches the flush module's own default. Guess, pending field data: the right number depends on how long ingest stays down, which nothing has observed.",
     timeoutMs:
@@ -110,7 +110,7 @@ export const DEFAULT_METRICS: MetricsConfig = /*#__PURE__*/ Object.freeze({
 export const METRICS_PROVENANCE: { readonly [K in keyof MetricsConfig]: string } =
   /*#__PURE__*/ Object.freeze({
     intervalMs:
-      'Guess, pending field data. 10 s keeps a rollup inside each of the front-loaded flushes (+5/+15/+45 s), which a 60 s interval would leave empty.',
+      'Guess, pending field data. 10 s puts several closed rollups inside the +45 s early flush, which a 60 s interval would leave empty.',
     maxTracks:
       "Matches the decode module's DEFAULT_MAX_BUCKETS. Guess, pending field data — a five-rendition ladder with audio uses tens, so 1024 only fires on a relay flapping aliases.",
   })
@@ -177,7 +177,7 @@ export const DEFAULT_PRIVACY: PrivacyConfig = /*#__PURE__*/ Object.freeze({
  * Its own origin rather than a path on the marketing site, so the two can be
  * rate-limited, moved and blocked independently of each other.
  */
-export const DEFAULT_ENDPOINT = 'https://ingest.moqtap.com/v1/ingest'
+export const DEFAULT_ENDPOINT = 'https://moqgest.com/v1/ingest'
 
 /**
  * Every default, in one frozen object.
@@ -224,9 +224,9 @@ export const DEFAULT_PROVENANCE: { readonly [K in keyof ResolvedConfig]: string 
     apiKey:
       'No default. `init()` throws without one — there is nowhere to send to and nothing to authorise.',
     endpoint:
-      'Defaults to the hosted ingest at https://ingest.moqtap.com/v1/ingest and stays overridable for a self-hosted or proxied collector. Upload is a `fetch()` POST, so whichever origin is in force is the one connect-src entry a page needs.',
+      'Defaults to the hosted ingest at https://moqgest.com/v1/ingest and stays overridable for a self-hosted or proxied collector. Upload is a `fetch()` POST, so whichever origin is in force is the one connect-src entry a page needs.',
     sessionId:
-      'Minted with crypto.randomUUID(). Feeds sha256(sessionId:segmentSeq), and ingest dedupes exactly, so a colliding id is a silently discarded and under-billed session. A customer-supplied constant cannot be prevented here.',
+      'Minted with crypto.randomUUID(). Feeds sha256(sessionId:segmentSeq), and ingest dedupes exactly, so a session with a colliding id is silently discarded. A customer-supplied constant cannot be prevented here.',
     detail:
       'Baseline is always on and always the same. Elevation is billable, so the default can only be baseline.',
     drafts:

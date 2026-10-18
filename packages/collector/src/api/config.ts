@@ -31,6 +31,7 @@ import {
   MQ1110,
   MQ1111,
   MQ1112,
+  MQ1113,
 } from '../codes.js'
 import { SUPPORTED_DRAFTS } from '../draft/protocol.js'
 import {
@@ -86,6 +87,72 @@ function defaultMintSessionId(): string {
   let r = ''
   for (let i = 0; i < 4; i += 1) r += Math.floor(Math.random() * 0x1_0000_0000).toString(16)
   return `s-${Date.now().toString(16)}-${r}`
+}
+
+/**
+ * The longest supplied session id kept, in UTF-8 bytes.
+ *
+ * Ingest refuses, without storing any of the session, an upload whose id is
+ * longer than this. It is the bound ingest enforces, restated here because the
+ * collector and ingest ship separately. A minted id is a 36 B UUID, or under
+ * 50 B without `crypto`, so it is never in reach.
+ */
+export const MAX_SESSION_ID_BYTES = 128
+
+/**
+ * Whether ingest can store `id`: at most {@link MAX_SESSION_ID_BYTES} UTF-8
+ * bytes, well-formed UTF-16, and no C0 or C1 control character or DEL.
+ *
+ * One pass over the code units, measuring the bytes as it goes, rather than
+ * `String.prototype.isWellFormed`: that is ES2024, newer than the oldest
+ * runtime this package supports.
+ */
+export function isStorableSessionId(id: string): boolean {
+  // Every code unit is at least one UTF-8 byte, so a longer string is refused
+  // before it is walked.
+  if (id.length === 0 || id.length > MAX_SESSION_ID_BYTES) return false
+  let bytes = 0
+  for (let i = 0; i < id.length; i += 1) {
+    const c = id.charCodeAt(i)
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return false
+    if (c < 0x80) bytes += 1
+    else if (c < 0x800) bytes += 2
+    else if (c >= 0xd800 && c <= 0xdbff) {
+      // A high surrogate must be followed by a low one; past the end of the
+      // string `charCodeAt` is NaN, which fails the range check too.
+      const next = id.charCodeAt(i + 1)
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false
+      bytes += 4
+      i += 1
+    } else if (c >= 0xdc00 && c <= 0xdfff) return false
+    else bytes += 3
+  }
+  return bytes <= MAX_SESSION_ID_BYTES
+}
+
+/**
+ * The session id: the supplied one when ingest can store it, otherwise a
+ * minted one.
+ *
+ * Replaced rather than thrown, like every other non-fatal option: the session
+ * is collected regardless, under an id `vitals.ids()` reports. Kept as given, a
+ * refused id would cost the whole session at ingest, where nobody integrating
+ * the collector would look.
+ */
+function sessionIdOf(v: unknown, mint: () => string, report: (p: ConfigProblem) => void): string {
+  const supplied = str(v, '', 'sessionId', report)
+  if (supplied === '') return mint()
+  if (!isStorableSessionId(supplied)) {
+    // The byte length, not the id: the id is what may hold a control character
+    // or be arbitrarily long, and the message lands in the customer's logs.
+    report({
+      key: 'sessionId',
+      code: MQ1113,
+      got: String(new TextEncoder().encode(supplied).byteLength),
+    })
+    return mint()
+  }
+  return supplied
 }
 
 /* ── scalar readers ──────────────────────────────────────────────────────── */
@@ -434,7 +501,7 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
   }
 
   const mint = opts.mintSessionId ?? defaultMintSessionId
-  const sessionId = str(c.sessionId, '', 'sessionId', report) || mint()
+  const sessionId = sessionIdOf(c.sessionId, mint, report)
 
   const ctx = bagOf(c.context, 'context', report) ?? {}
   const d = DEFAULTS.context

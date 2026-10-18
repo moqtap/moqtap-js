@@ -27,7 +27,7 @@ npm install @moqtap/collector
 import { init } from '@moqtap/collector'
 
 const vitals = init({
-  apiKey: 'pk_live_...',
+  apiKey: 'mqt_pk_...',
   context: {
     actorId: currentUser.id,
     contentId: 'live/room-42',
@@ -47,10 +47,10 @@ latencies.
 The only thing that ever leaves the page is an upload to `endpoint` — a
 `fetch()` POST on the main path, and a `navigator.sendBeacon()` for the session
 tail at `pagehide`. Both are governed by `connect-src`, so the endpoint's origin
-has to be in it. `endpoint` defaults to `https://ingest.moqtap.com/v1/ingest`:
+has to be in it. `endpoint` defaults to `https://moqgest.com/v1/ingest`:
 
 ```http
-Content-Security-Policy: connect-src 'self' https://ingest.moqtap.com;
+Content-Security-Policy: connect-src 'self' https://moqgest.com;
 ```
 
 Point `endpoint` at your own collector and use that origin instead — scheme and
@@ -64,6 +64,7 @@ host, no path. Nothing else in your policy has to move: there is no `eval`, no
 | Key              | What it controls                                                  |
 | ---------------- | ----------------------------------------------------------------- |
 | `endpoint`       | Where uploads go. Defaults to the hosted ingest.                   |
+| `sessionId`      | Your own id for the session, up to 128 UTF-8 bytes; else minted    |
 | `context`        | `actorId`, `contentId`, `environment`, `release`                   |
 | `detail`         | `baseline`, `headers`, `headers+sizes` or `headers+data`           |
 | `metrics`        | How often the rollup closes, how many tracks it follows            |
@@ -76,13 +77,19 @@ host, no path. Nothing else in your policy has to move: there is no `eval`, no
 
 ```typescript
 init({
-  apiKey: 'pk_live_...',
+  apiKey: 'mqt_pk_...',
   endpoint: 'https://ingest.your-company.example/v1/ingest',
   metrics: { intervalMs: 10_000 },
   budget: { elevatedMinutes: 60 },
   upload: { intervalMs: 60_000, byteThreshold: 32 * 1024 },
 })
 ```
+
+A session uploads at `ready`, 45 s later, then every 60 s or every 32 KB
+accumulated, whichever comes first, and once more at `stop()` or `pagehide`. A
+tab killed with no `pagehide` loses at most the last 60 s.
+`upload.earlyFlushesMs`, `upload.intervalMs` and `upload.byteThreshold` set
+the cadence.
 
 Every threshold is a config key with a recorded default. Read the defaults from
 `DEFAULTS`, and each one's provenance from `DEFAULT_PROVENANCE`.
@@ -148,7 +155,7 @@ waits for the page's config.
 // main.ts -- the page
 import { init } from '@moqtap/collector'
 
-const vitals = init({ apiKey: 'pk_live_...' })
+const vitals = init({ apiKey: 'mqt_pk_...' })
 
 const worker = new Worker(new URL('./transport.worker.ts', import.meta.url), {
   type: 'module',

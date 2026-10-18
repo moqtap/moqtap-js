@@ -5,6 +5,20 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-18
+
+### Changed
+
+- **Breaking.** Add `https://moqgest.com` to `connect-src` on a page with a
+  strict CSP: the default `endpoint` is `https://moqgest.com/v1/ingest` (was
+  `https://ingest.moqtap.com/v1/ingest`).
+- **A `sessionId` ingest cannot store is refused at `init()`.** One over 128
+  UTF-8 bytes, holding a control character, or with an unpaired surrogate is
+  reported as `MQ1113` and replaced by a minted id, which `vitals.ids()`
+  returns. Ingest refuses such an id, and with it the whole session.
+- **One early upload, at +45 s.** `upload.earlyFlushesMs` defaults to
+  `[45000]` (was `[5000, 15000, 45000]`); set it to `[5000, 15000, 45000]` to keep the old schedule.
+
 ## [0.3.0] - 2026-10-02
 
 ### Added

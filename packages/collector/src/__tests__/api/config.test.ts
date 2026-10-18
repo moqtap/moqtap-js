@@ -8,8 +8,13 @@
  * at the call site instead of producing a collector that uploads nowhere.
  */
 
-import { describe, expect, it } from 'vitest'
-import { type ConfigProblem, resolveConfig } from '../../api/config.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  type ConfigProblem,
+  isStorableSessionId,
+  MAX_SESSION_ID_BYTES,
+  resolveConfig,
+} from '../../api/config.js'
 import {
   DEFAULT_LIMITS,
   DEFAULT_PROVENANCE,
@@ -19,6 +24,7 @@ import {
   LIMIT_PROVENANCE,
   levelIndex,
 } from '../../api/defaults.js'
+import { MQ1113 } from '../../codes.js'
 import { DETAIL_LEVELS } from '../../types.js'
 
 const MINIMAL = { apiKey: 'pk_test', endpoint: 'https://ingest.test/v1/ingest' }
@@ -80,12 +86,12 @@ describe('no threshold is a constant', () => {
   })
 
   it('carries the numbers the spec hard-codes rather than hiding them in code', () => {
-    // The 8-transport cap, the 32 KB / 60 s seal, the 5/15/45 s early flushes,
+    // The 8-transport cap, the 32 KB / 60 s seal, the +45 s early flush,
     // the 64 KB beacon cap, the 5,000/s control rate.
     expect(DEFAULT_LIMITS.maxConcurrentTransports).toBe(8)
     expect(DEFAULT_UPLOAD.byteThreshold).toBe(32 * 1024)
     expect(DEFAULT_UPLOAD.intervalMs).toBe(60_000)
-    expect([...DEFAULT_UPLOAD.earlyFlushesMs]).toEqual([5_000, 15_000, 45_000])
+    expect([...DEFAULT_UPLOAD.earlyFlushesMs]).toEqual([45_000])
     expect(DEFAULT_UPLOAD.beaconMaxBytes).toBe(64 * 1024)
     expect(DEFAULT_LIMITS.controlRatePerSec).toBe(5_000)
   })
@@ -175,10 +181,121 @@ describe('identity', () => {
     expect(resolveConfig({ ...MINIMAL, sessionId: 'sess-1' }).sessionId).toBe('sess-1')
   })
 
+  it('mints a session id in place of an empty one', () => {
+    expect(resolveConfig({ ...MINIMAL, sessionId: '' }).sessionId).not.toBe('')
+  })
+
   it('leaves actorId and contentId absent rather than inventing them', () => {
     const c = resolveConfig(MINIMAL)
     expect(c.context.actorId).toBe('')
     expect(c.context.contentId).toBe('')
+  })
+})
+
+/**
+ * The session ids ingest can store. Ingest refuses, without storing any of the
+ * session, an upload whose id is longer than 128 UTF-8 bytes, holds a control
+ * character, or is not well-formed UTF-16, so each of those is refused here,
+ * at `init()`, where the customer is looking -- reported, and replaced by a
+ * minted id so the session survives.
+ */
+describe('a supplied session id ingest could not store', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  /** Resolve with `sessionId` and a fixed mint, collecting the reported problems. */
+  function resolveWith(sessionId: string): { sessionId: string; problems: ConfigProblem[] } {
+    const { problems, onProblem } = collect()
+    const c = resolveConfig({ ...MINIMAL, sessionId }, { onProblem, mintSessionId: () => 'minted' })
+    return { sessionId: c.sessionId, problems }
+  }
+
+  function expectRefused(sessionId: string, bytes: number): void {
+    const r = resolveWith(sessionId)
+    expect(r.sessionId).toBe('minted')
+    expect(r.problems).toEqual([{ key: 'sessionId', code: MQ1113, got: String(bytes) }])
+  }
+
+  function expectKept(sessionId: string): void {
+    const r = resolveWith(sessionId)
+    expect(r.sessionId).toBe(sessionId)
+    expect(r.problems).toEqual([])
+  }
+
+  it('bounds the id at 128 bytes, the bound ingest enforces', () => {
+    expect(MAX_SESSION_ID_BYTES).toBe(128)
+  })
+
+  it('keeps an id of exactly 128 bytes', () => {
+    expectKept('a'.repeat(128))
+  })
+
+  it('refuses an id of 129 bytes and mints one in its place', () => {
+    expectRefused('a'.repeat(129), 129)
+  })
+
+  it('counts the bound in UTF-8 bytes, not in characters or code units', () => {
+    // U+00E9 is one code unit and two bytes, U+20AC one code unit and three,
+    // U+1F600 two code units and four.
+    const two = 'é'
+    const three = '€'
+    const four = '\u{1f600}'
+    expectKept(two.repeat(64))
+    expectRefused(`${two.repeat(64)}a`, 129)
+    expectKept(`${three.repeat(42)}ab`)
+    expectRefused(three.repeat(43), 129)
+    expectKept(four.repeat(32))
+    expectRefused(`${four.repeat(32)}a`, 129)
+  })
+
+  it('refuses a C0 control character, DEL and a C1 control character', () => {
+    for (const c of ['\u0000', '\t', '\n', '\u001f', '\u007f', '\u0080', '\u009f']) {
+      expectRefused(`sess-${c}-1`, c < '\u0080' ? 8 : 9)
+    }
+  })
+
+  it('keeps the characters either side of the control ranges', () => {
+    // U+0020 and U+007E border the C0 range and DEL; U+00A0 follows C1.
+    expectKept('sess- ~-1')
+    expectKept('sess-\u00a0-1')
+  })
+
+  it('refuses a lone high surrogate, a lone low surrogate and a reversed pair', () => {
+    // The encoder that measures the reported length writes each lone surrogate
+    // as U+FFFD, three bytes.
+    expectRefused('sess-\ud83d', 8)
+    expectRefused('\ud83dsess', 7)
+    expectRefused('sess-\ude00-1', 10)
+    expectRefused('sess-\ude00\ud83d', 11)
+  })
+
+  it('reports the length, never the id, so the message cannot carry the refused id', () => {
+    const r = resolveWith(`x${'\u0000'.repeat(300)}`)
+    expect(r.problems).toEqual([{ key: 'sessionId', code: MQ1113, got: '301' }])
+  })
+
+  it('accepts every id the collector mints from crypto.randomUUID', () => {
+    for (let i = 0; i < 200; i += 1) {
+      const { problems, onProblem } = collect()
+      const c = resolveConfig(MINIMAL, { onProblem })
+      expect(isStorableSessionId(c.sessionId), c.sessionId).toBe(true)
+      expect(problems).toEqual([])
+    }
+  })
+
+  it('accepts the longest id the collector mints without crypto', () => {
+    // Every random word at its widest and a clock far past today's, so the
+    // fallback id is as long as it can get.
+    vi.stubGlobal('crypto', undefined)
+    vi.spyOn(Math, 'random').mockReturnValue(0.999_999_999)
+    vi.spyOn(Date, 'now').mockReturnValue(Number.MAX_SAFE_INTEGER)
+    const { problems, onProblem } = collect()
+    const c = resolveConfig(MINIMAL, { onProblem })
+    expect(c.sessionId).toMatch(/^s-[0-9a-f]+-[0-9a-f]{32}$/)
+    expect(isStorableSessionId(c.sessionId)).toBe(true)
+    expect(problems).toEqual([])
   })
 })
 

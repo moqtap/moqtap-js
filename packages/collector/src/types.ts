@@ -878,7 +878,7 @@ export interface BudgetConfig {
 export interface UploadConfig {
   readonly intervalMs: number
   readonly byteThreshold: number
-  /** The front-loaded schedule: `ready`, then +5 s, +15 s, +45 s. */
+  /** The front-loaded schedule, as offsets from `ready`. Default `[45000]`. */
   readonly earlyFlushesMs: readonly number[]
   readonly maxAttempts: number
   /**
@@ -929,6 +929,15 @@ export interface CollectorConfig {
    * override, and defaulting past it would send traffic somewhere unchosen.
    */
   readonly endpoint?: string
+  /**
+   * The session's id, when you want it to match one of your own. Absent means
+   * one is minted.
+   *
+   * At most 128 UTF-8 bytes, well-formed UTF-16, and free of control
+   * characters, because that is what ingest can store. Anything else is
+   * reported as MQ1113 and replaced by a minted id, which `vitals.ids()`
+   * returns.
+   */
   readonly sessionId?: string
   readonly detail?: DetailLevel
   /**

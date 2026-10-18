@@ -9,9 +9,9 @@ import type { PressureSample } from '../types.js'
  * Three release policies were specified and none was named as governing. They
  * are reconciled by splitting the two verbs that were used interchangeably:
  *
- *  - **Sealing** is the flush schedule (`schedule.ts`): `ready`, +5 s, +15 s,
- *    +45 s, then every 60 s or 32 KB. It decides when a chunk is *built, keyed
- *    and persisted*.
+ *  - **Sealing** is the flush schedule (`schedule.ts`): `ready`, +45 s, then
+ *    every 60 s or 32 KB. It decides when a chunk is *built, keyed and
+ *    persisted*.
  *  - **Release** is this file. It decides only how fast sealed chunks leave the
  *    device, and it can only *slow* release — never seal less often.
  *

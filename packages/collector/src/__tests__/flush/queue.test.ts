@@ -459,23 +459,59 @@ const scheduleWith = (
 }
 
 describe('FlushSchedule', () => {
-  it('is front-loaded then backs off: ready, +5 s, +15 s, +45 s, then every 60 s', () => {
+  it('is front-loaded then backs off: ready, +45 s, then every 60 s', () => {
     const timers = new FakeTimers()
     const { schedule, fired } = scheduleWith(timers)
     schedule.start(0)
 
     timers.advance(0)
     expect(fired).toEqual(['ready'])
+    timers.advance(44_999)
+    expect(fired).toEqual(['ready'])
+    timers.advance(1)
+    expect(fired).toEqual(['ready', 'early'])
+    timers.advance(59_999)
+    expect(fired).toHaveLength(2)
+    timers.advance(1)
+    expect(fired[2]).toBe('interval')
+    timers.advance(60_000)
+    expect(fired[3]).toBe('interval')
+  })
+
+  it('seals a ten-minute session eleven times before its tail, and never leaves a gap over 60 s', () => {
+    // The schedule's defaults are DEFAULT_UPLOAD's. A steady session carries
+    // little new information per interval, and the longest gap between seals
+    // is what a crash with no pagehide tail loses.
+    const timers = new FakeTimers()
+    const at: number[] = []
+    const schedule = new FlushSchedule({
+      onFlush: () => at.push(timers.now),
+      byteThreshold: 32 * 1024,
+      timers,
+    })
+    schedule.start(0)
+    for (let t = 0; t < 600_000; t += 1_000) timers.advance(1_000)
+
+    expect(at).toEqual([
+      0, 45_000, 105_000, 165_000, 225_000, 285_000, 345_000, 405_000, 465_000, 525_000, 585_000,
+    ])
+    const gaps = at.map((t, i) => (i === 0 ? t : t - (at[i - 1] as number)))
+    expect(Math.max(...gaps, 600_000 - (at[at.length - 1] as number))).toBeLessThanOrEqual(60_000)
+  })
+
+  it('runs a configured multi-offset early phase before the interval', () => {
+    const timers = new FakeTimers()
+    const { schedule, fired } = scheduleWith(timers, { earlyFlushesMs: [15_000, 5_000] })
+    schedule.start(0)
+
+    timers.advance(0)
     timers.advance(5_000)
     timers.advance(10_000)
-    timers.advance(30_000)
-    expect(fired).toEqual(['ready', 'early', 'early', 'early'])
+    expect(fired).toEqual(['ready', 'early', 'early'])
     timers.advance(59_999)
-    expect(fired).toHaveLength(4)
+    expect(fired).toHaveLength(3)
     timers.advance(1)
-    expect(fired[4]).toBe('interval')
-    timers.advance(60_000)
-    expect(fired[5]).toBe('interval')
+    expect(fired[3]).toBe('interval')
   })
 
   it('seals on the byte threshold and restarts the interval, so it does not seal twice over', () => {

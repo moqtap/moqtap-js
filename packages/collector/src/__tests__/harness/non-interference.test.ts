@@ -299,11 +299,11 @@ const DESIGN = {
 /**
  * A flush schedule compressed so an arm actually uploads.
  *
- * The shipped schedule is `+5 s / +15 s / +45 s`, then 60 s or 32 KB. An arm
+ * The shipped schedule is `ready`, +45 s, then 60 s or 32 KB. An arm
  * lasts about a second, so under that schedule the fault would never be reached
  * and every treatment would pass by never having tried. Same named keys
- * (`limits.earlyFlushesMs`, `limits.flushIntervalMs`,
- * `limits.flushByteThreshold`), same meanings, turned down — possible only
+ * (`upload.earlyFlushesMs`, `upload.intervalMs`, `upload.byteThreshold`),
+ * same meanings, turned down — possible only
  * because they are named keys rather than constants.
  */
 const FLUSH_UPLOAD = {
@@ -876,7 +876,7 @@ describe('stop() must settle even when ingest never answers', () => {
       { persist: false, noLifecycleListeners: true },
     )
     await settle()
-    // Short, and on the shipped flush schedule (+5 s / +15 s / +45 s), so no
+    // Short, and on the shipped flush schedule (ready, then +45 s), so no
     // automatic flush has happened yet and `stop()` owns the first upload —
     // which is the case a page hits when it tears down early.
     await runReferencePlayer({ objects: 20, cadenceMs: 8, drainMs: 8 })

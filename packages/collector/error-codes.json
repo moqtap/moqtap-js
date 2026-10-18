@@ -82,7 +82,7 @@
     "MQ1110": {
       "summary": "expected an array of positive millisecond offsets",
       "value": "none",
-      "detail": "`upload.earlyFlushesMs` is the front-loaded flush schedule — by default `ready`, then +5 s, +15 s and +45 s. It must be an array of positive millisecond offsets from `ready`."
+      "detail": "`upload.earlyFlushesMs` is the front-loaded flush schedule — by default `ready`, then +45 s. It must be an array of positive millisecond offsets from `ready`."
     },
     "MQ1111": {
       "summary": "expected a size string like '32MB' or a byte count",
@@ -93,6 +93,11 @@
       "summary": "unknown config key; ignored",
       "value": "none",
       "detail": "A top-level key on the config object is not one `CollectorConfig` accepts. It is ignored, and reported because a config typo is otherwise completely silent — `detial: 'headers'` type-checks against an excess-property check only at a literal call site, and not at all when the object arrives from JSON."
+    },
+    "MQ1113": {
+      "summary": "sessionId is not one ingest can store; a minted id is used",
+      "value": "the supplied id's length in UTF-8 bytes",
+      "detail": "A supplied `sessionId` must be at most 128 UTF-8 bytes, well-formed UTF-16 (no unpaired surrogate) and free of C0 and C1 control characters and DEL. Ingest refuses an upload whose id breaks any of these without storing any of it, so the collector refuses the id at `init()` instead: the session is collected under a minted id, which `vitals.ids()` returns. The value carried is the length rather than the id itself, because the id is the thing that may hold a control character or run arbitrarily long, and this message lands in your logs. 128 bytes is room for a UUID, a prefixed UUID or a hash in hex."
     },
     "MQ2001": {
       "summary": "frame payload exceeds what a 31-bit length can carry",

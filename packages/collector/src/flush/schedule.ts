@@ -1,12 +1,15 @@
+import { DEFAULT_UPLOAD } from '../api/defaults.js'
 import type { Mono, SealReason } from '../types.js'
 
 /**
- * The sealing schedule, front-loaded then backing off: at `ready`, then +5 s,
- * +15 s, +45 s, then every 60 s or every 32 KB accumulated, whichever comes
- * first. Everything interesting about setup happens in the first seconds and a
- * session that dies during establishment must not be lost, while a steady
- * session carries almost no new information per interval — so a 12-hour channel
- * stays visible throughout and a crash loses at most 60 seconds.
+ * The sealing schedule, front-loaded then backing off: at `ready`, then +45 s,
+ * then every 60 s or every 32 KB accumulated, whichever comes first. The
+ * `ready` seal carries setup and the handshake, so a session that dies during
+ * establishment is not lost, and +45 s lands its first rollups before the
+ * steady interval. A steady session carries little new information per
+ * interval, so there is one early seal, not several. No gap between seals
+ * exceeds 60 s, so a 12-hour channel stays visible throughout and a crash loses
+ * at most 60 seconds.
  *
  * Decides only when a chunk is *sealed*, never when it is released — that is
  * `pacer.ts`. If pressure could stretch the sealing interval, the "at most 60
@@ -30,16 +33,13 @@ export interface FlushScheduleOptions {
   readonly onFlush: (reason: SealReason) => void
   /** The 32 KB. A byte count, so `Limits.flushByteThreshold` carries it. */
   readonly byteThreshold: number
-  /** The front-loaded offsets from `ready`. Default `[5000, 15000, 45000]`. */
+  /** The front-loaded offsets from `ready`. Default `DEFAULT_UPLOAD.earlyFlushesMs`. */
   readonly earlyFlushesMs?: readonly number[]
-  /** The steady interval once the early phase is over. Default 60 000 ms. */
+  /** The steady interval once the early phase is over. Default `DEFAULT_UPLOAD.intervalMs`. */
   readonly intervalMs?: number
   readonly timers?: TimerSource
   readonly onInternalError?: (err: unknown) => void
 }
-
-const DEFAULT_EARLY: readonly number[] = [5_000, 15_000, 45_000]
-const DEFAULT_INTERVAL_MS = 60_000
 
 const platformTimers: TimerSource = {
   setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -68,8 +68,10 @@ export class FlushSchedule {
     this.#onFlush = o.onFlush
     this.#onError = o.onInternalError
     this.#threshold = Math.max(1, o.byteThreshold)
-    this.#early = (o.earlyFlushesMs ?? DEFAULT_EARLY).filter((n) => n > 0).sort((a, b) => a - b)
-    this.#intervalMs = Math.max(1, o.intervalMs ?? DEFAULT_INTERVAL_MS)
+    this.#early = (o.earlyFlushesMs ?? DEFAULT_UPLOAD.earlyFlushesMs)
+      .filter((n) => n > 0)
+      .sort((a, b) => a - b)
+    this.#intervalMs = Math.max(1, o.intervalMs ?? DEFAULT_UPLOAD.intervalMs)
     this.#timers = o.timers ?? platformTimers
   }
 

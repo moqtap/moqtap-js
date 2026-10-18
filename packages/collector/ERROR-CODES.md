@@ -88,7 +88,7 @@ A key under `flightRecorder.triggers` is not `stall`, `trackSwitch` or `cadence`
 
 ### `MQ1110` — expected an array of positive millisecond offsets
 
-`upload.earlyFlushesMs` is the front-loaded flush schedule — by default `ready`, then +5 s, +15 s and +45 s. It must be an array of positive millisecond offsets from `ready`.
+`upload.earlyFlushesMs` is the front-loaded flush schedule — by default `ready`, then +45 s. It must be an array of positive millisecond offsets from `ready`.
 
 ### `MQ1111` — expected a size string like '32MB' or a byte count
 
@@ -97,6 +97,12 @@ A key under `flightRecorder.triggers` is not `stall`, `trackSwitch` or `cadence`
 ### `MQ1112` — unknown config key; ignored
 
 A top-level key on the config object is not one `CollectorConfig` accepts. It is ignored, and reported because a config typo is otherwise completely silent — `detial: 'headers'` type-checks against an excess-property check only at a literal call site, and not at all when the object arrives from JSON.
+
+### `MQ1113` — sessionId is not one ingest can store; a minted id is used
+
+A supplied `sessionId` must be at most 128 UTF-8 bytes, well-formed UTF-16 (no unpaired surrogate) and free of C0 and C1 control characters and DEL. Ingest refuses an upload whose id breaks any of these without storing any of it, so the collector refuses the id at `init()` instead: the session is collected under a minted id, which `vitals.ids()` returns. The value carried is the length rather than the id itself, because the id is the thing that may hold a control character or run arbitrarily long, and this message lands in your logs. 128 bytes is room for a UUID, a prefixed UUID or a hash in hex.
+
+*Value carried:* the supplied id's length in UTF-8 bytes.
 
 ## 2xxx — envelope — framing, body, idempotency, gzip
 
