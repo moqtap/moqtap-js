@@ -192,6 +192,12 @@ const platformClock: ClockSource = { now: () => performance.now(), wall: () => D
  * transports; each intercepted `WebTransport` is one *connection*, and a
  * reconnect makes a new one.
  */
+/** A worker global: it never sees `pagehide`, so it never holds a number for one. */
+function inWorker(): boolean {
+  const g = globalThis as { WorkerGlobalScope?: abstract new () => unknown }
+  return typeof g.WorkerGlobalScope === 'function' && globalThis instanceof g.WorkerGlobalScope
+}
+
 export class CollectorRuntime implements TransportObserver {
   readonly config: ResolvedConfig
   readonly anchor: ClockAnchor
@@ -287,6 +293,7 @@ export class CollectorRuntime implements TransportObserver {
       clock: relClock,
       level: () => this.#escalation.level,
       maxPendingBytes: 8 * config.upload.byteThreshold,
+      reserveAhead: !inWorker(),
       onInternalError: this.#onError,
     })
 
@@ -460,6 +467,7 @@ export class CollectorRuntime implements TransportObserver {
   /** A worker was expected. Until it handshakes the session is `partial`. */
   expectWorker(): void {
     this.#partialExpected = true
+    this.#queue.reserve()
   }
 
   /** The worker handshook. The session is complete again. */
@@ -906,6 +914,7 @@ export class CollectorRuntime implements TransportObserver {
       // the loud failure has to reach ingest, and `SetupRecord.degraded` is
       // where it lands — so the record goes out now rather than at teardown.
       this.#ensureSetup()
+      this.#schedule.ready(this.#clock.now())
       return
     }
     c.adapter = result.adapter
@@ -927,6 +936,7 @@ export class CollectorRuntime implements TransportObserver {
     // selected — exist from here, so this is the earliest honest moment for the
     // setup record.
     this.#ensureSetup()
+    this.#schedule.ready(this.#clock.now())
     for (const chunk of pending) c.dispatcher.onStreamData(chunk)
     for (const d of datagrams) c.dispatcher.onDatagram(d)
   }
@@ -951,6 +961,7 @@ export class CollectorRuntime implements TransportObserver {
         c.pendingBytes = 0
         c.pendingDatagrams = []
         this.#ensureSetup()
+        this.#schedule.ready(this.#clock.now())
         return
       }
       // Counted, not silently truncated. The counter surfaces on the terminal
@@ -1272,9 +1283,9 @@ export class CollectorRuntime implements TransportObserver {
     if (this.#ports.noLifecycleListeners === true) return
     const g = globalThis as { addEventListener?: (t: string, f: () => void) => void }
     if (typeof g.addEventListener !== 'function') return
-    const handler = (): void => {
+    const handler = (e?: { persisted?: boolean }): void => {
       try {
-        this.#sendTail()
+        this.#sendTail(e?.persisted === true)
       } catch (err) {
         this.#onError(err)
       }
@@ -1283,7 +1294,11 @@ export class CollectorRuntime implements TransportObserver {
     g.addEventListener('pagehide', handler)
   }
 
-  #sendTail(): void {
+  /**
+   * @param persisted The page is entering the back/forward cache and may be
+   *   restored, so the session is not over and no terminal record is sent.
+   */
+  #sendTail(persisted: boolean): void {
     if (this.#halted()) return
     // the third close condition — "the page reloading or unloading". Before
     // the seal, so the record that closes the window rides this beacon rather
@@ -1294,6 +1309,9 @@ export class CollectorRuntime implements TransportObserver {
     this.#escalation.unload()
     this.#ensureSetup()
     this.#rollup.tick(this.#clock.now())
+    // The page is going away, and with it any worker it linked: a dedicated
+    // worker gets no `pagehide` and cannot end its own session.
+    if (!persisted) this.#emitTerminal('pagehide')
     const chunk = this.#queue.sealSync('pagehide')
     if (chunk === null) return
     // The credential has to be handed over explicitly: `sendBeacon` can set no

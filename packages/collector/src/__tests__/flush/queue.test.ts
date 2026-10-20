@@ -232,6 +232,45 @@ describe('FlushQueue.seal', () => {
 
 /* ── keyed before persistence ────────────────────────────────── */
 
+describe('FlushQueue segment numbers shared between realms', () => {
+  it('takes no number until there is something to send', async () => {
+    // A page whose transports live in a linked worker: its queue exists, but
+    // the worker's uploads must still start at 0.
+    const store = await ChunkStore.open('db', 1 << 20, { backend: new MemoryBackend() })
+    new FlushQueue({ sessionId: 's1', store, gzip: false })
+    const worker = new FlushQueue({ sessionId: 's1', store, gzip: false, reserveAhead: false })
+    worker.json(note('a'))
+    expect(((await worker.seal('ready')) as FlushChunk).segmentSeq).toBe(0)
+  })
+
+  it('leaves no gap: the page reserves its tail number, the worker numbers around it', async () => {
+    const store = await ChunkStore.open('db', 1 << 20, { backend: new MemoryBackend() })
+    const page = new FlushQueue({ sessionId: 's1', store, gzip: false })
+    page.reserve()
+    await new Promise((r) => setTimeout(r, 0))
+    const worker = new FlushQueue({ sessionId: 's1', store, gzip: false, reserveAhead: false })
+    const seqs: number[] = []
+    for (const name of ['a', 'b']) {
+      worker.json(note(name))
+      seqs.push(((await worker.seal('interval')) as FlushChunk).segmentSeq)
+    }
+    page.json(note('terminal'))
+    const tail = page.sealSync('pagehide') as FlushChunk
+    seqs.push(tail.segmentSeq)
+    expect([...seqs].sort()).toEqual([0, 1, 2])
+  })
+
+  it('gives a seal that races the first reservation that number, in order', async () => {
+    const store = await ChunkStore.open('db', 1 << 20, { backend: new MemoryBackend() })
+    const q = new FlushQueue({ sessionId: 's1', store, gzip: false })
+    q.json(note('a'))
+    const first = (await q.seal('ready')) as FlushChunk
+    q.json(note('b'))
+    const second = (await q.seal('interval')) as FlushChunk
+    expect([first.segmentSeq, second.segmentSeq]).toEqual([0, 1])
+  })
+})
+
 describe('FlushQueue with a store', () => {
   it('persists the chunk under the key it was stamped with, before it is ever uploaded', async () => {
     const backend = new MemoryBackend()
@@ -570,6 +609,27 @@ describe('FlushSchedule', () => {
     timers.advance(200_000)
     expect(fired).toEqual([])
     expect(timers.pending).toBe(0)
+  })
+
+  it('counts the early flushes from the session being ready, not from start()', () => {
+    const timers = new FakeTimers()
+    const { schedule, fired } = scheduleWith(timers)
+    schedule.start(0)
+    timers.advance(30_000)
+    expect(fired).toEqual(['ready'])
+
+    schedule.ready(30_000)
+    timers.advance(0)
+    expect(fired).toEqual(['ready', 'ready'])
+    timers.advance(44_999)
+    expect(fired).toHaveLength(2)
+    timers.advance(1)
+    expect(fired[2]).toBe('early')
+
+    // Once only: a second session does not restart the schedule.
+    schedule.ready(80_000)
+    timers.advance(0)
+    expect(fired).toHaveLength(3)
   })
 
   it('start() is idempotent and cannot re-arm after stop()', () => {

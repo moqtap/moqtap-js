@@ -57,6 +57,12 @@ export interface FlushQueueOptions {
   readonly maxPendingBytes?: number
   /** Where the memory-only sequence starts when no store is configured. */
   readonly startSegmentSeq?: number
+  /**
+   * Hold one segment number in hand for `sealSync`. Only a realm that gets
+   * `pagehide` needs it; elsewhere a held number is never sent, and every
+   * realm sharing the session's counter would see the gap. Default on.
+   */
+  readonly reserveAhead?: boolean
   readonly onInternalError?: (err: unknown) => void
 }
 
@@ -87,11 +93,12 @@ export class FlushQueue implements RecordSink {
   readonly #gzip: boolean
   readonly #maxPending: number
   readonly #onError: ((err: unknown) => void) | undefined
+  readonly #reserveAhead: boolean
 
   #writer = new FrameWriter()
   #chain: Promise<unknown> = Promise.resolve()
   #reserved: number | undefined
-  #reserving = false
+  #reservation: Promise<void> | undefined
   #memSeq: number
   #droppedRecords = 0
   #droppedChunks = 0
@@ -108,8 +115,15 @@ export class FlushQueue implements RecordSink {
     this.#maxPending = Math.max(1024, opts.maxPendingBytes ?? DEFAULT_MAX_PENDING)
     this.#onError = opts.onInternalError
     this.#memSeq = opts.startSegmentSeq ?? 0
-    // Keep one allocated segment number in hand so the pagehide seal, which
-    // cannot await, always has one.
+    this.#reserveAhead = opts.reserveAhead ?? true
+  }
+
+  /**
+   * Reserve the number the `pagehide` seal will use, before there is anything
+   * to seal. For a page whose transports live in a linked worker: its only
+   * upload is the tail, and that has no time to await one.
+   */
+  reserve(): void {
     this.#prefetch()
   }
 
@@ -154,6 +168,9 @@ export class FlushQueue implements RecordSink {
       return
     }
     this.#skipRaw = false
+    // A number is taken once there is something to send, never earlier: one
+    // held by a realm that never seals is a gap in the session's sequence.
+    this.#prefetch()
     try {
       this.#writer.json(r)
     } catch (err) {
@@ -303,6 +320,11 @@ export class FlushQueue implements RecordSink {
   }
 
   async #allocSeq(): Promise<number> {
+    // A reservation still in flight is this seal's number; taking another
+    // beside it would send the two out of order.
+    if (this.#reserved === undefined && this.#reservation !== undefined) {
+      await this.#reservation
+    }
     const reserved = this.#reserved
     if (reserved !== undefined) {
       this.#reserved = undefined
@@ -340,9 +362,9 @@ export class FlushQueue implements RecordSink {
   }
 
   #prefetch(): void {
-    if (this.#store === null || this.#reserved !== undefined || this.#reserving) return
-    this.#reserving = true
-    this.#store
+    if (!this.#reserveAhead || this.#store === null) return
+    if (this.#reserved !== undefined || this.#reservation !== undefined) return
+    this.#reservation = this.#store
       .nextSegmentSeq(this.#sessionId)
       .then((seq) => {
         this.#reserved = seq
@@ -350,7 +372,7 @@ export class FlushQueue implements RecordSink {
       })
       .catch((err: unknown) => this.#onError?.(err))
       .finally(() => {
-        this.#reserving = false
+        this.#reservation = undefined
       })
   }
 }

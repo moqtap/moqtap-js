@@ -727,6 +727,24 @@ describe('a pre-15 session over WebTransport', () => {
     expect(setup?.degraded).toBeUndefined()
   })
 
+  it('uploads as soon as the draft is known, not at the next scheduled seal', async () => {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { persist: false, noLifecycleListeners: true, fetchImpl: impl })
+    await settle()
+
+    const wt = new (g.WebTransport as new (u: string) => MockWebTransport)('https://relay.test/moq')
+    await wt.open('')
+    await settle(5)
+    await legacyHandshake(wt)
+    await settle()
+
+    const setup = (await allRecords(posts)).find((r) => r.t === 'setup') as
+      | { draft: number | null }
+      | undefined
+    expect(setup?.draft).toBe(14)
+    await c.stop()
+  })
+
   it('keeps the draft of a handshake that crossed before init()', async () => {
     const { posts, impl } = recordingFetch()
     ensureDormantHook()
@@ -838,13 +856,20 @@ describe('the overrun policy', () => {
  */
 describe('the tail when the platform will not take a beacon', () => {
   /** Intercepts only `pagehide`; everything else still reaches the real global. */
-  function capturePagehide(): { fire: () => void; restore: () => void } {
+  function capturePagehide(): {
+    fire: (e?: { persisted: boolean }) => void
+    restore: () => void
+  } {
     const gg = globalThis as unknown as Record<string, unknown>
     const prev = gg.addEventListener as
-      | ((t: string, f: () => void, ...rest: unknown[]) => void)
+      | ((t: string, f: (e?: { persisted: boolean }) => void, ...rest: unknown[]) => void)
       | undefined
-    let handler: (() => void) | undefined
-    gg.addEventListener = (t: string, f: () => void, ...rest: unknown[]): void => {
+    let handler: ((e?: { persisted: boolean }) => void) | undefined
+    gg.addEventListener = (
+      t: string,
+      f: (e?: { persisted: boolean }) => void,
+      ...rest: unknown[]
+    ): void => {
       if (t === 'pagehide') {
         handler = f
         return
@@ -852,9 +877,9 @@ describe('the tail when the platform will not take a beacon', () => {
       prev?.call(globalThis, t, f, ...rest)
     }
     return {
-      fire: () => {
+      fire: (e) => {
         expect(handler).toBeDefined()
-        handler?.()
+        handler?.(e)
       },
       restore: () => {
         gg.addEventListener = prev
@@ -931,19 +956,48 @@ describe('the tail when the platform will not take a beacon', () => {
       const fromUrl = new URL(beaconUrl).searchParams.get('ik')
       const tail = calls.slice(before)
       expect(tail).toHaveLength(1)
-      const fromHeader = (tail[0]?.init.headers as Record<string, string>)['idempotency-key']
+      const fromFetch = new URL(tail[0]?.url ?? '').searchParams.get('ik')
 
       // Present, well-formed, and the same key on both paths. The pattern is
       // the one the edge validates: sha256 hex, or the 32-hex fallback a
       // non-secure context produces.
       expect(fromUrl).toMatch(/^(?:[0-9a-f]{32}|[0-9a-f]{64})$/)
-      expect(fromUrl).toBe(fromHeader)
+      expect(fromUrl).toBe(fromFetch)
 
       await c.stop()
       await settle()
     } finally {
       p.restore()
     }
+  })
+
+  it('ends the session when the page unloads, but not when it enters the back/forward cache', async () => {
+    const tails = async (persisted: boolean): Promise<EnvelopeRecord[]> => {
+      const p = capturePagehide()
+      try {
+        let sent: Blob | undefined
+        const c = init(base(), {
+          persist: false,
+          fetchImpl: recordingFetch().impl,
+          beacon: (_url, blob) => {
+            sent = blob
+            return true
+          },
+        })
+        await settle()
+        p.fire({ persisted })
+        await c.abort()
+        return sent === undefined ? [] : recordsOf(new Uint8Array(await sent.arrayBuffer()))
+      } finally {
+        p.restore()
+        teardownDormant()
+        resetDormantForTest()
+      }
+    }
+    const unloaded = await tails(false)
+    expect(unloaded.find((r) => r.t === 'terminal')).toMatchObject({ reason: 'pagehide' })
+    const cached = await tails(true)
+    expect(cached.some((r) => r.t === 'terminal')).toBe(false)
   })
 
   it('still delivers the tail when a blocker has removed or stubbed sendBeacon', async () => {
@@ -958,7 +1012,7 @@ describe('the tail when the platform will not take a beacon', () => {
       const tail = calls.slice(before)
       expect(tail).toHaveLength(1)
       expect(tail[0]?.init.keepalive).toBe(true)
-      expect((tail[0]?.init.headers as Record<string, string>).authorization).toBe('Bearer pk_test')
+      expect(new URL(tail[0]?.url ?? '').searchParams.get('k')).toBe('pk_test')
       await c.stop()
       await settle()
     } finally {

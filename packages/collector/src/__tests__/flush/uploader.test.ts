@@ -94,19 +94,14 @@ const uploaderWith = (
 /* ── the request ─────────────────────────────────────────────────────────── */
 
 describe('Uploader.send, the request', () => {
-  it('POSTs the body with the key in a header and declares no Content-Encoding', async () => {
+  it('sends a request that needs no CORS preflight: keys in the URL, a safelisted type', async () => {
     const f = scripted([ok()])
     const out = await uploaderWith(f.impl).send(chunk(7))
 
     expect(out).toMatchObject({ ok: true, status: 200, terminal: false })
     expect(f.calls).toHaveLength(1)
-    expect(f.calls[0]?.url).toBe('https://ingest.example/v1/ingest')
-    expect(f.calls[0]?.headers['idempotency-key']).toBe('key-7')
-    expect(f.calls[0]?.headers.authorization).toBe('Bearer k-123')
-    expect(f.calls[0]?.headers['content-type']).toBe('application/octet-stream')
-    // gzip is announced by the body's own preamble, because sendBeacon cannot
-    // set a header and both paths must produce one readable shape.
-    expect(f.calls[0]?.headers['content-encoding']).toBeUndefined()
+    expect(f.calls[0]?.url).toBe('https://ingest.example/v1/ingest?k=k-123&ik=key-7')
+    expect(f.calls[0]?.headers).toEqual({ 'content-type': 'text/plain' })
   })
 
   it('sends the sealed bytes verbatim, so a retry after a reload is byte-identical', async () => {
@@ -325,7 +320,7 @@ describe('sendTail', () => {
 
     expect(accepted).toBe('beacon')
     expect(seen[0]?.url).toBe('https://ingest.example/v1/ingest?k=abc')
-    expect(seen[0]?.blob.type).toBe('application/octet-stream')
+    expect(seen[0]?.blob.type).toBe('text/plain')
     expect(new Uint8Array((await seen[0]?.blob.arrayBuffer()) as ArrayBuffer)).toEqual(body)
   })
 
@@ -544,10 +539,7 @@ describe('sendTail when the platform will not take a beacon', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('carries the credential on each path in the only way that path can', () => {
-    // The beacon can set no headers, so its key rides in the URL. The fallback
-    // is a real fetch and uses a header, which keeps the key out of access logs
-    // wherever we have the choice.
+  it('carries the credential in the URL on both paths, so neither preflights', () => {
     let beaconUrl = ''
     sendTail('https://ingest.test/v1/ingest', body, {
       apiKey: 'pk test/+&',
@@ -565,10 +557,10 @@ describe('sendTail when the platform will not take a beacon', () => {
       apiKey: 'pk_test',
       idempotencyKey: 'a'.repeat(64),
     })
-    const headers = calls[0]?.init.headers as Record<string, string>
-    expect(calls[0]?.url).toBe('https://ingest.test/v1/ingest?tenant=7')
-    expect(headers.authorization).toBe('Bearer pk_test')
-    expect(headers['idempotency-key']).toBe('a'.repeat(64))
+    expect(calls[0]?.url).toBe(
+      `https://ingest.test/v1/ingest?tenant=7&k=pk_test&ik=${'a'.repeat(64)}`,
+    )
+    expect(calls[0]?.init.headers).toEqual({ 'content-type': 'text/plain' })
   })
 
   it('appends the key to an endpoint that already has a query', () => {

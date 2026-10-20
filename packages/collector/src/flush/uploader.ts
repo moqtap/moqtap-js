@@ -1,4 +1,5 @@
 import type { ClockSource, UploadOutcome } from '../types.js'
+import { UPLOAD_CONTENT_TYPE, uploadUrl } from './beacon.js'
 import { ClockSync } from './clock-sync.js'
 import { deadlineSignal, sleepUntil } from './deadline.js'
 import type { Chunk } from './idb.js'
@@ -168,19 +169,12 @@ export class Uploader {
       const deadline = deadlineSignal(this.#timeoutMs, signal)
       let res: Response
       try {
-        res = await doFetch(this.#endpoint, {
+        // Credentials in the URL and a safelisted type, so the request needs
+        // no CORS preflight; see `uploadUrl`. Gzip is declared by the body's
+        // own preamble.
+        res = await doFetch(uploadUrl(this.#endpoint, this.#apiKey, c.idempotencyKey), {
           method: 'POST',
-          headers: {
-            // No `Content-Encoding`: gzip is declared by the body's own 8-byte
-            // preamble, not by a header, because `sendBeacon` cannot set one and
-            // both paths must produce a body ingest reads the same way.
-            'content-type': 'application/octet-stream',
-            authorization: `Bearer ${this.#apiKey}`,
-            // the key, in a header as well as in the first frame, so ingest
-            // can dedupe without decompressing.
-            'idempotency-key': c.idempotencyKey,
-            ...this.#headers,
-          },
+          headers: { 'content-type': UPLOAD_CONTENT_TYPE, ...this.#headers },
           body: c.bytes as unknown as BodyInit,
           ...(deadline.signal !== undefined ? { signal: deadline.signal } : {}),
         })

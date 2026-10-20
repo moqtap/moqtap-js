@@ -186,6 +186,9 @@ vitals.linkWorker(port1)
 const vitals = await initWorker(event.data.moqtapPort)
 ```
 
+When the page unloads, its collector ends the session, including the worker's
+part of it: a dedicated worker is stopped without an unload event of its own.
+
 `linkWorker()` arms the fail-closed rule: from that call the session is marked
 `partial` on its setup and terminal records until the worker answers, so a
 worker that never imports the collector leaves the session reported partial

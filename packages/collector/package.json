@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/collector",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "MoQT session collector — dormant WebTransport hook, counting decoder, and metered upload envelope",
   "type": "module",
   "license": "FSL-1.1-MIT",

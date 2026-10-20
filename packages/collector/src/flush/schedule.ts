@@ -62,6 +62,7 @@ export class FlushSchedule {
   #bytes = 0
   #started = false
   #stopped = false
+  #readied = false
   #startedAt: Mono = 0
 
   constructor(o: FlushScheduleOptions) {
@@ -86,13 +87,31 @@ export class FlushSchedule {
   }
 
   /**
-   * Arm the schedule, when the session is ready. The opening `ready` flush is
-   * emitted on a zero-delay timer rather than synchronously, so `start()` never
-   * re-enters its caller's stack.
+   * Arm the schedule. The opening `ready` flush is emitted on a zero-delay
+   * timer rather than synchronously, so `start()` never re-enters its caller's
+   * stack.
    */
   start(nowMono: Mono): void {
     if (this.#started || this.#stopped) return
     this.#started = true
+    this.#arm(nowMono)
+  }
+
+  /**
+   * The first session's draft is known, so there is a setup record to send.
+   * Seals now and counts the early flushes from here rather than from
+   * `start()`, which may have run long before the player connected. Once.
+   */
+  ready(nowMono: Mono): void {
+    if (!this.#started || this.#stopped || this.#readied) return
+    this.#readied = true
+    for (const h of this.#handles) this.#timers.clearTimer(h)
+    this.#handles = []
+    this.#intervalHandle = undefined
+    this.#arm(nowMono)
+  }
+
+  #arm(nowMono: Mono): void {
     this.#startedAt = nowMono
     this.#after(0, 'ready')
     for (const at of this.#early) this.#after(at, 'early')

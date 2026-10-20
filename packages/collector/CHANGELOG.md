@@ -5,6 +5,19 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-10-20
+
+### Fixed
+
+- No gap in a session's upload numbers when the page links a worker or
+  `init()` runs twice with the same `sessionId`.
+- The first upload goes out as soon as the session's draft is known, and the
+  +45 s upload counts from there rather than from `init()`.
+- Unloading the page ends the session, including one in a linked worker. A page
+  entering the back/forward cache does not.
+- Uploads need no CORS preflight: the key and idempotency key travel in the URL,
+  as `text/plain`.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added
