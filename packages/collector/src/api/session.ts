@@ -127,22 +127,24 @@ interface Connection {
   pendingDatagrams: DatagramChunk[]
   closed: boolean
   /**
-   * The session negotiated `moq-00`, so the draft is still unknown and is being
-   * looked for in the handshake.
+   * The session negotiated `moq-00`, or no protocol at all over WebTransport,
+   * so the draft is still unknown and is being looked for in the handshake.
    *
-   * Set only for the eight drafts before -15, which share that one ALPN. Cleared
+   * Set only for the eight drafts before -15. Cleared
    * the moment SETUP names a version, or when the pre-draft buffer fills — see
    * `#probeLegacyDraft`.
    */
   awaitingSetup: boolean
   /**
-   * Stream ids already offered to the setup probe, so each is tried once.
+   * Stream halves already offered to the setup probe, so each is tried once.
    *
-   * SETUP is the first message on the control stream, so only a stream's first
-   * chunk can carry it. Without this the probe would re-run on every buffered
+   * SETUP is the first message each side writes on the control stream, so only
+   * the first chunk in each direction can carry it: a CLIENT_SETUP offering
+   * several versions says nothing, and the SERVER_SETUP that does arrives on
+   * the same stream. Without this the probe would re-run on every buffered
    * chunk of a stream it has already declined.
    */
-  probedStreams: Set<number>
+  probedStreams: Set<string>
   /**
    * Per send stream: the last `bytesAcknowledged` seen, and the track to credit
    * it to once resolved.
@@ -219,6 +221,8 @@ export class CollectorRuntime implements TransportObserver {
   #lastKeys: TrackKeys | undefined
   #draft: SupportedDraft | null = null
   #protocol: string | null = null
+  /** Drafts the dormant hook read off SETUP frames that crossed before `init()`. */
+  #dormantSetupDrafts: ReadonlyMap<string, SupportedDraft> = new Map()
   #degraded: SetupRecord['degraded'] | undefined
   #roles = new Set<'publisher' | 'subscriber'>()
 
@@ -373,6 +377,7 @@ export class CollectorRuntime implements TransportObserver {
     void preloadDrafts(this.config.drafts.length > 0 ? this.config.drafts : undefined)
 
     const dormant = drainDormant()
+    this.#dormantSetupDrafts = dormant.setupDrafts
     if (this.#armed()) {
       // The ring claims its memory here and nowhere else. At the default depth
       // that is 32 MiB, and every `#ring.push` site is behind `#armed()` — so a
@@ -554,12 +559,16 @@ export class CollectorRuntime implements TransportObserver {
   onSessionProtocol(sessionId: string, protocol: string): void {
     const c = this.#connections.get(sessionId)
     if (c === undefined || c.dispatcher !== null) return
-    this.#protocol = protocol
-    if (protocol === LEGACY_PROTOCOL) {
-      // Every draft before -15 negotiates `moq-00`, so the ALPN has told us the
-      // family and not the draft. Keep buffering and read the selected version
-      // out of the handshake instead — `#probeLegacyDraft`, from the control
-      // chunks that were going to be buffered anyway.
+    this.#protocol = protocol === '' ? null : protocol
+    if (protocol === LEGACY_PROTOCOL || protocol === '') {
+      // Drafts before -15 negotiate `moq-00` over QUIC and nothing over
+      // WebTransport, so the version comes from SETUP: read by the dormant hook
+      // if the handshake preceded `init()`, else by `#probeLegacyDraft`.
+      const known = this.#dormantSetupDrafts.get(sessionId)
+      if (known !== undefined) {
+        void this.#attachDraft(c, LEGACY_PROTOCOL, known)
+        return
+      }
       c.awaitingSetup = true
       return
     }
@@ -569,6 +578,11 @@ export class CollectorRuntime implements TransportObserver {
   onSessionClose(sessionId: string): void {
     const c = this.#connections.get(sessionId)
     if (c === undefined) return
+    if (c.awaitingSetup && this.#draft === null) {
+      // Seen but never identified, which the setup record has to say.
+      this.#degraded ??= 'unsupported-protocol'
+    }
+    c.awaitingSetup = false
     c.closed = true
     this.#connections.delete(sessionId)
   }
@@ -865,8 +879,9 @@ export class CollectorRuntime implements TransportObserver {
    */
   #probeLegacyDraft(c: Connection, chunk: StreamChunk): void {
     if (!c.awaitingSetup || !chunk.control) return
-    if (c.probedStreams.has(chunk.streamId)) return
-    c.probedStreams.add(chunk.streamId)
+    const half = `${chunk.streamId}/${chunk.direction}`
+    if (c.probedStreams.has(half)) return
+    c.probedStreams.add(half)
     const draft = draftOfSetupFrame(chunk.data)
     if (draft === undefined) return
     c.awaitingSetup = false

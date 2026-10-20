@@ -28,10 +28,17 @@
  * out, persisted or sent.
  */
 
+import { draftOfSetupFrame } from '../draft/setup-probe.js'
 import { ByteRing, type RingEntry } from '../ring/index.js'
 import { installWebTransportHook, type TransportHook } from '../transport/index.js'
 import { type PresenceHandle, publishPresence } from '../transport/presence.js'
-import type { DatagramChunk, InterceptedSession, StreamChunk, TransportObserver } from '../types.js'
+import type {
+  DatagramChunk,
+  InterceptedSession,
+  StreamChunk,
+  SupportedDraft,
+  TransportObserver,
+} from '../types.js'
 import { COLLECTOR_VERSION } from '../version.js'
 import { DEFAULT_LIMITS } from './defaults.js'
 
@@ -55,6 +62,14 @@ export interface DormantState {
   readonly sessions: Map<string, InterceptedSession>
   readonly protocols: Map<string, string>
   /**
+   * The draft each pre-15 session's SETUP named. Control bytes are never
+   * ringed, so for a handshake before `init()` this is the only record of it.
+   * Only the version is kept: SETUP carries the Authorization Token.
+   */
+  readonly setupDrafts: Map<string, SupportedDraft>
+  /** Per session, the stream halves already offered to the probe. */
+  readonly probed: Map<string, Set<string>>
+  /**
    * Whether the hook actually patched the global.
    *
    * Recorded here rather than read back off `hook.installed`, because that flag
@@ -70,6 +85,21 @@ export interface DormantState {
 let state: DormantState | null = null
 let installFailed = false
 
+/** Read the draft off the first chunk of each control-stream direction. */
+function probeSetup(s: DormantState, c: StreamChunk): void {
+  if (s.setupDrafts.has(c.sessionId)) return
+  let halves = s.probed.get(c.sessionId)
+  if (halves === undefined) {
+    halves = new Set()
+    s.probed.set(c.sessionId, halves)
+  }
+  const half = `${c.streamId}/${c.direction}`
+  if (halves.has(half)) return
+  halves.add(half)
+  const draft = draftOfSetupFrame(c.data)
+  if (draft !== undefined) s.setupDrafts.set(c.sessionId, draft)
+}
+
 function dormantObserver(s: DormantState): TransportObserver {
   return {
     onSessionOpen(session: InterceptedSession): void {
@@ -81,6 +111,8 @@ function dormantObserver(s: DormantState): TransportObserver {
     onSessionClose(sessionId: string): void {
       s.sessions.delete(sessionId)
       s.protocols.delete(sessionId)
+      s.setupDrafts.delete(sessionId)
+      s.probed.delete(sessionId)
     },
     onStreamData(c: StreamChunk): void {
       // Control bytes are not buffered here, for the reason given at the ring
@@ -90,7 +122,10 @@ function dormantObserver(s: DormantState): TransportObserver {
       // Authorization Token option travels. Nothing consumed these — the
       // dormant ring's only destination is the live ring, and the replay skips
       // every control entry — so this drops a copy rather than a capability.
-      if (c.control) return
+      if (c.control) {
+        probeSetup(s, c)
+        return
+      }
       // `ByteRing.push` copies. `StreamChunk.data` is a borrowed view onto the
       // page's own buffer and the page may write through it on its next frame,
       // so retaining the view rather than a copy would silently rewrite bytes
@@ -163,6 +198,8 @@ export function ensureDormantHook(): TransportHook {
       ring,
       sessions: new Map(),
       protocols: new Map(),
+      setupDrafts: new Map(),
+      probed: new Map(),
       patched: false,
     }
     const hook = installWebTransportHook(globalThis, dormantObserver(next), {
@@ -222,12 +259,20 @@ export function drainDormant(): {
   entries: RingEntry[]
   sessions: Map<string, InterceptedSession>
   protocols: Map<string, string>
+  setupDrafts: Map<string, SupportedDraft>
 } {
   const s = state
-  if (s === null) return { entries: [], sessions: new Map(), protocols: new Map() }
+  if (s === null) {
+    return { entries: [], sessions: new Map(), protocols: new Map(), setupDrafts: new Map() }
+  }
   const entries = s.ring.snapshot()
   s.ring.clear()
-  return { entries, sessions: new Map(s.sessions), protocols: new Map(s.protocols) }
+  return {
+    entries,
+    sessions: new Map(s.sessions),
+    protocols: new Map(s.protocols),
+    setupDrafts: new Map(s.setupDrafts),
+  }
 }
 
 /**

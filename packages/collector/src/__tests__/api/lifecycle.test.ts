@@ -15,7 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
+import { ensureDormantHook, resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { init } from '../../api/init.js'
 import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/index.js'
 import { ChunkStore, MemoryBackend } from '../../flush/index.js'
@@ -674,6 +674,98 @@ describe('a baseline session, end to end', () => {
     expect(ctrl).toBeDefined()
     expect(ctrl?.decoded).toBe(true)
     expect(ctrl?.n).toBeGreaterThan(0)
+  })
+})
+
+/** Draft-14 `client-setup/two-versions` and `server-setup/basic` from `@moqtap/test-vectors`. */
+const hex = (h: string): Uint8Array =>
+  Uint8Array.from(h.match(/../g) ?? [], (b) => Number.parseInt(b, 16))
+const CLIENT_SETUP_TWO_VERSIONS = hex('20001202c0000000ff00000dc0000000ff00000e00')
+const SERVER_SETUP_14 = hex('210009c0000000ff00000e00')
+
+/** The client's half of a pre-15 handshake: open the control stream, offer, read the pick. */
+async function legacyHandshake(wt: MockWebTransport): Promise<void> {
+  const bidi = (await wt.createBidirectionalStream()) as unknown as {
+    readable: ReadableStream<Uint8Array>
+    writable: WritableStream<Uint8Array>
+    inbound: { push(b: Uint8Array): void; close(): void }
+  }
+  const writer = bidi.writable.getWriter()
+  await writer.write(CLIENT_SETUP_TWO_VERSIONS)
+  bidi.inbound.push(SERVER_SETUP_14)
+  bidi.inbound.close()
+  const reader = bidi.readable.getReader()
+  for (;;) {
+    const r = await reader.read()
+    if (r.done) break
+  }
+}
+
+async function allRecords(posts: readonly Post[]): Promise<EnvelopeRecord[]> {
+  const all: EnvelopeRecord[] = []
+  for (const p of posts) all.push(...(await recordsOf(p.body)))
+  return all
+}
+
+describe('a pre-15 session over WebTransport', () => {
+  it("reads the draft off the server's SETUP when no protocol was negotiated", async () => {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { persist: false, noLifecycleListeners: true, fetchImpl: impl })
+    await settle()
+
+    const wt = new (g.WebTransport as new (u: string) => MockWebTransport)('https://relay.test/moq')
+    await wt.open('')
+    await settle(5)
+    await legacyHandshake(wt)
+    await settle()
+    await c.stop()
+    await settle()
+
+    const setup = (await allRecords(posts)).find((r) => r.t === 'setup') as
+      | { draft: number | null; protocol: string | null; degraded?: string }
+      | undefined
+    expect(setup?.draft).toBe(14)
+    expect(setup?.protocol).toBeNull()
+    expect(setup?.degraded).toBeUndefined()
+  })
+
+  it('keeps the draft of a handshake that crossed before init()', async () => {
+    const { posts, impl } = recordingFetch()
+    ensureDormantHook()
+    const wt = new (g.WebTransport as new (u: string) => MockWebTransport)('https://relay.test/moq')
+    await wt.open('')
+    await legacyHandshake(wt)
+    await settle(5)
+
+    const c = init(base(), { persist: false, noLifecycleListeners: true, fetchImpl: impl })
+    await settle()
+    await c.stop()
+    await settle()
+
+    const setup = (await allRecords(posts)).find((r) => r.t === 'setup') as
+      | { draft: number | null }
+      | undefined
+    expect(setup?.draft).toBe(14)
+  })
+
+  it('says so when the session ends with its draft never named', async () => {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { persist: false, noLifecycleListeners: true, fetchImpl: impl })
+    await settle()
+
+    const wt = new (g.WebTransport as new (u: string) => MockWebTransport)('https://relay.test/moq')
+    await wt.open('')
+    await settle(5)
+    wt.closeSession()
+    await settle()
+    await c.stop()
+    await settle()
+
+    const setup = (await allRecords(posts)).find((r) => r.t === 'setup') as
+      | { draft: number | null; degraded?: string }
+      | undefined
+    expect(setup?.draft).toBeNull()
+    expect(setup?.degraded).toBe('unsupported-protocol')
   })
 })
 

@@ -185,6 +185,40 @@ rather than complete. If the page never links it, the worker's handshake times
 out after 5 s, `vitals.linked` is `false`, and every verb on the returned
 collector is inert -- it transmits nothing.
 
+## Troubleshooting
+
+### No sessions appear
+
+Open the browser's developer tools, play a stream, and filter the Network panel
+for your `endpoint` (`moqgest.com` by default). The first upload goes out as
+soon as a session is ready.
+
+**No upload requests at all** means the collector never saw a session:
+
+- **The player opens its `WebTransport` in a Worker.** This is the most common
+  cause. The page's hook cannot see a worker's sessions; add `initWorker()` in
+  the worker and `linkWorker()` in the page, as in [Workers](#workers). Search
+  your player's code for `new Worker(` if you are not sure.
+- **The collector was imported too late.** The hook is installed when the
+  package is imported, so a `new WebTransport()` that ran before that import is
+  invisible. Import it before the code that creates your player.
+- **The player is not using WebTransport.** A player that falls back to
+  WebSocket is not measured.
+
+**Requests that fail before reaching the network** are blocked by your Content
+Security Policy; the console names the directive. Add the endpoint's origin to
+`connect-src`, as in [Content Security Policy](#content-security-policy).
+
+**Requests answered `401` or `403`** were refused by ingest:
+
+- `401`: the key is wrong, or was created in the last two minutes and is not
+  live yet.
+- `403`: the key is disabled, or the page's origin is not on the key's allowed
+  origins.
+
+Uploads answered `202` are accepted, and the session appears in Insight within
+a minute or two.
+
 ## Errors
 
 Every error carries a code, and the runtime message is the code plus the

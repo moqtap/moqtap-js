@@ -213,7 +213,10 @@ export interface WriterPressure {
  */
 export interface TransportObserver {
   onSessionOpen(s: InterceptedSession): void
-  /** The negotiated `session.protocol`, available only after `ready`. */
+  /**
+   * The negotiated `session.protocol`, available only after `ready`. `''` when
+   * the session was established without one, as every draft before -15 is.
+   */
   onSessionProtocol?(sessionId: string, protocol: string): void
   onSessionClose(sessionId: string, reason: string, at: Mono): void
   onStreamOpen?(sessionId: string, streamId: number, bidi: boolean, o: StreamOrigin): void

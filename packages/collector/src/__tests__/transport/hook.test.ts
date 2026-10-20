@@ -477,14 +477,14 @@ describe('negotiated protocol', () => {
     expect(rec.protocols).toEqual([{ sessionId: rec.sessions[0]!.id, protocol: 'moqt-20' }])
   })
 
-  it('reports nothing on a browser without protocol negotiation', async () => {
+  it('reports an empty protocol for a session established without one', async () => {
     const glob = mockGlobal()
     const rec = recorder()
     install(glob, rec.observer)
     const wt = connect(glob)
     await wt.open()
     await settle()
-    expect(rec.protocols).toHaveLength(0)
+    expect(rec.protocols).toEqual([{ sessionId: rec.sessions[0]!.id, protocol: '' }])
   })
 
   it('reports nothing for a session that never opened', async () => {

@@ -389,7 +389,7 @@ export function installWebTransportHook(
     readonly streams: Map<number, StreamState>
     /** The record `onSessionOpen` was given, kept for the dormancy replay. */
     readonly session: InterceptedSession
-    /** The server's pick, once `ready` has resolved. */
+    /** The server's pick, once `ready` has resolved; `''` when there was none. */
     protocol: string | undefined
     /** The observer this session has already been announced to. */
     announced: TransportObserver | null
@@ -1163,12 +1163,12 @@ export function installWebTransportHook(
     const closed = instance.closed
 
     // The negotiated protocol is the empty string until the session is
-    // established, so the read has to wait for `ready`.
+    // established, so the read has to wait for `ready`. `''` after that means
+    // none was negotiated, as on every MoQT draft before -15.
     if (isThenable(ready)) {
       ready.then(
         () => {
-          const protocol = readNegotiatedProtocol(instance)
-          if (!protocol) return
+          const protocol = readNegotiatedProtocol(instance) ?? ''
           // Remembered as well as reported: a key may arrive after the
           // session is established, and the pick is announced exactly once.
           state.protocol = protocol
