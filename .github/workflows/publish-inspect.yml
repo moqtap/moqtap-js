@@ -1,0 +1,48 @@
+name: Publish @moqtap/inspect
+
+on:
+  push:
+    tags:
+      - 'inspect-v*'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify package.json version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#inspect-v}"
+          PKG_VERSION=$(node -p "require('./packages/inspect/package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - run: bun install --frozen-lockfile
+
+      # Scoped to this package. A sibling's failing test must not block this
+      # release: the packages share a repository, not a release cadence.
+      # The build runs first because the checks below resolve this package by
+      # bare specifier through its `exports` map, which points at `dist/` --
+      # there is nothing to resolve until it has been built.
+      - run: bun run --cwd packages/inspect build
+      - run: ./node_modules/.bin/biome check packages/inspect
+      - run: ./node_modules/.bin/tsc --build packages/inspect
+      - run: bun run --cwd packages/inspect test
+
+      - name: Publish @moqtap/inspect
+        run: npm publish --access public
+        working-directory: packages/inspect

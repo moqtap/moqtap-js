@@ -36,6 +36,15 @@
         "vitest": "^3.2.7",
       },
     },
+    "packages/inspect": {
+      "name": "@moqtap/inspect",
+      "version": "0.1.0",
+      "devDependencies": {
+        "tsup": "^8.0.0",
+        "typescript": "^5.5.0",
+        "vitest": "^3.2.7",
+      },
+    },
     "packages/trace": {
       "name": "@moqtap/trace",
       "version": "0.4.2",
@@ -159,6 +168,8 @@
     "@moqtap/codec": ["@moqtap/codec@workspace:packages/codec"],
 
     "@moqtap/collector": ["@moqtap/collector@workspace:packages/collector"],
+
+    "@moqtap/inspect": ["@moqtap/inspect@workspace:packages/inspect"],
 
     "@moqtap/test-traces": ["@moqtap/test-traces@0.1.1", "", {}, "sha512-KA7EX98xtwdCntENa0H9sansK+PlnFuI2/W76umTlZwBK+Aq4rNL2bagp1cAqzs5C+yl9UybZPhxSCT1sGo3TA=="],
 

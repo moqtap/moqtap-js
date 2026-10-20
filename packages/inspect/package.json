@@ -1,0 +1,50 @@
+{
+  "name": "@moqtap/inspect",
+  "version": "0.1.0",
+  "description": "MoQT control messages made readable: setup versions as drafts, printable fields, implementation names, and track aliases joined to their names",
+  "type": "module",
+  "license": "MIT",
+  "author": "moqtap",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moqtap/moqtap-js.git",
+    "directory": "packages/inspect"
+  },
+  "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/inspect",
+  "bugs": "https://github.com/moqtap/moqtap-js/issues",
+  "keywords": [
+    "moqt",
+    "moq",
+    "media-over-quic",
+    "webtransport",
+    "protocol",
+    "inspector",
+    "devtools"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/__tests__"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.7"
+  }
+}

@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/codec" },
     { "path": "packages/trace" },
+    { "path": "packages/inspect" },
     { "path": "packages/collector" },
     { "path": "packages/collector/tsconfig.browser.json" },
     { "path": "packages/viewer" }
