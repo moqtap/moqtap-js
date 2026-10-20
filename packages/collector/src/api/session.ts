@@ -22,12 +22,11 @@
 
 import { StreamDispatcher, TrackKeys } from '../decode/index.js'
 import {
+  type DraftSet,
   degradedReasonOf,
   draftOfSetupFrame,
   LEGACY_PROTOCOL,
-  loadDraft,
-  loadDraftNumber,
-  preloadDrafts,
+  resolveDraft,
 } from '../draft/index.js'
 import {
   type Chunk,
@@ -121,7 +120,7 @@ interface Connection {
   keys: TrackKeys
   dispatcher: StreamDispatcher | null
   adapter: DraftAdapter | undefined
-  /** The raw buffer, held across the dynamic-import await. Bounded in bytes. */
+  /** The raw buffer, held until the draft is known. Bounded in bytes. */
   pending: StreamChunk[]
   pendingBytes: number
   pendingDatagrams: DatagramChunk[]
@@ -223,6 +222,7 @@ export class CollectorRuntime implements TransportObserver {
   #protocol: string | null = null
   /** Drafts the dormant hook read off SETUP frames that crossed before `init()`. */
   #dormantSetupDrafts: ReadonlyMap<string, SupportedDraft> = new Map()
+  readonly #drafts: DraftSet
   #degraded: SetupRecord['degraded'] | undefined
   #roles = new Set<'publisher' | 'subscriber'>()
 
@@ -249,8 +249,14 @@ export class CollectorRuntime implements TransportObserver {
   #transportsRefused = 0
   #onPagehide: (() => void) | undefined
 
-  constructor(config: ResolvedConfig, hook: TransportHook, ports: RuntimePorts = {}) {
+  constructor(
+    config: ResolvedConfig,
+    hook: TransportHook,
+    drafts: DraftSet,
+    ports: RuntimePorts = {},
+  ) {
     this.config = config
+    this.#drafts = drafts
     this.#ports = ports
     this.#hook = hook
     this.#clock = ports.clock ?? platformClock
@@ -367,15 +373,11 @@ export class CollectorRuntime implements TransportObserver {
   /**
    * Take over from the dormant hook and start the schedule.
    *
-   * Order matters. The pin is preloaded first ("Present => eager, no dynamic
-   * import at session time"), then the dormant ring's pre-key bytes are moved
-   * into this collector's own ring, and only then does the observer go live —
-   * so no byte arrives at a dispatcher before the ring it may be replayed from
-   * is populated.
+   * Order matters. The dormant ring's pre-key bytes are moved into this
+   * collector's own ring before the observer goes live, so no byte arrives at
+   * a dispatcher before the ring it may be replayed from is populated.
    */
   start(): void {
-    void preloadDrafts(this.config.drafts.length > 0 ? this.config.drafts : undefined)
-
     const dormant = drainDormant()
     this.#dormantSetupDrafts = dormant.setupDrafts
     if (this.#armed()) {
@@ -566,13 +568,13 @@ export class CollectorRuntime implements TransportObserver {
       // if the handshake preceded `init()`, else by `#probeLegacyDraft`.
       const known = this.#dormantSetupDrafts.get(sessionId)
       if (known !== undefined) {
-        void this.#attachDraft(c, LEGACY_PROTOCOL, known)
+        this.#attachDraft(c, LEGACY_PROTOCOL, known)
         return
       }
       c.awaitingSetup = true
       return
     }
-    void this.#attachDraft(c, protocol)
+    this.#attachDraft(c, protocol)
   }
 
   onSessionClose(sessionId: string): void {
@@ -885,28 +887,19 @@ export class CollectorRuntime implements TransportObserver {
     const draft = draftOfSetupFrame(chunk.data)
     if (draft === undefined) return
     c.awaitingSetup = false
-    void this.#attachDraft(c, LEGACY_PROTOCOL, draft)
+    this.#attachDraft(c, LEGACY_PROTOCOL, draft)
   }
 
-  async #attachDraft(c: Connection, protocol: string, known?: SupportedDraft): Promise<void> {
-    const opts = {
-      ...(this.config.drafts.length > 0 ? { pin: this.config.drafts } : {}),
-    }
-    // `known` is the version the peer's own SETUP frame named, for the eight
-    // drafts whose ALPN cannot say. It is evidence off the wire, not a
-    // preference — see `loadDraftNumber`.
-    const result =
-      known === undefined
-        ? await loadDraft(protocol, opts)
-        : await loadDraftNumber(known, protocol, opts)
+  #attachDraft(c: Connection, protocol: string, known?: SupportedDraft): void {
+    const result = resolveDraft(this.#drafts, protocol, known)
     if (c.closed || this.#halted()) return
-    if (!result.ok || result.adapter === undefined || result.draft === undefined) {
+    if (!result.ok) {
       // the loud failure. The adapter is withheld entirely — two incompatible
       // varint families disagree on the same bytes and return plausible wrong
       // numbers — so the session degrades to transport-only metrics and the raw
       // control bytes it already shipped. The pending buffer is released rather
       // than held: nothing will ever parse it.
-      this.#degraded = degradedReasonOf(result.reason ?? 'import-failed')
+      this.#degraded = degradedReasonOf(result.reason)
       c.pending = []
       c.pendingBytes = 0
       c.pendingDatagrams = []
@@ -940,9 +933,7 @@ export class CollectorRuntime implements TransportObserver {
 
   #bufferPending(c: Connection, chunk: StreamChunk): void {
     this.#probeLegacyDraft(c, chunk)
-    // The probe may have attached a dispatcher synchronously in a warm-cache
-    // build. Nothing downstream of here would be wrong if it had not, but
-    // buffering a chunk that could be dispatched delays it for no reason.
+    // The probe may have just attached a dispatcher.
     if (c.dispatcher !== null) {
       c.dispatcher.onStreamData(chunk)
       return
@@ -962,9 +953,9 @@ export class CollectorRuntime implements TransportObserver {
         this.#ensureSetup()
         return
       }
-      // Counted, not silently truncated. The counter surfaces on
-      // the terminal record, so a session that lost its opening seconds to a
-      // slow chunk fetch says so rather than looking like a short one.
+      // Counted, not silently truncated. The counter surfaces on the terminal
+      // record, so a session that lost its opening seconds says so rather than
+      // looking like a short one.
       this.#droppedRecords += 1
       this.#sampledTypes.add('pre-draft-bytes')
       return

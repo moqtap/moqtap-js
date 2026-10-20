@@ -53,7 +53,7 @@ export type { StreamKind }
 
 /**
  * Draft-agnostic first-byte sniff, for callers that have no adapter yet — the
- * copy the seam uses during the dynamic-import await. The dispatcher itself uses
+ * copy the seam uses before the draft is known. The dispatcher itself uses
  * {@link DraftAdapter.sniff}, so a future draft can disagree without touching
  * this file.
  *

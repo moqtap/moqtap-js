@@ -4,9 +4,7 @@
  * The subgroup type range moved to `0x10-0x15` and `0x18-0x1D`. Object IDs
  * are still absolute; draft-14 made them deltas.
  *
- * **This module is the boundary of the draft-12 chunk.** It is reached only
- * through `DRAFT_LOADERS[12]`'s `() => import('../drafts/draft12/index.js')`, and
- * the `@moqtap/codec/draft12` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft12` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

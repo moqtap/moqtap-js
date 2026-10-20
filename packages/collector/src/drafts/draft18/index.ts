@@ -5,9 +5,7 @@
  * became deltas. Two independent changes in one draft, and neither is visible
  * in the other's neighbourhood.
  *
- * **This module is the boundary of the draft-18 chunk.** It is reached only
- * through `DRAFT_LOADERS[18]`'s `() => import('../drafts/draft18/index.js')`, and
- * the `@moqtap/codec/draft18` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft18` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

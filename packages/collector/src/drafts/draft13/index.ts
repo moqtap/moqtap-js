@@ -4,9 +4,7 @@
  * Wire-identical to draft-12 for the data streams. The changes were in the
  * control plane.
  *
- * **This module is the boundary of the draft-13 chunk.** It is reached only
- * through `DRAFT_LOADERS[13]`'s `() => import('../drafts/draft13/index.js')`, and
- * the `@moqtap/codec/draft13` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft13` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

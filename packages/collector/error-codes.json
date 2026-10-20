@@ -60,11 +60,13 @@
       "detail": "`detail` must be one of `baseline`, `headers`, `headers+sizes`, `headers+data`. Anything else is reported and the session stays at `baseline`. Nothing is guessed: `headers+size` is not silently read as `headers+sizes`, because a level is billable and a guess would spend money you did not agree to."
     },
     "MQ1106": {
+      "retired": true,
       "summary": "expected an array of draft numbers",
       "value": "none",
       "detail": "`drafts` pins which draft adapters are loaded eagerly. It must be an array; anything else is reported and the pin is treated as absent, which means one chunk is fetched at session time for whatever draft was actually negotiated."
     },
     "MQ1107": {
+      "retired": true,
       "summary": "unsupported draft in the pin; dropped",
       "value": "the rejected draft, JSON-encoded",
       "detail": "A draft number in `drafts` is not one this build ships an adapter for. It is dropped and the rest of the pin is kept. The pin is deliberately not emptied: an empty array reads as \"no pin\" to the loader, so emptying it would turn a typo into \"load anything\" — the opposite of what a pin is for."

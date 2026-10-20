@@ -158,15 +158,6 @@ describe('typos are reported, not swallowed', () => {
     expect(c.detail).toBe('baseline')
     expect(problems.map((p) => p.key)).toContain('detail')
   })
-
-  it('drops an unsupported draft from the pin without emptying it', () => {
-    const { problems, onProblem } = collect()
-    const c = resolveConfig({ ...MINIMAL, drafts: [20, 6 as never] }, { onProblem })
-    // An emptied pin reads as "no pin" to the loader, which would turn a typo
-    // into "load anything" — the opposite of what a pin is for.
-    expect([...c.drafts]).toEqual([20])
-    expect(problems.map((p) => p.key)).toContain('drafts')
-  })
 })
 
 describe('identity', () => {

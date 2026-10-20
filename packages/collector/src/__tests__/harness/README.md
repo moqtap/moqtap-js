@@ -160,41 +160,29 @@ above the 2 s the collector actually takes.
 
 ## The bundle budget
 
-**Budget: ~10 KB gz static + 4–9 KB per negotiated draft.**
+**Budget: ~10 KB gz static + 4–9 KB per draft.**
 
 Measured with that budget's own method — `bun build --target=browser --minify`
-from TypeScript source, then gzip level 9 — on 2026-09-05:
+from TypeScript source, then gzip level 9 — on 2026-10-20:
 
 | bundle | minified | **gzipped** | against budget |
 | --- | ---: | ---: | --- |
-| static entry, codec external | 107 KB | **32 244 B (31.5 KB)** | budget 10 KB — **3.15× over** |
-| static entry + every lazy chunk | — | 35 852 B (35.0 KB) | — |
-| draft-20 chunk, codec inlined | 22.3 KB | **6 714 B (6.6 KB)** | band 4–9 KB — inside |
-| draft-19 chunk, codec inlined | 20.7 KB | 6 134 B (6.0 KB) | inside |
-| codec draft-20 decoder alone | 17.8 KB | 5 161 B (5.0 KB) | budget says 5.3 KB — corroborated |
+| root entry, codec external | 126 KB | **37 460 B (36.6 KB)** | budget 10 KB — **3.7× over** |
+| root entry as downloaded, every draft | 298 KB | 60 034 B (58.6 KB) | — |
+| `/draft20` entry as downloaded | 135 KB | 41 621 B (40.6 KB) | — |
+| one draft's adapter + codec decoder | 17–30 KB | 5 167–7 698 B | band 4–9 KB — inside |
 
-The per-draft half of the budget holds. **The static half does not**, and that
-was the expected outcome — the first honest number was always likely to exceed
-10 KB. Nobody has decided whether 31.5 KB is acceptable; the
-ceilings in the test are a *regression* guard at the measured value, and the gap
-to the budget is printed on every run and repeated in every failure message so
-that raising a ceiling has to be a decision rather than an edit.
-
-Where the bytes are, each subsystem bundled alone (they share code, so this is a
-ranking and not an accounting):
-
-```
-  flush          5 953 B gz      decode         5 488 B gz
-  rollup         4 478 B gz      transport      4 468 B gz
-  draft          3 362 B gz      recorder       3 341 B gz
-  envelope       2 034 B gz      ring           1 609 B gz
-```
+The per-draft half of the budget holds. **The static half does not.** The
+entry ceiling in the test is a backstop against a step change, and the gap to
+the budget is printed on every run and repeated in every failure message so
+that raising the ceiling has to be a decision rather than an edit. `bun run
+size` breaks the static half down by subsystem.
 
 ### Known trap: `bun build` on a re-export barrel
 
 `bun build src/index.ts` (bun 1.3.13) reports **8 modules and 8.7 KB gz** for a
 bundle in which `init` is never defined. The real graph is 56 modules and
-~32 KB gz. Bun drops the modules behind a pure `export … from` barrel while
+~37 KB gz. Bun drops the modules behind a pure `export … from` barrel while
 still emitting the `export {}` clause that names them. Every measurement here
 therefore goes through a namespace-import shim, and `TRUNCATION_MARKERS` fails
 the suite if the graph is ever emptied again.

@@ -5,6 +5,22 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-20
+
+### Added
+
+- `@moqtap/collector/draft07` through `/draft22` export `init` and
+  `initWorker` with that draft's decoder only. Importing one installs the
+  hook, as the root entry does.
+
+### Changed
+
+- **Breaking.** Decoders are static imports; nothing is loaded at session
+  time, so IIFE worker builds and CSPs without chunk loading need no setup. The
+  root entry carries every draft.
+- **Breaking.** The `drafts` option is removed: import a draft entry instead.
+  `MQ1106` and `MQ1107` are retired.
+
 ## [0.4.1] - 2026-10-20
 
 ### Fixed

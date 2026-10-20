@@ -22,6 +22,7 @@
  * marks its own session `partial` on the setup and terminal records.
  */
 
+import type { DraftSet } from '../draft/index.js'
 import type { CollectorConfig } from '../types.js'
 import { ensureDormantHook, teardownDormant } from './dormant.js'
 import {
@@ -30,7 +31,7 @@ import {
   HANDSHAKE,
   HELLO,
   type InitOptions,
-  init,
+  initWith,
   type MessageTarget,
 } from './init.js'
 
@@ -96,7 +97,8 @@ function globalTarget(): MessageTarget | null {
  * every verb is inert, because an unhandled rejection inside someone's worker
  * is the failure this package exists not to cause.
  */
-export async function initWorker(
+export async function initWorkerWith(
+  drafts: DraftSet,
   port?: MessagePort,
   options: InitWorkerOptions = {},
 ): Promise<WorkerCollector> {
@@ -151,7 +153,7 @@ export async function initWorker(
 
   if (config === null) return dormantCollector()
 
-  const collector = init(config, options)
+  const collector = initWith(drafts, config, options)
   // A delegating wrapper rather than a copy: `PendingCollector`'s methods read
   // private fields, and spreading would detach them from the instance that owns
   // them.

@@ -68,11 +68,11 @@ An option that groups other options — `metrics`, `upload`, `limits`, `flightRe
 
 `detail` must be one of `baseline`, `headers`, `headers+sizes`, `headers+data`. Anything else is reported and the session stays at `baseline`. Nothing is guessed: `headers+size` is not silently read as `headers+sizes`, because a level is billable and a guess would spend money you did not agree to.
 
-### `MQ1106` — expected an array of draft numbers
+### `MQ1106` — expected an array of draft numbers **retired**
 
 `drafts` pins which draft adapters are loaded eagerly. It must be an array; anything else is reported and the pin is treated as absent, which means one chunk is fetched at session time for whatever draft was actually negotiated.
 
-### `MQ1107` — unsupported draft in the pin; dropped
+### `MQ1107` — unsupported draft in the pin; dropped **retired**
 
 A draft number in `drafts` is not one this build ships an adapter for. It is dropped and the rest of the pin is kept. The pin is deliberately not emptied: an empty array reads as "no pin" to the loader, so emptying it would turn a typo into "load anything" — the opposite of what a pin is for.
 

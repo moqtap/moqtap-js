@@ -4,9 +4,7 @@
  * Wire-identical to draft-18 for these walks. The type is still a byte;
  * draft-20 widened it back to a varint.
  *
- * **This module is the boundary of the draft-19 chunk.** It is reached only
- * through `DRAFT_LOADERS[19]`'s `() => import('../drafts/draft19/index.js')`, and
- * the `@moqtap/codec/draft19` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft19` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

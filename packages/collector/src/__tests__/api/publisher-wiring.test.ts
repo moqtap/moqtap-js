@@ -16,10 +16,10 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
-import { init } from '../../api/init.js'
 import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/index.js'
 import type { CollectorConfig, EnvelopeRecord, RollupTrackWire } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
+import { init } from '../support/init.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -79,7 +79,6 @@ const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
   sessionId: 'sess-fixed',
-  drafts: [20],
   metrics: { intervalMs: 100 },
   ...over,
 })

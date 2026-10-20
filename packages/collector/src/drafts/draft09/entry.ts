@@ -1,34 +1,17 @@
 /**
- * `@moqtap/collector/draft09` -- the draft-partitioned entry point.
+ * `@moqtap/collector/draft09`: the collector with draft-09's decoder and no
+ * other. A session on another draft is reported as `draft-mismatch`.
  *
- * Importing this reaches draft-09's decoder and nothing else: no other draft's
- * chunk, and **no module-eval side effect**, because a consumer reaching for a
- * decoder has not asked to have `globalThis.WebTransport` patched. That is what
- * the root entry does, and it is why the root entry is declared impure in
- * `sideEffects` and this one is not.
- *
- * `draft09` rather than `d9`: every entry in this workspace is zero-padded,
- * and `@moqtap/codec` spells its draft entries the same way.
- *
- * Draft-09 negotiates the ALPN `moq-00`, which it shares with every draft
- * before -15. The ALPN alone therefore does not say which draft a session
- * speaks -- the selected version does, and it arrives in SERVER_SETUP. See
- * `../../draft/setup-probe.ts`.
+ * Importing this patches `globalThis.WebTransport`, as the root entry does.
  */
 
+import { ensureDormantHook } from '../../api/dormant.js'
+import { entryPoint } from '../../api/entry.js'
+import { adapter } from './index.js'
+
+ensureDormantHook()
+
+export const { init, initWorker } = entryPoint([adapter])
 export { PROTOCOL_STRINGS } from '../../draft/protocol.js'
-export type {
-  DatagramCounts,
-  DecodedControl,
-  DraftAdapter,
-  FetchHeaderInfo,
-  Need,
-  ObjectCursor,
-  ObjectHeaderInfo,
-  StreamKind,
-  SubgroupHeaderInfo,
-  SupportedDraft,
-  VarintReader,
-} from '../../types.js'
-export { NEED } from '../../types.js'
+export * from '../../public.js'
 export { adapter, DRAFT09_ADAPTER, draft } from './index.js'

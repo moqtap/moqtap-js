@@ -24,8 +24,6 @@ import {
   MQ1103,
   MQ1104,
   MQ1105,
-  MQ1106,
-  MQ1107,
   MQ1108,
   MQ1109,
   MQ1110,
@@ -33,7 +31,6 @@ import {
   MQ1112,
   MQ1113,
 } from '../codes.js'
-import { SUPPORTED_DRAFTS } from '../draft/protocol.js'
 import {
   type BudgetConfig,
   type CollectorConfig,
@@ -45,7 +42,6 @@ import {
   type PrivacyConfig,
   type ResolvedConfig,
   type StorageConfig,
-  type SupportedDraft,
   type TriggerConfig,
   type UploadConfig,
 } from '../types.js'
@@ -214,30 +210,6 @@ function detailOf(v: unknown, report: (p: ConfigProblem) => void): DetailLevel {
     return DEFAULTS.detail
   }
   return v as DetailLevel
-}
-
-/**
- * The draft pin.
- *
- * An unrecognised draft number is dropped and reported rather than emptying the
- * whole pin: the loader reads an empty array as "no pin", so a mistyped pin
- * would silently become "load anything".
- */
-function draftsOf(v: unknown, report: (p: ConfigProblem) => void): readonly SupportedDraft[] {
-  if (v === undefined) return DEFAULTS.drafts
-  if (!Array.isArray(v)) {
-    report({ key: 'drafts', code: MQ1106 })
-    return DEFAULTS.drafts
-  }
-  const out: SupportedDraft[] = []
-  for (const d of v) {
-    if (SUPPORTED_DRAFTS.includes(d)) {
-      if (!out.includes(d)) out.push(d)
-    } else {
-      report({ key: 'drafts', code: MQ1107, got: JSON.stringify(d) })
-    }
-  }
-  return Object.freeze(out)
 }
 
 /* ── trigger config ─────────────────────────────────────────── */
@@ -514,7 +486,6 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
     endpoint,
     sessionId,
     detail: detailOf(c.detail, report),
-    drafts: draftsOf(c.drafts, report),
     context: Object.freeze({
       actorId: str(ctx.actorId, d.actorId, 'context.actorId', report),
       contentId: str(ctx.contentId, d.contentId, 'context.contentId', report),

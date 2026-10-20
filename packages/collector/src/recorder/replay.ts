@@ -532,11 +532,11 @@ export interface FlightRecorderOptions {
   /**
    * The loaded draft, looked up at fire time.
    *
-   * A getter rather than a value because the draft module loads *after* the
+   * A getter rather than a value because the draft is known only *after* the
    * session's protocol is negotiated, while the recorder is armed from `init()`
-   * — and because the adapter is withheld entirely when the customer's pin
-   * disagrees with the negotiated protocol. `undefined` means the session is
-   * degraded and no re-parse is possible; the fire is counted, not faked.
+   * — and because the adapter is withheld entirely when the entry was not built
+   * with the negotiated draft. `undefined` means the session is degraded and no
+   * re-parse is possible; the fire is counted, not faked.
    */
   readonly adapter: () => DraftAdapter | undefined
   /** The live `TrackKeys`. See {@link ReplayOptions.keys}. */

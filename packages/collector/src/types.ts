@@ -252,11 +252,9 @@ export interface HookOptions {
 /**
  * The drafts this package parses: every one `@moqtap/codec` speaks.
  *
- * One entry per draft, **one chunk each**. Each is behind a static literal
- * `import()` specifier in `DRAFT_LOADERS`, and a session downloads the one its
- * peer negotiated and no others — the root `@moqtap/codec` entry, which
- * statically imports every draft at 39.6 KB gz against 5.3 KB for one, must
- * never be reachable from any collector module.
+ * One entry point per draft, carrying that draft's decoder and no other. The
+ * root `@moqtap/codec` entry, which statically imports every draft at 39.6 KB
+ * gz against 5.3 KB for one, must never be reachable from any collector module.
  *
  * The range starts at 07 because that is where `@moqtap/codec` starts. Drafts 04
  * through 06 have implementations in the field and no decoder in this workspace,
@@ -943,18 +941,6 @@ export interface CollectorConfig {
    */
   readonly sessionId?: string
   readonly detail?: DetailLevel
-  /**
-   * Static pin for builds that cannot dynamic-import. It **selects among
-   * literal specifiers the bundler can already see** — it does not substitute
-   * anything, which is how it coexists with the "not build-time
-   * substitution".
-   *
-   * On disagreement between the pin and the negotiated protocol the
-   * adapter is withheld entirely. Two incompatible varint families disagree on
-   * the same bytes and return plausible wrong numbers, and a dashboard full of
-   * plausible wrong numbers is worse than one with a gap in it.
-   */
-  readonly drafts?: readonly SupportedDraft[]
   readonly context?: SessionContext
   readonly metrics?: Partial<MetricsConfig>
   readonly flightRecorder?: Partial<FlightRecorderConfig>
@@ -1020,7 +1006,6 @@ export interface ResolvedConfig {
   readonly endpoint: string
   readonly sessionId: string
   readonly detail: DetailLevel
-  readonly drafts: readonly SupportedDraft[]
   readonly context: Required<SessionContext>
   readonly metrics: MetricsConfig
   readonly flightRecorder: FlightRecorderConfig
@@ -1135,7 +1120,7 @@ export interface SetupRecord extends RecordBase {
    */
   readonly continuedFrom?: { readonly sessionId: string; readonly by: 'collector' }
   /** The loud failure. Set means: transport-only metrics, raw control bytes still shipped. */
-  readonly degraded?: 'draft-mismatch' | 'import-failed' | 'unsupported-protocol'
+  readonly degraded?: 'draft-mismatch' | 'unsupported-protocol'
 }
 
 /**

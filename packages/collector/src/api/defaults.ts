@@ -202,7 +202,6 @@ export const DEFAULTS: ResolvedConfig = /*#__PURE__*/ Object.freeze({
   endpoint: DEFAULT_ENDPOINT,
   sessionId: '',
   detail: BASELINE,
-  drafts: /*#__PURE__*/ Object.freeze([]),
   context: /*#__PURE__*/ Object.freeze({
     actorId: '',
     contentId: '',
@@ -229,8 +228,6 @@ export const DEFAULT_PROVENANCE: { readonly [K in keyof ResolvedConfig]: string 
       'Minted with crypto.randomUUID(). Feeds sha256(sessionId:segmentSeq), and ingest dedupes exactly, so a session with a colliding id is silently discarded. A customer-supplied constant cannot be prevented here.',
     detail:
       'Baseline is always on and always the same. Elevation is billable, so the default can only be baseline.',
-    drafts:
-      'Empty means no pin: one chunk fetched at session time for the negotiated draft. A pin makes the import eager and costs both chunks — 10.6 KB gz against 5.3 — so it ships off.',
     context:
       'Every field absent. actorId is accepted raw, never hashed, and treated as personal data — the one field with real privacy weight, where no default can be right. contentId, environment and release are absent for the ordinary reason that only the customer knows them; their cardinality is bounded nowhere, and ingest alarms on growth rate instead.',
     metrics: 'See METRICS_PROVENANCE — one line per key.',
@@ -257,7 +254,6 @@ export const CONFIG_KEYS: readonly (keyof CollectorConfig)[] = /*#__PURE__*/ Obj
   'endpoint',
   'sessionId',
   'detail',
-  'drafts',
   'context',
   'metrics',
   'flightRecorder',

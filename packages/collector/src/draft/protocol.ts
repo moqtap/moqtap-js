@@ -39,11 +39,9 @@
 import type { AnyMessage, ExchangeKind, SupportedDraft } from '../types.js'
 
 /**
- * The drafts this package parses, newest first — the order a pin should prefer
- * them in. Each is behind a static literal `import()` specifier in
- * {@link DRAFT_LOADERS} and lands in its own chunk; the root `@moqtap/codec`
- * entry, which statically imports every draft, is never reachable from any
- * collector module.
+ * The drafts this package parses, newest first. Each entry point imports the
+ * adapters it ships; the root `@moqtap/codec` entry, which statically imports
+ * every draft, is never reachable from any collector module.
  */
 export const SUPPORTED_DRAFTS: readonly SupportedDraft[] = /*#__PURE__*/ Object.freeze([
   22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7,

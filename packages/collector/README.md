@@ -123,26 +123,22 @@ reach the network leaves the backlog for the next page load.
 
 ## Drafts
 
-Drafts 07 through 22, negotiated per session. Only the negotiated draft's
-decoder is loaded, behind a static literal specifier a bundler can follow.
-
-> **Never import the `@moqtap/codec` root or `@moqtap/codec/session` yourself.**
-> Both statically pull every draft, against a fraction of that for one draft's
-> decoder, and it looks exactly like every other import line in review. Import
-> `@moqtap/codec/draft20` — a static string, never
-> `` import(`@moqtap/codec/draft${n}`) ``, which defeats bundler analysis.
-
-For builds that cannot dynamic-import — a strict CSP with no chunk loading, a
-single-file bundler — pin the drafts instead. The pin selects among the same
-literal specifiers the bundler can already see, and the import becomes eager at
-init:
+Drafts 07 through 22. The root entry carries a decoder for every one of them;
+if your relays speak one draft, import that draft's entry instead. It is the
+same API with one decoder, about 18 KB gzipped smaller:
 
 ```typescript
-init({ apiKey, drafts: [20, 18] })
+import { init } from '@moqtap/collector/draft14'
 ```
 
-`@moqtap/collector/draft07` through `@moqtap/collector/draft22` are the
-draft-partitioned entry points for referencing one draft's adapter directly.
+`@moqtap/collector/draft07` through `@moqtap/collector/draft22` each export
+`init` and `initWorker`. A session that negotiates any other draft is reported
+as `draft-mismatch` and not decoded. Every decoder is a static import, so no
+build needs chunk loading.
+
+> **Never import the `@moqtap/codec` root or `@moqtap/codec/session` yourself.**
+> Both statically pull every draft, and it looks exactly like every other
+> import line in review.
 
 ## Workers
 
@@ -165,7 +161,7 @@ vitals.linkWorker(worker)
 
 ```typescript
 // transport.worker.ts -- the worker
-import { initWorker } from '@moqtap/collector'
+import { initWorker } from '@moqtap/collector' // or '@moqtap/collector/draftNN'
 
 // The import already installed the dormant hook in this realm. With no
 // argument the handshake runs over the worker's own global, which is what a
@@ -176,6 +172,18 @@ const vitals = await initWorker()
 
 const transport = new WebTransport('https://relay.example.com/moq')
 await transport.ready
+```
+
+If the worker also runs an RPC library such as Comlink on its global, give the
+handshake its own channel so neither side sees the other's messages:
+
+```typescript
+const { port1, port2 } = new MessageChannel()
+worker.postMessage({ moqtapPort: port2 }, [port2]) // page
+vitals.linkWorker(port1)
+
+// worker: wait for that message, then
+const vitals = await initWorker(event.data.moqtapPort)
 ```
 
 `linkWorker()` arms the fail-closed rule: from that call the session is marked

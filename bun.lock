@@ -23,7 +23,7 @@
     },
     "packages/collector": {
       "name": "@moqtap/collector",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@moqtap/codec": ">=0.13.0",
       },

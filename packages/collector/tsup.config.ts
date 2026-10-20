@@ -7,9 +7,7 @@ import { baseConfig } from '../../tsup.config.base'
  * The drafts this package ships, zero-padded, read off `src/drafts/draftNN/`.
  *
  * Read rather than listed so that the entry map, the codec allowlist and the
- * declaration `paths` cannot fall behind a new draft directory. A config file
- * is not bundled, so the static-literal rule in `src/draft/loaders.ts` does not
- * apply here.
+ * declaration `paths` cannot fall behind a new draft directory.
  */
 const DRAFTS: readonly string[] = readdirSync(join(process.cwd(), 'src', 'drafts'), {
   withFileTypes: true,
@@ -102,14 +100,13 @@ export default defineConfig({
   },
   sourcemap: false,
   entry: {
-    // src/index.ts installs the dormant hook at module-eval time, which is why
-    // package.json marks dist/index.js as having side effects.
+    // Every entry installs the dormant hook at module-eval time, which is why
+    // package.json marks each as having side effects.
     index: 'src/index.ts',
     // `draft20`, not `d20` — every other package in this workspace uses the
     // zero-padded form and `d20` would be the only one of its kind.
     //
-    // One entry per draft, each its own chunk. A consumer that imports one of
-    // them gets that draft's decoder and no other's.
+    // One entry per draft: the same API with that draft's decoder and no other's.
     ...Object.fromEntries(DRAFTS.map((d) => [`draft${d}`, `src/drafts/draft${d}/entry.ts`])),
   },
   external: CODEC_ALLOWED,

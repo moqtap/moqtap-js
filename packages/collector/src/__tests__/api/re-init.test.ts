@@ -28,10 +28,10 @@ import {
   resetDormantForTest,
   teardownDormant,
 } from '../../api/dormant.js'
-import { init } from '../../api/init.js'
 import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/index.js'
 import type { CollectorConfig, EnvelopeRecord, RollupTrackWire } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
+import { init } from '../support/init.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -90,9 +90,6 @@ const settle = async (times?: number): Promise<void> => {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  // Pinned, so the decoder chunk is loaded eagerly and no dynamic import races
-  // the first frames.
-  drafts: [20],
   metrics: { intervalMs: 100 },
   ...over,
 })

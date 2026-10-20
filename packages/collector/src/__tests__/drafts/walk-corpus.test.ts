@@ -34,8 +34,8 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DRAFT_LOADERS } from '../../draft/loaders.js'
 import { SUPPORTED_DRAFTS } from '../../draft/protocol.js'
+import { ALL_ADAPTERS } from '../../drafts/all.js'
 import { type DraftAdapter, NEED, type ObjectCursor, type SupportedDraft } from '../../types.js'
 
 const require_ = createRequire(import.meta.url)
@@ -125,14 +125,12 @@ function expectedObjects(decoded: Record<string, unknown>, headerGroup?: bigint)
   })
 }
 
-const ADAPTERS = new Map<SupportedDraft, DraftAdapter>()
+const ADAPTERS = new Map<SupportedDraft, DraftAdapter>(ALL_ADAPTERS.map((a) => [a.draft, a]))
 
 async function adapterFor(draft: SupportedDraft): Promise<DraftAdapter> {
-  const cached = ADAPTERS.get(draft)
-  if (cached !== undefined) return cached
-  const mod = await DRAFT_LOADERS[draft]()
-  ADAPTERS.set(draft, mod.adapter)
-  return mod.adapter
+  const adapter = ADAPTERS.get(draft)
+  if (adapter === undefined) throw new Error(`no adapter for draft ${draft}`)
+  return adapter
 }
 
 function newCursor(): ObjectCursor {

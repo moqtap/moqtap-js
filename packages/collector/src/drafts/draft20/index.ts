@@ -5,9 +5,7 @@
  * Delta field, and `0x20C` Timed-Out joined the marker set. The subgroup
  * stream type is a varint again.
  *
- * **This module is the boundary of the draft-20 chunk.** It is reached only
- * through `DRAFT_LOADERS[20]`'s `() => import('../drafts/draft20/index.js')`, and
- * the `@moqtap/codec/draft20` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft20` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

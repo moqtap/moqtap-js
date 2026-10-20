@@ -16,11 +16,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ensureDormantHook, resetDormantForTest, teardownDormant } from '../../api/dormant.js'
-import { init } from '../../api/init.js'
 import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/index.js'
 import { ChunkStore, MemoryBackend } from '../../flush/index.js'
 import type { CollectorConfig, EnvelopeRecord } from '../../types.js'
 import { subscribeBytes } from '../decode/vectors.js'
+import { init } from '../support/init.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -641,9 +641,7 @@ async function deliverControl(
 describe('a baseline session, end to end', () => {
   it('ships the control plane raw and reports the negotiated draft', async () => {
     const { posts, impl } = recordingFetch()
-    // Pinned, so the chunk is loaded eagerly and no dynamic import races the
-    // first frames.
-    const c = init(base({ drafts: [20] }), {
+    const c = init(base(), {
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: impl,
@@ -775,7 +773,7 @@ describe('the overrun policy', () => {
     // One control frame per second is the whole budget, so the second frame in
     // the same second is the "fuzzing peer / relay flapping thousands of
     // streams" case the overrun policy describes, compressed into a test.
-    const c = init(base({ drafts: [20], limits: { controlRatePerSec: 1 } }), {
+    const c = init(base({ limits: { controlRatePerSec: 1 } }), {
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: impl,

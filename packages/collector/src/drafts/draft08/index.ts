@@ -5,9 +5,7 @@
  * rather than a byte length, so it is the only one the walk has to iterate
  * instead of skipping in one step.
  *
- * **This module is the boundary of the draft-08 chunk.** It is reached only
- * through `DRAFT_LOADERS[8]`'s `() => import('../drafts/draft08/index.js')`, and
- * the `@moqtap/codec/draft08` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft08` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

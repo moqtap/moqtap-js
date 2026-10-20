@@ -4,9 +4,7 @@
  * The oldest draft the codec speaks. One subgroup stream type, no type
  * flags at all, no per-object extension block, and absolute Object IDs.
  *
- * **This module is the boundary of the draft-07 chunk.** It is reached only
- * through `DRAFT_LOADERS[7]`'s `() => import('../drafts/draft07/index.js')`, and
- * the `@moqtap/codec/draft07` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft07` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

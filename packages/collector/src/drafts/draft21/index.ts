@@ -5,9 +5,7 @@
  * dialect is draft-20's field for field. The two are told apart only by the
  * ALPN they negotiate.
  *
- * **This module is the boundary of the draft-21 chunk.** It is reached only
- * through `DRAFT_LOADERS[21]`'s `() => import('../drafts/draft21/index.js')`, and
- * the `@moqtap/codec/draft21` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft21` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

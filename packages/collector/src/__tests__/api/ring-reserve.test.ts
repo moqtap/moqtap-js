@@ -24,9 +24,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
-import { init } from '../../api/init.js'
 import { ByteRing } from '../../ring/index.js'
 import type { CollectorConfig } from '../../types.js'
+import { init } from '../support/init.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>

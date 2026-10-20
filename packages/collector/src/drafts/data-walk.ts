@@ -41,10 +41,9 @@
  * | 14-16   | RFC 9000 | flag ranges   | delta      | length, bit 0    |
  * | 17 on   | MoQT vi64| flag bits     | delta      | properties, bit 0|
  *
- * Imported **only** by `src/drafts/draftNN/index.ts`, each behind the dynamic
- * `import()` in `DRAFT_LOADERS`. Never re-export it from `src/draft/index.ts`:
- * that barrel is in the static graph, and pulling this file in moves per-draft
- * bytes into the static budget.
+ * Imported **only** by `src/drafts/draftNN/index.ts`. Never re-export it from
+ * `src/draft/index.ts`: that barrel is shared by every entry, and pulling this
+ * file in moves per-draft bytes into the static budget.
  */
 
 import { NEED, type Need, type VarintValue } from '../draft/varint.js'

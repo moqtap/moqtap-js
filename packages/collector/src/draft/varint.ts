@@ -9,8 +9,8 @@
  * 2-bit-prefix form the same value is `6f 00`. Feed `af 00` to an RFC 9000
  * reader and it reads prefix `0b10` — a **four**-byte varint — swallowing two
  * bytes that belong to the next field and yielding `0x2F00xxxx`. No error, no
- * exception, just a number. That is why {@link loadDraft} refuses to hand out
- * an adapter when the pin and the negotiated protocol disagree.
+ * exception, just a number. That is why {@link resolveDraft} refuses to hand
+ * out an adapter for a draft the entry was not built with.
  *
  * Why these are re-implemented rather than imported: `MoqtBufferReader` is
  * exported from no public `@moqtap/codec` subpath — its `exports` map has

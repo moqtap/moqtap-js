@@ -24,25 +24,22 @@
  *     braces — if the bundler truncates again the markers vanish and this test
  *     fails rather than under-reporting.
  *
- *  3. **The target is not a cap, and the two ceilings are different kinds of
- *     number.** The "~10 KB gz static" stays a *target*: shipping a worse
- *     collector to hit an arbitrary number is the wrong trade. The entry
- *     ceiling is a chosen backstop with headroom; the chunk ceiling is a
- *     regression guard at the measured value. Either way the distance to the
- *     target rides in the failure message so nobody has to go looking for it.
+ *  3. **The target is not a cap.** The "~10 KB gz static" stays a *target*:
+ *     shipping a worse collector to hit an arbitrary number is the wrong trade.
+ *     The entry ceiling is a chosen backstop with headroom, and the distance to
+ *     the target rides in the failure message so nobody has to go looking for it.
  *
  *  4. **Both halves of the budget are measured.** The budget is "~10 KB gz
- *     static **+ 4–9 KB per negotiated draft**", and the static build above has
+ *     static **+ 4–9 KB per draft**", and the static build above has
  *     `@moqtap/codec/*` external, so it says nothing about the second half. The
- *     `per negotiated draft` block below builds each draft chunk with the
- *     codec's decoder **inlined**, because that pair is what the network fetches
- *     when a draft is negotiated. It is also the only place the tree-shaking
- *     claim is genuinely tested: with the codec external, "no `encodeMessage` in
- *     the graph" is true by construction and proves nothing about the codec.
+ *     `per draft` block below builds each draft with the codec's decoder
+ *     **inlined**, and a single-draft entry whole. It is also the only place the
+ *     tree-shaking claim is genuinely tested: with the codec external, "no
+ *     `encodeMessage` in the graph" is true by construction.
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -53,33 +50,16 @@ import { SUPPORTED_DRAFTS } from '../../draft/protocol.js'
 const PKG = resolve(__dirname, '..', '..', '..')
 
 /**
- * The always-loaded entry's ceiling: `bun build --target=browser --minify
- * --splitting`, `@moqtap/codec/*` external, `gzip -9`. The reference target is
- * 10240 B.
+ * The root entry's ceiling: `bun build --target=browser --minify`,
+ * `@moqtap/codec/*` external, `gzip -9`. The reference target is 10240 B.
  *
- * 40 KB is a chosen number, not a measured one. The entry sits around 35.8 KB
- * and moves a few bytes between builds of identical sources, so a ceiling
- * pinned to the measurement fails on a rebuild that changed nothing. The
- * headroom is deliberate — it grows as drafts are added — and this guard is a
- * backstop against a step change. Bringing the entry down toward the target is
- * its own work, not something done under a failing test.
+ * 40 KB is a chosen number, not a measured one. The entry, with every draft's
+ * adapter, sits around 37.2 KB and moves a few bytes between builds of
+ * identical sources. The headroom is deliberate — it grows as drafts are added —
+ * and this guard is a backstop against a step change. Bringing the entry down
+ * toward the target is its own work, not something done under a failing test.
  */
 const ENTRY_CEILING_GZ = 40_000
-
-/**
- * The largest single draft chunk, which is what one session actually fetches.
- *
- * A session negotiates one draft, fetches one chunk, and the others are
- * never requested, so "entry plus every lazy chunk" is a number nobody pays:
- * guarding the sum would make adding a draft look like a regression while the
- * number every page actually pays did not move.
- *
- * So the two numbers that mean something are guarded — the always-loaded entry
- * above and the worst single chunk here — and the sum is reported rather than
- * asserted on. Measured across every draft: 1842 B gz.
- */
-const CHUNK_CEILING_GZ = 2_200
-const MEASURED_MAX_CHUNK_GZ = 1_842
 const SPEC_TARGET_GZ = 10_240
 
 /**
@@ -128,13 +108,8 @@ const FOREIGN_DRAFTS: readonly string[] = SUPPORTED_DRAFTS.filter((d) => d !== 2
 )
 
 interface Built {
-  readonly entry: string
-  readonly chunks: readonly string[]
   readonly all: string
   readonly entryGz: number
-  readonly totalGz: number
-  /** The biggest single draft chunk — what one session pays on top of the entry. */
-  readonly maxChunkGz: number
 }
 
 let out = ''
@@ -205,34 +180,18 @@ function buildOne(name: string, source: string, external: readonly string[]): On
 function build(): Built {
   const shim = join(out, 'shim.ts')
   writeFileSync(shim, shimSource())
-
-  const dist = join(out, 'dist')
+  const file = join(out, 'shim.js')
   runBun([
     'build',
     shim,
     '--target=browser',
     '--minify',
-    '--splitting',
-    `--outdir=${dist}`,
+    `--outfile=${file}`,
     '--external',
     '@moqtap/codec/*',
   ])
-
-  const files = readdirSync(dist).filter((f) => f.endsWith('.js'))
-  if (!files.includes('shim.js')) throw new Error(`no entry among: ${files.join(', ')}`)
-
-  const read = (f: string): string => readFileSync(join(dist, f), 'utf8')
-  const entry = read('shim.js')
-  const chunks = files.filter((f) => f !== 'shim.js').map(read)
-
-  return {
-    entry,
-    chunks,
-    all: [entry, ...chunks].join('\n'),
-    entryGz: gzip(entry),
-    totalGz: [entry, ...chunks].reduce((n, s) => n + gzip(s), 0),
-    maxChunkGz: chunks.reduce((n, s) => Math.max(n, gzip(s)), 0),
-  }
+  const all = readFileSync(file, 'utf8')
+  return { all, entryGz: gzip(all) }
 }
 
 beforeAll(() => {
@@ -255,12 +214,10 @@ describe('the bundle is actually the whole bundle', () => {
     ).toBe(true)
   })
 
-  it('emits the draft adapters as separate lazily-loaded chunks', () => {
-    // src/draft/loaders.ts uses static literal specifiers, so a splitting
-    // bundler emits one chunk per draft rather than inlining every draft into
-    // the entry. If this fails, look for a template literal in loaders.ts.
-    expect(built.chunks.length).toBeGreaterThanOrEqual(SUPPORTED_DRAFTS.length)
-    expect(built.entry).not.toContain('@moqtap/codec')
+  it('loads nothing at runtime', () => {
+    // Every decoder is a static import, so a bundle needs no chunk loading:
+    // IIFE worker builds and CSPs without chunk loading work unchanged.
+    expect(built.all).not.toMatch(/\bimport\(/)
   })
 })
 
@@ -297,40 +254,18 @@ describe('gzipped size', () => {
     ).toBeLessThanOrEqual(ENTRY_CEILING_GZ)
   })
 
-  it('keeps the largest single draft chunk under its ceiling', () => {
-    expect(
-      built.maxChunkGz,
-      `The largest lazy chunk is ${built.maxChunkGz} B gz, ceiling ${CHUNK_CEILING_GZ} B ` +
-        `(measured ${MEASURED_MAX_CHUNK_GZ} B). This is the collector's own adapter and ` +
-        'excludes @moqtap/codec, which adds ~4.9-7.9 KB gz for the one negotiated draft ' +
-        '— measured per draft in the block below. A session fetches exactly one of ' +
-        'these, so this and the entry are the two numbers a page pays.',
-    ).toBeLessThanOrEqual(CHUNK_CEILING_GZ)
-  })
-
-  it('emits one chunk per draft and shares the walk between them', () => {
-    // One chunk per draft plus the modules they share — `data-walk.ts` and
-    // `adapter.ts`, which are one copy between every draft rather than a copy
-    // each. If this drops to one per draft, the shared walk has been inlined
-    // into every draft and the sum below will say so.
-    expect(built.chunks.length).toBeGreaterThan(SUPPORTED_DRAFTS.length)
-  })
-
   it('reports the numbers even when it passes', () => {
     console.log(
-      `[size] entry ${built.entryGz} B gz | largest chunk ${built.maxChunkGz} B gz | ` +
-        `all chunks ${built.totalGz} B gz | ` +
-        `${built.chunks.length} lazy chunks | ` +
+      `[size] entry ${built.entryGz} B gz | ` +
         `${(built.entryGz / SPEC_TARGET_GZ).toFixed(1)}x the ${SPEC_TARGET_GZ} B target`,
     )
     expect(built.entryGz).toBeGreaterThan(0)
   })
 })
 
-describe('the other half of the budget: per negotiated draft', () => {
-  // What a session actually costs on top of the static half: the collector's own
-  // draft adapter plus the codec decoder it imports, bundled together, because
-  // that pair is one network fetch at `session.protocol` time.
+describe('the other half of the budget: per draft', () => {
+  // What each draft adds to the static half: the collector's own draft adapter
+  // plus the codec decoder it imports, bundled together.
   //
   // Every draft, not a sample. The older drafts are a different shape —
   // draft-07's decoder has no Authorization Token structure and no factored
@@ -341,12 +276,12 @@ describe('the other half of the budget: per negotiated draft', () => {
     const nn = n < 10 ? `0${n}` : `${n}`
     const m = buildOne(`draft${nn}`, shimFor('drafts', `draft${nn}`, 'index.ts'), [])
     console.log(
-      `[size] draft-${nn} chunk (collector adapter + codec decoder): ` +
+      `[size] draft-${nn} (collector adapter + codec decoder): ` +
         `${m.gzippedBytes} B gz, ${m.minifiedBytes} B min | band 4096–${DRAFT_CEILING_GZ} B`,
     )
     expect(
       m.gzippedBytes,
-      `the draft-${n} chunk is over the per-draft budget. Unlike the static ` +
+      `draft-${n} is over the per-draft budget. Unlike the static ` +
         'ceiling, this one is the spec figure rather than a measured regression ' +
         'guard, so exceeding it is a real overrun of a real budget.',
     ).toBeLessThanOrEqual(DRAFT_CEILING_GZ)
@@ -358,18 +293,27 @@ describe('the other half of the budget: per negotiated draft', () => {
     // reports "no encodeMessage" whether one is there or not.
     const m = buildOne('draft20-shake', shimFor('drafts', 'draft20', 'index.ts'), [])
     for (const sym of FORBIDDEN_CODEC_IMPORTS) {
-      expect(m.readable, `${sym} survived into the draft-20 chunk`).not.toContain(sym)
+      expect(m.readable, `${sym} survived into draft-20`).not.toContain(sym)
     }
     for (const other of FOREIGN_DRAFTS) {
-      expect(m.readable, `${other} reached the draft-20 chunk`).not.toContain(other)
+      expect(m.readable, `${other} reached draft-20`).not.toContain(other)
     }
-    // The root entry's every-draft registry. Anywhere in here it would mean
-    // the root was reached and the chunk is 39.6 KB rather than 5.3.
+    // The codec root's every-draft registry. Anywhere in here it would mean
+    // the codec root was reached: 39.6 KB rather than 5.3.
     expect(m.readable).not.toContain('DRAFT_VERSIONS')
     // And the decoders that are supposed to be there, so the greps above are
     // not passing on an empty bundle.
     expect(m.readable).toContain('decodeMessage')
     expect(m.readable).toContain('decodeDatagram')
+  })
+
+  it('keeps a single-draft entry to the static half plus one draft', () => {
+    const m = buildOne('entry20', shimFor('drafts', 'draft20', 'entry.ts'), [])
+    console.log(`[size] @moqtap/collector/draft20, whole: ${m.gzippedBytes} B gz`)
+    for (const other of FOREIGN_DRAFTS) {
+      expect(m.readable, `${other} reached the draft-20 entry`).not.toContain(other)
+    }
+    expect(m.gzippedBytes).toBeLessThanOrEqual(ENTRY_CEILING_GZ + DRAFT_CEILING_GZ)
   })
 })
 

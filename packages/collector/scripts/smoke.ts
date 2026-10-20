@@ -23,12 +23,11 @@
  *
  * ── Why every check is its own process
  *
- * Importing the main entry patches `globalThis.WebTransport` at module-eval
- * time, and that patch is a *global*: it cannot be undone by a `beforeEach`, and
- * ESM module records are cached per realm so a second import would not re-run
- * the side effect anyway. In a single-process runner the draft-entry assertions
- * would pass or fail on the order the files happened to run in, which is the
- * exact failure this check exists to rule out.
+ * Importing any entry patches `globalThis.WebTransport` at module-eval time,
+ * and that patch is a *global*: it cannot be undone by a `beforeEach`, and ESM
+ * module records are cached per realm so a second import would not re-run the
+ * side effect anyway. In a single-process runner every probe after the first
+ * would see the previous one's patch.
  *
  * So each probe is spawned as a **fresh `node` process** with a sentinel
  * `WebTransport` planted before anything is loaded; nothing leaks between probes
@@ -290,16 +289,23 @@ const EXPECTED: Readonly<
       'COLLECTOR_VERSION',
       'NEED',
     ],
-    // The dormant install, and the reason `./dist/index.js` and `./dist/index.cjs` are the only
-    // two files in the `sideEffects` allowlist.
+    // The dormant install, and the reason every entry is in the `sideEffects` allowlist.
     patches: true,
   },
   ...Object.fromEntries(
     DRAFT_ENTRIES.map((e) => [
       `./${e}`,
       {
-        names: ['adapter', `${e.toUpperCase()}_ADAPTER`, 'draft', 'PROTOCOL_STRINGS', 'NEED'],
-        patches: false,
+        names: [
+          'init',
+          'initWorker',
+          'adapter',
+          `${e.toUpperCase()}_ADAPTER`,
+          'draft',
+          'PROTOCOL_STRINGS',
+          'NEED',
+        ],
+        patches: true,
       },
     ]),
   ),
@@ -428,7 +434,7 @@ function main(): void {
 
     /* 3 ── the documented side-effect boundary ───────────────────────────── */
 
-    section('side-effect boundary — package.json marks only the main entry')
+    section('side-effect boundary — every entry installs the hook')
     for (const [sub, expected] of Object.entries(EXPECTED)) {
       const specifier = sub === '.' ? pkg.name : `${pkg.name}/${sub.slice(2)}`
       for (const fmt of ['ESM import', 'CJS require']) {
@@ -442,11 +448,9 @@ function main(): void {
           r.patched === expected.patches
             ? ''
             : expected.patches
-              ? 'Importing the main entry installs the dormant hook, and the ' +
+              ? 'Importing an entry installs the dormant hook, and the ' +
                 'sideEffects allowlist is written on that promise. It did not fire.'
-              : 'A draft entry patched a global. Every draft entry documents "no module-eval ' +
-                'side effect", and package.json omits them from sideEffects — so a bundler is ' +
-                'free to tree-shake away a patch a consumer is now relying on.',
+              : 'An entry patched a global it documents leaving alone.',
         )
         if (expected.patches) {
           check(r.stillFunction, `${specifier} (${fmt}) leaves a constructible WebTransport behind`)

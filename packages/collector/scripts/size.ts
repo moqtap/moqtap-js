@@ -21,10 +21,9 @@
  * ── Method, matching that test so the numbers stay comparable
  *
  * `bun build --target=browser --minify`, then `gzip -9`, measured **from
- * TypeScript source, not from `dist/`**: the published per-draft files are thin
- * re-exports over shared chunks (`dist/draft19.js` is 297 bytes of `import`
- * lines) and measure nothing alone. It also runs without a build, which is what
- * lets it sit in a dev loop.
+ * TypeScript source, not from `dist/`**: the published entries are thin
+ * re-exports over shared chunks and measure nothing alone. It also runs without
+ * a build, which is what lets it sit in a dev loop.
  *
  * Two details, either of which silently under-reports if it is got wrong:
  *
@@ -34,11 +33,10 @@
  *     src/index.ts` reports 8 modules and 8.7 KB gz for a bundle whose `init`
  *     is not defined anywhere in it. A namespace import plus a global
  *     assignment keeps the graph whole.
- *  2. **The static entry is measured with `@moqtap/codec/*` external; the draft
- *     entries are measured with it inlined.** That asymmetry is the budget
- *     shape — "~10 KB gz static + 4–9 KB per negotiated draft" — not an
- *     oversight. The draft chunk plus its codec decoder is one network fetch at
- * `session.protocol` time, so they are weighed together.
+ *  2. **The root entry is measured twice:** with `@moqtap/codec/*` external,
+ *     which is the collector's own code and what the subsystem breakdown
+ *     charges, and whole, which is what a page downloads. The draft entries are
+ *     measured whole.
  *
  * ── Usage
  *
@@ -75,33 +73,28 @@ const DRAFTS: readonly string[] = [...SUPPORTED_DRAFTS]
 /**
  * The published entry points, from `package.json`'s `exports` map.
  *
- * `.` is measured against `src/index.ts` with the codec external — the static
- * half of the budget, "everything `init()` reaches".
- *
- * `./draftNN` is measured against its published `entry.ts` with the codec
- * **inlined**, because that pair is one network fetch at `session.protocol`
- * time. The published entry adds `PROTOCOL_STRINGS` and a type-only re-export
- * on top of `drafts/draftNN/index.ts`, which is a two-figure number of bytes;
- * measuring what is actually published is worth that much drift, and the drift
- * is named here so nobody re-derives it.
- *
- * **Read the per-draft rows as alternatives, never as a sum.** A session
- * negotiates one draft and fetches one of them. Adding them up describes a
- * consumer who imports every entry point by hand, which is not a thing
- * anyone does and not a number anyone pays.
+ * **Read the per-draft rows as alternatives, never as a sum.** A page imports
+ * one entry: the root, or the draft its relays speak.
  */
 const ENTRIES = [
   {
     id: '.',
-    label: 'static entry — everything init() reaches',
+    label: "root entry, the collector's own code (codec external)",
     parts: ['index.ts'] as readonly string[],
     external: ['@moqtap/codec/*'] as readonly string[],
-    /** Only the main entry is split: the draft adapters are its lazy chunks. */
+    /** Built with sourcemaps, for the subsystem breakdown. */
     split: true,
+  },
+  {
+    id: '. (whole)',
+    label: "root entry as downloaded, every draft's decoder",
+    parts: ['index.ts'] as readonly string[],
+    external: [] as readonly string[],
+    split: false,
   },
   ...DRAFTS.map((nn) => ({
     id: `./draft${nn}`,
-    label: `draft-${nn} entry (collector adapter + codec decoder)`,
+    label: `draft-${nn} entry as downloaded`,
     parts: ['drafts', `draft${nn}`, 'entry.ts'] as readonly string[],
     external: [] as readonly string[],
     split: false,
@@ -120,7 +113,7 @@ const SUBSYSTEM_LABELS: Readonly<Record<string, string>> = {
   rollup: 'rollup',
   transport: 'transport — the WebTransport seam',
   draft: 'draft — loader and negotiation',
-  drafts: 'drafts — the per-draft adapters (lazy chunks)',
+  drafts: 'drafts — the per-draft adapters',
   recorder: 'recorder — the flight recorder',
   envelope: 'envelope — framing and records',
   ring: 'ring',
@@ -137,19 +130,11 @@ interface Measure {
 
 interface EntryMeasure extends Measure {
   readonly label: string
-  /** Split entries only: the entry plus every lazy chunk it emits. */
+  /** Split entries only: the entry plus every chunk it emits. */
   readonly chunks?: number
   readonly totalGz?: number
   readonly totalMin?: number
-  /**
-   * The largest single lazy chunk.
-   *
-   * The number a page actually pays on top of the entry, because a session
-   * negotiates one draft and fetches one chunk. {@link totalGz} is the sum of
-   * every draft chunk plus what they share, which nothing downloads — it is reported
-   * because a jump in it means a shared module stopped being shared, and for no
-   * other reason.
-   */
+  /** The largest single chunk, when the build emits any. */
   readonly maxChunkGz?: number
 }
 
@@ -388,7 +373,7 @@ function measureSplit(out: string, name: string, source: string, external: reado
   const code = read(entryFile)
   const chunks = files.filter((f) => f !== entryFile).map(read)
 
-  // Charge every output byte, across the entry and its lazy chunks, to a
+  // Charge every output byte, across the entry and any chunks, to a
   // subsystem. The rows are exclusive and sum to `totalMin`.
   const perOutput = new Map<string, Map<string, Range[]>>()
   for (const f of files) {
@@ -450,7 +435,7 @@ function measure(): Report {
     const entries: Record<string, EntryMeasure> = {}
     const subsystems: Record<string, Measure & { label: string }> = {}
     for (const e of ENTRIES) {
-      const name = e.id === '.' ? 'entry' : e.id.replace('./', '')
+      const name = e.id === '.' ? 'entry' : e.id === '. (whole)' ? 'whole' : e.id.replace('./', '')
       const source = shimFor(...e.parts)
       if (!e.split) {
         entries[e.id] = { label: e.label, ...measureSingle(out, name, source, e.external) }
@@ -522,14 +507,12 @@ function renderText(r: Report, base: Report | null): string {
   for (const [id, m] of Object.entries(r.entries)) {
     const b = base?.entries[id]
     lines.push(entryRow(id, m.gz, m.min, b?.gz))
-    // What one session pays: the entry plus the single chunk it fetches.
-    if (m.maxChunkGz !== undefined) {
-      lines.push(entryRow('  └ + largest lazy chunk', m.gz + m.maxChunkGz, null, undefined))
-    }
-    // What nothing pays. Reported only so that a jump says a shared module
-    // stopped being shared.
-    if (m.totalGz !== undefined) {
-      lines.push(entryRow(`  └ + all ${m.chunks} chunks`, m.totalGz, m.totalMin ?? 0, b?.totalGz))
+    // Only a build that emits chunks has these rows.
+    if (m.chunks) {
+      lines.push(entryRow('  └ + largest chunk', m.gz + (m.maxChunkGz ?? 0), null, undefined))
+      lines.push(
+        entryRow(`  └ + all ${m.chunks} chunks`, m.totalGz ?? 0, m.totalMin ?? 0, b?.totalGz),
+      )
     }
   }
 
@@ -544,7 +527,7 @@ function renderText(r: Report, base: Report | null): string {
   }
 
   lines.push('')
-  lines.push('  where the static bytes are (entry + lazy chunks, charged by sourcemap)')
+  lines.push('  where the static bytes are (charged by sourcemap)')
   lines.push(`    ${'subsystem'.padEnd(NAME)} ${'gzipped'.padStart(19)} ${'minified'.padStart(13)}`)
   const rows = Object.entries(r.subsystems).sort((a, b2) => b2[1].min - a[1].min)
   const totalMin = rows.reduce((n, [, m]) => n + m.min, 0)
@@ -591,14 +574,12 @@ function renderMarkdown(r: Report, base: Report | null): string {
   }
   for (const [id, m] of Object.entries(r.entries)) {
     l.push(row(`\`${id}\``, m.gz, m.min, base?.entries[id]?.gz))
-    if (m.maxChunkGz !== undefined) {
-      l.push(row(`\`${id}\` + largest lazy chunk`, m.gz + m.maxChunkGz, 0, undefined))
-    }
-    if (m.totalGz !== undefined) {
+    if (m.chunks) {
+      l.push(row(`\`${id}\` + largest chunk`, m.gz + (m.maxChunkGz ?? 0), 0, undefined))
       l.push(
         row(
           `\`${id}\` + all ${m.chunks} chunks`,
-          m.totalGz,
+          m.totalGz ?? 0,
           m.totalMin ?? 0,
           base?.entries[id]?.totalGz,
         ),
@@ -627,7 +608,7 @@ function renderMarkdown(r: Report, base: Report | null): string {
   }
   l.push('')
   l.push(
-    'Every output byte of the static entry and its lazy chunks is charged to a subsystem ' +
+    'Every output byte of the static entry is charged to a subsystem ' +
       "using the build's own sourcemaps, so the rows are exclusive and the minified column " +
       'sums to the entry. The gzipped column is marginal — gzip of the bundle minus gzip of ' +
       'the bundle with that subsystem spliced out, i.e. what removing it would actually save ' +

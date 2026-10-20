@@ -18,6 +18,7 @@
  */
 
 import { MQ1004 } from '../codes.js'
+import type { DraftSet } from '../draft/index.js'
 import { ChunkStore } from '../flush/index.js'
 import type {
   CollectorConfig,
@@ -285,7 +286,11 @@ class PendingCollector implements Collector {
  * Every other configuration problem is reported and defaulted, because a dependency
  * inside someone else's player does not get to throw over a mistyped bucket cap.
  */
-export function init(config: CollectorConfig, options: InitOptions = {}): Collector {
+export function initWith(
+  drafts: DraftSet,
+  config: CollectorConfig,
+  options: InitOptions = {},
+): Collector {
   const onError = (err: unknown): void => {
     try {
       config.onInternalError?.(err)
@@ -347,7 +352,7 @@ export function init(config: CollectorConfig, options: InitOptions = {}): Collec
         })
       }
 
-      const runtime = new CollectorRuntime(resolved, claim.hook, {
+      const runtime = new CollectorRuntime(resolved, claim.hook, drafts, {
         ...options,
         store,
         onInternalError: onError,

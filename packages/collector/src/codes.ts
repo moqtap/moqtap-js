@@ -41,10 +41,6 @@ export const MQ1103 = 'MQ1103'
 export const MQ1104 = 'MQ1104'
 /** `detail` was not one of the levels on the lattice. */
 export const MQ1105 = 'MQ1105'
-/** `drafts` was not an array. */
-export const MQ1106 = 'MQ1106'
-/** A draft in the pin is not one this build supports. Dropped, pin kept. */
-export const MQ1107 = 'MQ1107'
 /** `flightRecorder.triggers` was an array; it must be an object keyed by kind. */
 export const MQ1108 = 'MQ1108'
 /** A key under `flightRecorder.triggers` is not a trigger kind. Ignored. */

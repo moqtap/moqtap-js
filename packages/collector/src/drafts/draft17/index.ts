@@ -5,9 +5,7 @@
  * 9000's, and control moves to a unidirectional stream opening `af 00`. Fetch
  * Group IDs are still absolute; draft-18 made them deltas.
  *
- * **This module is the boundary of the draft-17 chunk.** It is reached only
- * through `DRAFT_LOADERS[17]`'s `() => import('../drafts/draft17/index.js')`, and
- * the `@moqtap/codec/draft17` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft17` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.

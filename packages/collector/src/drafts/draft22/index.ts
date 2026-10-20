@@ -5,9 +5,7 @@
  * so this dialect is draft-21's field for field, which is draft-20's. Control messages go through
  * `@moqtap/codec/draft22`, which owns that change.
  *
- * **This module is the boundary of the draft-22 chunk.** It is reached only
- * through `DRAFT_LOADERS[22]`'s `() => import('../drafts/draft22/index.js')`, and
- * the `@moqtap/codec/draft22` specifier below is a **static string literal** on
+ * The `@moqtap/codec/draft22` specifier below is a **static string literal** on
  * purpose: a template literal would defeat bundler analysis and pull every
  * draft -- 39.6 KB gz against 5.3 KB, a 7.5x regression that looks
  * like every other import line in review.
