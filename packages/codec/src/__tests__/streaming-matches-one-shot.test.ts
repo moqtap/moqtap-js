@@ -18,8 +18,8 @@
  * having thought of it.
  *
  * The header types are swept rather than chosen. Each draft numbers its own
- * flags — draft-15's bit 1 is `end_of_group` where draft-16's is a Subgroup ID
- * mode, and Properties do not exist before draft-17 — so picking values by hand
+ * flags — draft-18 adds a bit at 0x40 that no earlier draft has, and
+ * Properties do not exist before draft-17 — so picking values by hand
  * would encode this author's reading of six specifications into the fixtures.
  * Instead every value the draft's own encoder will emit and its own one-shot
  * decoder will accept is tried, and the two paths must agree on all of them.

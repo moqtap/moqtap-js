@@ -178,7 +178,9 @@ function readSubgroupHeader(r: BufferReader): SubgroupHeaderFields {
   const endOfGroup = (streamType & 0x08) !== 0
   const hasSubgroupField = (streamType & 0x04) !== 0
   const hasPriority = streamType < 0x30
-  const subgroupIsFirstObjId = false
+  // Table 6: with no Subgroup ID field, 0x02 makes the Subgroup ID the first
+  // Object's ID (0x12-13, 0x1A-1B, 0x32-33, 0x3A-3B) rather than zero.
+  const subgroupIsFirstObjId = (streamType & 0x02) !== 0 && !hasSubgroupField
 
   const trackAlias = r.readVarInt()
   const groupId = r.readVarInt()

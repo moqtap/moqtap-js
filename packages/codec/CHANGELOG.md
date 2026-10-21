@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [0.13.3] - 2026-10-21
+
+### Fixed
+
+- **Draft-15 Subgroup ID on types 0x12, 0x13, 0x1A, 0x1B, 0x32, 0x33, 0x3A and
+  0x3B.** Section 10.4.2 Table 6 makes the Subgroup ID of these streams the
+  first Object's ID; `decodeSubgroupStream` and `createSubgroupStreamDecoder`
+  reported 0.
+
 ## [0.13.2] - 2026-10-03
 
 ### Changed
