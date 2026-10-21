@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/inspect",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MoQT control messages made readable: setup versions as drafts, printable fields, implementation names, and track aliases joined to their names",
   "type": "module",
   "license": "MIT",
@@ -42,7 +42,11 @@
     "build": "tsup",
     "test": "vitest run"
   },
+  "peerDependencies": {
+    "@moqtap/codec": ">=0.13.2"
+  },
   "devDependencies": {
+    "@moqtap/codec": "workspace:*",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.2.7"
