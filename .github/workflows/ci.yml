@@ -47,6 +47,24 @@ jobs:
         run: bun run smoke
         working-directory: packages/collector
 
+  # The collector against real Chromium, Firefox and WebKit. Kept apart from
+  # `test` so that job never needs browsers installed.
+  browsers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+      # Run from the collector so `bunx` resolves its own `playwright-core`:
+      # the browser builds have to match the version the tests drive.
+      - name: Install the Playwright browsers
+        working-directory: packages/collector
+        run: bunx playwright-core install --with-deps chromium firefox webkit
+
+      - run: bun run --cwd packages/collector test:browsers
+
   # Spec §7.1, decided: **no hard cap.** "10 KB was drawn before anything was
   # built; it is a target worth keeping in view, not a limit worth shipping a
   # worse collector to hit. What is not optional is *measuring* it… a standing
