@@ -37,7 +37,9 @@ jobs:
       # release: the packages share a repository, not a release cadence.
       # The build runs first because the checks below resolve this package by
       # bare specifier through its `exports` map, which points at `dist/` --
-      # there is nothing to resolve until it has been built.
+      # there is nothing to resolve until it has been built. The codec is
+      # built first for the same reason: this package imports its draft tables.
+      - run: bun run --cwd packages/codec build
       - run: bun run --cwd packages/inspect build
       - run: ./node_modules/.bin/biome check packages/inspect
       - run: ./node_modules/.bin/tsc --build packages/inspect
