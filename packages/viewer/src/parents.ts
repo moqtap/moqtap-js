@@ -161,7 +161,44 @@ export interface TraceMessage {
    * is the point. Present only as `true`. See `canOfferLocalOpen`.
    */
   readonly local?: true
+  /**
+   * A newer copy of the trace on screen: the page keeps its place in it
+   * (`moqtrace-replace`). Present only as `true`.
+   */
+  readonly replace?: true
+  /** How long a request waits for its response before it is marked, in ms. */
+  readonly pendingMs?: number
+  /** Where to open: milliseconds from the session's start. */
+  readonly t?: number
+  /** Where to open: a message, as `segment:seq`. */
+  readonly msg?: string
 }
+
+/** The pending thresholds a project can set, in milliseconds. */
+export const PENDING_MS_RANGE = [500, 60_000] as const
+
+/** A message key: the segment and the sequence number within it. */
+const MESSAGE_KEY = /^\d{1,9}:\d{1,12}$/
+
+/**
+ * The optional fields a trace and a replacement share: the pending
+ * threshold and where to open. A value out of shape is dropped, not refused:
+ * the trace is still worth showing with the defaults.
+ */
+function viewFields(msg: Record<string, unknown>): Pick<TraceMessage, 'pendingMs' | 't' | 'msg'> {
+  const { pendingMs, t } = msg
+  const [low, high] = PENDING_MS_RANGE
+  return {
+    ...(typeof pendingMs === 'number' && pendingMs >= low && pendingMs <= high
+      ? { pendingMs }
+      : {}),
+    ...(typeof t === 'number' && Number.isFinite(t) && t >= 0 ? { t } : {}),
+    ...(typeof msg.msg === 'string' && MESSAGE_KEY.test(msg.msg) ? { msg: msg.msg } : {}),
+  }
+}
+
+/** The type a parent posts to swap the trace on screen for a newer copy of it. */
+export const REPLACE_MESSAGE = 'moqtrace-replace'
 
 /**
  * Read a trace out of an admitted message, or `null` if it carries none.
@@ -170,19 +207,26 @@ export interface TraceMessage {
  * `{ type: 'moqtrace', bytes, name }`, and released binaries have it compiled
  * in, so it is kept rather than redesigned. `shareable` and `local` are
  * optional, and only the site relay sets them.
+ *
+ * `{ type: 'moqtrace-replace', bytes, name }` is the portal's, for a session
+ * still being recorded: the same trace, longer. It carries neither mark.
  */
 export function asTraceMessage(data: unknown): TraceMessage | null {
   if (typeof data !== 'object' || data === null) return null
   const msg = data as Record<string, unknown>
-  if (msg.type !== 'moqtrace') return null
+  const replace = msg.type === REPLACE_MESSAGE
+  if (msg.type !== 'moqtrace' && !replace) return null
   const { bytes } = msg
   let view: Uint8Array
   if (bytes instanceof Uint8Array) view = bytes
   else if (bytes instanceof ArrayBuffer) view = new Uint8Array(bytes)
   else return null
+  const name = typeof msg.name === 'string' ? { name: msg.name } : {}
+  if (replace) return { bytes: view, ...name, ...viewFields(msg), replace: true }
   return {
     bytes: view,
-    ...(typeof msg.name === 'string' ? { name: msg.name } : {}),
+    ...name,
+    ...viewFields(msg),
     ...(msg.shareable === true ? { shareable: true as const } : {}),
     ...(msg.local === true ? { local: true as const } : {}),
   }
@@ -234,6 +278,30 @@ export function tellParent(gate: ParentGate, parent: PostTarget, state: FrameSta
   const origin = gate.origin
   if (origin === null) return false
   parent.postMessage({ type: 'moqtrace-view-state', state }, origin)
+  return true
+}
+
+/** The type of the message that tells the parent where the reader is. */
+export const SELECTION_MESSAGE = 'moqtrace-view-selection'
+
+/**
+ * Where the reader is: milliseconds from the session's start, and the
+ * selected message as `segment:seq`; either is `null` when nothing is chosen.
+ */
+export interface Selection {
+  readonly t: number | null
+  readonly msg: string | null
+}
+
+/**
+ * Tell the handshaken parent the reader moved, so it can put the place in
+ * its own URL. Like `tellParent`, it sends nothing before a handshake, and
+ * the message carries a time and a message key and nothing from the trace.
+ */
+export function tellSelection(gate: ParentGate, parent: PostTarget, selection: Selection): boolean {
+  const origin = gate.origin
+  if (origin === null) return false
+  parent.postMessage({ type: SELECTION_MESSAGE, t: selection.t, msg: selection.msg }, origin)
   return true
 }
 

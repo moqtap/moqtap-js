@@ -1,4 +1,6 @@
-/* moqtap — generated from tokens.json. Theme: <html data-theme="light|dark">, or no attribute to follow the system. */
+/* moqtap — generated from tokens.json by scripts/build-tokens.mjs. Do not edit by hand. */
+/* Theme: <html data-theme="light"> or "dark"; no attribute follows the system. */
+
 @font-face { font-family: "IBM Plex Sans"; src: url("fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
 @font-face { font-family: "IBM Plex Sans"; src: url("fonts/ibm-plex-sans-latin-400-italic.woff2") format("woff2"); font-weight: 400; font-style: italic; font-display: swap; }
 @font-face { font-family: "IBM Plex Sans"; src: url("fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
@@ -8,6 +10,7 @@
 @font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-style: normal; font-display: swap; }
 
 :root, [data-theme="light"] {
+  color-scheme: light;
   --bg: #f6f6f3;
   --surface: #ffffff;
   --surface-sunken: #efefeb;
@@ -42,16 +45,22 @@
   --dir-s2c-soft: #fbeadd;
   --team: #6a3aa8;
   --team-soft: #efe7fa;
-  --hex-offset: #7a7d83;
+  --hex-offset: #5f6268;
   --chart-1: #0d6b52;
   --chart-2: #1c58b8;
   --chart-3: #a1460a;
+  --chart-4: #6a3aa8;
+  --chart-5: #0b7189;
+  --chart-6: #a8285f;
+  --chart-7: #7a6400;
+  --chart-8: #5b5f66;
   --chart-grid: #e6e6e0;
   --scrim: #16181a8c;
   --shadow-pop: 0 1px 2px rgba(22,24,26,0.06), 0 6px 20px rgba(22,24,26,0.10);
   --shadow-dialog: 0 20px 48px rgba(22,24,26,0.18);
 }
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0d0f11;
   --surface: #15181b;
   --surface-sunken: #0a0c0e;
@@ -86,10 +95,15 @@
   --dir-s2c-soft: #3a1e0b;
   --team: #c3a6f5;
   --team-soft: #2a1d40;
-  --hex-offset: #7d858e;
+  --hex-offset: #8f979f;
   --chart-1: #3fd3a0;
   --chart-2: #86b6ff;
   --chart-3: #f5a462;
+  --chart-4: #c3a6f5;
+  --chart-5: #5cc8e2;
+  --chart-6: #f48bb6;
+  --chart-7: #d9c25a;
+  --chart-8: #9aa1a9;
   --chart-grid: #23282d;
   --scrim: #000000a6;
   --shadow-pop: 0 1px 2px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.55);
@@ -97,6 +111,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
+    color-scheme: dark;
     --bg: #0d0f11;
     --surface: #15181b;
     --surface-sunken: #0a0c0e;
@@ -131,16 +146,22 @@
     --dir-s2c-soft: #3a1e0b;
     --team: #c3a6f5;
     --team-soft: #2a1d40;
-    --hex-offset: #7d858e;
+    --hex-offset: #8f979f;
     --chart-1: #3fd3a0;
     --chart-2: #86b6ff;
     --chart-3: #f5a462;
+    --chart-4: #c3a6f5;
+    --chart-5: #5cc8e2;
+    --chart-6: #f48bb6;
+    --chart-7: #d9c25a;
+    --chart-8: #9aa1a9;
     --chart-grid: #23282d;
     --scrim: #000000a6;
     --shadow-pop: 0 1px 2px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.55);
     --shadow-dialog: 0 20px 48px rgba(0,0,0,0.7);
   }
 }
+
 :root {
   --space-0-5: 2px;
   --space-1: 4px;
@@ -176,4 +197,107 @@
   --z-toast: 80;
   --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --type-display-family: var(--font-sans);
+  --type-display-size: 56px;
+  --type-display-line: 60px;
+  --type-display-weight: 600;
+  --type-display-tracking: -0.02em;
+  --type-title-1-family: var(--font-sans);
+  --type-title-1-size: 36px;
+  --type-title-1-line: 44px;
+  --type-title-1-weight: 600;
+  --type-title-1-tracking: -0.015em;
+  --type-title-2-family: var(--font-sans);
+  --type-title-2-size: 24px;
+  --type-title-2-line: 32px;
+  --type-title-2-weight: 600;
+  --type-title-2-tracking: -0.01em;
+  --type-title-3-family: var(--font-sans);
+  --type-title-3-size: 19px;
+  --type-title-3-line: 28px;
+  --type-title-3-weight: 600;
+  --type-title-3-tracking: normal;
+  --type-lead-family: var(--font-sans);
+  --type-lead-size: 19px;
+  --type-lead-line: 30px;
+  --type-lead-weight: 400;
+  --type-lead-tracking: normal;
+  --type-prose-family: var(--font-sans);
+  --type-prose-size: 17px;
+  --type-prose-line: 28px;
+  --type-prose-weight: 400;
+  --type-prose-tracking: normal;
+  --type-page-title-family: var(--font-sans);
+  --type-page-title-size: 22px;
+  --type-page-title-line: 28px;
+  --type-page-title-weight: 600;
+  --type-page-title-tracking: -0.01em;
+  --type-heading-family: var(--font-sans);
+  --type-heading-size: 16px;
+  --type-heading-line: 24px;
+  --type-heading-weight: 600;
+  --type-heading-tracking: normal;
+  --type-body-family: var(--font-sans);
+  --type-body-size: 14px;
+  --type-body-line: 20px;
+  --type-body-weight: 400;
+  --type-body-tracking: normal;
+  --type-body-strong-family: var(--font-sans);
+  --type-body-strong-size: 14px;
+  --type-body-strong-line: 20px;
+  --type-body-strong-weight: 500;
+  --type-body-strong-tracking: normal;
+  --type-caption-family: var(--font-sans);
+  --type-caption-size: 12px;
+  --type-caption-line: 16px;
+  --type-caption-weight: 400;
+  --type-caption-tracking: normal;
+  --type-overline-family: var(--font-sans);
+  --type-overline-size: 11px;
+  --type-overline-line: 16px;
+  --type-overline-weight: 600;
+  --type-overline-tracking: 0.06em;
+  --type-code-family: var(--font-mono);
+  --type-code-size: 13px;
+  --type-code-line: 20px;
+  --type-code-weight: 400;
+  --type-code-tracking: normal;
+  --type-data-family: var(--font-mono);
+  --type-data-size: 12px;
+  --type-data-line: 18px;
+  --type-data-weight: 400;
+  --type-data-tracking: normal;
+  --type-data-strong-family: var(--font-mono);
+  --type-data-strong-size: 12px;
+  --type-data-strong-line: 18px;
+  --type-data-strong-weight: 500;
+  --type-data-strong-tracking: normal;
+  --type-data-xs-family: var(--font-mono);
+  --type-data-xs-size: 11px;
+  --type-data-xs-line: 16px;
+  --type-data-xs-weight: 400;
+  --type-data-xs-tracking: normal;
+  --type-tool-label-family: var(--font-sans);
+  --type-tool-label-size: 12px;
+  --type-tool-label-line: 16px;
+  --type-tool-label-weight: 500;
+  --type-tool-label-tracking: normal;
 }
+
+.mq-type-display { font-family: var(--type-display-family); font-size: var(--type-display-size); line-height: var(--type-display-line); font-weight: var(--type-display-weight); letter-spacing: var(--type-display-tracking); }
+.mq-type-title-1 { font-family: var(--type-title-1-family); font-size: var(--type-title-1-size); line-height: var(--type-title-1-line); font-weight: var(--type-title-1-weight); letter-spacing: var(--type-title-1-tracking); }
+.mq-type-title-2 { font-family: var(--type-title-2-family); font-size: var(--type-title-2-size); line-height: var(--type-title-2-line); font-weight: var(--type-title-2-weight); letter-spacing: var(--type-title-2-tracking); }
+.mq-type-title-3 { font-family: var(--type-title-3-family); font-size: var(--type-title-3-size); line-height: var(--type-title-3-line); font-weight: var(--type-title-3-weight); letter-spacing: var(--type-title-3-tracking); }
+.mq-type-lead { font-family: var(--type-lead-family); font-size: var(--type-lead-size); line-height: var(--type-lead-line); font-weight: var(--type-lead-weight); letter-spacing: var(--type-lead-tracking); }
+.mq-type-prose { font-family: var(--type-prose-family); font-size: var(--type-prose-size); line-height: var(--type-prose-line); font-weight: var(--type-prose-weight); letter-spacing: var(--type-prose-tracking); }
+.mq-type-page-title { font-family: var(--type-page-title-family); font-size: var(--type-page-title-size); line-height: var(--type-page-title-line); font-weight: var(--type-page-title-weight); letter-spacing: var(--type-page-title-tracking); }
+.mq-type-heading { font-family: var(--type-heading-family); font-size: var(--type-heading-size); line-height: var(--type-heading-line); font-weight: var(--type-heading-weight); letter-spacing: var(--type-heading-tracking); }
+.mq-type-body { font-family: var(--type-body-family); font-size: var(--type-body-size); line-height: var(--type-body-line); font-weight: var(--type-body-weight); letter-spacing: var(--type-body-tracking); }
+.mq-type-body-strong { font-family: var(--type-body-strong-family); font-size: var(--type-body-strong-size); line-height: var(--type-body-strong-line); font-weight: var(--type-body-strong-weight); letter-spacing: var(--type-body-strong-tracking); }
+.mq-type-caption { font-family: var(--type-caption-family); font-size: var(--type-caption-size); line-height: var(--type-caption-line); font-weight: var(--type-caption-weight); letter-spacing: var(--type-caption-tracking); }
+.mq-type-overline { font-family: var(--type-overline-family); font-size: var(--type-overline-size); line-height: var(--type-overline-line); font-weight: var(--type-overline-weight); letter-spacing: var(--type-overline-tracking); text-transform: uppercase; }
+.mq-type-code { font-family: var(--type-code-family); font-size: var(--type-code-size); line-height: var(--type-code-line); font-weight: var(--type-code-weight); letter-spacing: var(--type-code-tracking); }
+.mq-type-data { font-family: var(--type-data-family); font-size: var(--type-data-size); line-height: var(--type-data-line); font-weight: var(--type-data-weight); letter-spacing: var(--type-data-tracking); }
+.mq-type-data-strong { font-family: var(--type-data-strong-family); font-size: var(--type-data-strong-size); line-height: var(--type-data-strong-line); font-weight: var(--type-data-strong-weight); letter-spacing: var(--type-data-strong-tracking); }
+.mq-type-data-xs { font-family: var(--type-data-xs-family); font-size: var(--type-data-xs-size); line-height: var(--type-data-xs-line); font-weight: var(--type-data-xs-weight); letter-spacing: var(--type-data-xs-tracking); }
+.mq-type-tool-label { font-family: var(--type-tool-label-family); font-size: var(--type-tool-label-size); line-height: var(--type-tool-label-line); font-weight: var(--type-tool-label-weight); letter-spacing: var(--type-tool-label-tracking); }

@@ -22,7 +22,9 @@ import {
   type FrameState,
   ParentGate,
   READY,
+  type Selection,
   tellParent,
+  tellSelection,
   titlesTrace,
 } from './parents'
 import type { Theme } from './theme'
@@ -41,12 +43,22 @@ export interface IngestedTrace {
   readonly shareable?: boolean
   /** The parent read it from the person's machine itself. `parent` only. */
   readonly local?: boolean
+  /** A newer copy of the trace on screen, whose place is kept. `parent` only. */
+  readonly replace?: boolean
+  /** The parent's pending threshold, in ms. `parent` only. */
+  readonly pendingMs?: number
+  /** Where the parent asks the page to open: ms from the start, and a message key. */
+  readonly t?: number
+  readonly msg?: string
 }
 
 export interface IngestHandlers {
   onTrace(trace: IngestedTrace): void
-  /** Called for input that reached us and was refused, with a reason to show. */
-  onReject(reason: string): void
+  /**
+   * Called for input that reached us and was refused, with a reason to show.
+   * `replace` when it was meant to replace the trace on screen.
+   */
+  onReject(reason: string, replace?: boolean): void
   /** Called when the bound parent's theme changes. */
   onTheme?(theme: Theme): void
 }
@@ -92,6 +104,11 @@ export interface Ingest {
    * share what *it* holds, which is not what would be on screen. This is the
    * whole decision; the page only shows or hides the button on it.
    */
+  /**
+   * Tell the parent where the reader moved, while a trace it sent is on
+   * screen. Does nothing for a trace the person opened themselves.
+   */
+  reportSelection(trace: ShareCandidate | null, selection: Selection): void
   canShare(trace: ShareCandidate | null): boolean
   /** Ask the parent for its share dialog. Sends nothing unless `canShare`. */
   requestShare(trace: ShareCandidate | null): boolean
@@ -143,7 +160,8 @@ export function startIngest(handlers: IngestHandlers, host: IngestHost = window)
     if (msg === null) return
     if (!looksLikeTrace(msg.bytes)) {
       handlers.onReject(
-        `The page around this viewer sent ${msg.bytes.length} bytes that aren't a .moqtrace file.`,
+        `The page sent ${msg.bytes.length} bytes that aren't a .moqtrace file.`,
+        msg.replace === true,
       )
       tellParent(gate, host.parent, 'failed')
       return
@@ -155,6 +173,10 @@ export function startIngest(handlers: IngestHandlers, host: IngestHost = window)
       ...(msg.name === undefined ? {} : { name: msg.name }),
       ...(msg.shareable === true ? { shareable: true } : {}),
       ...(msg.local === true ? { local: true } : {}),
+      ...(msg.replace === true ? { replace: true } : {}),
+      ...(msg.pendingMs === undefined ? {} : { pendingMs: msg.pendingMs }),
+      ...(msg.t === undefined ? {} : { t: msg.t }),
+      ...(msg.msg === undefined ? {} : { msg: msg.msg }),
     })
   }
 
@@ -168,6 +190,10 @@ export function startIngest(handlers: IngestHandlers, host: IngestHost = window)
     report: (trace, state) => {
       if (trace.source !== 'parent') return
       tellParent(gate, host.parent, state)
+    },
+    reportSelection: (trace, selection) => {
+      if (trace?.source !== 'parent') return
+      tellSelection(gate, host.parent, selection)
     },
     canShare: (trace) => canOfferShare(gate, trace),
     requestShare: (trace) => {

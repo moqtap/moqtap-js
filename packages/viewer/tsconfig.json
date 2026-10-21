@@ -5,22 +5,24 @@
     "noEmit": true,
     "composite": true,
     "resolveJsonModule": true,
-    // `@moqtap/trace` by source, for the typecheck and for `bun build` alike,
-    // so neither needs a built `packages/trace/dist`. It is the same module the
+    // `@moqtap/trace` and `@moqtap/inspect` by source, for the typecheck and
+    // for `bun build` alike, so neither needs a built `dist`. It is the same module the
     // workspace link resolves to under Bun (`exports["."].bun`).
     "paths": {
-      "@moqtap/trace": ["../trace/src/index.ts"]
+      "@moqtap/trace": ["../trace/src/index.ts"],
+      "@moqtap/inspect": ["../inspect/src/index.ts"]
     }
   },
-  // The trace sources are listed because `paths` brings them into this
+  // These sources are listed because `paths` brings them into this
   // program, and a composite project must list every file it compiles.
-  "include": ["src", "src/data/*.json", "../trace/src"],
+  "include": ["src", "src/data/*.json", "../trace/src", "../inspect/src"],
   // The corpus test reads files off disk, and `@types/node` is not installed
   // for this package. Same exclusion, same reason, as `packages/trace`.
   "exclude": [
     "src/__tests__/corpus.test.ts",
     "src/__tests__/page.test.ts",
     "src/__tests__/locate.ts",
-    "../trace/src/__tests__"
+    "../trace/src/__tests__",
+    "../inspect/src/__tests__"
   ]
 }

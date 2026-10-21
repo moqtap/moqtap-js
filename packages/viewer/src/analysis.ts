@@ -11,21 +11,54 @@
  * how they lose an afternoon.
  */
 
-import type {
-  ControlMessageEvent,
-  ObjectHeaderEvent,
-  ObjectPayloadEvent,
-  StreamClosedEvent,
-  StreamOpenedEvent,
-  Trace,
-  TraceErrorEvent,
-  TraceEvent,
-  TraceHeader,
-  UnknownEvent,
+import {
+  type ControlEvent,
+  codeLabel,
+  displayBytes,
+  displayFields,
+  displayValue,
+  draftOfProtocol,
+  type InspectEvent,
+  messageAliases,
+  messageKind,
+  type Problem,
+  pairRequests,
+  problemDetail,
+  problemSeverity,
+  problems,
+  problemTitle,
+  requestIdOf,
+  setupImplementation,
+  setupVersionLabel,
+  type TrackFields,
+  TrackRegistry,
+  trackDisplayName,
+} from '@moqtap/inspect'
+import {
+  type AnnotationEvent,
+  type ControlMessageEvent,
+  controlMessageFields,
+  type ObjectHeaderEvent,
+  type ObjectPayloadEvent,
+  type PeerDisconnectedEvent,
+  type StreamClosedEvent,
+  type StreamOpenedEvent,
+  type Trace,
+  type TraceErrorEvent,
+  type TraceEvent,
+  type TraceHeader,
+  type UnknownEvent,
 } from '@moqtap/trace'
 
-import { byId, draftOf, idsNamed, type MessageDef, type MessageTables } from './drafts'
-import { draftLabel } from './format'
+import { byId, draftOf, type MessageDef, type MessageTables } from './drafts'
+import { draftLabel, hexId, offset, plainValue } from './format'
+import {
+  type Delivery,
+  type DeliveryStats,
+  delivery,
+  laneKey,
+  type PlacedAnnotation,
+} from './rollups'
 
 // --------------------------------------------------------------- results ---
 
@@ -47,6 +80,16 @@ export interface SessionSummary {
   readonly draft: number | null
   readonly perspective: string
   readonly detail: string
+  /** The WebTransport protocol the session negotiated (`moqt-16`), when the recorder noted it. */
+  readonly negotiatedProtocol?: string | undefined
+  /**
+   * How the draft is known, beyond the recorder declaring it: the negotiated
+   * protocol named it, or the version SERVER_SETUP selected did.
+   */
+  readonly draftFrom?: 'negotiated-protocol' | 'setup-version' | undefined
+  /** What the client and the relay call themselves in their setup messages. */
+  readonly clientImplementation?: string | undefined
+  readonly relayImplementation?: string | undefined
   readonly transport?: string | undefined
   readonly source?: string | undefined
   readonly endpoint?: string | undefined
@@ -86,8 +129,15 @@ export interface MessageRow {
   readonly timestamp: number
   /** Microseconds from the session's start: the first segment's start time. */
   readonly at: number
-  readonly direction: 0 | 1
-  readonly messageType: number
+  /** `0` sent by the recorder, `1` received; `null` where the file does not say. */
+  readonly direction: 0 | 1 | null
+  /** The wire ID; `null` on bytes that did not decode as any message. */
+  readonly messageType: number | null
+  /**
+   * Why the bytes on a control stream did not decode, for a row that holds
+   * bytes rather than a message. Such a row is never given a message name.
+   */
+  readonly undecodable?: string | undefined
   /**
    * The draft's name for this ID, or `null` when the draft does not name it.
    *
@@ -105,11 +155,17 @@ export interface MessageRow {
   readonly specPath: string | null
   readonly peer?: string | undefined
   readonly streamId?: string | undefined
+  /** The track the message is about, as `namespace / name`, once one is known. */
+  readonly track?: string | undefined
   /** Length of the message's encoded bytes, when the recorder kept them. */
   readonly size?: number | undefined
   /** The first `RAW_PREVIEW_BYTES` of those bytes. */
   readonly raw?: Uint8Array | undefined
-  /** Decoded fields, when the writer recorded a map. */
+  /**
+   * Decoded fields, when the writer recorded a map, made readable
+   * (`displayFields`): a value with a shown form and a recorded one is a
+   * `Displayed` record.
+   */
   readonly fields?: Readonly<Record<string, unknown>> | undefined
   /**
    * The message value rendered as text, for a writer that recorded something
@@ -117,6 +173,73 @@ export interface MessageRow {
    * survive a read rather than be replaced with an empty one.
    */
   readonly opaque?: string | undefined
+  /** The request id the message carries, in decimal. */
+  readonly requestId?: string | undefined
+  /** The same message's names in other drafts (ANNOUNCE for PUBLISH_NAMESPACE). */
+  readonly aliases?: readonly string[] | undefined
+  /** For a request: the response that answered it. */
+  readonly response?: Exchange | undefined
+  /** For a response: the request it answered. */
+  readonly answers?: Exchange | undefined
+  /** For a request: it went past the pending threshold without a response. */
+  readonly pending?: { readonly waitedUs: number; readonly answered: boolean } | undefined
+  /** For an error response: its code and the code's name in this draft. */
+  readonly error?: ErrorInfo | undefined
+  /**
+   * The index of the request whose exchange this message belongs to: the
+   * request itself, its response, and what followed under the same request.
+   */
+  readonly thread?: number | undefined
+}
+
+/** The other half of a request and its response. */
+export interface Exchange {
+  /** Index into `TraceAnalysis.messages`. */
+  readonly index: number
+  readonly name: string
+  readonly requestId?: string | undefined
+  /** Microseconds from request to response, when both carry a time. */
+  readonly rttUs: number | null
+}
+
+export interface ErrorInfo {
+  /** The code in decimal; `null` when the message carried none. */
+  readonly code: string | null
+  /** The code's name in the session's draft; `null` when that draft has none. */
+  readonly codeName: string | null
+  /** The code as shown: `TRACK_DOES_NOT_EXIST (0x4)`, `0x4, unknown for draft-14`. */
+  readonly label: string
+  readonly reason: string
+}
+
+/** Something wrong in the control messages, in time order. */
+export interface ProblemRow {
+  readonly kind: Problem<unknown>['kind']
+  /** Microseconds from the session's start, when known. */
+  readonly at: number | null
+  /** The message it is about, as an index into `TraceAnalysis.messages`. */
+  readonly index: number | null
+  readonly title: string
+  /** The request an error answers, or a pending request's track. */
+  readonly detail: string | null
+  readonly connection?: string | undefined
+}
+
+/** One connection in a trace that tags its events with one (`p`). */
+export interface ConnectionRow {
+  readonly id: string
+  /** `Connection 1`, in the order they first appear. */
+  readonly label: string
+  readonly realm?: string | undefined
+  readonly origin?: string | undefined
+  readonly roles?: readonly string[] | undefined
+  readonly protocol?: string | undefined
+  readonly openedAt?: number | undefined
+  readonly closedAt?: number | undefined
+  /** How it closed: `closed`, `failed`, `worker-gone` or `session-end`. */
+  readonly cause?: string | undefined
+  readonly code?: number | undefined
+  readonly reason?: string | undefined
 }
 
 /** One object seen on a stream, from its header, its payload, or both. */
@@ -142,6 +265,8 @@ export interface StreamRow {
   /** `0` subgroup, `1` datagram, `2` fetch; absent when no open was recorded. */
   readonly streamType?: 0 | 1 | 2 | undefined
   readonly trackAlias?: string | undefined
+  /** The track the stream carries, as `namespace / name`, when the control plane named it. */
+  readonly track?: string | undefined
   readonly groupId?: string | undefined
   readonly subgroupId?: string | undefined
   readonly fetchRequestId?: string | undefined
@@ -156,12 +281,55 @@ export interface StreamRow {
   readonly objectRows: readonly ObjectRow[]
 }
 
+/**
+ * One track: as the control messages named it, keyed by namespace and name,
+ * with what the rollups say about its delivery. A track the rollups report
+ * and no recorded request named has no request fields.
+ */
+export interface TrackRow {
+  /** Unique in the trace: the connection and the request, or the rollup lane. */
+  readonly key: string
+  /** `namespace / name`; empty when the request named neither. */
+  readonly name: string
+  readonly namespace: readonly string[]
+  readonly trackName: string
+  readonly alias?: string | undefined
+  readonly connection?: string | undefined
+  readonly requestId?: string | undefined
+  readonly via?: TrackFields['via'] | undefined
+  readonly status?: TrackFields['status'] | undefined
+  /** Objects the recorder received on it. */
+  readonly received?: DeliveryStats | undefined
+  /** Objects the recorder sent on it. */
+  readonly sent?: DeliveryStats | undefined
+  /** The timeline lane of each direction, keyed as `Lane.key`. */
+  readonly lanes: readonly string[]
+  readonly errorReason?: string | undefined
+  /** Microseconds from the session's start. */
+  readonly requestedAt?: number | undefined
+  /** When the request was accepted or refused. */
+  readonly answeredAt?: number | undefined
+  readonly endedAt?: number | undefined
+}
+
 export interface TraceAnalysis {
   readonly summary: SessionSummary
   readonly findings: readonly Finding[]
   readonly messages: readonly MessageRow[]
+  readonly tracks: readonly TrackRow[]
   readonly streams: readonly StreamRow[]
+  readonly problems: readonly ProblemRow[]
+  /** Empty for a trace that does not tell its connections apart. */
+  readonly connections: readonly ConnectionRow[]
+  readonly delivery: Delivery
+  /** Microseconds from the session's start to its last event. */
+  readonly endUs: number
+  /** How long a request waits for its response before it is marked. */
+  readonly pendingMs: number
 }
+
+/** A request with no response this long after it was sent is marked, unless the parent says otherwise. */
+export const DEFAULT_PENDING_MS = 5000
 
 /**
  * How much of each byte string crosses from the worker to the page.
@@ -176,73 +344,11 @@ export const OBJECT_ROWS_PER_STREAM = 500
 
 // ----------------------------------------------------------- CBOR helpers ---
 
-/**
- * The decoded fields of a control message, or `undefined` when the recorded
- * message is not a map.
- *
- * `typeof x === 'object'` also admits `null`, an array and a byte string, and
- * every one of those would then be read for keys that come back `undefined`,
- * silently, and precisely on the traces where the writer recorded something
- * unusual, which are the traces someone is most likely to be looking at.
- */
-function fieldsOf(message: unknown): Record<string, unknown> | undefined {
-  if (message === null || typeof message !== 'object') return undefined
-  if (Array.isArray(message) || ArrayBuffer.isView(message)) return undefined
-  return message as Record<string, unknown>
-}
-
-const HEX_PREVIEW_BYTES = 32
-
-/**
- * Convert a decoded CBOR value into something that survives `postMessage` and
- * renders as text.
- *
- * Byte strings are previewed rather than carried whole: a control message's
- * fields can hold a whole object payload, and the message log is not where
- * anyone reads one.
- */
-function display(value: unknown, depth = 0): unknown {
-  if (typeof value === 'bigint') return value.toString()
-  if (value instanceof Uint8Array) {
-    const head = Array.from(value.subarray(0, HEX_PREVIEW_BYTES))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
-    const suffix = value.length > HEX_PREVIEW_BYTES ? '…' : ''
-    return `0x${head}${suffix} (${value.length} bytes)`
-  }
-  if (depth >= 4) return '…'
-  if (Array.isArray(value)) return value.map((v) => display(v, depth + 1))
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, display(v, depth + 1)]),
-    )
-  }
-  return value
-}
-
 /** Render any recorded message value the format allows as one line of text. */
 function opaqueText(message: unknown): string {
   if (typeof message === 'string') return message
-  const shown = display(message)
-  return typeof shown === 'string' ? shown : JSON.stringify(shown)
-}
-
-/**
- * A request id read out of a decoded control message.
- *
- * Two spellings because the field was renamed across the drafts this reads,
- * and the value may arrive as a CBOR integer or a bignum depending on its
- * size, so it is normalised to a string, which compares correctly for both
- * and for the pairing this feeds.
- */
-function requestIdOf(fields: Readonly<Record<string, unknown>> | undefined): string | undefined {
-  if (fields === undefined) return undefined
-  const raw = fields.request_id ?? fields.subscribe_id
-  if (typeof raw === 'bigint' || typeof raw === 'number') return raw.toString()
-  // `display` has already turned a bignum into its decimal string by the time
-  // a row is built, so the string form is the common case here, not a fallback.
-  if (typeof raw === 'string' && /^\d+$/.test(raw)) return raw
-  return undefined
+  if (message instanceof Uint8Array) return displayBytes(message).text
+  return JSON.stringify(plainValue(displayValue(message)))
 }
 
 /**
@@ -290,9 +396,6 @@ function ordered(segments: readonly Trace[]): Placed[] {
 const KNOWN_PERSPECTIVES = new Set(['client', 'server', 'observer', 'relay-tap'])
 const KNOWN_DETAIL = new Set(['control', 'headers', 'headers+sizes', 'headers+data', 'full'])
 
-/** Message names that answer a SUBSCRIBE, across every draft that defines one. */
-const SUBSCRIBE_RESPONSES = ['SUBSCRIBE_OK', 'SUBSCRIBE_ERROR', 'REQUEST_OK', 'REQUEST_ERROR']
-
 /**
  * The draft that gave each request its own control stream.
  *
@@ -313,6 +416,7 @@ interface CheckInput {
   readonly defs: readonly MessageDef[]
   readonly draft: number | null
   readonly truncatedAt?: number | undefined
+  readonly problems: readonly ProblemRow[]
 }
 
 function check(input: CheckInput): Finding[] {
@@ -340,20 +444,10 @@ function check(input: CheckInput): Finding[] {
   }
 
   if (!KNOWN_PERSPECTIVES.has(header.perspective)) {
-    add(
-      'unknown-perspective',
-      'note',
-      `Perspective "${header.perspective}"`,
-      'Not one of the perspectives this page knows, and shown as recorded. The vocabulary is open, so this is a trace from a newer or private recorder rather than a broken one.',
-    )
+    add('unknown-perspective', 'note', `Unknown perspective "${header.perspective}"`, '')
   }
   if (!KNOWN_DETAIL.has(header.detail)) {
-    add(
-      'unknown-detail',
-      'note',
-      `Detail level "${header.detail}"`,
-      'Not one of the levels this page knows, so which events to expect cannot be inferred from it. Shown as recorded.',
-    )
+    add('unknown-detail', 'note', `Unknown detail level "${header.detail}"`, '')
   }
 
   if (draft === null) {
@@ -397,8 +491,8 @@ function check(input: CheckInput): Finding[] {
     add(
       'unknown-events',
       'note',
-      `${unknownTypes.length} event type${unknownTypes.length === 1 ? '' : 's'} this page cannot name`,
-      `${unknownTypes.map(([type, n]) => `type ${type} (${n})`).join(', ')}. Their fields are kept as recorded. New event types may be added without a format version bump, so this is expected on a trace from a newer recorder.`,
+      `${unknownTypes.length} unknown event type${unknownTypes.length === 1 ? '' : 's'}`,
+      unknownTypes.map(([type, n]) => `type ${type} (${n})`).join(', '),
     )
   }
 
@@ -409,7 +503,7 @@ function check(input: CheckInput): Finding[] {
       'errors',
       'error',
       `${errors.length} error event${errors.length === 1 ? '' : 's'}`,
-      reasons.length > 0 ? reasons.slice(0, 3).join(' · ') : 'No reason string was recorded.',
+      reasons.slice(0, 3).join(' · '),
     )
   }
 
@@ -427,16 +521,16 @@ function check(input: CheckInput): Finding[] {
     )
   }
 
-  const goawayIds = idsNamed(defs, ['GOAWAY'])
-  const goaways = messages.filter((m) => goawayIds.has(m.messageType))
+  const goaways = input.problems.filter((p) => p.kind === 'goaway')
   if (goaways.length > 0) {
-    add(
-      'goaway',
-      'warning',
-      `GOAWAY sent ${goaways.length === 1 ? 'once' : `${goaways.length} times`}`,
-      'One side asked the other to migrate away. Subscriptions ending after this point ended because of it, not because they failed.',
-    )
+    const at = (p: ProblemRow) => (p.at === null ? null : `at ${offset(p.at)}`)
+    const [first, ...more] = goaways
+    const detail = [at(first!), ...more.map((p) => [p.title, at(p)].filter(Boolean).join(' '))]
+    add('goaway', 'warning', first!.title, detail.filter(Boolean).join(' · '))
   }
+
+  found.push(...problemFindings(input.problems))
+  found.push(...unpairable(messages, draft))
 
   // Said once here rather than under each message it applies to. It is a fact
   // about the recorder, not about any one message, and repeating it down a log
@@ -451,8 +545,7 @@ function check(input: CheckInput): Finding[] {
     )
   }
 
-  found.push(...draftAgreementChecks(defs, messages, header.protocol, draft))
-  found.push(...subscriptionChecks(defs, messages))
+  found.push(...draftAgreementChecks(defs, messages, draft))
 
   if (messages.length > 0 && draft !== null && draft >= STREAM_PER_REQUEST_FROM) {
     const missing = messages.filter((m) => m.streamId === undefined).length
@@ -475,8 +568,8 @@ function check(input: CheckInput): Finding[] {
     add(
       'datagram-track-unknown',
       'warning',
-      `${unidentified.length} datagram group${unidentified.length === 1 ? '' : 's'} name no track`,
-      'Objects carry no track alias of their own, and a datagram group has no stream header to take one from. These groups cannot be attributed to a track from this file, and this page does not guess one.',
+      `${unidentified.length} datagram group${unidentified.length === 1 ? '' : 's'} with no track`,
+      '',
     )
   }
 
@@ -494,8 +587,8 @@ function check(input: CheckInput): Finding[] {
     add(
       'header-extra',
       'note',
-      `${Object.keys(headerExtra).length} header key${Object.keys(headerExtra).length === 1 ? '' : 's'} this page cannot name`,
-      `${Object.keys(headerExtra).join(', ')}. Kept as recorded.`,
+      `${Object.keys(headerExtra).length} unknown header key${Object.keys(headerExtra).length === 1 ? '' : 's'}`,
+      Object.keys(headerExtra).join(', '),
     )
   }
 
@@ -514,7 +607,6 @@ function check(input: CheckInput): Finding[] {
 function draftAgreementChecks(
   defs: readonly MessageDef[],
   messages: readonly MessageRow[],
-  protocol: string,
   draft: number | null,
 ): Finding[] {
   if (draft === null || messages.length === 0) return []
@@ -523,18 +615,30 @@ function draftAgreementChecks(
   const findings: Finding[] = []
 
   const undefinedIds = [
-    ...new Set(messages.filter((m) => m.name === null && !m.reserved).map((m) => m.messageType)),
+    ...new Set(
+      messages
+        .filter((m) => m.name === null && !m.reserved)
+        .map((m) => m.messageType)
+        .filter((id): id is number => id !== null),
+    ),
   ]
   if (undefinedIds.length > 0) {
     findings.push({
       id: 'message-id-undefined',
       severity: 'warning',
-      title: `${draftLabel(draft)} does not define ${undefinedIds.length === 1 ? 'this message ID' : 'these message IDs'}`,
-      detail: `${undefinedIds.map(hex).join(', ')}. The file declares "${protocol}", so either the session used a different draft than the recorder was told, or these are private code points. Names on this page come from ${draftLabel(draft)} and are only as right as that string.`,
+      title: `Not defined in ${draftLabel(draft)}: ${undefinedIds.map(hex).join(', ')}`,
+      detail: '',
     })
   }
 
-  const reservedIds = [...new Set(messages.filter((m) => m.reserved).map((m) => m.messageType))]
+  const reservedIds = [
+    ...new Set(
+      messages
+        .filter((m) => m.reserved)
+        .map((m) => m.messageType)
+        .filter((id): id is number => id !== null),
+    ),
+  ]
   if (reservedIds.length > 0) {
     const notes = reservedIds
       .map((id) => {
@@ -553,69 +657,59 @@ function draftAgreementChecks(
   return findings
 }
 
+/** Problems said on the overview, at most this many before the rest are counted. */
+const PROBLEM_FINDINGS = 20
+
 /**
- * Subscriptions that were asked for and never answered.
- *
- * The pairing runs on request ids read out of the decoded message, which not
- * every writer records: some write the message as an opaque rendering with no
- * addressable fields at all. Where that happens the answer is to say the check
- * could not run, never to report zero unanswered: a trace with no readable ids
- * and a trace where every subscription succeeded look identical otherwise, and
- * they are opposite findings.
+ * The control-message problems as findings. GOAWAY has its own finding, and
+ * undecodable bytes are counted with the other error events.
  */
-function subscriptionChecks(
-  defs: readonly MessageDef[],
-  messages: readonly MessageRow[],
-): Finding[] {
-  const subscribeIds = idsNamed(defs, ['SUBSCRIBE'])
-  if (subscribeIds.size === 0) return []
-
-  const subscribes = messages.filter((m) => subscribeIds.has(m.messageType))
-  if (subscribes.length === 0) return []
-
-  const answered = new Set<string>()
-  const responseIds = idsNamed(defs, SUBSCRIBE_RESPONSES)
-  for (const message of messages) {
-    if (!responseIds.has(message.messageType)) continue
-    const id = requestIdOf(message.fields)
-    if (id !== undefined) answered.add(id)
-  }
-
-  const unmatchable = subscribes.filter((m) => requestIdOf(m.fields) === undefined)
-  if (unmatchable.length === subscribes.length) {
-    return [
-      {
-        id: 'subscribe-unpairable',
-        severity: 'note',
-        title: 'Subscriptions cannot be paired with their responses',
-        detail: `No request id could be read from any of the ${subscribes.length} SUBSCRIBE message${subscribes.length === 1 ? '' : 's'}, so whether each was answered is not something this file can say.`,
-      },
-    ]
-  }
-
-  const unanswered = subscribes.filter((m) => {
-    const id = requestIdOf(m.fields)
-    return id !== undefined && !answered.has(id)
-  })
-
-  const findings: Finding[] = []
-  if (unanswered.length > 0) {
+function problemFindings(rows: readonly ProblemRow[]): Finding[] {
+  const listed = rows.filter((p) => p.kind !== 'goaway' && p.kind !== 'undecodable')
+  const findings: Finding[] = listed.slice(0, PROBLEM_FINDINGS).map((p) => ({
+    id: p.kind === 'error' ? 'error-response' : p.kind === 'pending' ? 'request-pending' : p.kind,
+    severity: problemSeverity(p.kind),
+    title: p.title,
+    detail: [p.detail, p.at === null ? null : `At ${offset(p.at)}`]
+      .filter((part): part is string => part !== null)
+      .join(' · '),
+  }))
+  const more = listed.length - PROBLEM_FINDINGS
+  if (more > 0) {
     findings.push({
-      id: 'subscribe-unanswered',
-      severity: 'warning',
-      title: `${unanswered.length} SUBSCRIBE never answered`,
-      detail: `Request id${unanswered.length === 1 ? '' : 's'} ${unanswered.map((m) => requestIdOf(m.fields)).join(', ')}. Either the response is outside the recorded window, or it never came.`,
-    })
-  }
-  if (unmatchable.length > 0) {
-    findings.push({
-      id: 'subscribe-partly-unpairable',
+      id: 'more-problems',
       severity: 'note',
-      title: `${unmatchable.length} SUBSCRIBE carries no readable request id`,
-      detail: 'Those are excluded from the count above rather than assumed answered.',
+      title: `${more} more problem${more === 1 ? '' : 's'}`,
+      detail: '',
     })
   }
   return findings
+}
+
+/**
+ * Requests that went unanswered and carry nothing a response could be matched
+ * by. Before draft-17 a response names its request in its fields, so a request
+ * recorded without any is not one this trace can pair, and is said to be so
+ * rather than left looking answered. From draft-17 the stream pairs them, and
+ * `no-control-stream-id` covers a recording without one.
+ */
+function unpairable(messages: readonly MessageRow[], draft: number | null): Finding[] {
+  if (draft !== null && draft >= STREAM_PER_REQUEST_FROM) return []
+  const bare = messages.filter(
+    (m, i) =>
+      m.thread === i &&
+      m.response === undefined &&
+      (m.fields === undefined || Object.keys(m.fields).length === 0),
+  )
+  if (bare.length === 0) return []
+  return [
+    {
+      id: 'requests-unpairable',
+      severity: 'note',
+      title: `${bare.length} request${bare.length === 1 ? '' : 's'} with no fields to match a response by`,
+      detail: [...new Set(bare.map((m) => m.name ?? hexId(m.messageType ?? 0)))].join(', '),
+    },
+  ]
 }
 
 // -------------------------------------------------------------- analysis ---
@@ -626,10 +720,19 @@ export interface AnalyzeInput {
   readonly tables: MessageTables
   /** Byte offset the file was cut at, when the read ended early. */
   readonly truncatedAt?: number
+  /** How long a request waits for its response before it is marked; 5 s when not given. */
+  readonly pendingMs?: number
+}
+
+/** One connection's tracks, kept apart because aliases and request ids are per connection. */
+interface ConnectionTracks {
+  readonly tracks: Map<string, TrackFields>
+  readonly registry: TrackRegistry<TrackFields>
 }
 
 export function analyze(input: AnalyzeInput): TraceAnalysis {
   const { segments, formatVersion, tables, truncatedAt } = input
+  const pendingMs = input.pendingMs ?? DEFAULT_PENDING_MS
   const header = segments[0]!.header
   const events = ordered(segments)
 
@@ -637,14 +740,426 @@ export function analyze(input: AnalyzeInput): TraceAnalysis {
   const defs: readonly MessageDef[] = draft === null ? [] : (tables[draft] ?? [])
   const names = byId(defs)
 
-  const summary = summarize(header, segments, events, formatVersion, draft)
   const since = sessionClock(header, segments)
-  const messages = events
-    .filter((p): p is { segment: number; event: ControlMessageEvent } => p.event.type === 'control')
-    .map(({ segment, event }) => row(segment, event, names, since))
+  const byConnection = new Map<string, ConnectionTracks>()
+  const tracksOn = (peer: string | undefined): ConnectionTracks => {
+    const key = peer ?? ''
+    let found = byConnection.get(key)
+    if (found === undefined) {
+      const tracks = new Map<string, TrackFields>()
+      found = { tracks, registry: new TrackRegistry(tracks, (fields) => fields) }
+      byConnection.set(key, found)
+    }
+    return found
+  }
 
-  const findings = check({ header, events, messages, summary, defs, draft, truncatedAt })
-  return { summary, findings, messages, streams: streamRows(events, since) }
+  const dataStreams = dataStreamIds(events)
+  const setup: SetupFacts = {}
+  const rows: MessageRow[] = []
+  let endUs = 0
+  for (const { segment, event } of events) {
+    endUs = Math.max(endUs, since(segment, event.timestamp))
+    if (event.type === 'control') {
+      rows.push(
+        row(segment, event as ControlMessageEvent, {
+          names,
+          since,
+          registry: tracksOn(event.peer).registry,
+          setup,
+          perspective: header.perspective,
+          draft,
+        }),
+      )
+    } else if (event.type === 'error') {
+      const error = event as TraceErrorEvent
+      // A decode failure on a data stream is a broken object, not a control
+      // message; only the ones on a control stream sit in the message log.
+      const onData = error.streamId !== undefined && dataStreams.has(error.streamId.toString())
+      if (error.errorKind === 'decode' && !onData) rows.push(undecodableRow(segment, error, since))
+    }
+  }
+  const { messages, problems: problemRows } = link(rows, {
+    draft,
+    pendingMs,
+    endUs,
+    perspective: header.perspective,
+  })
+
+  const summary = {
+    ...summarize(header, segments, events, formatVersion, draft),
+    ...sessionFacts(events, setup, draft),
+  }
+  const streams = streamRows(events, since).map((stream) => {
+    const { tracks, registry } = tracksOn(stream.peer)
+    const track =
+      stream.fetchRequestId !== undefined
+        ? tracks.get(stream.fetchRequestId)
+        : stream.trackAlias !== undefined
+          ? registry.byAlias(stream.trackAlias)
+          : undefined
+    const name = track === undefined ? '' : trackDisplayName(track)
+    return name.length === 0 ? stream : { ...stream, track: name }
+  })
+
+  const annotations: PlacedAnnotation[] = events
+    .filter((p) => p.event.type === 'annotation')
+    .map(({ segment, event }) => ({
+      segment,
+      at: since(segment, event.timestamp),
+      event: event as AnnotationEvent,
+    }))
+  const delivered = delivery(annotations, (event) => event.peer ?? '')
+  const findings = check({
+    header,
+    events,
+    messages,
+    summary,
+    defs,
+    draft,
+    truncatedAt,
+    problems: problemRows,
+  })
+  return {
+    summary,
+    findings,
+    messages,
+    tracks: trackRows(byConnection, delivered),
+    streams,
+    problems: problemRows,
+    connections: connectionRows(events, since),
+    delivery: delivered,
+    endUs,
+    pendingMs,
+  }
+}
+
+/** Streams that carried objects, whose errors are about objects rather than control messages. */
+function dataStreamIds(events: readonly Placed[]): Set<string> {
+  const ids = new Set<string>()
+  for (const { event } of events) {
+    if (
+      event.type === 'stream-opened' ||
+      event.type === 'stream-closed' ||
+      event.type === 'object-header' ||
+      event.type === 'object-payload'
+    ) {
+      ids.add((event as unknown as { streamId: bigint }).streamId.toString())
+    }
+  }
+  return ids
+}
+
+function undecodableRow(segment: number, event: TraceErrorEvent, since: Clock): MessageRow {
+  const raw = loose(event, 'raw')
+  const bytes = raw instanceof Uint8Array ? raw : undefined
+  const length = loose(event, 'rawLength')
+  return {
+    segment,
+    seq: event.seq,
+    timestamp: event.timestamp,
+    at: since(segment, event.timestamp),
+    // The format records no direction for an error, and none is guessed.
+    direction: null,
+    messageType: null,
+    undecodable: event.reason,
+    name: null,
+    reserved: false,
+    note: null,
+    section: null,
+    specPath: null,
+    peer: event.peer,
+    streamId: event.streamId?.toString(),
+    size: typeof length === 'number' ? length : bytes?.length,
+    raw: preview(bytes, RAW_PREVIEW_BYTES),
+  }
+}
+
+interface LinkContext {
+  readonly draft: number | null
+  readonly pendingMs: number
+  readonly endUs: number
+  readonly perspective: string
+}
+
+type RowLinks = {
+  -readonly [K in 'response' | 'answers' | 'pending' | 'error' | 'thread']?: MessageRow[K]
+}
+
+/** Messages that name a limit rather than a request, though they carry a request id field. */
+const LIMIT_MESSAGES = new Set(['MAX_REQUEST_ID', 'MAX_SUBSCRIBE_ID'])
+
+/**
+ * Requests joined to their responses, and the problems the messages show,
+ * from `@moqtap/inspect`. Each row learns the other half of its exchange, its
+ * error code's name, whether it went unanswered past the threshold, and which
+ * request's exchange it belongs to.
+ */
+function link(
+  rows: readonly MessageRow[],
+  ctx: LinkContext,
+): { messages: MessageRow[]; problems: ProblemRow[] } {
+  const inspected: InspectEvent[] = rows.map((r): InspectEvent => {
+    const common = {
+      direction: r.direction ?? undefined,
+      streamId: r.streamId,
+      atMs: r.at / 1000,
+      connection: r.peer,
+    }
+    return r.undecodable !== undefined
+      ? { kind: 'undecodable', reason: r.undecodable, ...common }
+      : ({ name: r.name, fields: r.fields, ...common } satisfies ControlEvent)
+  })
+  const indexOf = new Map(inspected.map((event, i) => [event, i]))
+  const links: RowLinks[] = rows.map(() => ({}))
+  const exchange = (i: number, rttMs: number | null): Exchange => ({
+    index: i,
+    name: rows[i]!.name ?? hexId(rows[i]!.messageType ?? 0),
+    ...(rows[i]!.requestId === undefined ? {} : { requestId: rows[i]!.requestId }),
+    rttUs: rttMs === null ? null : Math.round(rttMs * 1000),
+  })
+
+  const threads = new Map<string, number>()
+  const draft17 = ctx.draft !== null && ctx.draft >= STREAM_PER_REQUEST_FROM
+  for (const pair of pairRequests(inspected, { draft: ctx.draft })) {
+    const request = indexOf.get(pair.request)!
+    links[request]!.thread = request
+    const { requestId, peer, streamId } = rows[request]!
+    if (requestId !== undefined) threads.set(`${peer ?? ''}|id:${requestId}`, request)
+    if (draft17 && streamId !== undefined) threads.set(`${peer ?? ''}|s:${streamId}`, request)
+    if (pair.response === null) continue
+    const response = indexOf.get(pair.response)!
+    links[request]!.response = exchange(response, pair.rttMs)
+    links[response]!.answers = exchange(request, pair.rttMs)
+    links[response]!.thread = request
+  }
+  rows.forEach((r, i) => {
+    if (links[i]!.thread !== undefined || r.name === null || LIMIT_MESSAGES.has(r.name)) return
+    const conn = r.peer ?? ''
+    const byId = r.requestId === undefined ? undefined : threads.get(`${conn}|id:${r.requestId}`)
+    const byStream =
+      draft17 && r.streamId !== undefined ? threads.get(`${conn}|s:${r.streamId}`) : undefined
+    const thread = byId ?? byStream
+    if (thread !== undefined && thread < i) links[i]!.thread = thread
+  })
+
+  const wording = {
+    pendingMs: ctx.pendingMs,
+    draft: ctx.draft,
+    perspective: ctx.perspective,
+    trackOf: (event: InspectEvent) => {
+      const i = indexOf.get(event)
+      return i === undefined ? undefined : rows[i]!.track
+    },
+  }
+  const found: ProblemRow[] = []
+  for (const problem of problems(inspected, {
+    pendingMs: ctx.pendingMs,
+    draft: ctx.draft,
+    endMs: ctx.endUs / 1000,
+  })) {
+    const index = indexOf.get(problem.event) ?? null
+    const at = problem.atMs === null ? null : Math.round(problem.atMs * 1000)
+    const message = index === null ? undefined : rows[index]
+    if (index !== null && problem.kind === 'error') {
+      links[index]!.error = {
+        code: problem.code,
+        codeName: problem.codeName,
+        label: codeLabel(problem.code, problem.codeName, ctx.draft),
+        reason: problem.reason,
+      }
+    }
+    if (index !== null && problem.kind === 'pending') {
+      links[index]!.pending = {
+        waitedUs: Math.round(problem.waitedMs * 1000),
+        answered: problem.response !== null,
+      }
+    }
+    found.push({
+      kind: problem.kind,
+      at,
+      index,
+      title: problemTitle(problem, wording),
+      detail: problemDetail(problem, wording),
+      ...(message?.peer === undefined ? {} : { connection: message.peer }),
+    })
+  }
+
+  const messages = rows.map((r, i) => {
+    const own = links[i]!
+    return Object.keys(own).length === 0 ? r : { ...r, ...own }
+  })
+  return { messages, problems: found }
+}
+
+interface ConnectionBuilder {
+  id: string
+  label: string
+  realm?: string
+  origin?: string
+  roles?: string[]
+  protocol?: string
+  openedAt?: number
+  closedAt?: number
+  cause?: string
+  code?: number
+  reason?: string
+}
+
+/**
+ * The connections a trace tells apart by its events' `p`, in the order each
+ * first appears, with what the collector said about each one.
+ */
+function connectionRows(events: readonly Placed[], since: Clock): ConnectionRow[] {
+  const rows = new Map<string, ConnectionBuilder>()
+  for (const { segment, event } of events) {
+    if (event.peer === undefined) continue
+    let row = rows.get(event.peer)
+    if (row === undefined) {
+      row = { id: event.peer, label: `Connection ${rows.size + 1}` }
+      rows.set(event.peer, row)
+    }
+    const at = since(segment, event.timestamp)
+    if (event.type === 'peer-connected') row.openedAt ??= at
+    if (event.type === 'peer-disconnected') {
+      const closed = event as PeerDisconnectedEvent
+      row.closedAt ??= at
+      if (closed.errorCode !== 0) row.code ??= closed.errorCode
+      if (closed.reason !== undefined) row.reason ??= closed.reason
+    }
+    if (event.type !== 'annotation') continue
+    const { label, data } = event as AnnotationEvent
+    if (data === null || typeof data !== 'object') continue
+    const d = data as Record<string, unknown>
+    if (label === 'collector.conn-open') {
+      // Re-sent as the collector learns more; the later word wins.
+      if (typeof d.realm === 'string') row.realm = d.realm
+      if (typeof d.origin === 'string') row.origin = d.origin
+      if (typeof d.protocol === 'string') row.protocol = d.protocol
+      if (Array.isArray(d.roles)) row.roles = d.roles.filter((r) => typeof r === 'string')
+    } else if (label === 'collector.conn-close') {
+      if (typeof d.cause === 'string') row.cause = d.cause
+      if (typeof d.code === 'number') row.code = d.code
+      if (typeof d.reason === 'string') row.reason = d.reason
+      row.closedAt ??= at
+    }
+  }
+  return [...rows.values()]
+}
+
+/**
+ * Each connection's tracks with their delivery joined on, then any track the
+ * rollups report that no recorded request named.
+ */
+function trackRows(
+  byConnection: ReadonlyMap<string, ConnectionTracks>,
+  delivered: Delivery,
+): TrackRow[] {
+  const stats = new Map(delivered.lanes.map((lane) => [lane.key, lane.stats]))
+  const claimed = new Set<string>()
+  const rows: TrackRow[] = []
+  for (const [connection, { tracks, registry }] of byConnection) {
+    for (const track of tracks.values()) {
+      const kind = track.via === 'fetch' ? 'fetch' : 'alias'
+      const id = track.via === 'fetch' ? track.subscribeId : track.trackAlias
+      // An alias reused by a later request carries that request's objects.
+      const owns = id !== undefined && (kind === 'fetch' || registry.byAlias(id) === track)
+      const rx = owns ? laneKey(connection, 'rx', kind, id) : null
+      const tx = owns ? laneKey(connection, 'tx', kind, id) : null
+      const received = rx === null ? undefined : stats.get(rx)
+      const sent = tx === null ? undefined : stats.get(tx)
+      const lanes: string[] = []
+      if (received !== undefined && rx !== null) lanes.push(rx)
+      if (sent !== undefined && tx !== null) lanes.push(tx)
+      for (const lane of lanes) claimed.add(lane)
+      rows.push({
+        key: `${connection}|${track.subscribeId}`,
+        name: trackDisplayName(track),
+        namespace: track.trackNamespace,
+        trackName: track.trackName,
+        alias: track.trackAlias,
+        ...(connection === '' ? {} : { connection }),
+        requestId: track.subscribeId,
+        via: track.via,
+        status: track.status,
+        ...(received === undefined ? {} : { received }),
+        ...(sent === undefined ? {} : { sent }),
+        lanes,
+        errorReason: track.errorReason,
+        requestedAt: track.subscribedAt,
+        answeredAt: track.subscribeOkAt ?? track.subscribeErrorAt,
+        endedAt: track.subscribeDoneAt,
+      })
+    }
+  }
+  for (const lane of delivered.lanes) {
+    if (claimed.has(lane.key)) continue
+    const { stats: s } = lane
+    rows.push({
+      key: lane.key,
+      name: '',
+      namespace: [],
+      trackName: '',
+      ...(s.kind === 'alias' ? { alias: s.id } : { requestId: s.id }),
+      ...(lane.connection === '' ? {} : { connection: lane.connection }),
+      ...(s.direction === 'rx' ? { received: s } : { sent: s }),
+      lanes: [lane.key],
+    })
+  }
+  return rows
+}
+
+/** What the setup messages said, gathered while the rows are built. */
+interface SetupFacts {
+  clientImplementation?: string
+  relayImplementation?: string
+  /** The draft SERVER_SETUP selected, as `draft-NN`. */
+  selectedVersion?: string
+}
+
+/**
+ * The annotation labels a collector notes its connection's negotiated
+ * protocol under: the session's setup, or a connection's opening.
+ */
+const PROTOCOL_ANNOTATIONS = new Set(['collector.setup', 'collector.conn-open'])
+
+function negotiatedProtocolOf(events: readonly Placed[]): string | undefined {
+  for (const { event } of events) {
+    if (event.type !== 'annotation') continue
+    const { label, data } = event as AnnotationEvent
+    if (!PROTOCOL_ANNOTATIONS.has(label) || data === null || typeof data !== 'object') continue
+    const protocol = (data as Record<string, unknown>).protocol
+    if (typeof protocol === 'string' && protocol.length > 0) return protocol
+  }
+  return undefined
+}
+
+function sessionFacts(
+  events: readonly Placed[],
+  setup: SetupFacts,
+  draft: number | null,
+): Pick<
+  SessionSummary,
+  'negotiatedProtocol' | 'draftFrom' | 'clientImplementation' | 'relayImplementation'
+> {
+  const negotiatedProtocol = negotiatedProtocolOf(events)
+  const draftFrom =
+    draft === null
+      ? undefined
+      : negotiatedProtocol !== undefined && draftOfProtocol(negotiatedProtocol) === draft
+        ? 'negotiated-protocol'
+        : setup.selectedVersion === draftLabel(draft)
+          ? 'setup-version'
+          : undefined
+  return {
+    ...(negotiatedProtocol === undefined ? {} : { negotiatedProtocol }),
+    ...(draftFrom === undefined ? {} : { draftFrom }),
+    ...(setup.clientImplementation === undefined
+      ? {}
+      : { clientImplementation: setup.clientImplementation }),
+    ...(setup.relayImplementation === undefined
+      ? {}
+      : { relayImplementation: setup.relayImplementation }),
+  }
 }
 
 type Clock = (segment: number, timestamp: number) => number
@@ -868,35 +1383,82 @@ function summarize(
   }
 }
 
-function row(
-  segment: number,
-  event: ControlMessageEvent,
-  names: ReadonlyMap<number, MessageDef>,
-  since: Clock,
-): MessageRow {
-  const def = names.get(event.messageType)
-  const fields = fieldsOf(event.message)
+interface RowContext {
+  readonly names: ReadonlyMap<number, MessageDef>
+  readonly since: Clock
+  readonly registry: TrackRegistry<TrackFields>
+  readonly setup: SetupFacts
+  readonly perspective: string
+  readonly draft: number | null
+}
+
+function row(segment: number, event: ControlMessageEvent, ctx: RowContext): MessageRow {
+  const def = ctx.names.get(event.messageType)
+  const fields = controlMessageFields(event.message)
   const named = def !== undefined && !def.reserved
+  const name = named ? def.name : null
+  const at = ctx.since(segment, event.timestamp)
+  const kind = fields === undefined ? null : messageKind(name, fields)
+
+  let track: string | undefined
+  if (fields !== undefined && kind !== null) {
+    const touched = ctx.registry.apply(kind, fields, {
+      direction: event.direction === 0 ? 'tx' : 'rx',
+      streamId: event.streamId,
+      timestamp: at,
+    })
+    const shown = touched === null ? '' : trackDisplayName(touched)
+    if (shown.length > 0) track = shown
+    noteSetup(ctx, kind, fields, event.direction)
+  }
+
+  const shown = fields === undefined ? undefined : displayFields(name, fields)
+  const requestId = requestIdOf(name, shown) ?? undefined
+  const aliases = name === null ? [] : messageAliases(name, ctx.draft)
   return {
     segment,
     seq: event.seq,
     timestamp: event.timestamp,
-    at: since(segment, event.timestamp),
+    at,
     direction: event.direction,
     messageType: event.messageType,
-    name: named ? def.name : null,
+    name,
     reserved: def?.reserved ?? false,
     note: def?.note ?? null,
     section: named ? def.section : null,
     specPath: def?.specPath ?? null,
     peer: event.peer,
     streamId: event.streamId?.toString(),
+    track,
     size: event.raw?.length,
     raw: preview(event.raw, RAW_PREVIEW_BYTES),
-    fields: fields === undefined ? undefined : (display(fields) as Record<string, unknown>),
+    fields: shown,
     opaque:
       fields === undefined && event.message !== undefined && event.message !== null
         ? opaqueText(event.message)
         : undefined,
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(aliases.length === 0 ? {} : { aliases }),
   }
+}
+
+/** Keep what a setup message says about the two ends: the first word of each wins. */
+function noteSetup(
+  ctx: RowContext,
+  kind: string,
+  fields: Record<string, unknown>,
+  direction: 0 | 1,
+) {
+  // Which end sent a unified SETUP follows from which end recorded it.
+  const sentByClient =
+    ctx.perspective === 'client'
+      ? direction === 0
+      : ctx.perspective === 'server'
+        ? direction === 1
+        : undefined
+  const named = setupImplementation(kind, fields, sentByClient)
+  if (named?.side === 'client') ctx.setup.clientImplementation ??= named.implementation
+  if (named?.side === 'server') ctx.setup.relayImplementation ??= named.implementation
+  const selected = kind === 'server_setup' ? setupVersionLabel(fields.selected_version) : null
+  if (selected !== null) ctx.setup.selectedVersion ??= selected
 }

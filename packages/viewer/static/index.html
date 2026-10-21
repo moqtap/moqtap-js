@@ -55,6 +55,11 @@
 
       <main id="surface" class="vw-surface">
         <div id="tabs" class="mq-tabs vw-tabs" role="tablist" aria-label="Views" hidden></div>
+        <!-- Shown only for a trace with more than one connection. -->
+        <div id="connection-bar" class="vw-connbar" hidden>
+          <label class="mq-label" for="connection">Connection</label>
+          <select id="connection" class="mq-select vw-conn"></select>
+        </div>
 
         <div id="empty" class="vw-empty">
           <div id="drop" class="mq-drop vw-drop">
@@ -64,7 +69,7 @@
               Drop a <code>.moqtrace</code> file anywhere on this page, or choose one. It is
               decoded in this browser and never uploaded.
             </p>
-            <button id="choose" class="mq-btn mq-btn--primary" type="button">Choose a file</button>
+            <button id="choose" class="mq-btn mq-btn--secondary" type="button">Choose a file</button>
             <input id="empty-file-input" type="file" accept=".moqtrace" tabindex="-1" hidden />
           </div>
           <div id="error" class="mq-notice mq-notice--error vw-error" role="alert" hidden>

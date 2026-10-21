@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { byId, draftOf, idsNamed, type MessageDef } from '../drafts'
-import { bytes, count, duration, heading, hexLines, middle, offset } from '../format'
+import { byId, draftOf, type MessageDef } from '../drafts'
+import {
+  asShown,
+  bytes,
+  citation,
+  count,
+  duration,
+  heading,
+  hexLines,
+  middle,
+  offset,
+  plainValue,
+  specHref,
+} from '../format'
 import { looksLikeTrace } from '../ingest'
 import { applyTheme, asTheme, themeFromQuery } from '../theme'
 
@@ -32,18 +44,8 @@ describe('draftOf', () => {
   })
 })
 
-describe('idsNamed', () => {
-  it('finds whichever spelling of a response this draft defines', () => {
-    const defs = [def(4, 'SUBSCRIBE_OK'), def(5, 'SUBSCRIBE_ERROR')]
-    expect([...idsNamed(defs, ['SUBSCRIBE_OK', 'REQUEST_OK'])]).toEqual([4])
-  })
-
-  it('never returns a reserved code point, whatever its placeholder name', () => {
-    const defs = [def(0x40, 'RESERVED', true), def(3, 'SUBSCRIBE')]
-    expect([...idsNamed(defs, ['RESERVED', 'SUBSCRIBE'])]).toEqual([3])
-  })
-
-  it('byId indexes by wire value', () => {
+describe('byId', () => {
+  it('indexes by wire value', () => {
     expect(byId([def(3, 'SUBSCRIBE')]).get(3)?.name).toBe('SUBSCRIBE')
   })
 })
@@ -99,11 +101,13 @@ describe('format', () => {
   })
 
   it('shortens long identifiers in the middle and leaves short ones whole', () => {
-    expect(middle('7f3a91c0d2e4b6a8e2b4c91e')).toBe('7f3a…c91e')
-    expect(middle('7f3a91c0e')).toBe('7f3a91c0e')
-    expect(middle('7f3a91c0e2')).toBe('7f3a…c0e2')
-    expect(middle('7f3a91c0d2e4b6a8e', 8)).toBe('7f3a91c0d2e4b6a8e')
-    expect(middle('abcdefghij', 4)).toBe('abcd…ghij')
+    expect(middle('7f3a91c0d2e4b6a8e2b4c91e')).toBe('7f3a91c0…e2b4c91e')
+    expect(middle('7f3a91c0d2e4b6a8e2b4')).toBe('7f3a91c0d2e4b6a8e2b4')
+    expect(middle('7f3a91c0d2e4b6a8e2b4c')).toBe('7f3a91c0…6a8e2b4c')
+    expect(middle('a'.repeat(45), 22)).toBe('a'.repeat(45))
+    expect(middle('abcdefghijklmnopqrstuvwxyz0123456789abcdefghijk', 22)).toBe(
+      'abcdefghijklmnopqrstuv…z0123456789abcdefghijk',
+    )
   })
 
   it('lays bytes out sixteen to a line with offsets and ASCII', () => {
@@ -119,15 +123,58 @@ describe('format', () => {
   })
 
   it('turns direction 0 (away from the recorder) into a side when the recorder says which end it was', () => {
-    expect(heading(0, 'client')).toEqual({ glyph: '→', side: 'c2s', label: 'client→server' })
-    expect(heading(1, 'client')).toEqual({ glyph: '←', side: 's2c', label: 'server→client' })
-    expect(heading(0, 'server')).toEqual({ glyph: '←', side: 's2c', label: 'server→client' })
-    expect(heading(1, 'server')).toEqual({ glyph: '→', side: 'c2s', label: 'client→server' })
+    const up = { glyph: '↑', side: 'c2s', label: 'Client → relay' }
+    const down = { glyph: '↓', side: 's2c', label: 'Relay → client' }
+    expect(heading(0, 'client')).toEqual(up)
+    expect(heading(1, 'client')).toEqual(down)
+    expect(heading(0, 'server')).toEqual(down)
+    expect(heading(1, 'server')).toEqual(up)
   })
 
   it('claims no side for a recorder that was neither end', () => {
-    expect(heading(0, 'observer').label).toBe('sent by the recorder')
-    expect(heading(1, 'relay-tap').label).toBe('received by the recorder')
+    expect(heading(0, 'observer').label).toBe('Sent')
+    expect(heading(1, 'relay-tap').label).toBe('Received')
+  })
+})
+
+describe('specHref', () => {
+  it('links a registry path on the site, with the trailing slash the site serves', () => {
+    expect(specHref('/spec/draft-14/subscribe_ok')).toBe(
+      'https://moqtap.com/spec/draft-14/subscribe_ok/',
+    )
+    expect(specHref('/spec/draft-14/subscribe_ok/')).toBe(
+      'https://moqtap.com/spec/draft-14/subscribe_ok/',
+    )
+  })
+
+  it('refuses anything that would leave the site', () => {
+    expect(specHref('//evil.example/x')).toBeNull()
+    expect(specHref('https://evil.example/x')).toBeNull()
+    expect(specHref('spec/draft-14')).toBeNull()
+  })
+})
+
+describe('plainValue', () => {
+  it('copies integers and text as shown, bytes and versions as recorded', () => {
+    expect(
+      plainValue({
+        id: { $shown: 'integer', text: '18446744073709551615', raw: '18446744073709551615' },
+        name: { $shown: 'text', text: 'now', raw: '0x6e6f77' },
+        blob: { $shown: 'bytes', text: '0x0001 (2 bytes)', raw: '0x0001' },
+        versions: [{ $shown: 'version', text: 'draft-14', raw: '0xff00000e' }],
+        n: 3,
+      }),
+    ).toEqual({
+      id: '18446744073709551615',
+      name: 'now',
+      blob: '0x0001',
+      versions: ['0xff00000e'],
+      n: 3,
+    })
+  })
+
+  it('reads a map with more keys as a map, not a shown value', () => {
+    expect(asShown({ $shown: 'text', text: 'a', raw: 'b', other: 1 })).toBeNull()
   })
 })
 
@@ -175,5 +222,17 @@ describe('the signature check', () => {
     expect(looksLikeTrace(enc.encode('MOQTRACE\0\0'))).toBe(true)
     expect(looksLikeTrace(enc.encode('MOQTRAC'))).toBe(false)
     expect(looksLikeTrace(enc.encode('moqtrace'))).toBe(false)
+  })
+})
+
+describe('citation', () => {
+  it('names the draft and the section, as text', () => {
+    expect(citation(14, '9.8')).toBe('draft-14 §9.8')
+    expect(citation(7, '6.2')).toBe('draft-07 §6.2')
+  })
+
+  it('is left out when the draft or the section is unknown', () => {
+    expect(citation(null, '9.8')).toBeNull()
+    expect(citation(14, null)).toBeNull()
   })
 })

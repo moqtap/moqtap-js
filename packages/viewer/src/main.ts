@@ -3,26 +3,35 @@
  *
  * Every string rendered here comes out of a file someone else wrote, so text
  * goes in through `textContent` and nothing else: no `innerHTML`, no
- * templates, no attribute built from trace content except the one link `href`,
- * which is built from the registry and not from the trace, and `title`
- * tooltips, which are text too.
+ * templates, no attribute built from trace content except the spec link
+ * `href`s, which are built from the registry and not from the trace, and
+ * `title` tooltips, which are text too.
  *
  * The markup is moqtap's design system (`mq-` classes from the vendored
  * `bundle.css`, in its compact density); `vw-` classes are this page's own
  * layout, in `styles.css`.
+ *
+ * Only types come from `analysis.ts`: the page never loads the decoder or the
+ * inspection code, which run in the worker.
  */
 
 import { Copy } from 'lucide-static'
 import type {
+  ConnectionRow,
   Finding,
   MessageRow,
   ObjectRow,
   SessionSummary,
   StreamRow,
   TraceAnalysis,
+  TrackRow,
 } from './analysis'
+import { el, muted, num } from './dom'
 import {
+  asShown,
+  bucketRange,
   bytes,
+  citation,
   count,
   draftLabel,
   duration,
@@ -35,17 +44,19 @@ import {
   iso,
   middle,
   offset,
+  plainValue,
+  specHref,
+  threshold,
+  unknownParameter,
+  wallClock,
 } from './format'
 import { type IngestedTrace, ingestFile, type ShareCandidate, startIngest } from './ingest'
+import { isErrorRow, keyAction, matchesFilter, messageKey, nextGap, stepProblem } from './navigate'
+import type { Selection } from './parents'
+import type { DeliveryStats } from './rollups'
 import { applyTheme } from './theme'
+import { renderTimeline, type TimelineHandle } from './timeline'
 import type { AnalyzeRequest, AnalyzeResponse } from './worker'
-
-/**
- * Where a message's spec page lives. The registry stores a path on the site,
- * and the viewer is on another origin, so the path is resolved against the
- * site rather than against this page.
- */
-const SPEC_ORIGIN = 'https://moqtap.com'
 
 function byId<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id)
@@ -63,6 +74,8 @@ const shareButton = byId<HTMLButtonElement>('share')
 const openButton = byId<HTMLButtonElement>('open-capture')
 const chooseButton = byId<HTMLButtonElement>('choose')
 const tabStrip = byId<HTMLElement>('tabs')
+const connectionBar = byId<HTMLDivElement>('connection-bar')
+const connectionPicker = byId<HTMLSelectElement>('connection')
 const empty = byId<HTMLDivElement>('empty')
 const dropZone = byId<HTMLDivElement>('drop')
 const errorBox = byId<HTMLDivElement>('error')
@@ -74,7 +87,7 @@ const EMPTY_TITLE = title.textContent ?? ''
 
 const SOURCE_LABEL: Record<IngestedTrace['source'], string> = {
   file: 'This machine',
-  parent: 'The page around this viewer',
+  parent: 'The page',
 }
 
 // Only the outermost page in a nest of frames shows the logo.
@@ -84,17 +97,6 @@ if (window.parent === window) {
 }
 
 // --------------------------------------------------------------- helpers ---
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag)
-  if (className !== undefined) node.className = className
-  if (text !== undefined) node.textContent = text
-  return node
-}
 
 /**
  * A Lucide icon at 16px with a 1.5px stroke (2.25 in its 24-unit viewBox,
@@ -129,17 +131,6 @@ function keyValue(rows: [string, Value | Value[] | undefined][]): HTMLDListEleme
   return list
 }
 
-/** Text that is a number and should line up: mono, tabular figures. */
-function num(text: string, tooltip?: string): HTMLSpanElement {
-  const span = el('span', 'mq-mono mq-num', text)
-  if (tooltip !== undefined) span.title = tooltip
-  return span
-}
-
-function muted(text: string): HTMLSpanElement {
-  return el('span', 'mq-muted', text)
-}
-
 function sectionHeading(text: string, n?: number): HTMLHeadingElement {
   const h = el('h2', 'vw-heading', text)
   if (n !== undefined) h.append(el('span', 'mq-tab__count', count(n)))
@@ -154,6 +145,33 @@ function directionGlyph(dir: Heading, className: string): HTMLSpanElement {
   span.title = dir.label
   span.append(glyph, el('span', 'mq-sr', dir.label))
   return span
+}
+
+/**
+ * A track's series swatch. Tracks take the categorical colours `chart-1` to
+ * `chart-8` in the order the summary lists them, so a track keeps its colour
+ * in every view; past the eighth they share `chart-8`, the system's "Other".
+ * Never shown alone: the alias is written beside it.
+ */
+function trackSwatch(alias: string, tracks: readonly string[]): HTMLSpanElement {
+  const index = tracks.indexOf(alias)
+  const series = index < 0 ? 8 : Math.min(index, 7) + 1
+  const swatch = el('span', series > 1 ? `mq-swatch mq-swatch--${series}` : 'mq-swatch')
+  swatch.setAttribute('aria-hidden', 'true')
+  return swatch
+}
+
+function trackLabel(alias: string, tracks: readonly string[], text: string): HTMLSpanElement {
+  const label = el('span', 'vw-track')
+  label.append(trackSwatch(alias, tracks), text)
+  return label
+}
+
+/** Every track with its swatch: the legend for the colours the views use. */
+function trackLegend(tracks: readonly string[]): HTMLSpanElement {
+  const legend = el('span', 'mq-legend')
+  for (const alias of tracks) legend.append(trackLabel(alias, tracks, alias))
+  return legend
 }
 
 function directionBadge(dir: Heading): HTMLSpanElement {
@@ -180,7 +198,7 @@ function identifier(value: string, what: string): HTMLSpanElement {
  */
 function address(value: string, what: string): HTMLSpanElement {
   const wrap = el('span', 'vw-id')
-  wrap.append(el('span', 'mq-mono vw-wrap', value), copyButton(value, what))
+  wrap.append(el('span', 'mq-addr', value), copyButton(value, what))
   return wrap
 }
 
@@ -199,7 +217,7 @@ function copyButton(value: string, what: string): HTMLButtonElement {
     void copy(value).then((ok) => {
       live.textContent = ok
         ? 'Copied'
-        : `Couldn't copy the ${what}. Your browser or the page around this viewer blocked the clipboard.`
+        : `Couldn't copy the ${what}. The browser or the page blocked the clipboard.`
       if (!ok) return
       button.dataset.state = 'copied'
       clearTimeout(timer)
@@ -207,6 +225,20 @@ function copyButton(value: string, what: string): HTMLButtonElement {
         delete button.dataset.state
         live.textContent = ''
       }, 1600)
+    })
+  })
+  return button
+}
+
+/** A text button that copies, for actions a reader names: "Copy thread". */
+function copyTextButton(value: () => string, label: string, what: string): HTMLButtonElement {
+  const button = el('button', 'mq-btn mq-btn--quiet vw-copy-text', label)
+  button.type = 'button'
+  button.addEventListener('click', () => {
+    void copy(value()).then((ok) => {
+      live.textContent = ok
+        ? 'Copied'
+        : `Couldn't copy the ${what}. The browser or the page blocked the clipboard.`
     })
   })
   return button
@@ -250,7 +282,25 @@ function hexView(data: Uint8Array, label: string): HTMLPreElement {
 
 // ------------------------------------------------------------- JSON tree ---
 
+/**
+ * A value the analysis made readable: printable bytes as quoted text, other
+ * bytes in hex, a large integer in full, a setup version as its draft. What
+ * was recorded is in the tooltip.
+ */
+function shownValue(text: string, raw: string, kind: string): HTMLSpanElement {
+  const span =
+    kind === 'text'
+      ? el('span', 's', JSON.stringify(text))
+      : el('span', kind === 'integer' ? 'n' : undefined, text)
+  if (raw !== text) span.title = raw
+  return span
+}
+
 function treeValue(value: unknown): HTMLSpanElement {
+  const shown = asShown(value)
+  if (shown !== null) return shownValue(shown.text, shown.raw, shown.$shown)
+  const unknown = unknownParameter(value)
+  if (unknown !== null) return el('span', 'vw-unknown-param', unknown)
   if (value === null || value === undefined) return el('span', 'null', 'null')
   if (typeof value === 'string') return el('span', 's', JSON.stringify(value))
   if (typeof value === 'number') return el('span', 'n', String(value))
@@ -262,9 +312,12 @@ function treeNodes(value: object, depth: number): HTMLUListElement {
   const list = el('ul')
   for (const [key, child] of Object.entries(value)) {
     const item = el('li')
-    if (child !== null && typeof child === 'object' && Object.keys(child).length > 0) {
+    const leafObject = asShown(child) !== null || unknownParameter(child) !== null
+    const branch =
+      child !== null && typeof child === 'object' && !leafObject && Object.keys(child).length > 0
+    if (branch) {
       const details = el('details')
-      details.open = depth === 0
+      details.open = depth === 0 || key === 'unknown'
       const summary = el('summary')
       const size = Array.isArray(child) ? `[${child.length}]` : `{${Object.keys(child).length}}`
       summary.append(el('span', 'k', key), ' ', muted(size))
@@ -273,7 +326,7 @@ function treeNodes(value: object, depth: number): HTMLUListElement {
     } else {
       item.className = 'leaf'
       const shown =
-        child !== null && typeof child === 'object'
+        child !== null && typeof child === 'object' && !leafObject
           ? muted(Array.isArray(child) ? '[]' : '{}')
           : treeValue(child)
       item.append(el('span', 'k', key), ': ', shown)
@@ -299,19 +352,11 @@ const SEVERITY_BADGE: Record<Finding['severity'], [string, string]> = {
   note: ['mq-badge--note', 'i Note'],
 }
 
-function renderFindings(findings: readonly Finding[]): HTMLElement {
+/** The findings card, or `null` when there are none. */
+function renderFindings(findings: readonly Finding[]): HTMLElement | null {
+  if (findings.length === 0) return null
   const node = el('section', 'vw-card')
   node.append(sectionHeading('Findings', findings.length))
-  if (findings.length === 0) {
-    node.append(
-      el(
-        'p',
-        'vw-card-note mq-muted',
-        'Nothing to flag. No errors, dropped events or ambiguity this viewer knows how to spot.',
-      ),
-    )
-    return node
-  }
   const list = el('div', 'vw-findings')
   const sorted = [...findings].sort(
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
@@ -322,8 +367,8 @@ function renderFindings(findings: readonly Finding[]): HTMLElement {
     row.append(
       el('span', `mq-badge ${badgeClass}`, badgeText),
       el('span', 'mq-finding__title', finding.title),
-      el('span', 'mq-finding__body', finding.detail),
     )
+    if (finding.detail.length > 0) row.append(el('span', 'mq-finding__body', finding.detail))
     list.append(row)
   }
   node.append(list)
@@ -344,14 +389,30 @@ function renderSummary(summary: SessionSummary, opened: Opened): HTMLElement {
   const started = num(instant(summary.startTime), iso(summary.startTime) ?? undefined)
   const protocol: Value[] =
     summary.draft === null
-      ? [summary.protocol, muted(' no draft this viewer carries')]
+      ? [summary.protocol, muted(' unknown draft')]
       : [
           el('span', 'mq-badge mq-badge--draft', draftLabel(summary.draft)),
           muted(` ${summary.protocol}`),
         ]
 
+  const negotiated =
+    summary.negotiatedProtocol === undefined
+      ? undefined
+      : el('span', 'mq-mono', summary.negotiatedProtocol)
+  const draftFrom: Value[] | undefined =
+    summary.draftFrom === 'negotiated-protocol' && negotiated !== undefined
+      ? [el('span', undefined, 'Negotiated protocol '), negotiated]
+      : summary.draftFrom === 'setup-version'
+        ? [el('span', undefined, 'Version in SERVER_SETUP')]
+        : undefined
+
   const list = keyValue([
     ['Protocol', protocol],
+    ['Draft from', draftFrom],
+    // Said once: as where the draft came from, or here when it named none.
+    ['Negotiated protocol', draftFrom === undefined ? negotiated : undefined],
+    ['Client', summary.clientImplementation],
+    ['Relay', summary.relayImplementation],
     ['Perspective', summary.perspective],
     ['Detail level', summary.detail],
     [
@@ -386,7 +447,7 @@ function renderSummary(summary: SessionSummary, opened: Opened): HTMLElement {
         `${count(summary.objects)}${summary.payloadBytes > 0 ? ` · ${bytes(summary.payloadBytes)}` : ''}`,
       ),
     ],
-    ['Track aliases', summary.tracks.length > 0 ? summary.tracks.join(', ') : undefined],
+    ['Track aliases', summary.tracks.length > 0 ? trackLegend(summary.tracks) : undefined],
     ['Peers', summary.peers.length > 0 ? summary.peers.join(', ') : undefined],
     ['Events', events.length > 0 ? events : muted('none')],
     ['File', [opened.name, muted(` · ${bytes(opened.size)}`)]],
@@ -396,15 +457,100 @@ function renderSummary(summary: SessionSummary, opened: Opened): HTMLElement {
   return node
 }
 
+const CLOSE_CAUSE: Record<string, string> = {
+  closed: 'closed',
+  failed: 'failed',
+  'worker-gone': 'worker terminated',
+  'session-end': 'session ended',
+}
+
+/** What a connection is, in a few words: `page · subscriber · moqt-14`. */
+function connectionFacts(connection: ConnectionRow): string {
+  return [connection.realm, ...(connection.roles ?? []), connection.protocol]
+    .filter((part): part is string => part !== undefined && part.length > 0)
+    .join(' · ')
+}
+
+function connectionName(connection: ConnectionRow): string {
+  const facts = connectionFacts(connection)
+  return facts.length > 0 ? `${connection.label} (${facts})` : connection.label
+}
+
+function renderConnections(connections: readonly ConnectionRow[]): HTMLElement | null {
+  if (connections.length < 2) return null
+  const node = el('section', 'vw-card')
+  node.append(sectionHeading('Connections', connections.length))
+  const list = keyValue(
+    connections.map((c): [string, Value[]] => {
+      const parts: Value[] = []
+      const facts = connectionFacts(c)
+      if (facts.length > 0) parts.push(el('span', undefined, facts))
+      if (c.origin !== undefined) parts.push(muted(` ${c.origin}`))
+      if (c.openedAt !== undefined) parts.push(muted(` · opened ${offset(c.openedAt)}`))
+      if (c.closedAt !== undefined) {
+        const cause = c.cause === undefined ? 'closed' : (CLOSE_CAUSE[c.cause] ?? c.cause)
+        const code = c.code === undefined ? '' : ` ${hexId(c.code)}`
+        const reason = c.reason === undefined ? '' : ` "${c.reason}"`
+        parts.push(muted(` · ${cause}${code}${reason} ${offset(c.closedAt)}`))
+      }
+      return [c.label, parts]
+    }),
+  )
+  node.append(list)
+  return node
+}
+
 // -------------------------------------------------------------- log pane ---
 
 interface LogRow {
   readonly time: number
+  /** The wall-clock time, for the tooltip. */
+  readonly wall?: string | null
   readonly dir: Heading | null
   readonly type: string
+  /** Shown before the type: which connection, when several share the log. */
+  readonly tag?: string
   readonly sub?: string
+  /**
+   * The track alias and the summary's track order, for its swatch, and the
+   * track's name where the control plane gave one.
+   */
+  readonly track?: {
+    readonly alias: string
+    readonly tracks: readonly string[]
+    readonly name?: string | undefined
+  }
   readonly meta: string
   readonly error?: boolean
+  /** Went past the pending threshold. */
+  readonly pending?: boolean
+}
+
+interface LogPane {
+  readonly node: HTMLElement
+  /** How many rows it holds. */
+  readonly size: number
+  /** The selected row, or -1. */
+  selected(): number
+  /** Select a row; `user` when the reader chose it, which the parent hears about. */
+  select(index: number, scroll: boolean, user: boolean): void
+  /** The row with this key, or -1. */
+  find(key: string): number
+  /** Draw the selected row's detail again, as after a display toggle. */
+  refresh(): void
+}
+
+interface LogOptions<T> {
+  readonly idPrefix: string
+  readonly label: string
+  readonly items: readonly T[]
+  readonly toRow: (item: T) => LogRow
+  readonly detail: (item: T) => Node[]
+  readonly heads: [string, string]
+  readonly keyOf: (item: T) => string
+  /** The row to select first, by key. */
+  readonly initial?: string | undefined
+  readonly onSelect?: (item: T, user: boolean) => void
 }
 
 /**
@@ -414,14 +560,8 @@ interface LogRow {
  * The rows are a listbox: one tab stop, arrow keys move, Home and End jump.
  * The detail is a region of its own, focusable because it scrolls.
  */
-function logPane<T>(
-  idPrefix: string,
-  label: string,
-  items: readonly T[],
-  toRow: (item: T) => LogRow,
-  detail: (item: T) => Node[],
-  heads: [string, string],
-): HTMLElement {
+function logPane<T>(options: LogOptions<T>): LogPane {
+  const { idPrefix, label, items, toRow, detail, heads, keyOf } = options
   const split = el('div', 'mq-split-pane vw-split')
 
   const left = el('div', 'vw-logpane')
@@ -437,45 +577,64 @@ function logPane<T>(
   list.setAttribute('role', 'listbox')
   list.setAttribute('aria-label', label)
   list.tabIndex = 0
+  list.dataset.pane = idPrefix
+  list.dataset.keep = `${idPrefix}-list`
   left.append(head, list)
 
   const right = el('div', 'vw-detail')
   right.tabIndex = 0
   right.setAttribute('role', 'region')
   right.setAttribute('aria-label', `${label}: details`)
+  right.dataset.keep = `${idPrefix}-detail`
 
   const rows: HTMLDivElement[] = []
   let selected = -1
 
-  const select = (index: number, scroll: boolean) => {
+  const select = (index: number, scroll: boolean, user: boolean) => {
     if (index < 0 || index >= items.length || index === selected) return
     rows[selected]?.setAttribute('aria-selected', 'false')
     selected = index
     const row = rows[index]!
     row.setAttribute('aria-selected', 'true')
     list.setAttribute('aria-activedescendant', row.id)
+    list.dataset.selected = keyOf(items[index]!)
     if (scroll) row.scrollIntoView({ block: 'nearest' })
     right.replaceChildren(...detail(items[index]!))
     right.scrollTop = 0
+    options.onSelect?.(items[index]!, user)
   }
 
   items.forEach((item, index) => {
     const data = toRow(item)
-    const row = el('div', `mq-log__row${data.error === true ? ' mq-log__row--error' : ''}`)
+    const classes = ['mq-log__row']
+    if (data.error === true) classes.push('mq-log__row--error')
+    if (data.pending === true) classes.push('vw-row--pending')
+    const row = el('div', classes.join(' '))
     row.id = `${idPrefix}-${index}`
     row.setAttribute('role', 'option')
     row.setAttribute('aria-selected', 'false')
-    const type = el('span', 'mq-log__type', data.type)
+    const type = el('span', 'mq-log__type')
+    if (data.tag !== undefined) type.append(el('span', 'vw-conn-tag', data.tag), ' ')
+    type.append(data.type)
+    // The track before the kind: a narrow pane cuts the end of this cell,
+    // and a swatch must not lose the alias written beside it.
+    if (data.track !== undefined) {
+      const { alias, tracks, name } = data.track
+      type.append(' ', trackLabel(alias, tracks, name ?? `track ${alias}`))
+    }
     if (data.sub !== undefined) type.append(' ', muted(data.sub))
     const time = el('span', 'mq-log__time', offset(data.time))
-    time.title = exactOffset(data.time)
+    time.title =
+      data.wall === undefined || data.wall === null
+        ? exactOffset(data.time)
+        : `${exactOffset(data.time)} · ${data.wall}`
     row.append(
       time,
       data.dir === null ? el('span', 'mq-log__dir') : directionGlyph(data.dir, 'mq-log__dir'),
       type,
       el('span', 'mq-log__meta', data.meta),
     )
-    row.addEventListener('click', () => select(index, false))
+    row.addEventListener('click', () => select(index, false, true))
     rows.push(row)
   })
   list.append(...rows)
@@ -493,7 +652,7 @@ function logPane<T>(
     const next = to[event.key]
     if (next !== undefined) {
       event.preventDefault()
-      select(next, true)
+      select(next, true, true)
     } else if (event.key === 'Enter') {
       // Enter takes you into the detail of the row you are on.
       event.preventDefault()
@@ -502,95 +661,241 @@ function logPane<T>(
   })
 
   split.append(left, right)
-  select(0, false)
-  return split
+  const find = (key: string) => items.findIndex((item) => keyOf(item) === key)
+  const at = options.initial === undefined ? -1 : find(options.initial)
+  select(Math.max(0, at), false, false)
+  return {
+    node: split,
+    size: items.length,
+    selected: () => selected,
+    select,
+    find,
+    refresh: () => {
+      if (selected >= 0) right.replaceChildren(...detail(items[selected]!))
+    },
+  }
 }
 
 // -------------------------------------------------------------- messages ---
 
 /**
- * A link to the spec page for a message, or `null` when the registry path is
- * not one.
+ * A link to a message's spec page.
  *
- * The path comes from the committed registry, never from the trace, but it is
- * still resolved and checked to land on the site: a link is the one thing on
- * this page that leaves it.
+ * A new tab, because this one holds the whole analysis and none of it is in
+ * the URL: a trace that arrived by postMessage cannot be re-opened by
+ * navigating back. `noopener noreferrer` because a spec page has no business
+ * reaching back into a frame holding someone's capture. Framed, this needs
+ * `allow-popups allow-popups-to-escape-sandbox` on the parent's sandbox:
+ * without the first the browser drops the click silently, and without the
+ * second the spec page would open under the viewer's sandbox.
  */
-function specHref(specPath: string): string | null {
-  if (!specPath.startsWith('/')) return null
-  const url = new URL(specPath, SPEC_ORIGIN)
-  return url.origin === SPEC_ORIGIN ? url.href : null
+function specLink(href: string, text: string): HTMLAnchorElement {
+  const link = el('a', 'mq-link', text)
+  link.href = href
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
+  link.title = `${text} (opens in a new tab)`
+  return link
 }
 
-function messageDetail(message: MessageRow, summary: SessionSummary): Node[] {
-  const out: Node[] = []
-  const hex = hexId(message.messageType)
-  const head = el('div', 'vw-detail-head')
-  head.append(el('h2', 'vw-detail-title', message.name ?? hex))
+/** A message's name as the log shows it. */
+function shownName(message: MessageRow): string {
+  if (message.undecodable !== undefined) return 'Undecodable bytes'
+  return message.name ?? hexId(message.messageType ?? 0)
+}
 
+/** Everything known about a message, for Copy as JSON and Copy thread. */
+function messageObject(message: MessageRow, summary: SessionSummary): Record<string, unknown> {
+  return {
+    name: message.name,
+    type: message.messageType === null ? null : hexId(message.messageType),
+    draft: summary.draft === null ? null : draftLabel(summary.draft),
+    section: message.section,
+    direction:
+      message.direction === null ? null : heading(message.direction, summary.perspective).label,
+    atUs: message.at,
+    segment: message.segment,
+    seq: message.seq,
+    connection: message.peer ?? null,
+    stream: message.streamId ?? null,
+    requestId: message.requestId ?? null,
+    track: message.track ?? null,
+    size: message.size ?? null,
+    ...(message.error === undefined ? {} : { error: message.error }),
+    ...(message.undecodable === undefined ? {} : { undecodable: message.undecodable }),
+    fields: message.fields === undefined ? null : plainValue(message.fields),
+    ...(message.opaque === undefined ? {} : { opaque: message.opaque }),
+  }
+}
+
+/** An error code as read: `TRACK_DOES_NOT_EXIST (0x4)`, or `0x4, unknown for draft-14`. */
+function errorCode(message: MessageRow): Value[] | undefined {
+  const label = message.error?.label ?? ''
+  return label === '' ? undefined : [el('span', 'mq-mono', label)]
+}
+
+/** A control that selects another message, such as a request's response. */
+function jumpTo(index: number, text: string): HTMLButtonElement {
+  const button = el('button', 'mq-btn mq-btn--link vw-jump', text)
+  button.type = 'button'
+  button.addEventListener('click', () => gotoMessage(index, true))
+  return button
+}
+
+/** Whether a message's detail shows its fields or its bytes. Kept across messages. */
+let detailMode: 'fields' | 'hex' = 'fields'
+
+function modeToggle(): HTMLElement {
+  const group = el('div', 'vw-mode')
+  group.setAttribute('role', 'group')
+  group.setAttribute('aria-label', 'Show')
+  for (const [mode, text] of [
+    ['fields', 'Fields'],
+    ['hex', 'Hex'],
+  ] as const) {
+    const button = el('button', 'mq-btn mq-btn--quiet', text)
+    button.type = 'button'
+    button.setAttribute('aria-pressed', String(detailMode === mode))
+    button.addEventListener('click', () => {
+      detailMode = mode
+      messagesPane?.refresh()
+    })
+    group.append(button)
+  }
+  return group
+}
+
+function messageDetail(message: MessageRow, analysis: TraceAnalysis): Node[] {
+  const { summary, messages } = analysis
+  const out: Node[] = []
+  const hex = message.messageType === null ? null : hexId(message.messageType)
   const href =
     message.name !== null && message.specPath !== null ? specHref(message.specPath) : null
-  if (href !== null && message.name !== null) {
-    const cite = message.section === null ? message.name : `§ ${message.section} ${message.name}`
-    const link = el('a', 'mq-link vw-cite', cite)
-    link.href = href
-    // A new tab, because this one holds the whole analysis and none of it is
-    // in the URL: a trace that arrived by postMessage cannot be re-opened by
-    // navigating back. `noopener noreferrer` because a spec page has no
-    // business reaching back into a frame holding someone's capture. Framed,
-    // this needs `allow-popups allow-popups-to-escape-sandbox` on the parent's
-    // sandbox: without the first the browser drops the click silently, and
-    // without the second the spec page would open under the viewer's sandbox.
-    link.target = '_blank'
-    link.rel = 'noopener noreferrer'
-    const draft = summary.draft === null ? '' : `${draftLabel(summary.draft)} `
-    link.title = `${draft}${cite} (opens in a new tab)`
-    head.append(link)
-  }
-  out.push(head)
-  if (href !== null) {
-    // The address as text as well, so it can be copied, and so the spec is
-    // still reachable under a parent whose sandbox refuses popups.
-    out.push(el('p', 'mq-mono mq-muted vw-spec-address', href))
-  }
 
-  const time = num(offset(message.at), exactOffset(message.at))
-  const codePoint: Value[] = [hex]
+  const head = el('div', 'vw-detail-head')
+  const heading2 = el('h2', 'vw-detail-title')
+  if (href !== null && message.name !== null) {
+    heading2.append(specLink(href, message.name))
+  } else {
+    heading2.textContent = shownName(message)
+  }
+  head.append(heading2)
+  if (message.name !== null && hex !== null) head.append(muted(hex))
+  if (message.aliases !== undefined && message.aliases.length > 0) {
+    head.append(muted(`also ${message.aliases.join(', ')}`))
+  }
   if (message.reserved) {
-    codePoint.push(
+    head.append(
       el(
         'span',
         'vw-reserved',
-        message.note === null ? ' ▲ reserved code point' : ` ▲ reserved: ${message.note}`,
+        message.note === null ? '▲ reserved code point' : `▲ reserved: ${message.note}`,
       ),
     )
   }
+  const cite = citation(summary.draft, message.section)
+  if (cite !== null) head.append(el('span', 'mq-muted vw-cite', cite))
+  const actions = el('span', 'vw-detail-copy')
+  const thread =
+    message.thread === undefined ? [] : messages.filter((m) => m.thread === message.thread)
+  if (thread.length > 1) {
+    actions.append(
+      copyTextButton(
+        () =>
+          JSON.stringify(
+            thread.map((m) => messageObject(m, summary)),
+            null,
+            2,
+          ),
+        'Copy thread',
+        'thread',
+      ),
+    )
+  }
+  actions.append(
+    copyButton(JSON.stringify(messageObject(message, summary), null, 2), 'message as JSON'),
+  )
+  head.append(actions)
+  out.push(head)
+
+  const wall = wallClock(summary.startTime, message.at)
+  const connection = analysis.connections.find((c) => c.id === message.peer)
+  const response = message.response
+  const answers = message.answers
   out.push(
     keyValue([
-      ['Type', codePoint],
-      ['Direction', directionBadge(heading(message.direction, summary.perspective))],
-      ['Time', time],
+      [
+        'Direction',
+        message.direction === null
+          ? undefined
+          : directionBadge(heading(message.direction, summary.perspective)),
+      ],
+      [
+        'Time',
+        [
+          num(offset(message.at), exactOffset(message.at)),
+          ...(wall === null ? [] : [muted(` ${wall}`)]),
+        ],
+      ],
+      ['Connection', connection === undefined ? undefined : connectionName(connection)],
+      ['Request', message.requestId === undefined ? undefined : `#${message.requestId}`],
+      ['Track', message.track],
+      [
+        'Response',
+        response === undefined
+          ? message.pending !== undefined && !message.pending.answered
+            ? el('span', 'vw-pending', `No response after ${threshold(analysis.pendingMs)}`)
+            : undefined
+          : [
+              jumpTo(response.index, response.name),
+              muted(response.rttUs === null ? '' : ` after ${duration(response.rttUs)}`),
+            ],
+      ],
+      [
+        'Answers',
+        answers === undefined
+          ? undefined
+          : [
+              jumpTo(
+                answers.index,
+                `${answers.name}${answers.requestId === undefined ? '' : ` #${answers.requestId}`}`,
+              ),
+              muted(answers.rttUs === null ? '' : ` ${duration(answers.rttUs)} earlier`),
+            ],
+      ],
+      ['Error code', errorCode(message)],
+      [
+        'Reason',
+        message.error !== undefined && message.error.reason.length > 0
+          ? message.error.reason
+          : message.undecodable,
+      ],
       ['Stream', message.streamId],
-      ['Peer', message.peer],
       ['Size', message.size === undefined ? undefined : num(bytes(message.size))],
-      ['Event', `segment ${message.segment} · seq ${message.seq}`],
     ]),
   )
 
-  out.push(el('h3', 'vw-subhead', 'Fields'))
-  if (message.fields !== undefined && Object.keys(message.fields).length > 0) {
-    out.push(jsonTree(message.fields))
-  } else if (message.fields !== undefined) {
-    out.push(el('p', 'mq-muted vw-note', 'The message has no fields.'))
-  } else if (message.opaque !== undefined) {
-    // No explanation beside it: that belongs to the recorder, not to this
-    // message, and the `opaque-messages` finding states it once.
-    out.push(el('pre', 'vw-opaque', message.opaque))
-  } else {
-    out.push(el('p', 'mq-muted vw-note', 'The recorder decoded no fields for this message.'))
-  }
+  const hasFields =
+    (message.fields !== undefined && Object.keys(message.fields).length > 0) ||
+    message.opaque !== undefined
+  const hasBytes = message.raw !== undefined && message.size !== undefined
+  const mode = !hasBytes ? 'fields' : !hasFields ? 'hex' : detailMode
+  if (hasFields && hasBytes) out.push(modeToggle())
 
-  if (message.raw !== undefined && message.size !== undefined) {
+  // Bytes that did not decode have no fields to say are missing.
+  if (mode === 'fields' && message.undecodable !== undefined) return out
+  if (mode === 'fields') {
+    out.push(el('h3', 'vw-subhead', 'Fields'))
+    if (message.fields !== undefined && Object.keys(message.fields).length > 0) {
+      out.push(jsonTree(message.fields))
+    } else if (message.opaque !== undefined) {
+      // No explanation beside it: that belongs to the recorder, not to this
+      // message, and the `opaque-messages` finding states it once.
+      out.push(el('pre', 'vw-opaque', message.opaque))
+    } else {
+      out.push(el('p', 'mq-muted vw-note', 'No fields'))
+    }
+  } else if (message.raw !== undefined && message.size !== undefined) {
     out.push(el('h3', 'vw-subhead', 'Bytes'))
     if (message.raw.length < message.size) {
       out.push(
@@ -601,38 +906,364 @@ function messageDetail(message: MessageRow, summary: SessionSummary): Node[] {
         ),
       )
     }
-    out.push(hexView(message.raw, `Bytes of ${message.name ?? hex}`))
+    out.push(hexView(message.raw, `Bytes of ${shownName(message)}`))
   }
   return out
 }
 
-function renderMessages(analysis: TraceAnalysis): HTMLElement {
+/** What a message's row shows after its name: the wire ID, its request id, its error's name. */
+function messageSub(message: MessageRow): string | undefined {
+  const id =
+    message.undecodable !== undefined
+      ? null
+      : message.name === null
+        ? message.reserved
+          ? 'reserved'
+          : null
+        : hexId(message.messageType ?? 0)
+  const parts = [
+    id,
+    message.requestId === undefined ? null : `#${message.requestId}`,
+    message.error?.codeName ?? null,
+    message.track ?? null,
+  ].filter((part): part is string => part !== null)
+  return parts.length === 0 ? undefined : parts.join('  ')
+}
+
+/** What a message's row says in its last column: its response, or that none came. */
+function messageMeta(message: MessageRow, pendingMs: number): string {
+  const response = message.response
+  if (response !== undefined) {
+    return `→ ${response.name}${response.rttUs === null ? '' : ` ${duration(response.rttUs)}`}`
+  }
+  if (message.pending !== undefined) return `no response after ${threshold(pendingMs)}`
+  if (message.undecodable !== undefined && message.size !== undefined) return bytes(message.size)
+  return ''
+}
+
+interface Indexed {
+  readonly message: MessageRow
+  readonly index: number
+}
+
+/** Where the view is, beyond the place a replacement keeps: the picker and the filter. */
+interface ViewState {
+  /** The connection shown, or `null` for all. */
+  connection: string | null
+  filter: string
+}
+
+const view: ViewState = { connection: null, filter: '' }
+
+let shown: { analysis: TraceAnalysis; opened: Opened } | null = null
+let messagesPane: LogPane | null = null
+let messageItems: readonly Indexed[] = []
+let rebuildMessages: ((keep: string | undefined) => void) | null = null
+let filterInput: HTMLInputElement | null = null
+let timeline: TimelineHandle | null = null
+let selectTab: ((id: string) => void) | null = null
+
+function connectionShown(peer: string | undefined): boolean {
+  return view.connection === null || (peer ?? '') === view.connection
+}
+
+function connectionTag(analysis: TraceAnalysis, peer: string | undefined): string | undefined {
+  if (view.connection !== null || analysis.connections.length < 2) return undefined
+  const index = analysis.connections.findIndex((c) => c.id === peer)
+  return index < 0 ? undefined : `C${index + 1}`
+}
+
+function report(selection: Selection) {
+  ingest.reportSelection(onScreen, selection)
+}
+
+function renderMessages(analysis: TraceAnalysis, initial: string | undefined): HTMLElement {
   const { messages, summary } = analysis
   if (messages.length === 0) {
+    messagesPane = null
     return emptyPanel(
       'No control messages recorded.',
       'A trace taken below the session layer, or one filtered to data events, legitimately has none.',
     )
   }
-  return logPane(
-    'message',
-    'Control messages',
-    messages,
-    (m) => ({
-      time: m.at,
-      dir: heading(m.direction, summary.perspective),
-      type: m.name ?? hexId(m.messageType),
-      ...(m.name === null
-        ? m.reserved
-          ? { sub: 'reserved' }
-          : {}
-        : { sub: hexId(m.messageType) }),
-      meta: m.size === undefined ? '' : bytes(m.size),
-      error: m.name?.endsWith('_ERROR') === true,
-    }),
-    (m) => messageDetail(m, summary),
-    ['Message', 'Size'],
+  const wrap = el('div', 'vw-messages')
+  const bar = el('div', 'vw-filterbar')
+  const input = el('input', 'mq-input vw-filter')
+  input.type = 'search'
+  input.placeholder = 'Filter: name, #request, track'
+  input.setAttribute('aria-label', 'Filter messages')
+  input.value = view.filter
+  filterInput = input
+  bar.append(input)
+  const holder = el('div', 'vw-messages-pane')
+
+  const build = (keep: string | undefined) => {
+    messageItems = messages
+      .map((message, index) => ({ message, index }))
+      .filter(({ message }) => connectionShown(message.peer))
+      .filter(({ message }) => matchesFilter(message, view.filter))
+    if (messageItems.length === 0) {
+      messagesPane = null
+      holder.replaceChildren(emptyPanel('No messages match.'))
+      return
+    }
+    messagesPane = logPane<Indexed>({
+      idPrefix: 'message',
+      label: 'Control messages',
+      items: messageItems,
+      toRow: ({ message: m }) => {
+        const sub = messageSub(m)
+        const tag = connectionTag(analysis, m.peer)
+        return {
+          time: m.at,
+          wall: wallClock(summary.startTime, m.at),
+          dir: m.direction === null ? null : heading(m.direction, summary.perspective),
+          type: shownName(m),
+          ...(tag === undefined ? {} : { tag }),
+          ...(sub === undefined ? {} : { sub }),
+          meta: messageMeta(m, analysis.pendingMs),
+          error: isErrorRow(m),
+          pending: m.pending !== undefined,
+        }
+      },
+      detail: ({ message: m }) => messageDetail(m, analysis),
+      heads: ['Message', 'Response'],
+      keyOf: ({ message: m }) => messageKey(m),
+      initial: keep,
+      onSelect: ({ message: m }, user) => {
+        if (user) report({ t: Math.round(m.at / 1000), msg: messageKey(m) })
+      },
+    })
+    holder.replaceChildren(messagesPane.node)
+  }
+  rebuildMessages = build
+
+  input.addEventListener('input', () => {
+    view.filter = input.value
+    const current = messagesPane === null ? undefined : messageItems[messagesPane.selected()]
+    build(current === undefined ? undefined : messageKey(current.message))
+  })
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      input.blur()
+    } else if (event.key === 'ArrowDown' || event.key === 'Enter') {
+      event.preventDefault()
+      holder.querySelector<HTMLElement>('[role="listbox"]')?.focus()
+    }
+  })
+
+  build(initial)
+  wrap.append(bar, holder)
+  return wrap
+}
+
+/** Select a message by its index in the analysis, showing the messages tab. */
+function gotoMessage(index: number, user: boolean) {
+  if (shown === null) return
+  const message = shown.analysis.messages[index]
+  if (message === undefined) return
+  let at = messageItems.findIndex((item) => item.index === index)
+  if (at < 0 && (view.filter.length > 0 || !connectionShown(message.peer))) {
+    // Out of the filtered view: show everything rather than nothing.
+    view.filter = ''
+    if (filterInput !== null) filterInput.value = ''
+    if (!connectionShown(message.peer)) {
+      setConnection(null)
+      return gotoMessage(index, user)
+    }
+    rebuildMessages?.(messageKey(message))
+    at = messageItems.findIndex((item) => item.index === index)
+  }
+  selectTab?.('messages')
+  messagesPane?.select(at, true, user)
+}
+
+// ---------------------------------------------------------------- tracks ---
+
+const TRACK_STATUS: Record<NonNullable<TrackRow['status']>, string> = {
+  pending: 'No response',
+  active: 'Active',
+  error: 'Error',
+  done: 'Ended',
+}
+
+function trackName(track: TrackRow, summary: SessionSummary): HTMLTableCellElement {
+  const name = el('td', 'mq-mono')
+  const text =
+    track.name.length > 0
+      ? track.name
+      : track.alias !== undefined
+        ? `alias ${track.alias}`
+        : `fetch #${track.requestId ?? ''}`
+  if (track.alias !== undefined && summary.tracks.includes(track.alias)) {
+    name.append(trackLabel(track.alias, summary.tracks, text))
+  } else {
+    name.textContent = text
+  }
+  return name
+}
+
+function table(
+  label: string,
+  heads: readonly (readonly [string, boolean])[],
+  body: HTMLTableRowElement[],
+): HTMLElement {
+  const wrap = el('div', 'mq-table-wrap vw-tracks')
+  wrap.tabIndex = 0
+  wrap.setAttribute('role', 'region')
+  wrap.setAttribute('aria-label', label)
+  wrap.dataset.keep = `tracks-${label}`
+  const t = el('table', 'mq-table')
+  const headRow = el('tr')
+  for (const [text, right] of heads) {
+    const th = el('th', right ? 'mq-r' : undefined, text)
+    th.scope = 'col'
+    headRow.append(th)
+  }
+  const thead = el('thead')
+  thead.append(headRow)
+  const tbody = el('tbody')
+  tbody.append(...body)
+  t.append(thead, tbody)
+  wrap.append(t)
+  return wrap
+}
+
+const RECEIVED_HEADS = [
+  ['Track', false],
+  ['Alias', true],
+  ['Request', false],
+  ['Status', false],
+  ['Subscribe→OK', true],
+  ['First object', true],
+  ['Objects', true],
+  ['Group ID gaps', true],
+  ['Skipped', true],
+  ['Stalls (longest)', true],
+  ['Cadence p50/p95', true],
+  ['Arrival p95', true],
+  ['Error', false],
+] as const
+
+const SENT_HEADS = [
+  ['Track', false],
+  ['Alias', true],
+  ['Request', false],
+  ['Status', false],
+  ['Objects sent', true],
+  ['Bytes', true],
+  ['Waiting to send', true],
+  ['Acknowledged', true],
+] as const
+
+function bucket(value: number | null): string {
+  return value === null ? '' : bucketRange(value)
+}
+
+function requestCell(track: TrackRow): string {
+  return track.via === undefined ? '' : `${track.via.toUpperCase()} #${track.requestId ?? ''}`
+}
+
+function receivedRow(track: TrackRow, summary: SessionSummary): HTMLTableRowElement {
+  const tr = el('tr')
+  const stats: DeliveryStats | undefined = track.received
+  const answered =
+    track.status !== 'error' && track.requestedAt !== undefined && track.answeredAt !== undefined
+      ? duration(track.answeredAt - track.requestedAt)
+      : ''
+  const first = el('td', 'mq-r mq-mono')
+  if (stats?.firstObjectAt !== undefined) {
+    if (track.requestedAt !== undefined) {
+      first.textContent = duration(Math.max(0, stats.firstObjectAt - track.requestedAt))
+      first.title = `${offset(stats.firstObjectAt)}, from the request`
+    } else {
+      first.textContent = offset(stats.firstObjectAt)
+      first.title = exactOffset(stats.firstObjectAt)
+    }
+  }
+  const stalls =
+    stats === undefined
+      ? ''
+      : stats.stalls === 0 || stats.longestStall === null
+        ? '0'
+        : `${count(stats.stalls)} (${bucketRange(stats.longestStall)})`
+  const cadence =
+    stats?.cadenceP50 === null || stats?.cadenceP50 === undefined
+      ? ''
+      : `${bucket(stats.cadenceP50)} / ${bucket(stats.cadenceP95)}`
+  tr.append(
+    trackName(track, summary),
+    el('td', 'mq-r mq-mono', track.alias ?? ''),
+    el('td', 'mq-mono', requestCell(track)),
+    el('td', undefined, track.status === undefined ? '' : TRACK_STATUS[track.status]),
+    el('td', 'mq-r mq-mono', answered),
+    first,
+    el('td', 'mq-r mq-mono', stats === undefined ? '' : count(stats.objects)),
+    el('td', 'mq-r mq-mono', stats === undefined ? '' : count(stats.groupGaps)),
+    el('td', 'mq-r mq-mono', stats === undefined ? '' : count(stats.skipped)),
+    el('td', 'mq-r mq-mono', stalls),
+    el('td', 'mq-r mq-mono', cadence),
+    el('td', 'mq-r mq-mono', stats === undefined ? '' : bucket(stats.arrivalP95)),
+    el('td', undefined, track.errorReason ?? ''),
   )
+  return tr
+}
+
+function sentRow(track: TrackRow, summary: SessionSummary): HTMLTableRowElement {
+  const tr = el('tr')
+  const stats = track.sent!
+  tr.append(
+    trackName(track, summary),
+    el('td', 'mq-r mq-mono', track.alias ?? ''),
+    el('td', 'mq-mono', requestCell(track)),
+    el('td', undefined, track.status === undefined ? '' : TRACK_STATUS[track.status]),
+    el('td', 'mq-r mq-mono', count(stats.objects)),
+    el('td', 'mq-r mq-mono', bytes(stats.payloadBytes)),
+    el('td', 'mq-r mq-mono', stats.blockedMs === undefined ? '' : duration(stats.blockedMs * 1000)),
+    el('td', 'mq-r mq-mono', stats.ackedBytes === undefined ? '' : bytes(stats.ackedBytes)),
+  )
+  return tr
+}
+
+function renderTracks(analysis: TraceAnalysis): HTMLElement {
+  const { summary, connections } = analysis
+  const tracks = analysis.tracks.filter((t) => connectionShown(t.connection))
+  if (tracks.length === 0) return emptyPanel('No tracks.')
+  const node = el('div', 'vw-tracks-panel')
+  node.dataset.keep = 'tracks'
+  node.tabIndex = 0
+  const groups =
+    connections.length > 1 && view.connection === null
+      ? connections.map((c) => [c, tracks.filter((t) => t.connection === c.id)] as const)
+      : ([[null, tracks]] as const)
+  for (const [connection, rows] of groups) {
+    if (rows.length === 0) continue
+    if (connection !== null) node.append(el('h2', 'vw-heading', connectionName(connection)))
+    const received = rows.filter((t) => t.received !== undefined || t.sent === undefined)
+    const sent = rows.filter((t) => t.sent !== undefined)
+    const label = connection === null ? '' : ` on ${connection.label}`
+    if (received.length > 0) {
+      node.append(
+        table(
+          `Tracks received${label}`,
+          RECEIVED_HEADS,
+          received.map((t) => receivedRow(t, summary)),
+        ),
+      )
+    }
+    if (sent.length > 0) {
+      node.append(el('h3', 'vw-subhead vw-tracks-sub', 'Sent'))
+      node.append(
+        table(
+          `Tracks sent${label}`,
+          SENT_HEADS,
+          sent.map((t) => sentRow(t, summary)),
+        ),
+      )
+    }
+  }
+  return node
 }
 
 // --------------------------------------------------------------- streams ---
@@ -649,7 +1280,7 @@ function objectsTable(stream: StreamRow): HTMLElement {
   wrap.tabIndex = 0
   wrap.setAttribute('role', 'region')
   wrap.setAttribute('aria-label', `Objects on stream ${stream.streamId}`)
-  const table = el('table', 'mq-table')
+  const t = el('table', 'mq-table')
   const head = el('tr')
   for (const [text, right] of [
     ['Time', false],
@@ -667,8 +1298,8 @@ function objectsTable(stream: StreamRow): HTMLElement {
   thead.append(head)
   const tbody = el('tbody')
   for (const object of stream.objectRows) tbody.append(objectRow(object))
-  table.append(thead, tbody)
-  wrap.append(table)
+  t.append(thead, tbody)
+  wrap.append(t)
   return wrap
 }
 
@@ -719,8 +1350,13 @@ function streamDetail(stream: StreamRow, summary: SessionSummary): Node[] {
       ],
       [
         'Track alias',
-        stream.trackAlias ?? (stream.streamType === undefined ? undefined : muted('not recorded')),
+        stream.trackAlias !== undefined
+          ? trackLabel(stream.trackAlias, summary.tracks, stream.trackAlias)
+          : stream.streamType === undefined
+            ? undefined
+            : muted('not recorded'),
       ],
+      ['Track', stream.track],
       ['Group', stream.groupId],
       ['Subgroup', stream.subgroupId],
       ['Fetch request', stream.fetchRequestId],
@@ -766,36 +1402,125 @@ function streamDetail(stream: StreamRow, summary: SessionSummary): Node[] {
   return out
 }
 
-function renderStreams(analysis: TraceAnalysis): HTMLElement {
-  const { streams, summary } = analysis
+function renderStreams(analysis: TraceAnalysis, initial: string | undefined): HTMLElement {
+  const { summary } = analysis
+  const streams = analysis.streams.filter((s) => connectionShown(s.peer))
   if (streams.length === 0) {
     return emptyPanel(
       'No streams recorded.',
       'A trace recorded at the control detail level, or a session that sent no objects, has none.',
     )
   }
-  return logPane(
-    'stream',
-    'Streams and objects',
-    streams,
-    (s) => ({
+  return logPane<StreamRow>({
+    idPrefix: 'stream',
+    label: 'Streams and objects',
+    items: streams,
+    toRow: (s) => ({
       time: s.at,
       dir: s.direction === undefined ? null : heading(s.direction, summary.perspective),
       type: `stream ${s.streamId}`,
-      sub: [streamKind(s), s.trackAlias === undefined ? null : `track ${s.trackAlias}`]
-        .filter((p) => p !== null)
-        .join(' · '),
+      ...(streamKind(s) === null ? {} : { sub: streamKind(s)! }),
+      ...(s.trackAlias === undefined
+        ? {}
+        : { track: { alias: s.trackAlias, tracks: summary.tracks, name: s.track } }),
       meta: `${count(s.objects)} ${s.objects === 1 ? 'object' : 'objects'}${s.bytes > 0 ? ` · ${bytes(s.bytes)}` : ''}`,
     }),
-    (s) => streamDetail(s, summary),
-    ['Stream', 'Objects'],
-  )
+    detail: (s) => streamDetail(s, summary),
+    heads: ['Stream', 'Objects'],
+    keyOf: (s) => s.streamId,
+    initial,
+  }).node
 }
 
-function emptyPanel(what: string, detail: string): HTMLElement {
+function emptyPanel(what: string, detail?: string): HTMLElement {
   const node = el('div', 'mq-empty vw-panel-empty')
-  node.append(el('h2', 'mq-empty__title', what), el('p', undefined, detail))
+  node.append(el('h2', 'mq-empty__title', what))
+  if (detail !== undefined) node.append(el('p', undefined, detail))
   return node
+}
+
+// -------------------------------------------------------------- timeline ---
+
+function renderTimelineTab(analysis: TraceAnalysis): HTMLElement {
+  const nothing =
+    analysis.messages.length === 0 &&
+    analysis.delivery.lanes.length === 0 &&
+    analysis.delivery.bands.length === 0 &&
+    analysis.delivery.playerEvents.length === 0
+  if (nothing) {
+    timeline = null
+    return emptyPanel('Nothing to draw.')
+  }
+  timeline = renderTimeline({
+    analysis,
+    connection: view.connection,
+    connectionLabel: (id) => {
+      const connection = analysis.connections.find((c) => c.id === id)
+      return connection === undefined ? id : connectionName(connection)
+    },
+    onMessage: (index) => {
+      const message = analysis.messages[index]
+      const at = messageItems.findIndex((item) => item.index === index)
+      if (at >= 0) messagesPane?.select(at, true, false)
+      if (message !== undefined) {
+        report({ t: Math.round(message.at / 1000), msg: messageKey(message) })
+      }
+    },
+    onTime: (us) => report({ t: Math.round(us / 1000), msg: null }),
+  })
+  return timeline.node
+}
+
+// ----------------------------------------------------------------- place ---
+
+/**
+ * Where the reader is in the trace on screen: the tab, the row selected in
+ * each log, and how far each scrolling region is scrolled. Kept across a
+ * parent's `moqtrace-replace`, a newer copy of the same trace, so a reader
+ * following a session as it grows keeps their place, and across a change of
+ * connection.
+ */
+interface Place {
+  readonly tab: string | null
+  readonly selected: ReadonlyMap<string, string>
+  readonly scroll: ReadonlyMap<string, Scroll>
+}
+
+interface Scroll {
+  readonly top: number
+  readonly left: number
+}
+
+/** Scroll offsets owed to regions in a tab not shown since the last render. */
+const pendingScroll = new Map<string, Scroll>()
+
+function currentPlace(): Place {
+  const tab = tabStrip.querySelector<HTMLElement>('[aria-selected="true"]')?.dataset.view ?? null
+  const selected = new Map<string, string>()
+  for (const list of Array.from(results.querySelectorAll<HTMLElement>('[data-pane]'))) {
+    const key = list.dataset.selected
+    if (key !== undefined) selected.set(list.dataset.pane!, key)
+  }
+  const scroll = new Map(pendingScroll)
+  for (const node of Array.from(results.querySelectorAll<HTMLElement>('[data-keep]'))) {
+    // A region in a hidden tab reads 0; it keeps the offset it is still owed.
+    if (node.closest('[hidden]') === null) {
+      scroll.set(node.dataset.keep!, { top: node.scrollTop, left: node.scrollLeft })
+    }
+  }
+  return { tab, selected, scroll }
+}
+
+/** Apply the offsets owed to the scrolling regions of a panel just shown. */
+function restoreScroll(panel: HTMLElement) {
+  for (const node of Array.from(panel.querySelectorAll<HTMLElement>('[data-keep]'))) {
+    const key = node.dataset.keep!
+    const owed = pendingScroll.get(key)
+    if (owed === undefined) continue
+    node.scrollTop = owed.top
+    node.scrollLeft = owed.left
+    pendingScroll.delete(key)
+  }
 }
 
 // ------------------------------------------------------------------ tabs ---
@@ -807,14 +1532,17 @@ interface View {
   readonly render: () => HTMLElement
 }
 
-function showViews(views: readonly View[]) {
+function showViews(views: readonly View[], initial: string | null) {
   tabStrip.replaceChildren()
   results.replaceChildren()
   const panels = new Map<string, HTMLElement>()
   const tabs: HTMLButtonElement[] = []
 
   const select = (id: string, focus: boolean) => {
-    for (const [panelId, panel] of panels) panel.hidden = panelId !== id
+    const panel = panels.get(id)
+    if (panel === undefined) return
+    for (const [panelId, other] of panels) other.hidden = panelId !== id
+    restoreScroll(panel)
     for (const tab of tabs) {
       const on = tab.dataset.view === id
       tab.setAttribute('aria-selected', String(on))
@@ -822,6 +1550,7 @@ function showViews(views: readonly View[]) {
       if (on && focus) tab.focus()
     }
   }
+  selectTab = (id) => select(id, false)
 
   views.forEach((view, index) => {
     const panel = el('div', 'vw-panel')
@@ -853,8 +1582,119 @@ function showViews(views: readonly View[]) {
   })
 
   tabStrip.hidden = false
-  select(views[0]!.id, false)
+  select(views.find((v) => v.id === initial)?.id ?? views[0]!.id, false)
 }
+
+// ----------------------------------------------------------- connections ---
+
+function offerConnections(analysis: TraceAnalysis) {
+  const { connections } = analysis
+  if (view.connection !== null && !connections.some((c) => c.id === view.connection)) {
+    view.connection = null
+  }
+  connectionBar.hidden = connections.length < 2
+  if (connections.length < 2) return
+  const all = el('option', undefined, `All ${connections.length} connections`)
+  all.value = ''
+  connectionPicker.replaceChildren(
+    all,
+    ...connections.map((c) => {
+      const option = el('option', undefined, connectionName(c))
+      option.value = c.id
+      return option
+    }),
+  )
+  connectionPicker.value = view.connection ?? ''
+}
+
+function setConnection(id: string | null) {
+  view.connection = id
+  connectionPicker.value = id ?? ''
+  if (shown !== null) show(shown.analysis, shown.opened, true)
+}
+
+connectionPicker.addEventListener('change', () => {
+  setConnection(connectionPicker.value === '' ? null : connectionPicker.value)
+})
+
+// ------------------------------------------------------------------ keys ---
+
+/** Where "next" counts from: the selected message, else the start. */
+function referenceTime(): number {
+  if (shown === null || messagesPane === null) return -1
+  return messageItems[messagesPane.selected()]?.message.at ?? -1
+}
+
+document.addEventListener('keydown', (event) => {
+  const target = event.target as HTMLElement | null
+  if (
+    target !== null &&
+    (target.closest('input, textarea, select, [contenteditable="true"]') !== null ||
+      target.isContentEditable)
+  ) {
+    return
+  }
+  const action = keyAction(event)
+  if (action === null || shown === null) return
+  const { analysis } = shown
+  event.preventDefault()
+  switch (action) {
+    case 'next-message':
+    case 'previous-message': {
+      if (messagesPane === null) return
+      selectTab?.('messages')
+      const step = action === 'next-message' ? 1 : -1
+      messagesPane.select(Math.max(0, messagesPane.selected() + step), true, true)
+      return
+    }
+    case 'next-problem':
+    case 'previous-problem': {
+      const problems = analysis.problems.filter((p) => connectionShown(p.connection))
+      const step = action === 'next-problem' ? 1 : -1
+      const problem = stepProblem(problems, referenceTime(), step)
+      if (problem === null) {
+        live.textContent = step === 1 ? 'No later problem' : 'No earlier problem'
+        return
+      }
+      live.textContent = problem.title
+      gotoMessage(problem.index!, true)
+      return
+    }
+    case 'next-error': {
+      const from = messagesPane?.selected() ?? -1
+      const next = messageItems.findIndex((item, i) => i > from && isErrorRow(item.message))
+      if (next < 0) {
+        live.textContent = 'No later error'
+        return
+      }
+      selectTab?.('messages')
+      messagesPane?.select(next, true, true)
+      return
+    }
+    case 'next-gap': {
+      if (timeline === null) return
+      const gap = nextGap(timeline.cells, timelineFrom)
+      if (gap === null) {
+        live.textContent = 'No later gap or stall'
+        return
+      }
+      timelineFrom = gap.from
+      selectTab?.('timeline')
+      timeline.selectCell(gap)
+      report({ t: Math.round(gap.from / 1000), msg: null })
+      return
+    }
+    case 'filter':
+      if (filterInput === null) return
+      selectTab?.('messages')
+      filterInput.focus()
+      filterInput.select()
+      return
+  }
+})
+
+/** Where `g` continues from: the last gap it showed. */
+let timelineFrom = -1
 
 // ------------------------------------------------------------------ flow ---
 
@@ -875,10 +1715,10 @@ interface Opened {
 
 // A title the parent already shows is kept for assistive technology, so the
 // framed document still has its heading, and taken off the screen.
-function setTitle(text: string, shown: boolean) {
+function setTitle(text: string, visible: boolean) {
   title.textContent = text.length > 48 ? middle(text, 22) : text
   title.title = text
-  title.classList.toggle('vw-offscreen', !shown)
+  title.classList.toggle('mq-sr', !visible)
 }
 
 // Framed, the header can be left with nothing on screen: no title (the parent
@@ -886,49 +1726,106 @@ function setTitle(text: string, shown: boolean) {
 // bar is chrome for its own sake, so it goes the same way as the title.
 function fitHeader() {
   const bare =
-    title.classList.contains('vw-offscreen') &&
+    title.classList.contains('mq-sr') &&
     [factsLine, draftPill, shareButton, openButton].every((node) => node.hidden)
-  header.classList.toggle('vw-offscreen', bare)
+  header.classList.toggle('mq-sr', bare)
 }
 
-function show(analysis: TraceAnalysis, opened: Opened) {
-  showViews([
-    {
-      id: 'overview',
-      label: 'Overview',
-      render: () => {
-        const panel = el('div', 'vw-overview')
-        // Focusable because it scrolls; see `hexView`.
-        panel.tabIndex = 0
-        panel.append(renderFindings(analysis.findings), renderSummary(analysis.summary, opened))
-        return panel
+/** Show an analysis; `keepPlace` when it replaces the same trace, grown. */
+function show(analysis: TraceAnalysis, opened: Opened, keepPlace: boolean) {
+  const place = keepPlace ? currentPlace() : null
+  pendingScroll.clear()
+  for (const [key, scroll] of place?.scroll ?? []) pendingScroll.set(key, scroll)
+  shown = { analysis, opened }
+  offerConnections(analysis)
+  const messages = analysis.messages.filter((m) => connectionShown(m.peer)).length
+  showViews(
+    [
+      {
+        id: 'overview',
+        label: 'Overview',
+        render: () => {
+          const panel = el('div', 'vw-overview')
+          // Focusable because it scrolls; see `hexView`.
+          panel.tabIndex = 0
+          panel.dataset.keep = 'overview'
+          const findings = renderFindings(analysis.findings)
+          if (findings !== null) panel.append(findings)
+          panel.append(renderSummary(analysis.summary, opened))
+          const connections = renderConnections(analysis.connections)
+          if (connections !== null) panel.append(connections)
+          return panel
+        },
       },
-    },
-    {
-      id: 'messages',
-      label: 'Control messages',
-      count: analysis.messages.length,
-      render: () => renderMessages(analysis),
-    },
-    {
-      id: 'streams',
-      label: 'Streams and objects',
-      count: analysis.streams.length,
-      render: () => renderStreams(analysis),
-    },
-  ])
+      {
+        id: 'messages',
+        label: 'Control messages',
+        count: messages,
+        render: () => renderMessages(analysis, place?.selected.get('message')),
+      },
+      {
+        id: 'timeline',
+        label: 'Timeline',
+        render: () => renderTimelineTab(analysis),
+      },
+      {
+        id: 'tracks',
+        label: 'Tracks',
+        count: analysis.tracks.filter((t) => connectionShown(t.connection)).length,
+        render: () => renderTracks(analysis),
+      },
+      {
+        id: 'streams',
+        label: 'Streams and objects',
+        count: analysis.streams.filter((s) => connectionShown(s.peer)).length,
+        render: () => renderStreams(analysis, place?.selected.get('stream')),
+      },
+    ],
+    place?.tab ?? null,
+  )
 
   empty.hidden = true
   results.hidden = false
   errorBox.hidden = true
   delete dropZone.dataset.rejected
   setTitle(opened.name, opened.titled)
-  const messages = analysis.messages.length
-  factsLine.textContent = `${count(messages)} ${messages === 1 ? 'message' : 'messages'} · ${bytes(opened.size)}`
+  const total = analysis.messages.length
+  factsLine.textContent = `${count(total)} ${total === 1 ? 'message' : 'messages'} · ${bytes(opened.size)}`
   factsLine.hidden = false
   const { draft } = analysis.summary
   draftPill.textContent = draft === null ? '' : draftLabel(draft)
   draftPill.hidden = draft === null
+}
+
+/** The place a parent last asked for, so a replacement that repeats it keeps the reader's own. */
+let asked: { t?: number | undefined; msg?: string | undefined } = {}
+
+/**
+ * Open where the parent asked: a message, else a moment on the timeline. On
+ * a replacement only a place the parent changed is applied; one it repeats
+ * would take the reader back from wherever they went since.
+ */
+function openAt(trace: IngestedTrace, replacing: boolean) {
+  const previous = asked
+  asked = { t: trace.t, msg: trace.msg }
+  if (trace.t === undefined && trace.msg === undefined) return
+  if (replacing && previous.t === trace.t && previous.msg === trace.msg) return
+  if (shown === null) return
+  const { messages } = shown.analysis
+  const index =
+    trace.msg === undefined ? -1 : messages.findIndex((m) => messageKey(m) === trace.msg)
+  if (index >= 0) {
+    gotoMessage(index, false)
+    return
+  }
+  if (trace.t === undefined) return
+  const us = trace.t * 1000
+  const near = messageItems.findIndex((item) => item.message.at >= us)
+  if (near >= 0) messagesPane?.select(near, true, false)
+  if (timeline !== null) {
+    selectTab?.('timeline')
+    timeline.showTime(us)
+  }
 }
 
 // What the header's buttons are about: where the trace on screen came from
@@ -964,6 +1861,10 @@ function fail(message: string) {
   results.hidden = true
   results.replaceChildren()
   tabStrip.hidden = true
+  connectionBar.hidden = true
+  shown = null
+  messagesPane = null
+  timeline = null
   resetHeader()
   offerActions(null)
   empty.hidden = false
@@ -989,7 +1890,10 @@ let current: Worker | null = null
 
 const ingest = startIngest({
   onTrace: analyze,
-  onReject: fail,
+  // A newer copy that fails leaves the trace on screen as it was.
+  onReject: (reason, replace) => {
+    if (replace !== true || results.hidden) fail(reason)
+  },
   onTheme: (theme) => applyTheme(document.documentElement, theme),
 })
 resetHeader()
@@ -1003,7 +1907,10 @@ function analyze(trace: IngestedTrace) {
     source: trace.source,
     titled: ingest.showsTitle(trace),
   }
-  working(opened)
+  // A newer copy of the trace on screen is read behind it, so the page does
+  // not blank and lose the reader's place each time the trace grows.
+  const replacing = trace.replace === true && !results.hidden
+  if (!replacing) working(opened)
 
   // Resolved against this script, so the worker comes from the view origin
   // itself and `worker-src 'self'` is all the CSP has to allow.
@@ -1016,19 +1923,25 @@ function analyze(trace: IngestedTrace) {
   worker.addEventListener('message', (event: MessageEvent<AnalyzeResponse>) => {
     done()
     if (event.data.ok) {
-      show(event.data.analysis, opened)
-      offerActions(trace)
+      if (!replacing) {
+        view.connection = null
+        view.filter = ''
+        timelineFrom = -1
+      }
+      show(event.data.analysis, opened, replacing)
+      // A newer copy carries no marks of its own; the trace keeps the ones it
+      // arrived with.
+      if (!replacing) offerActions(trace)
+      openAt(trace, replacing)
       ingest.report(trace, 'opened')
     } else {
-      fail(event.data.message)
+      if (!replacing) fail(event.data.message)
       ingest.report(trace, 'failed')
     }
   })
   worker.addEventListener('error', () => {
     done()
-    fail(
-      'The decoder stopped unexpectedly. The file may be a .moqtrace version this viewer cannot read.',
-    )
+    if (!replacing) fail("This file can't be read.")
     ingest.report(trace, 'failed')
   })
 
@@ -1041,7 +1954,10 @@ function analyze(trace: IngestedTrace) {
   const payload = (
     whole ? buffer : buffer.slice(byteOffset, byteOffset + byteLength)
   ) as ArrayBuffer
-  const request: AnalyzeRequest = { bytes: payload }
+  const request: AnalyzeRequest = {
+    bytes: payload,
+    ...(trace.pendingMs === undefined ? {} : { pendingMs: trace.pendingMs }),
+  }
   worker.postMessage(request, [payload])
 }
 

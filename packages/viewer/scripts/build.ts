@@ -12,9 +12,9 @@
  * tsup because the output is a page, not a library: self-contained browser
  * entry points, no declarations, no CJS.
  *
- * `@moqtap/trace` resolves to its source through this package's `tsconfig.json`
- * `paths`, the same arrangement the collector's declaration build uses for the
- * codec, so the bundle does not depend on a built `trace/dist`.
+ * `@moqtap/trace` and `@moqtap/inspect` resolve to their sources through this
+ * package's `tsconfig.json` `paths`, the same arrangement the collector's
+ * declaration build uses for the codec, so the bundle needs no built `dist`.
  *
  * The bundle has no network, so everything it shows comes with it: the fonts
  * are files beside `tokens.css`, which loads them by relative URL, under

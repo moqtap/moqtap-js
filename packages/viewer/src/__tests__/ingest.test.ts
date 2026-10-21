@@ -92,6 +92,41 @@ describe('startIngest', () => {
     ])
   })
 
+  it('hands a replacement from its parent to the page as one', () => {
+    const { parent, frame, traces } = setup()
+    frame.deliver('https://app.moqtap.com', parent, traceMessage)
+    frame.deliver('https://app.moqtap.com', parent, { ...traceMessage, type: 'moqtrace-replace' })
+    expect(traces.map((t) => t.replace)).toEqual([undefined, true])
+  })
+
+  it('gates a replacement like any trace', () => {
+    const { parent, frame, traces } = setup()
+    frame.deliver('https://app.moqtap.com', parent, traceMessage)
+    const replacement = { ...traceMessage, type: 'moqtrace-replace' }
+    frame.deliver('https://moqtap.com', parent, replacement)
+    frame.deliver('https://app.moqtap.com', new FakeWindow(), replacement)
+    frame.deliver('https://evil.example', parent, replacement)
+    expect(traces).toHaveLength(1)
+  })
+
+  it('says a refused replacement was one, and reports it to the bound origin', () => {
+    const parent = new FakeWindow()
+    const frame = new FakeFrame(parent)
+    const rejects: [string, boolean | undefined][] = []
+    startIngest({ onTrace: () => {}, onReject: (r, replace) => rejects.push([r, replace]) }, frame)
+    frame.deliver('https://app.moqtap.com', parent, {
+      type: 'moqtrace-replace',
+      bytes: new Uint8Array(4),
+    })
+    expect(rejects).toEqual([["The page sent 4 bytes that aren't a .moqtrace file.", true]])
+    expect(parent.posts.slice(1)).toEqual([
+      {
+        message: { type: 'moqtrace-view-state', state: 'failed' },
+        targetOrigin: 'https://app.moqtap.com',
+      },
+    ])
+  })
+
   it('never hands a trace from an origin off the allowlist to the page', () => {
     const { parent, frame, traces, rejects } = setup()
     frame.deliver('https://evil.example', parent, traceMessage)
@@ -268,6 +303,33 @@ describe('startIngest', () => {
     const frame = new FakeFrame()
     const ingest = startIngest({ onTrace: () => {}, onReject: () => {} }, frame)
     expect(ingest.canOpenLocal(null)).toBe(true)
+  })
+
+  it('passes the threshold and the place to open on to the page', () => {
+    const { parent, frame, traces } = setup()
+    frame.deliver('https://app.moqtap.com', parent, {
+      ...traceMessage,
+      pendingMs: 2000,
+      t: 5,
+      msg: '1:2',
+    })
+    expect(traces[0]).toMatchObject({ pendingMs: 2000, t: 5, msg: '1:2' })
+  })
+
+  it("reports the reader's selection to the bound parent, and never for a local file", () => {
+    const { parent, frame, traces, ingest } = setup()
+    frame.deliver('https://app.moqtap.com', parent, traceMessage)
+    parent.posts.length = 0
+    ingest.reportSelection({ source: 'file' }, { t: 1, msg: null })
+    ingest.reportSelection(null, { t: 1, msg: null })
+    expect(parent.posts).toEqual([])
+    ingest.reportSelection(traces[0] ?? null, { t: 41_212, msg: '0:21' })
+    expect(parent.posts).toEqual([
+      {
+        message: { type: 'moqtrace-view-selection', t: 41_212, msg: '0:21' },
+        targetOrigin: 'https://app.moqtap.com',
+      },
+    ])
   })
 
   it('stops listening when stopped', () => {

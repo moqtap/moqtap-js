@@ -17,6 +17,8 @@ import { readTrace } from './read'
 
 export interface AnalyzeRequest {
   readonly bytes: ArrayBuffer
+  /** The parent's pending threshold, when it sent one. */
+  readonly pendingMs?: number
 }
 
 export type AnalyzeResponse =
@@ -40,6 +42,7 @@ export function handle(request: AnalyzeRequest): AnalyzeResponse {
         formatVersion,
         tables: tables as unknown as MessageTables,
         ...(truncatedAt === undefined ? {} : { truncatedAt }),
+        ...(request.pendingMs === undefined ? {} : { pendingMs: request.pendingMs }),
       }),
     }
   } catch (error) {

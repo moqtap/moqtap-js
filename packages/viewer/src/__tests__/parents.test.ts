@@ -23,6 +23,7 @@ import {
   SHARE_REQUEST,
   STAGING_PARENTS,
   tellParent,
+  tellSelection,
   titlesTrace,
 } from '../parents'
 
@@ -154,7 +155,58 @@ describe('what the frame says, and to whom', () => {
   })
 })
 
+describe('the selection the frame reports', () => {
+  it('goes to the bound origin only, as a time and a message key', () => {
+    const g = gate()
+    const out = new Recorder()
+    expect(tellSelection(g, out, { t: 41_212, msg: '0:21' })).toBe(false)
+    g.admit({ origin: 'https://app.moqtap.com', source: parent, data: trace })
+    expect(tellSelection(g, out, { t: 41_212, msg: '0:21' })).toBe(true)
+    expect(tellSelection(g, out, { t: 50_000, msg: null })).toBe(true)
+    expect(out.posts).toEqual([
+      {
+        message: { type: 'moqtrace-view-selection', t: 41_212, msg: '0:21' },
+        targetOrigin: 'https://app.moqtap.com',
+      },
+      {
+        message: { type: 'moqtrace-view-selection', t: 50_000, msg: null },
+        targetOrigin: 'https://app.moqtap.com',
+      },
+    ])
+  })
+})
+
 describe('the message shape', () => {
+  it('reads the pending threshold and the place to open, on a trace and a replacement', () => {
+    const bytes = new Uint8Array(8)
+    for (const type of ['moqtrace', 'moqtrace-replace']) {
+      expect(
+        asTraceMessage({ type, bytes, pendingMs: 2000, t: 41_212, msg: '0:21' }),
+      ).toMatchObject({
+        pendingMs: 2000,
+        t: 41_212,
+        msg: '0:21',
+      })
+    }
+  })
+
+  it('drops a threshold outside 500 ms to 60 s, a bad time and a bad message key', () => {
+    const bytes = new Uint8Array(8)
+    for (const extra of [
+      { pendingMs: 100 },
+      { pendingMs: 120_000 },
+      { pendingMs: '5000' },
+      { t: -1 },
+      { t: Number.NaN },
+      { msg: '21' },
+      { msg: '0:21<b>' },
+    ]) {
+      expect(asTraceMessage({ type: 'moqtrace', bytes, ...extra }), JSON.stringify(extra)).toEqual({
+        bytes,
+      })
+    }
+  })
+
   it('reads the shape released CLI shells send', () => {
     const buffer = new TextEncoder().encode('MOQTRACE').buffer
     const msg = asTraceMessage({ type: 'moqtrace', bytes: buffer, name: 'a.moqtrace' })
@@ -179,6 +231,18 @@ describe('the message shape', () => {
       const msg = asTraceMessage({ type: 'moqtrace', bytes, shareable })
       expect(msg && 'shareable' in msg, String(shareable)).toBe(false)
     }
+  })
+
+  it('reads a replacement as a trace marked to keep the place on screen', () => {
+    const msg = asTraceMessage({ type: 'moqtrace-replace', bytes: new Uint8Array(8), name: 'a' })
+    expect(msg).toEqual({ bytes: new Uint8Array(8), name: 'a', replace: true })
+  })
+
+  it('takes neither mark on a replacement, and marks a plain trace as no replacement', () => {
+    const bytes = new Uint8Array(8)
+    const msg = asTraceMessage({ type: 'moqtrace-replace', bytes, shareable: true, local: true })
+    expect(msg).toEqual({ bytes, replace: true })
+    expect(asTraceMessage({ type: 'moqtrace', bytes, replace: true })).toEqual({ bytes })
   })
 
   it('drops a name that is not a string rather than rendering it', () => {

@@ -42,23 +42,31 @@ the same bytes. The source:
 | file | what it is |
 |---|---|
 | `src/read.ts` | reads as much of a file as it will give up, reporting where a damaged file stops |
-| `src/analysis.ts` | what a trace says, reduced to findings, a session summary, a message log, and its streams and objects |
+| `src/analysis.ts` | what a trace says, reduced to findings, a session summary, a message log with requests paired and problems marked (`@moqtap/inspect`), its connections, tracks, streams and objects |
+| `src/rollups.ts` | a collector's rollups, flight dumps, detail windows and player annotations, placed on the trace's clock |
 | `src/drafts.ts` | naming wire IDs against the draft the trace declares |
-| `src/format.ts` | units (offsets, durations, wall clock, sizes), identifiers, draft labels, direction, hex lines |
+| `src/format.ts` | units (offsets, durations, wall clock, sizes), identifiers, draft labels, direction, spec links, hex lines, displayed field values |
 | `src/theme.ts` | light, dark or system, from the URL or the parent |
 | `src/theme-boot.ts` | the blocking script that applies `?theme=` |
 | `src/parents.ts` | the parent allowlist, the handshake, the messages it reads, and what the frame says back or shows |
 | `src/ingest.ts` | the two ways in: a parent's `postMessage`, or a local file |
 | `src/worker.ts` | the decoder worker |
-| `src/main.ts` | rendering: Overview, Control messages, Streams and objects |
+| `src/main.ts` | rendering: Overview, Control messages, Tracks, Streams and objects; the connection picker and the keys |
+| `src/timeline.ts` | the Timeline tab |
+| `src/navigate.ts` | the keys, the message filter, and where "next" lands |
+| `src/dom.ts` | element builders |
 | `src/data/message-tables.json` | every draft's control message registry, generated |
 
 ## The parent protocol
 
 ```
 frame  → parent   { type: 'moqtrace-inspector-ready', version: 1 }       target '*'
-parent → frame    { type: 'moqtrace', bytes: ArrayBuffer | Uint8Array, name?: string, shareable?: true, local?: true }
+parent → frame    { type: 'moqtrace', bytes: ArrayBuffer | Uint8Array, name?: string, shareable?: true, local?: true,
+                    pendingMs?: number, t?: number, msg?: string }
+parent → frame    { type: 'moqtrace-replace', bytes: ArrayBuffer | Uint8Array, name?: string,
+                    pendingMs?: number, t?: number, msg?: string }
 frame  → parent   { type: 'moqtrace-view-state', state: 'opened' | 'failed' }   target = the bound origin
+frame  → parent   { type: 'moqtrace-view-selection', t: number | null, msg: string | null }   target = the bound origin
 frame  → parent   { type: 'moqtrace-share-request' }                      target = the bound origin, site relay only
 parent → frame    { type: 'moqtap:theme', theme: 'light' | 'dark' | 'system' }
 ```
@@ -112,7 +120,26 @@ parent → frame    { type: 'moqtap:theme', theme: 'light' | 'dark' | 'system' }
    where the site's dev server runs too. The mark is read only as the literal
    `true`, and only from the site relay. In a frame with nothing on screen
    the button is hidden too; the empty state carries its own file chooser.
-7. **Theme.** The viewer has no theme control. The parent puts
+7. **Replacing.** `moqtrace-replace` passes the same gate as a trace and
+   carries a newer copy of the trace on screen, such as a session that is
+   still being recorded. The frame reads it behind the one shown and swaps
+   it in, keeping the tab, the selected message or stream, and the scroll
+   positions where they still exist, and answers with `moqtrace-view-state`
+   as for any trace. A copy that does not read leaves the trace on screen
+   and answers `failed`. With nothing on screen it opens like a trace. It
+   carries neither mark.
+8. **Pending threshold.** `pendingMs`, from 500 to 60000, is how long a
+   request waits for its response before the viewer marks it; 5000 without
+   it. A value out of range is ignored.
+9. **Place.** `t` (milliseconds from the session's start) and `msg` (a
+   message as `segment:seq`) say where to open: the message when it exists,
+   else the moment on the timeline. On a replacement they apply only when
+   they differ from the last ones sent, so a parent that repeats its URL's
+   place does not move a reader who has moved since. When the reader selects
+   a message or a moment, the frame posts `moqtrace-view-selection` with
+   the same two values, `null` for the one that does not apply, to the
+   bound origin only. Nothing is posted for a file opened here.
+10. **Theme.** The viewer has no theme control. The parent puts
    `?theme=light|dark|system` on the frame's URL, applied by a blocking
    script before the first paint, and posts `{ type: 'moqtap:theme', theme }`
    when its choice changes. The message passes the same gate as a trace (and
@@ -122,8 +149,9 @@ parent → frame    { type: 'moqtap:theme', theme: 'light' | 'dark' | 'system' }
 
 The message shapes are the ones `moqtap inspect`'s shell speaks, and released
 binaries have them compiled in. The shell speaks them to the site page, and
-the site page speaks them to the viewer. `shareable` and `local` are the two
-additions, and only the relay sets them. The theme message is the one every
+the site page speaks them to the viewer. `shareable` and `local` are
+additions only the relay sets; `pendingMs`, `t`, `msg`, the replacement and
+the selection report are the portal's. The theme message is the one every
 moqtap page that frames another passes down.
 Everything else that arrives is ignored silently: frames receive ordinary
 cross-origin chatter, and none of it is a failed import.
@@ -174,14 +202,47 @@ and `bun run test` need only this repository. `registries` and
 does not run them. Run the check after the site's registries change, before
 tagging a release.
 
-Spec links in a message's detail are cited by section (`§ 9.7 SUBSCRIBE_OK`),
-point at `https://moqtap.com<specPath>`, and open in a new tab, with
+A message's name in its detail links to its spec page, followed by its wire
+ID and a section citation (`draft-14 §9.8`) to the same page. Links point at
+`https://moqtap.com<specPath>/` and open in a new tab, with
 `rel="noopener noreferrer"`. A framed viewer needs
 `allow-popups allow-popups-to-escape-sandbox` in the embedder's `sandbox` for
 that: without `allow-popups` the browser drops the click silently, and without
-the escape the spec page would open under the viewer's sandbox. Each message
-with a spec page also shows its address as selectable text, so it can be
-copied and still reaches the spec under an embedder that refuses popups.
+the escape the spec page would open under the viewer's sandbox.
+
+Field values come from `@moqtap/inspect`'s `displayFields`, and the tracks
+from its `TrackRegistry`, one per connection, run in the worker: setup
+versions as drafts, printable bytes as text, large integers in full, unknown
+parameters as their id, length and bytes, and track aliases joined to
+namespace and name. Error codes are named by `errorName` for the session's
+draft ("unknown for draft-14" when that draft has none), renamed messages
+carry their other names from `messageAliases`, and requests are paired and
+problems found by `pairRequests` and `problems`.
+
+## Views
+
+- **Control messages:** each row has its direction, name, wire ID, request
+  id, track and response with its round trip (`→ SUBSCRIBE_OK 212 ms`). A
+  request with no response past the pending threshold is marked. The detail
+  shows named fields or the bytes in hex, the error code's name, links
+  between a request and its response, Copy as JSON and Copy thread.
+- **Timeline:** a control lane and a lane per track for each connection, in
+  the collector's rollup intervals. A cell's shade is its object rate; a
+  cell with a stall or a group ID gap is shaded whole and labelled, stalls by
+  histogram bucket. Flight dumps draw each object, and exact stalls, inside
+  their window. Bands mark where detail was raised (`collector.escalation`),
+  and annotations not labelled `collector.` or `insight.` are drawn as the
+  player's events.
+- **Tracks:** per connection, received tracks with subscribe to OK, first
+  object, objects, group ID gaps, skipped, stalls (longest by bucket),
+  cadence p50/p95 and arrival p95; sent tracks with objects, bytes, time
+  waiting to send and bytes acknowledged.
+- **Connections:** a trace whose events carry `p` is separated by it, with a
+  picker when there is more than one. A trace without `p` is one connection.
+
+Keys, when no text field has focus: `j`/`k` next and previous message,
+`n`/`p` next and previous problem, `e` next error, `g` next stall or group ID
+gap on the timeline, `/` the message filter.
 
 ## Tests
 
@@ -194,13 +255,17 @@ bun run test     # or: vitest run, from this directory
   through `handle()`, the function the worker runs. The summary must match the
   manifest, and each case must raise the findings it was written to provoke.
   Each message carries its draft section and its bytes, and each stream lists
-  the objects seen on it, on one clock from the session start.
+  the objects seen on it, on one clock from the session start. A session
+  shaped like a collector's shows its setup versions as drafts, names the
+  client and relay implementations and where the draft came from, joins its
+  track alias to namespace and name, and keeps a request id past 2^53 whole.
 - `parents.test.ts`: the gate. Lookalike origins, non-parent sources, the
   binding, and that nothing is posted before a handshake; the theme message's
   shape; when the header carries its own title; which parents answer a share
   request, and that the request is dataless and goes only to a handshaken site
-  relay; the `shareable` and `local` marks are read only as `true`; Open
-  capture is offered only where opening a local file is the point.
+  relay; the `shareable` and `local` marks are read only as `true`, and a
+  replacement carries neither; Open capture is offered only where opening a
+  local file is the point.
 - `ingest.test.ts`: the listener that applies the gate, on fake windows. A
   refused origin or source never reaches `onTrace`, the announcement goes to
   `'*'` only when framed, and reports go only to the bound origin; Share is
@@ -211,8 +276,16 @@ bun run test     # or: vitest run, from this directory
   and offered beside the site's own marked capture and on its own; the title
   is left to the portal and the shell, and kept for a capture read locally. A
   theme is taken only from an admitted parent, and never as a trace or a
-  failure.
-- `units.test.ts`: draft naming, units, the signature check, the theme.
+  failure. A replacement passes the same gate, and one that is refused says
+  so, so the page can keep the trace on screen.
+- `units.test.ts`: draft naming, units, direction labels, spec links, copied
+  field values, the signature check, the theme.
+- `inspect.test.ts`: requests paired with responses and threaded, error code
+  names, aliases, the pending threshold, undecodable bytes in the log,
+  connections kept apart, and the rollups, flight dumps, detail bands and
+  player events on the trace's clock.
+- `view.test.ts`: bucket ranges, thresholds, unknown parameters, wall time,
+  the keys, the filter, where "next" lands, and the timeline's labels.
 - `page.test.ts`: the page has nothing the CSP would refuse, the Share and
   Open capture buttons start hidden in the markup, the inline logo equals
   `brand/moqtap-logo.svg`, the theme is applied by a blocking script ahead
@@ -242,6 +315,10 @@ off screen, keeping it as the document's heading, because that parent names
 the trace above the frame. A capture read on this machine keeps its title. A
 header left with nothing on screen is taken off screen the same way.
 
+Each track alias keeps one categorical chart colour in every view, always
+with the alias written beside it; the overview's list of track aliases is
+the legend.
+
 The fonts are IBM Plex, under the SIL Open Font License 1.1: the `latin`
 woff2 files from npm `@fontsource/ibm-plex-sans` 5.1.1 and `@fontsource/ibm-plex-mono` 5.2.6,
 unmodified, with IBM's licence text from `@ibm/plex-sans` 1.1.0
@@ -253,8 +330,10 @@ carries a copy inline, so the wordmark takes the theme's ink through
 icons derived from Feather; both in `static/LICENSE-lucide-static.txt`),
 bundled at build time and drawn at 16px with a 1.5px stroke.
 
-## Resolution of `@moqtap/trace`
+## Resolution of `@moqtap/trace` and `@moqtap/inspect`
 
-Through `tsconfig.json` `paths` (and the matching alias in `vitest.config.ts`)
-to `../trace/src/index.ts`, the same module the workspace link resolves to
-under Bun. The bundle therefore never depends on a built `trace/dist`.
+Through `tsconfig.json` `paths` (and the matching aliases in
+`vitest.config.ts`) to `../trace/src/index.ts` and `../inspect/src/index.ts`,
+the same modules the workspace links resolve to under Bun. The bundle
+therefore never depends on a built `dist`. Only the worker loads them; the
+page takes types from `analysis.ts` and nothing else.

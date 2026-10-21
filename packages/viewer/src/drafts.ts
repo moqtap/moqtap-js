@@ -54,19 +54,3 @@ export function draftOf(protocol: string, tables: MessageTables): number | null 
 export function byId(defs: readonly MessageDef[]): ReadonlyMap<number, MessageDef> {
   return new Map(defs.map((def) => [def.value, def]))
 }
-
-/**
- * The wire IDs for a set of message names, skipping names this draft lacks.
- *
- * Callers ask by name because the names are what kept their meaning while the
- * IDs moved. A subscription's response is `SUBSCRIBE_OK` up to draft 14 and
- * `REQUEST_OK` from 15, so asking for both gets whichever this draft defines
- * without special-casing the changeover.
- */
-export function idsNamed(
-  defs: readonly MessageDef[],
-  names: readonly string[],
-): ReadonlySet<number> {
-  const wanted = new Set(names)
-  return new Set(defs.filter((def) => !def.reserved && wanted.has(def.name)).map((d) => d.value))
-}

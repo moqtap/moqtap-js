@@ -5,23 +5,6 @@
  * more. A file, not inline: the view origin serves `style-src 'self'`.
  */
 
-[hidden] {
-  display: none !important;
-}
-
-/* Scrollbars and form controls follow the theme the page shows. */
-:root {
-  color-scheme: light;
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    color-scheme: dark;
-  }
-}
-
 * {
   box-sizing: border-box;
 }
@@ -57,24 +40,6 @@ body {
   display: block;
   height: 13.47px;
   width: auto;
-}
-/*
- * Off screen but still read: the header and its title when the page framing
- * the viewer already names the trace. Two classes, so it outranks the
- * header's own size and padding.
- */
-.vw-header.vw-offscreen,
-.vw-title.vw-offscreen {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 .vw-facts {
   overflow: hidden;
@@ -194,8 +159,9 @@ body {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--line);
   color: var(--ink);
-  font-size: 12px;
-  line-height: 16px;
+  font-family: var(--type-tool-label-family);
+  font-size: var(--type-tool-label-size);
+  line-height: var(--type-tool-label-line);
   font-weight: 600;
 }
 
@@ -205,9 +171,15 @@ body {
   gap: var(--space-1);
   max-width: 100%;
 }
-.vw-wrap {
+/* A track alias after its series swatch, as in the design system's legend. */
+.vw-track {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.vw-id > .mq-addr {
   min-width: 0;
-  overflow-wrap: anywhere;
 }
 
 /* ----------------------------------------------------------- log panes --- */
@@ -253,24 +225,26 @@ body {
 }
 .vw-detail-title {
   margin: 0;
-  font: 600 14px/20px var(--font-mono);
+  font-family: var(--type-code-family);
+  font-size: var(--type-code-size);
+  line-height: var(--type-code-line);
+  font-weight: 600;
   color: var(--ink);
   overflow-wrap: anywhere;
 }
 .vw-cite {
-  font-size: 12px;
+  font-size: var(--type-caption-size);
 }
-.vw-spec-address {
-  margin: 0;
-  font-size: 11px;
-  overflow-wrap: anywhere;
-  user-select: all;
+.vw-detail-copy {
+  margin-left: auto;
+  align-self: center;
 }
 .vw-subhead {
   margin: var(--space-4) 0 0;
   color: var(--ink);
-  font-size: 12px;
-  line-height: 16px;
+  font-family: var(--type-tool-label-family);
+  font-size: var(--type-tool-label-size);
+  line-height: var(--type-tool-label-line);
   font-weight: 600;
 }
 .vw-note {
@@ -288,19 +262,15 @@ body {
 }
 .vw-opaque {
   margin: 0;
-  font-size: 12px;
-  line-height: 18px;
+  font-family: var(--type-data-family);
+  font-size: var(--type-data-size);
+  line-height: var(--type-data-line);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .vw-hex {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-}
-/* The design system's offset colour is under 4.5:1 on the sunken ground in
-   the light theme, and offsets are information, not decoration. */
-.vw-hex .off {
-  color: var(--ink-muted);
 }
 .vw-objects {
   max-height: 24rem;
@@ -310,7 +280,255 @@ body {
   padding: 2px var(--space-3);
 }
 
+.vw-tracks {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: var(--space-3);
+}
+.vw-tracks .mq-table td {
+  padding: 2px var(--space-3);
+}
+
 .vw-panel-empty {
   flex: 1;
   justify-content: center;
+}
+
+/* --------------------------------------------------------- connections --- */
+
+.vw-connbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.vw-connbar .mq-label {
+  margin: 0;
+}
+.vw-conn {
+  width: auto;
+  max-width: 100%;
+}
+.vw-conn-tag {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+
+/* ------------------------------------------------------------ messages --- */
+
+.vw-messages {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.vw-filterbar {
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.vw-filter {
+  max-width: 24rem;
+}
+.vw-messages-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.vw-row--pending .mq-log__meta,
+.vw-pending {
+  color: var(--warning);
+}
+.vw-detail-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.vw-mode {
+  display: inline-flex;
+  gap: 2px;
+  margin-top: var(--space-3);
+}
+.vw-mode .mq-btn[aria-pressed="true"] {
+  background: var(--surface-selected);
+  color: var(--ink);
+}
+.vw-jump {
+  font-family: var(--type-code-family);
+}
+.vw-unknown-param {
+  color: var(--ink-muted);
+}
+
+/* -------------------------------------------------------------- tracks --- */
+
+.vw-tracks-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.vw-tracks-panel > .vw-heading {
+  border-bottom: 0;
+}
+.vw-tracks-sub {
+  margin: var(--space-3) var(--space-3) 0;
+}
+
+/* ------------------------------------------------------------ timeline --- */
+
+.vw-timeline {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.vw-tl {
+  display: grid;
+  grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr);
+  margin: var(--space-3) var(--space-3) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.vw-tl-labels {
+  border-right: 1px solid var(--line);
+  min-width: 0;
+}
+/* One row of the chart: the same 22px as `ROW` in timeline.ts. */
+.vw-tl-label {
+  height: 22px;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 22px;
+}
+.vw-tl-label--group {
+  font-weight: 600;
+  color: var(--ink);
+}
+.vw-tl-scroll {
+  overflow-x: auto;
+  min-width: 0;
+}
+.vw-tl-scroll:focus-visible {
+  outline-offset: -2px;
+}
+.vw-tl-svg {
+  display: block;
+}
+.vw-tl-grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+.vw-tl-tick {
+  fill: var(--ink-muted);
+  font: 400 11px var(--font-mono);
+}
+.vw-tl-band {
+  fill: var(--info-soft);
+}
+.vw-tl-band-mark {
+  fill: var(--info);
+  fill-opacity: 0.35;
+}
+.vw-tl-msg-c2s {
+  stroke: var(--dir-c2s);
+  stroke-width: 1.5;
+}
+.vw-tl-msg-s2c {
+  stroke: var(--dir-s2c);
+  stroke-width: 1.5;
+}
+.vw-tl-msg-none {
+  stroke: var(--ink-muted);
+  stroke-width: 1.5;
+}
+.vw-tl-msg-error {
+  stroke: var(--danger);
+  stroke-width: 2;
+}
+.vw-tl-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+.vw-tl-pending {
+  fill: var(--warning);
+}
+.vw-tl-player {
+  cursor: pointer;
+}
+.vw-tl-player polygon {
+  fill: var(--team);
+}
+.vw-tl-player-label {
+  fill: var(--ink);
+  font: 400 11px var(--font-sans);
+}
+.vw-tl-cell {
+  fill: var(--chart-1);
+  cursor: pointer;
+}
+.vw-tl-d0 {
+  fill-opacity: 0.08;
+}
+.vw-tl-d1 {
+  fill-opacity: 0.3;
+}
+.vw-tl-d2 {
+  fill-opacity: 0.5;
+}
+.vw-tl-d3 {
+  fill-opacity: 0.7;
+}
+.vw-tl-d4 {
+  fill-opacity: 0.9;
+}
+/* Shaded whole and lighter than any density, so its label reads on it. */
+.vw-tl-cell.vw-tl-cell--marked {
+  fill: var(--danger);
+  fill-opacity: 0.3;
+  stroke: var(--danger);
+  stroke-width: 1;
+}
+.vw-tl-cell-label {
+  fill: var(--ink);
+  font: 500 11px var(--font-sans);
+  pointer-events: none;
+}
+.vw-tl-cell--selected {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+.vw-tl-flight {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-dasharray: 3 2;
+}
+.vw-tl-flight-stall {
+  fill: var(--danger);
+  fill-opacity: 0.4;
+}
+.vw-tl-object {
+  stroke: var(--chart-1);
+  stroke-width: 1;
+}
+.vw-tl-cursor {
+  stroke: var(--focus-ring);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+.vw-tl-detail {
+  margin: var(--space-2) var(--space-3) var(--space-3);
+  min-height: 18px;
+  font-size: 12px;
+  color: var(--ink);
 }

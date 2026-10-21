@@ -10,7 +10,12 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { type ObjectHeaderEvent, type TraceEvent, writeMoqtrace } from '@moqtap/trace'
+import {
+  type Displayed,
+  type ObjectHeaderEvent,
+  type TraceEvent,
+  writeMoqtrace,
+} from '@moqtap/trace'
 import { describe, expect, it } from 'vitest'
 import { PAYLOAD_PREVIEW_BYTES, type TraceAnalysis } from '../analysis'
 import { formatVersionOf, readTrace } from '../read'
@@ -113,14 +118,13 @@ describe('findings the corpus provokes', () => {
     )
   })
 
-  it('a SUBSCRIBE with a request id and no response is reported unanswered', () => {
-    expect(ids(analyse('v2-control-msg-map'))).toContain('subscribe-unanswered')
-  })
-
-  it('subscriptions with no readable request id are unpairable, never "all answered"', () => {
-    const found = ids(analyse('v2-msg-absent'))
-    expect(found).toContain('subscribe-unpairable')
-    expect(found).not.toContain('subscribe-unanswered')
+  it('a draft-17+ request recorded without its stream cannot be paired, and is said so', () => {
+    // Responses carry no request id from draft-17: only the stream ties them.
+    for (const id of ['v2-control-msg-map', 'v2-msg-absent']) {
+      const analysis = analyse(id)
+      expect(ids(analysis), id).toContain('no-control-stream-id')
+      expect(analysis.messages.some((m) => m.response !== undefined)).toBe(false)
+    }
   })
 
   it('a message ID the declared draft does not define is flagged as disagreement', () => {
@@ -264,6 +268,113 @@ describe('streams and objects', () => {
     expect(at.some((t, i) => t > raw[i]!.timestamp)).toBe(true)
     for (let i = 1; i < at.length; i++) expect(at[i]).toBeGreaterThanOrEqual(at[i - 1]!)
     for (const s of streams) expect(s.at).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('a session as a collector records it', () => {
+  const BIG_ID = 2n ** 60n
+  const ns = ['live', 'ch4']
+  type Draft = Omit<TraceEvent, 'seq' | 'timestamp'>
+  const control = (messageType: number, direction: 0 | 1, message: object): Draft =>
+    ({ type: 'control', messageType, direction, message }) as Draft
+
+  function session(withProtocol: boolean): TraceAnalysis {
+    const events: Draft[] = [
+      ...(withProtocol
+        ? [{ type: 'annotation', label: 'collector.setup', data: { protocol: 'moqt-14' } } as Draft]
+        : []),
+      control(0x20, 0, {
+        type: 'client_setup',
+        supported_versions: [0xff00000en, 0xff000010n],
+        parameters: { moqt_implementation: 'player/2.1' },
+      }),
+      control(0x21, 1, {
+        type: 'server_setup',
+        selected_version: 0xff00000en,
+        parameters: { moqt_implementation: 'relay/7' },
+      }),
+      control(0x3, 0, {
+        type: 'subscribe',
+        request_id: BIG_ID,
+        track_namespace: ns,
+        track_name: 'video/1080p',
+      }),
+      control(0x4, 1, { type: 'subscribe_ok', request_id: BIG_ID, track_alias: 9n }),
+      {
+        type: 'stream-opened',
+        streamId: 3n,
+        direction: 1,
+        streamType: 0,
+        trackAlias: 9n,
+      } as Draft,
+      control(0x10, 1, { type: 'goaway', new_session_uri: 'https://relay2.example/moq' }),
+    ]
+    const bytes = writeMoqtrace({
+      header: {
+        protocol: 'moq-transport-14',
+        perspective: 'client',
+        detail: 'control',
+        startTime: 1_767_225_600_000,
+      },
+      events: events.map((e, seq) => ({ ...e, seq, timestamp: seq * 1_000 }) as TraceEvent),
+    })
+    return analyseBytes(bytes, 'collector session')
+  }
+
+  it('shows setup versions as drafts, with the version in hex beside each', () => {
+    const [clientSetup] = session(true).messages
+    expect(clientSetup?.fields?.supported_versions).toEqual([
+      { $shown: 'version', text: 'draft-14', raw: '0xff00000e' },
+      { $shown: 'version', text: 'draft-16', raw: '0xff000010' },
+    ])
+  })
+
+  it('names the client and the relay from their setup messages', () => {
+    const { summary } = session(true)
+    expect(summary.clientImplementation).toBe('player/2.1')
+    expect(summary.relayImplementation).toBe('relay/7')
+  })
+
+  it('says how the draft is known: the negotiated protocol, else the selected version', () => {
+    expect(session(true).summary).toMatchObject({
+      negotiatedProtocol: 'moqt-14',
+      draftFrom: 'negotiated-protocol',
+    })
+    const bare = session(false).summary
+    expect(bare.negotiatedProtocol).toBeUndefined()
+    expect(bare.draftFrom).toBe('setup-version')
+  })
+
+  it('keys tracks by namespace and name, and joins the alias to them', () => {
+    const { tracks, messages, streams } = session(true)
+    expect(tracks).toEqual([
+      expect.objectContaining({
+        name: 'live/ch4 / video/1080p',
+        namespace: ns,
+        trackName: 'video/1080p',
+        alias: '9',
+        requestId: BIG_ID.toString(),
+        via: 'subscribe',
+        status: 'active',
+        requestedAt: 3_000,
+        answeredAt: 4_000,
+      }),
+    ])
+    expect(messages.find((m) => m.name === 'SUBSCRIBE_OK')?.track).toBe('live/ch4 / video/1080p')
+    expect(streams[0]?.track).toBe('live/ch4 / video/1080p')
+  })
+
+  it('keeps a request id past 2^53 in full, and still pairs the response with it', () => {
+    const analysis = session(true)
+    const subscribe = analysis.messages.find((m) => m.name === 'SUBSCRIBE')
+    expect((subscribe?.fields?.request_id as Displayed).text).toBe(BIG_ID.toString())
+    expect(ids(analysis)).not.toContain('subscribe-unanswered')
+  })
+
+  it('says who sent a GOAWAY, when, and where it pointed', () => {
+    const goaway = session(true).findings.find((f) => f.id === 'goaway')
+    expect(goaway?.title).toBe('GOAWAY from relay → https://relay2.example/moq')
+    expect(goaway?.detail).toBe('at +00:00.006')
   })
 })
 

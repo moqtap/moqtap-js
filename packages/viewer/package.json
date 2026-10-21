@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/viewer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "The .moqtrace viewer as a static bundle: rendered in a credential-free frame, fed by postMessage from an allowlisted parent or by a local file",
   "type": "module",
@@ -23,6 +23,7 @@
     "registries:check": "bun run scripts/registries.ts --check"
   },
   "devDependencies": {
+    "@moqtap/inspect": "workspace:*",
     "@moqtap/test-traces": "^0.1.1",
     "@moqtap/trace": "workspace:*",
     "lucide-static": "1.50.0",

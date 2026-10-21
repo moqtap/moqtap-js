@@ -6,13 +6,14 @@ import { defineConfig } from 'vitest/config'
  * resolves against this directory rather than the workspace root's project
  * list (see `packages/trace/vitest.config.ts`).
  *
- * The alias mirrors `tsconfig.json`'s `paths`: the tests read traces through
- * the same `@moqtap/trace` source the bundle is built from.
+ * The aliases mirror `tsconfig.json`'s `paths`: the tests run on the same
+ * `@moqtap/trace` and `@moqtap/inspect` sources the bundle is built from.
  */
 export default defineConfig({
   resolve: {
     alias: {
       '@moqtap/trace': fileURLToPath(new URL('../trace/src/index.ts', import.meta.url)),
+      '@moqtap/inspect': fileURLToPath(new URL('../inspect/src/index.ts', import.meta.url)),
     },
   },
   test: {
