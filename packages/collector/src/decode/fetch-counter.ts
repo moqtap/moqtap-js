@@ -44,7 +44,7 @@ import {
   type Desync,
   type ParseRun,
 } from './stream-walk.js'
-import type { CounterOptions } from './subgroup-counter.js'
+import { type CounterOptions, withStream } from './subgroup-counter.js'
 
 /** `FETCH_HEADER`'s stream type, identical in draft-19 and draft-20. */
 const FETCH_STREAM_TYPE = 0x05n
@@ -204,6 +204,7 @@ export class FetchCounter extends DataStreamCounter {
   private capped = false
   private pendingHeaderBytes = 0
   private readonly relativeObjectId: boolean
+  private readonly streamId: number
   private readonly cursor: ObjectCursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
 
   constructor(
@@ -215,6 +216,7 @@ export class FetchCounter extends DataStreamCounter {
   ) {
     super(opts?.slackBytes ?? DEFAULT_HEADER_SLACK_BYTES)
     this.relativeObjectId = (opts?.draft ?? 20) >= 20
+    this.streamId = opts?.streamId ?? -1
   }
 
   get bucketKey(): BucketKey | null {
@@ -281,6 +283,6 @@ export class FetchCounter extends DataStreamCounter {
       payloadBytes: o.payloadLength,
       at,
     }
-    this.sink.onObject(sample)
+    this.sink.onObject(withStream(sample, this.streamId))
   }
 }

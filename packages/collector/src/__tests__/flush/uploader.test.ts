@@ -27,7 +27,8 @@ import type { ClockSource } from '../../types.js'
 
 const chunk = (seq = 0, bytes = new Uint8Array([1, 2, 3, 4])): Chunk => ({
   sessionId: 's1',
-  segmentSeq: seq,
+  instanceId: 'i1',
+  seq,
   idempotencyKey: `key-${seq}`,
   createdWallMs: 1_700_000_000_000,
   bytes,
@@ -39,6 +40,7 @@ interface Call {
   readonly url: string
   readonly headers: Record<string, string>
   readonly body: unknown
+  readonly keepalive: boolean
 }
 
 interface FakeFetch {
@@ -54,7 +56,12 @@ const scripted = (responses: (Response | Error)[]): FakeFetch => {
     for (const [k, v] of Object.entries((init?.headers ?? {}) as Record<string, string>)) {
       headers[k.toLowerCase()] = v
     }
-    calls.push({ url: String(input), headers, body: init?.body })
+    calls.push({
+      url: String(input),
+      headers,
+      body: init?.body,
+      keepalive: init?.keepalive === true,
+    })
     const next = responses[Math.min(calls.length - 1, responses.length - 1)]
     if (next instanceof Error) return Promise.reject(next)
     return Promise.resolve((next as Response).clone())
@@ -100,8 +107,25 @@ describe('Uploader.send, the request', () => {
 
     expect(out).toMatchObject({ ok: true, status: 200, terminal: false })
     expect(f.calls).toHaveLength(1)
-    expect(f.calls[0]?.url).toBe('https://ingest.example/v1/ingest?k=k-123&ik=key-7')
+    // The instance rides in the URL too, so ingest can partition a body
+    // without decompressing it.
+    expect(f.calls[0]?.url).toBe('https://ingest.example/v1/ingest?k=k-123&ik=key-7&i=i1')
     expect(f.calls[0]?.headers).toEqual({ 'content-type': 'text/plain' })
+    expect(f.calls[0]?.keepalive).toBe(false)
+  })
+
+  it('asks for keepalive when told to, and only for a body the platform allows it on', async () => {
+    const f = scripted([ok()])
+    const u = uploaderWith(f.impl)
+    await u.send(chunk(0), undefined, true)
+    await u.send(chunk(1, new Uint8Array(64 * 1024 + 1)), undefined, true)
+    expect(f.calls.map((c) => c.keepalive)).toEqual([true, false])
+  })
+
+  it('leaves the instance out for a body stored before instances existed', async () => {
+    const f = scripted([ok()])
+    await uploaderWith(f.impl).send({ ...chunk(3), instanceId: '' })
+    expect(f.calls[0]?.url).toBe('https://ingest.example/v1/ingest?k=k-123&ik=key-3')
   })
 
   it('sends the sealed bytes verbatim, so a retry after a reload is byte-identical', async () => {
@@ -395,7 +419,7 @@ describe('Uploader.send, deadlines', () => {
   const blackhole = (): FakeFetch => {
     const calls: Call[] = []
     const impl = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      calls.push({ url: String(input), headers: {}, body: init?.body })
+      calls.push({ url: String(input), headers: {}, body: init?.body, keepalive: false })
       return new Promise<Response>((_resolve, reject) => {
         const s = init?.signal
         // No signal means no way out, which is precisely the bug: the test

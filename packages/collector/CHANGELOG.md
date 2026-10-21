@@ -5,6 +5,64 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-21
+
+### Added
+
+- `flush()` uploads everything recorded so far and ends nothing.
+- `connections()` lists every WebTransport in the page and its linked workers.
+- `newSession()` ends the session and starts the next one in the same page.
+  Linked workers follow.
+- `setContext()` sets `contentId` and `actorId` for connections opened from then on.
+- `connectionIdOf(transport)` on the page and in a worker. `annotate()` takes a
+  connection id.
+- A failed upload is retried in the page until ingest answers. Uploads the page
+  could not send are sent by the next page load on the origin, from any session.
+- Uploads when a connection closes and when the page is hidden.
+- Raised detail uploads one `hdr` record per object: connection, track, stream,
+  group, object and status, and the payload size from `headers+sizes`.
+
+### Changed
+
+- **Breaking.** `HdrRecord` carries `streamId`, `group`, `object`, `status` and
+  `size`, and no raw frame follows it; `n` is removed.
+- **Breaking.** `stop()` is `end()`. Unload already ends the session.
+- **Breaking.** `abort()` is `discard()`.
+- **Breaking.** `stop()` then `init()` for each playback is
+  `newSession({ contentId })`.
+- **Breaking.** `initWorker()` returns at once; `await vitals.linked` only for
+  diagnostics. Linked workers report to the page, which uploads for them.
+- **Breaking.** The worker's `stop()`, `abort()`, `linkWorker()` and
+  `defineMetric()` are removed. Define metrics on the page; workers `observe`
+  them by name.
+- **Breaking.** `ids().connectionId` is removed; use `connectionIdOf(transport)`
+  or `connections()`. `ids()` returns `instanceId`.
+- **Breaking.** `upload.stopDrainDeadlineMs` is `upload.drainDeadlineMs`.
+- **Breaking.** `WORKER_HANDSHAKE_TIMEOUT_MS` is `limits.linkTimeoutMs`.
+- **Breaking.** `resolveConfig`, `CollectorRuntime`, `EscalationController`,
+  `UsageMeter`, `DB_NAME`, `InitOptions`, `InitWorkerOptions`, `PRESENCE_KEY`,
+  `readPresence` and the dormant-hook functions move to
+  `@moqtap/collector/internal`.
+- **Breaking.** Update page and worker bundles together: a page links only a
+  worker of its own release.
+- Workers need neither `connect-src` nor IndexedDB.
+- With a trigger set, the flight-recorder ring is reserved when a realm opens its
+  first WebTransport, not at `init()`. A page that only links workers reserves none.
+- Upload bodies are version 2. The IndexedDB database moves to version 2; uploads
+  stored by earlier releases are sent once, as they are. `MQ2102` is retired.
+
+### Fixed
+
+- A worker that answers while `init()` is still starting is linked, rather than
+  reported as never answering.
+- Closing a tab in Firefox sends the session's last uploads and ends it.
+- Control messages exchanged before `init()` is running, or before a worker is
+  linked, reach the session: up to 64 KB per connection and 256 KB per page or
+  worker, the rest counted as dropped. Object data from that time is counted, as
+  `early.dataChunks` and `early.dataBytes` on the connection's rollup.
+- Counters a connection gathered since the last metrics interval are uploaded when
+  the session ends with it still open.
+
 ## [0.5.1] - 2026-10-20
 
 ### Fixed

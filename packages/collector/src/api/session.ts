@@ -1,259 +1,236 @@
 /**
- * The wiring. Every other module meets here and nowhere else.
+ * The page's runtime: the only part of the collector that numbers, seals,
+ * stores, uploads or ends anything.
  *
- * Three rules govern everything below.
+ * It observes the page's own transports through a {@link RealmObserver}, takes
+ * the frames linked workers forward, and turns both into one stream of bodies
+ * for this instance: numbered from zero in memory, keyed at the seal, kept in
+ * an outbox until ingest answers, and copied to IndexedDB so a body the page
+ * could not send is sent by the next page load on the origin.
  *
- * **1. The seam is a bounded enqueue and nothing else.** `types.ts` states the
- * contract: "every method runs synchronously on the page's own data path —
- * `onStreamData` fires *before* the page's write reaches the transport". So the
- * observer methods here copy, count and return: no `await`, no allocation of a
- * record, no compression, no storage call, and no timer started on that thread
- * of control.
+ * Rules every method below keeps:
  *
- * **2. Nothing throws into the page.** Every observer method is wrapped, and
- * every failure goes to `CollectorConfig.onInternalError`.
- *
- * **3. The overrun policy is a state, not a degradation.** Control frames and
- * the setup, terminal and escalation records are **non-droppable**; per-object
- * detail is droppable. When even the non-droppable set cannot be kept up with,
- * the runtime closes the segment, emits a terminal record with the counters and
- * stops — while still releasing the already-keyed backlog.
+ *  - **Nothing throws into the page.** Every failure goes to
+ *    `CollectorConfig.onInternalError`.
+ *  - **A sealed body leaves the outbox only on an answer**: a 2xx, or a 4xx
+ *    ingest will repeat forever. Anything else is retried — on the next seal,
+ *    on `online`, and on a backoff capped at 60 s.
+ *  - **The instance ends once**, with an `end` record in a body marked
+ *    `final`, whose `seq` the record names.
  */
 
-import { StreamDispatcher, TrackKeys } from '../decode/index.js'
+import type { DraftSet } from '../draft/index.js'
+import { sha256Hex } from '../envelope/index.js'
 import {
-  type DraftSet,
-  degradedReasonOf,
-  draftOfSetupFrame,
-  LEGACY_PROTOCOL,
-  resolveDraft,
-} from '../draft/index.js'
-import {
+  BEACON_MAX_BYTES,
   type Chunk,
+  type ChunkDestination,
   type ChunkStore,
+  compress,
   deadlineSignal,
   FlushQueue,
   FlushSchedule,
+  heldInstances,
+  holdInstanceLock,
+  type LockManagerLike,
+  platformLocks,
   ReleasePacer,
   sendTail,
   Uploader,
 } from '../flush/index.js'
-import { FlightRecorder, TriggerEngine, type TriggerEvent } from '../recorder/index.js'
-import { ByteRing, parseByteDepth, type RingEntry } from '../ring/index.js'
+import type { TriggerEvent } from '../recorder/index.js'
 import { CustomMetrics, RollupEngine } from '../rollup/index.js'
-import type { TransportHook } from '../transport/index.js'
+import { connectionIdOf, type TransportHook } from '../transport/index.js'
 import type {
-  BucketKey,
   ClockAnchor,
   ClockSource,
-  ControlFrameEvent,
-  DatagramChunk,
   DetailLevel,
-  DraftAdapter,
+  EndCounters,
+  EndRecord,
   EnvelopeRecord,
-  ExchangeKind,
   Identity,
-  InterceptedSession,
+  LifeRecord,
+  LinkRecord,
   Mono,
-  ObjectSample,
-  ParseFailureReason,
   RecordSink,
-  RecordType,
   ResolvedConfig,
-  SealReason,
   SetupRecord,
-  StreamChunk,
-  SupportedDraft,
-  TerminalRecord,
-  TransportObserver,
   UsageReport,
-  WriterPressure,
 } from '../types.js'
 import { COLLECTOR_VERSION } from '../version.js'
-import { DORMANT_DATAGRAM_STREAM_ID, drainDormant } from './dormant.js'
+import { mintId } from './config.js'
 import { EscalationController } from './escalation.js'
+import {
+  type CallMessage,
+  envelope,
+  type ForwardMessage,
+  HEARTBEAT_MS,
+  type LinkedMessage,
+  linkMessage,
+  type PageMessage,
+  SILENCE_MS,
+} from './link.js'
 import { UsageMeter } from './meter.js'
+import { type ConnectionSnapshot, type ConnectionState, RealmObserver } from './realm.js'
 
 /** Re-exported for the public API; defined in `../version.js` so the dormant
  * path can read it without pulling this module in. */
 export { COLLECTOR_VERSION }
 
-/**
- * The droppable set, and the whole of it.
- *
- * "**Never sample a non-droppable type.** Under pressure, sample only the
- * droppable ones, and record exactly which." A dropped record must not change
- * the meaning of one that survives:
- *
- *  - `ctrl` is **non-droppable**: the control plane is what ingest reparses to
- *    recover every track name, namespace and status the client deliberately does
- *    not ship. A rollup row whose binding message was dropped is a row
- *    ingest cannot name.
- *  - `setup`, `terminal` and `escalation` are **non-droppable**: one per
- *    session, or one per level change — dropping them saves nothing.
- *  - `rollup` is **non-droppable**: already O(1) per interval, and its counters
- *    are cumulative, so a dropped one is a hole in a total rather than a missing
- *    sample.
- *  - `hdr`, `flight` and `note` are **droppable**: per-object detail and
- *    customer annotations, each of which is one of many.
- */
-const DROPPABLE: ReadonlySet<RecordType> = new Set<RecordType>(['hdr', 'flight', 'note'])
+/** The part of a `MessageEvent` a link reads. */
+export interface LinkEvent {
+  readonly data?: unknown
+  readonly ports?: readonly MessagePort[]
+}
+
+/** What a worker link accepts: a `Worker`, a `MessagePort`, or anything postMessage-shaped. */
+export interface MessageTarget {
+  postMessage(message: unknown, transfer?: Transferable[]): void
+  addEventListener(type: 'message', listener: (e: LinkEvent) => void): void
+  removeEventListener?(type: 'message', listener: (e: LinkEvent) => void): void
+  start?(): void
+}
 
 /** Ports the runtime needs and does not create, so the suite can supply its own. */
 export interface RuntimePorts {
   readonly clock?: ClockSource
+  /** `performance.timeOrigin`: the page's clock origin, against which a worker's is rebased. */
+  readonly timeOrigin?: number
   readonly fetchImpl?: typeof fetch
   readonly store?: ChunkStore | null
   readonly setTimer?: (fn: () => void, ms: number) => unknown
   readonly clearTimer?: (h: unknown) => void
   /** Injected so a test can drive the beacon without a DOM. */
   readonly beacon?: (url: string, data: Blob) => boolean
-  /** Skip the `pagehide` listener; the suite installs none. */
+  /** Skip the page lifecycle listeners; the suite installs none. */
   readonly noLifecycleListeners?: boolean
+  /** `navigator.locks`, or `null` for a platform without Web Locks. */
+  readonly locks?: LockManagerLike | null
+  /** The instance id. Injected so the suite is deterministic. */
+  readonly instanceId?: string
+  /**
+   * The clock anchor of the session this one follows in the same page. A page
+   * keeps one timeline across its sessions, so a linked probe's clock offset
+   * stays valid when it follows the page into the next one.
+   */
+  readonly anchor?: ClockAnchor
   /** `CollectorConfig.onInternalError`, which `ResolvedConfig` deliberately omits. */
   readonly onInternalError?: (err: unknown) => void
 }
 
-interface Connection {
-  readonly id: string
-  readonly session: InterceptedSession
-  keys: TrackKeys
-  dispatcher: StreamDispatcher | null
-  adapter: DraftAdapter | undefined
-  /** The raw buffer, held until the draft is known. Bounded in bytes. */
-  pending: StreamChunk[]
-  pendingBytes: number
-  pendingDatagrams: DatagramChunk[]
-  closed: boolean
-  /**
-   * The session negotiated `moq-00`, or no protocol at all over WebTransport,
-   * so the draft is still unknown and is being looked for in the handshake.
-   *
-   * Set only for the eight drafts before -15. Cleared
-   * the moment SETUP names a version, or when the pre-draft buffer fills — see
-   * `#probeLegacyDraft`.
-   */
-  awaitingSetup: boolean
-  /**
-   * Stream halves already offered to the setup probe, so each is tried once.
-   *
-   * SETUP is the first message each side writes on the control stream, so only
-   * the first chunk in each direction can carry it: a CLIENT_SETUP offering
-   * several versions says nothing, and the SERVER_SETUP that does arrives on
-   * the same stream. Without this the probe would re-run on every buffered
-   * chunk of a stream it has already declined.
-   */
-  probedStreams: Set<string>
-  /**
-   * Per send stream: the last `bytesAcknowledged` seen, and the track to credit
-   * it to once resolved.
-   *
-   * The QUIC stat is **cumulative for the life of the stream** while
-   * `RollupTrackWire.ackedBytes` is a per-interval sum, so the difference is
-   * taken here rather than in the bucket: the stat is per *stream* and a track
-   * spans many streams.
-   *
-   * The track is **cached rather than looked up on arrival**, because the final
-   * reading arrives after the stream is gone. `writer.close()` calls `onDone`
-   * synchronously — `onStreamClose` here — and only then probes `getStats()`,
-   * whose promise resolves a microtask later, by which point the dispatcher has
-   * dropped the decoder that knew the track. For a stream carrying one subgroup
-   * that closing probe is often the *only* one, so resolving late would lose the
-   * metric, not merely a tail.
-   */
-  ackedByStream: Map<number, SendStreamAcks>
-}
-
-interface SendStreamAcks {
-  /** Cumulative, as the stat itself is. */
-  last: number
-  /** Resolved while the stream still had a decoder; `null` until then. */
-  key: BucketKey | null
-  /** The stream has closed; the next reading is its last. */
-  closed: boolean
-}
+/** The backoff a failed upload waits before the outbox tries again, in ms. */
+const RETRY_FIRST_MS = 1_000
+const RETRY_MAX_MS = 60_000
 
 /**
- * How many send streams may hold ack state at once.
- *
- * A closed stream's entry is dropped as soon as its final reading lands, so
- * this only bounds the pathological case: a stream aborted between its last
- * probe and a reading that never comes. Closed entries are swept first, and
- * insertion order makes the sweep the oldest ones.
+ * The gap after which hiding the page seals what it holds. Under it the last
+ * seal is recent enough that sealing again would only add an upload.
  */
-const MAX_ACK_STREAMS = 256
+const HIDDEN_SEAL_GAP_MS = 5_000
+
+/** How old a stored body must be before a page without Web Locks takes it as left behind. */
+const SWEEP_AGE_INTERVALS = 3
 
 const platformClock: ClockSource = { now: () => performance.now(), wall: () => Date.now() }
 
-/**
- * One collector. Owns every other module's instance and every timer.
- *
- * A single logical session (`config.sessionId`) that may span several
- * transports; each intercepted `WebTransport` is one *connection*, and a
- * reconnect makes a new one.
- */
-/** A worker global: it never sees `pagehide`, so it never holds a number for one. */
-function inWorker(): boolean {
-  const g = globalThis as { WorkerGlobalScope?: abstract new () => unknown }
-  return typeof g.WorkerGlobalScope === 'function' && globalThis instanceof g.WorkerGlobalScope
+/** One `linkWorker()` call. */
+interface Link {
+  readonly id: string
+  readonly target: MessageTarget
+  /**
+   * The runtime this link reports into. Every handler the link installed reads
+   * it at the time of the call, so the link follows the page into a new
+   * session without touching the customer's worker.
+   */
+  owner: CollectorRuntime
+  state: 'waiting' | 'linked' | 'timeout' | 'gone'
+  port: MessagePort | null
+  lastHeard: Mono
+  ready: boolean
+  /** Records the probe reported dropped, cumulative. */
+  dropped: number
+  /** Its open connections as of the last forward. */
+  conns: readonly ConnectionSnapshot[]
+  /** `terminate()` was called on it: gone for good, whatever arrives after. */
+  terminated: boolean
+  timeout: unknown
+  onHello: ((e: LinkEvent) => void) | undefined
 }
 
-export class CollectorRuntime implements TransportObserver {
+export class CollectorRuntime {
   readonly config: ResolvedConfig
   readonly anchor: ClockAnchor
+  readonly instanceId: string
 
   readonly #clock: ClockSource
   readonly #ports: RuntimePorts
   readonly #onError: (err: unknown) => void
   readonly #hook: TransportHook
+  readonly #drafts: DraftSet
+  readonly #dest: ChunkDestination
+  readonly #locks: LockManagerLike | undefined
 
-  readonly #ring: ByteRing
-  readonly #rollup: RollupEngine
+  readonly #realm: RealmObserver
   readonly #custom: CustomMetrics
+  /** Customer metrics belong to no connection, so they have an engine of their own. */
+  readonly #customRollup: RollupEngine
   readonly #queue: FlushQueue
   readonly #schedule: FlushSchedule
   readonly #pacer: ReleasePacer
   readonly #uploader: Uploader
-  readonly #recorder: FlightRecorder
-  readonly #triggers: TriggerEngine
   readonly #meter: UsageMeter
   readonly #escalation: EscalationController
   readonly #store: ChunkStore | null
+  /**
+   * Every record the page writes goes through here, so the instance's setup
+   * record is always the first frame of its first body. A page that never
+   * records anything never sends anything.
+   */
+  readonly #sink: RecordSink & { readonly pendingBytes: number }
+  /** Aborted at teardown: ends any upload still in flight. */
+  readonly #life = new AbortController()
 
-  readonly #connections = new Map<string, Connection>()
-  #connectionId: string
-  #lastAdapter: DraftAdapter | undefined
-  #lastKeys: TrackKeys | undefined
-  #draft: SupportedDraft | null = null
-  #protocol: string | null = null
-  /** Drafts the dormant hook read off SETUP frames that crossed before `init()`. */
-  #dormantSetupDrafts: ReadonlyMap<string, SupportedDraft> = new Map()
-  readonly #drafts: DraftSet
-  #degraded: SetupRecord['degraded'] | undefined
-  #roles = new Set<'publisher' | 'subscriber'>()
+  /** Sealed bodies awaiting an answer, oldest first; bodies swept from storage go first of all. */
+  #outbox: Chunk[] = []
+  /** Compression and the stored copy of each body, which a send waits for. */
+  readonly #prepared = new WeakMap<Chunk, Promise<void>>()
+  /** Bodies already counted in `usage()`, so a body both beaconed and prepared counts once. */
+  readonly #metered = new WeakSet<Chunk>()
+  /** This instance's bodies that will never arrive. */
+  readonly #lost: number[] = []
+  #pumping: Promise<void> | null = null
+  #urgent = false
+  #wake: (() => void) | undefined
+  #retryHandle: unknown
+  #retryDelay = 0
+  #lastSealMono: Mono
+  #forwardRefused = 0
+
+  #links: Link[] = []
+  #linkTimer: unknown
+  /**
+   * Instance locks of earlier sessions in this page, held while their bodies
+   * are still in this outbox, so no other page load sweeps them meanwhile.
+   */
+  readonly #inheritedLocks = new Map<string, () => void>()
+  /** What `ids()` and connections opened from now on carry. `setContext()` changes it. */
+  readonly #context: { actorId: string; contentId: string }
 
   #setupSent = false
-  #terminalSent = false
-  #stopped = false
-  #aborted = false
-  #overrun = false
-  #overrunAt: Mono | undefined
-  #overrunSignal: string | undefined
-  #partialExpected = false
-  #partialLinked = false
-
-  #outbox: Chunk[] = []
-  #pumping = false
+  #ended = false
+  #discarded = false
+  #releaseLock: () => void = () => {}
   #intervalHandle: unknown
   /** The one-shot timer landing the post-event timeout on time. See `#scheduleWindowClose`. */
   #windowHandle: unknown
-  #ctrlWindowStart = 0
-  #ctrlInWindow = 0
-  #objectsInWindow = 0
-  #droppedRecords = 0
-  #sampledTypes = new Set<string>()
-  #transportsRefused = 0
-  #onPagehide: (() => void) | undefined
+  #listeners: [string, (e: unknown) => void, boolean][] = []
+  #frozenAt: Mono | undefined
+  /** How far an unload got; see `#unload`. */
+  #unloadStep: 0 | 1 | 2 | 3 | 4 | 5 = 0
+  #endBody: Chunk | null = null
+  /** Bodies handed to the platform at `pagehide`, so a resumed unload sends each once. */
+  readonly #beaconed = new Set<Chunk>()
+  #probeOverrun: Pick<EndCounters, 'overrunAt' | 'overrunSignal'> | undefined
 
   constructor(
     config: ResolvedConfig,
@@ -262,9 +239,10 @@ export class CollectorRuntime implements TransportObserver {
     ports: RuntimePorts = {},
   ) {
     this.config = config
-    this.#drafts = drafts
     this.#ports = ports
     this.#hook = hook
+    this.#drafts = drafts
+    this.#context = { actorId: config.context.actorId, contentId: config.context.contentId }
     this.#clock = ports.clock ?? platformClock
     this.#onError = (err: unknown): void => {
       try {
@@ -273,12 +251,17 @@ export class CollectorRuntime implements TransportObserver {
         // An error handler that throws is where reporting stops.
       }
     }
-    this.anchor = { originMono: this.#clock.now(), originWall: this.#clock.wall() }
-    this.#connectionId = `${config.sessionId}#0`
+    this.anchor = ports.anchor ?? {
+      originMono: this.#clock.now(),
+      originWall: this.#clock.wall(),
+    }
+    this.instanceId = ports.instanceId ?? mintId()
+    this.#lastSealMono = this.#clock.now()
+    this.#dest = { endpoint: config.endpoint, keyHash: sha256Hex(config.apiKey) }
+    this.#locks = ports.locks === null ? undefined : (ports.locks ?? platformLocks())
 
-    // The clock every record is stamped with is already session-relative: the
-    // flush queue's docs require `now()` to be anchor-relative and nothing
-    // downstream re-bases it.
+    // Every record is stamped session-relative: the queue's batch frame here,
+    // and every other record by whoever writes it, against the same anchor.
     const relClock: ClockSource = {
       now: () => this.#clock.now() - this.anchor.originMono,
       wall: () => this.#clock.wall(),
@@ -289,37 +272,55 @@ export class CollectorRuntime implements TransportObserver {
 
     this.#queue = new FlushQueue({
       sessionId: config.sessionId,
-      store: this.#store,
+      instanceId: this.instanceId,
       clock: relClock,
       level: () => this.#escalation.level,
       maxPendingBytes: 8 * config.upload.byteThreshold,
-      reserveAhead: !inWorker(),
       onInternalError: this.#onError,
+    })
+    const queue = this.#queue
+    this.#sink = {
+      json: (r: EnvelopeRecord): void => {
+        if (this.#discarded) return
+        this.#ensureSetup()
+        queue.json(r)
+      },
+      raw: (b: Uint8Array): void => {
+        if (!this.#discarded) queue.raw(b)
+      },
+      get pendingBytes(): number {
+        return queue.pendingBytes
+      },
+    }
+
+    this.#realm = new RealmObserver({
+      realm: 'page',
+      config,
+      hook,
+      drafts,
+      originMono: this.anchor.originMono,
+      clock: this.#clock,
+      host: {
+        sink: this.#sink,
+        level: () => this.#escalation.level,
+        onTrigger: (e: TriggerEvent) => this.#escalation.onTrigger(e.kind, e.atMono, e.key),
+        onConnReady: () => this.#schedule.ready(this.#clock.now()),
+        onConnClosed: () => this.#sealNow(false),
+        onOverrun: () => this.#overrun(),
+        onPressure: (p) => this.#pacer.notePressure(p),
+        onBytes: (n) => this.#schedule.noteBytes(n),
+        onError: this.#onError,
+      },
     })
 
     this.#custom = new CustomMetrics({ onError: (m) => this.#onError(new Error(m)) })
-    this.#rollup = new RollupEngine({
+    this.#customRollup = new RollupEngine({
       intervalMs: config.metrics.intervalMs,
-      maxBuckets: config.metrics.maxTracks,
+      maxBuckets: 1,
       clock: this.#clock,
       sink: this.#sink,
       originMono: this.anchor.originMono,
       custom: this.#custom,
-    })
-
-    this.#ring = new ByteRing({ maxBytes: this.#depthBytes() })
-    this.#recorder = new FlightRecorder({
-      ring: this.#ring,
-      sink: this.#sink,
-      adapter: () => this.#lastAdapter,
-      keys: () => this.#lastKeys,
-      level: () => this.#escalation.level,
-      originMono: this.anchor.originMono,
-    })
-    this.#triggers = new TriggerEngine({
-      config: config.flightRecorder.triggers,
-      medians: this.#rollup,
-      onFire: (e) => this.#onTriggerFired(e),
     })
 
     this.#escalation = new EscalationController({
@@ -330,41 +331,36 @@ export class CollectorRuntime implements TransportObserver {
       clock: this.#clock,
       anchor: this.anchor,
       sink: this.#sink,
-      // the "the ring filling" close condition. The ring is only written to
-      // while the recorder is armed (see `#armed`), so on a session with no
-      // triggers configured — the default — this never advances and never
-      // closes anything.
+      // The "ring filling" close condition. The ring is only written to while
+      // the recorder is armed, so on a session with no triggers configured — the
+      // default — this never advances and never closes anything.
       ring: {
-        capacityBytes: this.#ring.maxBytes,
-        evictedBytes: () => this.#ring.evictedBytes,
+        capacityBytes: this.#realm.ring.maxBytes,
+        evictedBytes: () => this.#realm.ring.evictedBytes,
       },
       onWindowOpen: (deadline) => this.#scheduleWindowClose(deadline),
+      onLevelChange: (level) => this.#broadcast({ t: 'level', level }),
     })
 
     this.#uploader = new Uploader({
       endpoint: config.endpoint,
       apiKey: config.apiKey,
       maxAttempts: config.upload.maxAttempts,
-      // `fetch` has no timeout, so without this one blackholed request
-      // is pending for the life of the page — and `#pumping` with it, which
-      // wedges every later drain too.
+      // `fetch` has no timeout, so without this one blackholed request is
+      // pending for the life of the page, and the outbox behind it with it.
       timeoutMs: config.upload.timeoutMs,
       ...(ports.fetchImpl !== undefined ? { fetchImpl: ports.fetchImpl } : {}),
       onInternalError: this.#onError,
     })
     this.#pacer = new ReleasePacer({
       // The pacer shapes only the DELAY between releases; it can never seal
-      // less often. The bounds are this module's own: the floor is "as
-      // fast as the loop can go" and the ceiling is one flush interval, so a
-      // fully congested session still releases roughly as often as it seals and
-      // the backlog cannot grow without bound.
+      // less often. The ceiling is one flush interval, so a fully congested
+      // session still releases roughly as often as it seals.
       minIntervalMs: 0,
       maxIntervalMs: config.upload.intervalMs,
     })
     this.#schedule = new FlushSchedule({
-      onFlush: (r) => {
-        void this.#flush(r)
-      },
+      onFlush: () => this.#sealNow(true),
       byteThreshold: config.upload.byteThreshold,
       earlyFlushesMs: config.upload.earlyFlushesMs,
       intervalMs: config.upload.intervalMs,
@@ -377,59 +373,55 @@ export class CollectorRuntime implements TransportObserver {
 
   /* ── startup ──────────────────────────────────────────────────────────── */
 
-  /**
-   * Take over from the dormant hook and start the schedule.
-   *
-   * Order matters. The dormant ring's pre-key bytes are moved into this
-   * collector's own ring before the observer goes live, so no byte arrives at
-   * a dispatcher before the ring it may be replayed from is populated.
-   */
   start(): void {
-    const dormant = drainDormant()
-    this.#dormantSetupDrafts = dormant.setupDrafts
-    if (this.#armed()) {
-      // The ring claims its memory here and nowhere else. At the default depth
-      // that is 32 MiB, and every `#ring.push` site is behind `#armed()` — so a
-      // ring built for a session with no trigger configured would be held and
-      // never written to. Reserving here also keeps the allocation off the data
-      // path: the alternative, letting the first chunk claim it, would put a
-      // 32 MiB allocation on the page's own write path.
-      this.#ring.reserve()
-      this.#adoptDormantRing(dormant.entries)
-    }
-    this.#recorder.arm(this.config.flightRecorder.triggers)
+    this.#begin()
+    void this.#sweep()
+  }
 
-    // `setObserver` replays every session that was already open, `onSessionOpen`
-    // first and then the negotiated protocol — which is the ordinary case on a
-    // page that connects at load and calls `init()` after its own bootstrap.
-    this.#hook.setObserver(this.#guarded())
-
+  #begin(): void {
+    this.#releaseLock = holdInstanceLock(this.#locks, this.instanceId, this.#onError)
+    this.#realm.start()
     this.#schedule.start(this.#clock.now())
     this.#startInterval()
     this.#installLifecycle()
-    void this.#adoptBacklog()
   }
 
   /* ── the public verbs ─────────────────────────────────────────────────── */
 
   ids(): Identity {
-    const id: {
-      actorId?: string
-      sessionId: string
-      connectionId: string
-      contentId?: string
-    } = { sessionId: this.config.sessionId, connectionId: this.#connectionId }
-    if (this.config.context.actorId !== '') id.actorId = this.config.context.actorId
-    if (this.config.context.contentId !== '') id.contentId = this.config.context.contentId
-    return id
+    const ctx = this.#context
+    return {
+      sessionId: this.config.sessionId,
+      instanceId: this.instanceId,
+      ...(ctx.actorId !== '' ? { actorId: ctx.actorId } : {}),
+      ...(ctx.contentId !== '' ? { contentId: ctx.contentId } : {}),
+    }
+  }
+
+  /** The connection id of a `WebTransport` this page created. */
+  connectionIdOf(transport: unknown): string | undefined {
+    return connectionIdOf(transport)
+  }
+
+  /** Every connection seen in this page and its linked workers, open ones first. */
+  connections(): ConnectionState[] {
+    const page = this.#realm.connections()
+    const workers: ConnectionState[] = []
+    for (const l of this.#links) for (const s of l.conns) workers.push(s.conn)
+    const all = [...page, ...workers]
+    return [...all.filter((c) => c.state !== 'closed'), ...all.filter((c) => c.state === 'closed')]
   }
 
   usage(): UsageReport {
     return this.#meter.report()
   }
 
+  get ended(): boolean {
+    return this.#ended
+  }
+
   escalate(level: DetailLevel, reason?: string): void {
-    if (this.#stopped || this.#aborted) return
+    if (this.#ended) return
     this.#escalation.escalate(level, reason)
   }
 
@@ -440,19 +432,35 @@ export class CollectorRuntime implements TransportObserver {
    * error handling and will be called for incidents that never escalated.
    */
   resolve(reason?: string): void {
-    if (this.#stopped || this.#aborted) return
+    if (this.#ended) return
     this.#escalation.resolve(reason)
   }
 
-  annotate(name: string, data: unknown): void {
-    if (this.#stopped || this.#aborted || this.#overrun) return
+  annotate(name: string, data: unknown, connectionId?: string): void {
+    if (this.#ended || this.#realm.halted) return
     this.#sink.json({
       t: 'note',
       ts: this.#relNow(),
       lvl: this.#escalation.level,
       name: String(name),
+      ...(connectionId !== undefined ? { conn: String(connectionId) } : {}),
       data,
     })
+  }
+
+  /**
+   * Context for connections opened from now on, in this page and its linked
+   * workers. `ids()` carries it at once; the instance's setup record carries
+   * what was set before the instance's first body.
+   */
+  setContext(ctx: { contentId?: string; actorId?: string }): void {
+    if (this.#ended) return
+    if (typeof ctx.actorId === 'string') this.#context.actorId = ctx.actorId
+    if (typeof ctx.contentId === 'string') {
+      this.#context.contentId = ctx.contentId
+      this.#realm.setContentId(ctx.contentId)
+      this.#broadcast({ t: 'context', contentId: ctx.contentId })
+    }
   }
 
   defineMetric(name: string, d: Parameters<CustomMetrics['defineMetric']>[1]): void {
@@ -464,652 +472,479 @@ export class CollectorRuntime implements TransportObserver {
     else this.#custom.observe(name, value, labels)
   }
 
-  /** A worker was expected. Until it handshakes the session is `partial`. */
-  expectWorker(): void {
-    this.#partialExpected = true
-    this.#queue.reserve()
-  }
-
-  /** The worker handshook. The session is complete again. */
-  noteWorkerLinked(): void {
-    this.#partialLinked = true
+  /**
+   * Seal everything recorded so far and send it. Resolves when ingest has
+   * answered or `upload.drainDeadlineMs` has passed, with anything unsent
+   * still queued and stored for retry. Ends nothing.
+   */
+  async flush(): Promise<void> {
+    if (this.#ended) return
+    this.#broadcast({ t: 'forward' })
+    this.#tick()
+    this.#seal()
+    await this.#drainUrgent()
   }
 
   /**
-   * Flush what is buffered, then tear down.
-   *
-   * Clears **only what it successfully sent**. An ordinary `stop()` while
-   * offline would flush (fail), then clear — destroying precisely the durability
-   * IndexedDB exists for, and the backlog is largest exactly when the session is
-   * most worth having. So a failed upload here leaves its chunk persisted for
-   * the next page load, and only `abort()` clears unconditionally.
+   * End this instance: report its open connections closed, write `end{app}`,
+   * send everything, and restore the patched global.
    */
-  async stop(): Promise<void> {
-    if (this.#stopped || this.#aborted) return
-    this.#stopped = true
-    this.#detach()
-    this.#escalation.close()
-    this.#tickRollup()
-    this.#emitTerminal('stop')
-    // The page awaits this promise inside its own teardown, so the drain
-    // gets a deadline and `stop()` resolves whether or not ingest ever answers.
-    // One signal, threaded into every `Uploader.send` below it, rather than a
-    // timer racing the drain: a race would resolve `stop()` while an upload
-    // carried on in the background, which is the same hang with the evidence
-    // removed. On expiry the chunk is still queued and still persisted — which
-    // is exactly what the store exists for — so the next page load sends it.
-    const deadline = deadlineSignal(this.config.upload.stopDrainDeadlineMs)
+  async end(): Promise<void> {
+    if (this.#ended) return
+    this.#finish('app')
+    this.#seal(true)
     try {
-      await this.#flush('stop')
-      await this.#drainOutbox({ paced: false, signal: deadline.signal })
+      await this.#drainUrgent()
+      // Whatever is still unsent keeps its stored copy for the next page load.
+      await Promise.all(this.#outbox.map((c) => this.#prepared.get(c)))
     } finally {
-      deadline.clear()
+      this.#teardown()
+      this.#store?.close()
     }
-    await this.#teardown()
   }
 
   /**
-   * Drop what is buffered, then tear down. **Transmits nothing.**
-   *
-   * The verb to call when the reason for stopping is that you no longer want the
-   * data to leave the device: a consent withdrawal, an opt-out, a test fixture.
-   * The detach happens on the first line, before any await, so nothing can be
-   * sealed or sent while the teardown is in flight.
-   *
-   * No terminal record is emitted: `TerminalRecord.reason` has an `'abort'`
-   * member, but sending one would be a transmission, and after either verb the
-   * collector transmits nothing further for that session.
+   * Drop everything unsent, stored copies included, and tear down.
+   * **Transmits nothing**, from the first line on.
    */
-  async abort(): Promise<void> {
-    if (this.#aborted) return
-    this.#aborted = true
-    this.#stopped = true
-    this.#detach()
+  async discard(): Promise<void> {
+    if (this.#discarded) return
+    this.#discarded = true
+    this.#ended = true
+    this.#realm.detach()
+    const unsent = this.#outbox
     this.#outbox = []
-    this.#ring.clear()
+    this.#teardown()
     if (this.#store !== null) {
       try {
+        // The outbox can hold bodies of earlier sessions in this page and of
+        // earlier page loads; consent covers those too. Their stored copies may
+        // still be being written, so each is deleted once it is.
+        await Promise.all(unsent.map((c) => this.#prepared.get(c)))
+        for (const c of unsent) await this.#store.delete(c.idempotencyKey)
         await this.#store.clearSession(this.config.sessionId)
       } catch (err) {
         this.#onError(err)
       }
+      this.#store.close()
     }
-    await this.#teardown()
-  }
-
-  /* ── TransportObserver — every method runs on the page's data path ────── */
-
-  onSessionOpen(s: InterceptedSession): void {
-    if (this.#halted()) return
-    if (this.#connections.size >= this.config.limits.maxConcurrentTransports) {
-      // "Cap concurrent transports at 8: real clients are genuinely
-      // bounded there, so the cap only ever fires on something wrong." Counted,
-      // never silent (rule 2). Cumulative is deliberately uncapped.
-      this.#transportsRefused += 1
-      return
-    }
-    this.#connections.set(s.id, {
-      id: s.id,
-      session: s,
-      keys: new TrackKeys({ maxBuckets: this.config.metrics.maxTracks }),
-      dispatcher: null,
-      adapter: undefined,
-      pending: [],
-      pendingBytes: 0,
-      pendingDatagrams: [],
-      closed: false,
-      awaitingSetup: false,
-      probedStreams: new Set(),
-      ackedByStream: new Map(),
-    })
-    // One transport within the session. A reconnect makes a new one.
-    this.#connectionId = s.id
-  }
-
-  onSessionProtocol(sessionId: string, protocol: string): void {
-    const c = this.#connections.get(sessionId)
-    if (c === undefined || c.dispatcher !== null) return
-    this.#protocol = protocol === '' ? null : protocol
-    if (protocol === LEGACY_PROTOCOL || protocol === '') {
-      // Drafts before -15 negotiate `moq-00` over QUIC and nothing over
-      // WebTransport, so the version comes from SETUP: read by the dormant hook
-      // if the handshake preceded `init()`, else by `#probeLegacyDraft`.
-      const known = this.#dormantSetupDrafts.get(sessionId)
-      if (known !== undefined) {
-        this.#attachDraft(c, LEGACY_PROTOCOL, known)
-        return
-      }
-      c.awaitingSetup = true
-      return
-    }
-    this.#attachDraft(c, protocol)
-  }
-
-  onSessionClose(sessionId: string): void {
-    const c = this.#connections.get(sessionId)
-    if (c === undefined) return
-    if (c.awaitingSetup && this.#draft === null) {
-      // Seen but never identified, which the setup record has to say.
-      this.#degraded ??= 'unsupported-protocol'
-    }
-    c.awaitingSetup = false
-    c.closed = true
-    this.#connections.delete(sessionId)
-  }
-
-  onStreamData(c: StreamChunk): void {
-    if (this.#halted()) return
-    // Control bytes are deliberately NOT ringed: a token would sit in memory.
-    //
-    // The replay skips every control entry it finds (`recorder/replay.ts`) and
-    // baseline already ships every control frame's exact bytes through the
-    // framer, so a ringed copy would have no consumer. And a chunk arriving here
-    // is not frame-aligned, so masking it here would mean a second
-    // frame-aligned parser at the seam, while leaving it unmasked would mean the
-    // one place in the collector where a bearer token sits in memory in the
-    // clear.
-    if (this.#armed() && !c.control) {
-      this.#ring.push({
-        sessionId: c.sessionId,
-        streamId: c.streamId,
-        dir: c.direction,
-        control: c.control,
-        atMono: c.at,
-        data: c.data,
-      })
-    }
-    const conn = this.#connections.get(c.sessionId)
-    if (conn === undefined) return
-    const d = conn.dispatcher
-    if (d !== null) {
-      d.onStreamData(c)
-      return
-    }
-    // The draft chunk has not landed. Buffer raw, bounded — the spec
-    // mandates the buffering and gives it no bound at all, and an unbounded one
-    // behind a chunk that never resolves (offline, a 404, a CSP refusal) is a
-    // page-killing leak.
-    this.#bufferPending(conn, c)
-  }
-
-  onStreamClose(sessionId: string, streamId: number): void {
-    const conn = this.#connections.get(sessionId)
-    if (conn === undefined) return
-    // Resolve the track *before* the dispatcher drops the decoder that knows
-    // it. The closing `getStats()` probe fires right after this returns and
-    // lands a microtask later, by which point nothing else can answer.
-    //
-    // The entry is *created* here when there is none, not merely updated. A
-    // stream carrying a single subgroup — the ordinary shape — is probed once,
-    // at close, so its first reading is also its last and it would otherwise
-    // find no entry, resolve no track, and report nothing.
-    const existing = conn.ackedByStream.get(streamId)
-    if (existing !== undefined) {
-      existing.closed = true
-      existing.key ??= conn.dispatcher?.trackForStream(streamId, 'tx') ?? null
-    } else {
-      const key = conn.dispatcher?.trackForStream(streamId, 'tx') ?? null
-      // Only for a stream that carried a track. A control stream has no
-      // send-side metric to attribute and would just occupy a slot.
-      if (key !== null) {
-        if (conn.ackedByStream.size >= MAX_ACK_STREAMS) this.#sweepAcks(conn)
-        conn.ackedByStream.set(streamId, { last: 0, key, closed: true })
-      }
-    }
-    conn.dispatcher?.onStreamClose(streamId)
-  }
-
-  onStreamError(_sessionId: string, _streamId: number, error: unknown): void {
-    this.#onError(error)
-  }
-
-  onDatagram(c: DatagramChunk): void {
-    if (this.#halted()) return
-    if (this.#armed()) {
-      this.#ring.push({
-        sessionId: c.sessionId,
-        streamId: DORMANT_DATAGRAM_STREAM_ID,
-        dir: c.direction,
-        control: false,
-        atMono: c.at,
-        data: c.data,
-      })
-    }
-    const conn = this.#connections.get(c.sessionId)
-    if (conn === undefined) return
-    if (conn.dispatcher !== null) conn.dispatcher.onDatagram(c)
-    else if (conn.pendingDatagrams.length < 512) {
-      conn.pendingDatagrams.push({ ...c, data: c.data.slice() })
-    }
-  }
-
-  onWriterPressure(p: WriterPressure): void {
-    if (this.#halted()) return
-    this.#rollup.observeWriterReady(p.readyLatencyMs)
-    // And again against the track, when the stream has one. `writer.ready` can
-    // resolve before the page has written the subgroup header that names the
-    // alias, so an unattributed episode is ordinary rather than a fault: it is
-    // in the session histogram above either way, which is what keeps that
-    // number a true total.
-    const key = this.#connections.get(p.sessionId)?.dispatcher?.trackForStream(p.streamId, 'tx')
-    if (key != null) this.#rollup.observeWriterBlocked(key, p.readyLatencyMs, p.at)
-    // Object arrival rate is the pacer's pressure signal; a publish-only
-    // session has no arriving objects, so `writer.ready` latency is this
-    // package's fallback for it — a choice the spec does not make and nothing
-    // has validated.
-    this.#pacer.notePressure({
-      objectsPerSec: this.#objectRate(),
-      writerReadyMs: p.readyLatencyMs,
-      at: p.at,
-    })
   }
 
   /**
-   * `WebTransportSendStream.getStats().bytesAcknowledged`, cumulative per
-   * stream, differenced here and attributed to the track the stream carries.
+   * End this session and start the next one in this page, which takes over
+   * the transport hook, the store, every worker link and every body not yet
+   * sent. `null` once this instance has ended.
    *
-   * Chromium-only and feature-detected at the seam, so on every other engine
-   * this is simply never called and `ackedBytes` never appears on a row. That
-   * is the intended behaviour, not a degraded one — the field's absence is not
-   * distinguishable from "nothing was acknowledged" and must not be alerted on.
+   * Synchronous, like the seal: the old session's last body is numbered and
+   * keyed before this returns. A probe forward already on its way lands in
+   * the new session.
    */
-  onSendStats(sessionId: string, streamId: number, bytesAcknowledged: number, at: Mono): void {
-    if (this.#halted()) return
-    if (!Number.isFinite(bytesAcknowledged) || bytesAcknowledged < 0) return
-    const conn = this.#connections.get(sessionId)
-    if (conn === undefined) return
-
-    let acks = conn.ackedByStream.get(streamId)
-    if (acks === undefined) {
-      if (conn.ackedByStream.size >= MAX_ACK_STREAMS) this.#sweepAcks(conn)
-      acks = { last: 0, key: null, closed: false }
-      conn.ackedByStream.set(streamId, acks)
-    }
-
-    const delta = bytesAcknowledged - acks.last
-    if (delta > 0) {
-      // Late resolution, for a stream first probed before its subgroup header
-      // had been written. `onStreamClose` is the other half of this.
-      acks.key ??= conn.dispatcher?.trackForStream(streamId, 'tx') ?? null
-      if (acks.key !== null) {
-        // Advanced only when the bytes are actually credited. Advancing it on
-        // an unattributable reading would silently discard everything
-        // acknowledged before the track became known — and those bytes belong
-        // to the track as much as the later ones do. Held back, the first
-        // reading that can be attributed carries the whole cumulative total,
-        // which is what the stat means.
-        acks.last = bytesAcknowledged
-        this.#rollup.observeAckedBytes(acks.key, delta, at)
-      }
-    }
-    // A closed stream's reading is its last, so the entry has done its job.
-    if (acks.closed) conn.ackedByStream.delete(streamId)
+  successor(next: ResolvedConfig, instanceId: string): CollectorRuntime | null {
+    if (this.#ended) return null
+    this.#finish('new-session')
+    this.#seal(true)
+    const runtime = new CollectorRuntime(next, this.#hook, this.#drafts, {
+      ...this.#ports,
+      instanceId,
+      anchor: this.anchor,
+    })
+    const outbox = this.#outbox
+    // Every link, gone ones included: a worker silent past the limit is linked
+    // again when it speaks, and the ids `w1, w2 …` stay unique in the page.
+    const links = this.#links
+    const locks = new Map(this.#inheritedLocks)
+    locks.set(this.instanceId, this.#releaseLock)
+    this.#outbox = []
+    this.#links = []
+    this.#inheritedLocks.clear()
+    this.#releaseLock = () => {}
+    this.#teardown({ keepHook: true })
+    runtime.#adopt(this, outbox, links, locks)
+    return runtime
   }
 
-  /** Drop closed entries, oldest first; if none are closed, drop the oldest. */
-  #sweepAcks(conn: Connection): void {
-    for (const [id, a] of conn.ackedByStream) {
-      if (a.closed) conn.ackedByStream.delete(id)
+  /** Take over what {@link successor} hands on, and start. */
+  #adopt(
+    from: CollectorRuntime,
+    outbox: readonly Chunk[],
+    links: readonly Link[],
+    locks: ReadonlyMap<string, () => void>,
+  ): void {
+    for (const c of outbox) {
+      const prepared = from.#prepared.get(c)
+      if (prepared !== undefined) this.#prepared.set(c, prepared)
+      if (from.#metered.has(c)) this.#metered.add(c)
     }
-    if (conn.ackedByStream.size < MAX_ACK_STREAMS) return
-    const oldest = conn.ackedByStream.keys().next()
-    if (!oldest.done) conn.ackedByStream.delete(oldest.value)
-  }
-
-  /* ── the sink the rollup and the recorder write into ──────────────────── */
-
-  /**
-   * The gate, and the only path from a record to the wire.
-   *
-   * A `raw` frame is unreadable without the JSON record that names it and the
-   * two must never straddle a body, so `raw` follows the fate of the record
-   * before it: `#skipRaw` is set when a JSON record is dropped and the next
-   * `raw` is dropped with it.
-   */
-  readonly #sink: RecordSink & {
-    onObject(s: ObjectSample): void
-    onControlFrame(e: ControlFrameEvent): void
-    onParseFailure(k: BucketKey | null, r: ParseFailureReason): void
-    observeControlLatency(k: ExchangeKind, ms: number): void
-    markShared(k: BucketKey): void
-  } = {
-    json: (r: EnvelopeRecord): void => this.#writeRecord(r),
-    raw: (b: Uint8Array): void => {
-      if (this.#halted() || this.#skipRaw) {
-        this.#skipRaw = false
-        return
-      }
+    this.#outbox = [...outbox, ...this.#outbox]
+    for (const [id, release] of locks) this.#inheritedLocks.set(id, release)
+    this.#begin()
+    for (const link of links) {
+      link.owner = this
+      link.conns = []
+      link.ready = false
+      this.#links.push(link)
+      if (link.state === 'linked') this.#writeLink(link, 'linked')
       try {
-        this.#queue.raw(b)
-        this.#schedule.noteBytes(b.byteLength)
+        link.port?.postMessage(
+          envelope<PageMessage>({
+            t: 'session',
+            sessionId: this.config.sessionId,
+            instanceId: this.instanceId,
+            level: this.#escalation.level,
+          }),
+        )
       } catch (err) {
         this.#onError(err)
       }
-    },
-    onObject: (s: ObjectSample): void => {
-      this.#objectsInWindow += 1
-      this.#roles.add(s.key.dir === 'tx' ? 'publisher' : 'subscriber')
-      this.#rollup.onObject(s)
-      this.#triggers.onObject(s)
-    },
-    onControlFrame: (e: ControlFrameEvent): void => {
-      this.#noteControlFrame(e.at)
-      if (this.#overrun) return
-      this.#rollup.onControlFrame(e)
-    },
-    onParseFailure: (k: BucketKey | null, r: ParseFailureReason): void => {
-      this.#rollup.onParseFailure(k, r)
-    },
-    observeControlLatency: (k: ExchangeKind, ms: number): void => {
-      this.#rollup.observeControlLatency(k, ms)
-    },
-    markShared: (k: BucketKey): void => {
-      this.#rollup.markShared(k)
-    },
+    }
+    if (this.#links.length > 0) this.#startLinkTimer()
+    this.#releaseInherited()
+    if (this.#outbox.length > 0) void this.#drain()
   }
 
-  #skipRaw = false
+  /** Let go of an earlier session's lock once none of its bodies is left to send. */
+  #releaseInherited(): void {
+    for (const [id, release] of this.#inheritedLocks) {
+      if (this.#outbox.some((c) => c.instanceId === id)) continue
+      this.#inheritedLocks.delete(id)
+      release()
+    }
+  }
 
-  #writeRecord(r: EnvelopeRecord): void {
-    if (this.#halted()) {
-      this.#skipRaw = true
-      return
+  /* ── worker links ─────────────────────────────────────────────────────── */
+
+  /**
+   * Answer `target`'s hello, and report the link either way.
+   *
+   * Not automatic, and that is a security decision rather than an omission:
+   * the page cannot enumerate its workers, and a `message` listener on the
+   * page's own global would also hear cross-origin `postMessage` from any frame
+   * or opener. So the customer names the target, and only it is answered.
+   *
+   * `hello` is one the target sent before this runtime was running, heard on
+   * its behalf.
+   */
+  linkWorker(target: MessageTarget, hello?: LinkEvent): void {
+    if (this.#ended || this.#links.some((l) => l.target === target)) return
+    const link: Link = {
+      id: `w${this.#links.length + 1}`,
+      target,
+      owner: this,
+      state: 'waiting',
+      port: null,
+      lastHeard: this.#clock.now(),
+      ready: false,
+      dropped: 0,
+      conns: [],
+      terminated: false,
+      timeout: undefined,
+      onHello: undefined,
     }
-    // "Never sample a non-droppable type. Under pressure, sample only
-    // the droppable ones, and record exactly which."
-    if (DROPPABLE.has(r.t) && this.#underPressure()) {
-      this.#droppedRecords += 1
-      this.#sampledTypes.add(r.t)
-      this.#skipRaw = true
-      return
+    this.#links.push(link)
+    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
+    link.timeout = set(() => {
+      const owner = link.owner
+      if (link.state !== 'waiting' || owner.#ended) return
+      link.state = 'timeout'
+      owner.#writeLink(link, 'timeout')
+    }, this.config.limits.linkTimeoutMs)
+    this.#wrapTerminate(link)
+    const onHello = (e: LinkEvent): void => {
+      const m = linkMessage(e.data)
+      if (m === null || m.t !== 'hello' || typeof m.timeOrigin !== 'number') return
+      link.owner.#answer(link, m.timeOrigin)
     }
+    link.onHello = onHello
     try {
-      const before = this.#queue.pendingBytes
-      this.#queue.json(r)
-      this.#schedule.noteBytes(Math.max(0, this.#queue.pendingBytes - before))
-      this.#skipRaw = false
+      target.addEventListener('message', onHello)
+      target.start?.()
     } catch (err) {
       this.#onError(err)
-      this.#skipRaw = true
     }
+    this.#startLinkTimer()
+    if (hello !== undefined) onHello(hello)
   }
 
-  /** The flush buffer is close to its own hard cap. Droppable types give way. */
-  #underPressure(): boolean {
-    return this.#queue.pendingBytes > 6 * this.config.upload.byteThreshold
-  }
-
-  /* ── overrun ──────────────────────────────────────────────────────────── */
-
-  /**
-   * Control-plane rate, in a one-second window.
-   *
-   * "If even the non-droppable types cannot be kept up with — a fuzzing
-   * peer, a relay flapping thousands of streams — **stop collecting rather than
-   * degrade.** Close the segment, emit a terminal record carrying the counters,
-   * and send nothing further for that session." Control frames are the
-   * non-droppable type with an unbounded arrival rate, so they are the signal.
-   */
-  #noteControlFrame(at: Mono): void {
-    if (at - this.#ctrlWindowStart >= 1000) {
-      this.#ctrlWindowStart = at
-      this.#ctrlInWindow = 0
-      this.#objectsInWindow = 0
-    }
-    this.#ctrlInWindow += 1
-    if (this.#overrun || this.#ctrlInWindow <= this.config.limits.controlRatePerSec) return
-    this.#overrun = true
-    this.#overrunAt = at
-    this.#overrunSignal = `control-plane rate exceeded ${this.config.limits.controlRatePerSec}/s`
-    // The terminal record and the final seal are the last things this session
-    // produces. The already-keyed backlog still goes out: those chunks are paid
-    // for and honest, and the objection is to *continuing*, not to what was
-    // already recorded.
-    this.#detach()
-    this.#emitTerminal('overrun')
-    void this.#flush('terminal').then(() => this.#drainOutbox({ paced: true }))
-  }
-
-  #objectRate(): number {
-    return this.#objectsInWindow
-  }
-
-  /* ── draft loading ───────────────────────────────────── */
-
-  /**
-   * Try to read the negotiated draft out of a buffered control chunk.
-   *
-   * Only for `moq-00` sessions, where the ALPN names eight drafts at once. Only
-   * the **first** chunk of each control stream is offered: SETUP is the first
-   * message on the stream, so a match anywhere else would be a coincidence and
-   * not a handshake.
-   *
-   * Costs one call per control stream per session and nothing at all on
-   * draft-15+, where `awaitingSetup` is never set.
-   */
-  #probeLegacyDraft(c: Connection, chunk: StreamChunk): void {
-    if (!c.awaitingSetup || !chunk.control) return
-    const half = `${chunk.streamId}/${chunk.direction}`
-    if (c.probedStreams.has(half)) return
-    c.probedStreams.add(half)
-    const draft = draftOfSetupFrame(chunk.data)
-    if (draft === undefined) return
-    c.awaitingSetup = false
-    this.#attachDraft(c, LEGACY_PROTOCOL, draft)
-  }
-
-  #attachDraft(c: Connection, protocol: string, known?: SupportedDraft): void {
-    const result = resolveDraft(this.#drafts, protocol, known)
-    if (c.closed || this.#halted()) return
-    if (!result.ok) {
-      // the loud failure. The adapter is withheld entirely — two incompatible
-      // varint families disagree on the same bytes and return plausible wrong
-      // numbers — so the session degrades to transport-only metrics and the raw
-      // control bytes it already shipped. The pending buffer is released rather
-      // than held: nothing will ever parse it.
-      this.#degraded = degradedReasonOf(result.reason)
-      c.pending = []
-      c.pendingBytes = 0
-      c.pendingDatagrams = []
-      // the loud failure has to reach ingest, and `SetupRecord.degraded` is
-      // where it lands — so the record goes out now rather than at teardown.
-      this.#ensureSetup()
-      this.#schedule.ready(this.#clock.now())
+  #answer(link: Link, workerTimeOrigin: number): void {
+    if (this.#ended || link.port !== null) return
+    let channel: MessageChannel
+    try {
+      channel = new MessageChannel()
+    } catch (err) {
+      this.#onError(err)
       return
     }
-    c.adapter = result.adapter
-    this.#lastAdapter = result.adapter
-    this.#lastKeys = c.keys
-    this.#draft = result.draft
-    c.dispatcher = new StreamDispatcher(result.adapter, c.keys, this.#sink, {
-      slackBytes: this.config.limits.maxHeaderSlackBytes,
-      maskAuthParams: this.config.privacy.maskAuthParams,
-    })
-    // Replay in arrival order. The chunks were copied on the way in, so nothing
-    // here is a view onto a page buffer the player has since rewritten.
-    const pending = c.pending
-    const datagrams = c.pendingDatagrams
-    c.pending = []
-    c.pendingBytes = 0
-    c.pendingDatagrams = []
-    // The two fields worth having — the negotiated protocol and the draft it
-    // selected — exist from here, so this is the earliest honest moment for the
-    // setup record.
-    this.#ensureSetup()
-    this.#schedule.ready(this.#clock.now())
-    for (const chunk of pending) c.dispatcher.onStreamData(chunk)
-    for (const d of datagrams) c.dispatcher.onDatagram(d)
-  }
-
-  #bufferPending(c: Connection, chunk: StreamChunk): void {
-    this.#probeLegacyDraft(c, chunk)
-    // The probe may have just attached a dispatcher.
-    if (c.dispatcher !== null) {
-      c.dispatcher.onStreamData(chunk)
+    const port = channel.port1
+    link.port = port
+    port.onmessage = (e: MessageEvent) => link.owner.#fromProbe(link, e.data)
+    const pageTimeOrigin = this.#ports.timeOrigin ?? performance.timeOrigin
+    const linked: LinkedMessage = {
+      t: 'linked',
+      sessionId: this.config.sessionId,
+      instanceId: this.instanceId,
+      base: pageTimeOrigin + this.anchor.originMono - workerTimeOrigin,
+      level: this.#escalation.level,
+      config: {
+        metrics: this.config.metrics,
+        flightRecorder: this.config.flightRecorder,
+        limits: this.config.limits,
+        privacy: this.config.privacy,
+        upload: this.config.upload,
+        context: { ...this.config.context, ...this.#context },
+      },
+    }
+    try {
+      link.target.postMessage(envelope(linked), [channel.port2])
+    } catch (err) {
+      this.#onError(err)
       return
     }
-    const cap = this.config.limits.dormantRingBytes
-    if (c.pendingBytes + chunk.data.byteLength > cap) {
-      if (c.awaitingSetup) {
-        // The pre-draft buffer filled and SETUP never named a version. Waiting
-        // longer costs memory for a session that will not be parsed, so this is
-        // where a `moq-00` session gives up — reported as unsupported, which is
-        // what it is: MoQT of some version this build could not identify.
-        c.awaitingSetup = false
-        this.#degraded = 'unsupported-protocol'
-        c.pending = []
-        c.pendingBytes = 0
-        c.pendingDatagrams = []
-        this.#ensureSetup()
-        this.#schedule.ready(this.#clock.now())
-        return
+    this.#heard(link)
+  }
+
+  #fromProbe(link: Link, data: unknown): void {
+    if (this.#ended) return
+    const m = linkMessage(data) as (ForwardMessage | CallMessage) | null
+    if (m === null) return
+    try {
+      this.#heard(link)
+      switch (m.t) {
+        case 'fwd':
+          this.#forwarded(link, m)
+          return
+        case 'annotate':
+          this.annotate(m.name, m.data, m.conn)
+          return
+        case 'observe':
+          this.observe(m.name, m.value, m.labels)
+          return
+        case 'escalate':
+          this.escalate(m.level, m.reason)
+          return
+        case 'resolve':
+          this.resolve(m.reason)
+          return
+        case 'trigger':
+          this.#escalation.onTrigger(m.kind, m.at + this.anchor.originMono, m.key)
+          return
+        case 'overrun':
+          this.#overrun({ overrunAt: m.at, overrunSignal: m.signal })
+          return
       }
-      // Counted, not silently truncated. The counter surfaces on the terminal
-      // record, so a session that lost its opening seconds says so rather than
-      // looking like a short one.
-      this.#droppedRecords += 1
-      this.#sampledTypes.add('pre-draft-bytes')
-      return
-    }
-    c.pendingBytes += chunk.data.byteLength
-    c.pending.push({ ...chunk, data: chunk.data.slice() })
-  }
-
-  /* ── the ring ─────────────────────────────────────────────────────────── */
-
-  /**
-   * The ring is filled only while the recorder is armed.
-   *
-   * Armed is "ring overwriting in memory ... nothing parsed, nothing
-   * produced, nothing sent". Disarmed it is not a cheaper ring, it is no ring:
-   * a session with no triggers configured — the default, since automated mode
-   * ships off — pays neither the memory nor the per-chunk copy.
-   */
-  #armed(): boolean {
-    const t = this.config.flightRecorder.triggers
-    return t.stall !== undefined || t.cadence !== undefined || t.trackSwitch !== undefined
-  }
-
-  #depthBytes(): number {
-    try {
-      return parseByteDepth(this.config.flightRecorder.depth)
     } catch (err) {
       this.#onError(err)
-      return parseByteDepth('32MB')
     }
   }
 
-  #adoptDormantRing(entries: readonly RingEntry[]): void {
-    for (const e of entries) {
-      this.#ring.push({
-        sessionId: e.sessionId,
-        streamId: e.streamId,
-        dir: e.dir,
-        control: e.control,
-        atMono: e.atMono,
-        data: e.data,
+  /**
+   * A probe spoke: it is linked, and alive. A message a terminated worker
+   * posted before it died is still taken, but does not bring the link back.
+   */
+  #heard(link: Link): void {
+    link.lastHeard = this.#clock.now()
+    if (link.state === 'linked' || link.terminated) return
+    link.state = 'linked'
+    this.#writeLink(link, 'linked')
+  }
+
+  #forwarded(link: Link, m: ForwardMessage): void {
+    link.dropped = Math.max(link.dropped, m.dropped)
+    // A terminated worker's connections were reported closed when it went.
+    if (!link.terminated) link.conns = m.conns
+    if (m.ready && !link.ready) {
+      link.ready = true
+      this.#schedule.ready(this.#clock.now())
+    }
+    if (m.frames === undefined || m.n === 0) return
+    this.#ensureSetup()
+    const frames = new Uint8Array(m.frames, 0, m.byteLength ?? m.frames.byteLength)
+    if (this.#queue.append(frames, m.n)) this.#schedule.noteBytes(frames.byteLength)
+    else this.#forwardRefused += m.n
+  }
+
+  /**
+   * The worker is gone: terminated, or silent past {@link SILENCE_MS}. Its open
+   * connections are reported closed with what its last forward said about them.
+   * If it speaks again, it is linked again and its connections continue.
+   */
+  #workerGone(link: Link): void {
+    if (link.state !== 'linked' || this.#ended) return
+    link.state = 'gone'
+    this.#writeLink(link, 'gone')
+    this.#closeForwarded(link, 'worker-gone')
+    link.conns = []
+    this.#sealNow(false)
+  }
+
+  /** Report a link's open connections closed, from its last forward. */
+  #closeForwarded(link: Link, cause: 'worker-gone' | 'session-end'): void {
+    const ts = this.#relNow()
+    for (const s of link.conns) {
+      if (s.conn.state === 'closed') continue
+      if (s.rollup !== null) this.#sink.json(s.rollup)
+      this.#sink.json({
+        t: 'conn-close',
+        ts,
+        lvl: this.#escalation.level,
+        conn: s.conn.id,
+        cause,
+        counters: s.counters,
       })
     }
   }
 
-  #onTriggerFired(e: TriggerEvent): void {
-    if (this.#halted()) return
-    // Order is load-bearing: the trigger opens a billable capture window
-    // and "the pre-trigger dump is that window's first record". Raise first so
-    // the dump is stamped at the window's level, then fire.
-    this.#escalation.onTrigger(e.kind, e.atMono, e.key)
-    this.#recorder.fire(e)
+  /**
+   * Notice `terminate()` on this one `Worker` object the moment it is called,
+   * without touching `Worker.prototype`. A call that bypasses the instance —
+   * `Worker.prototype.terminate.call(w)` — is caught by the silence check.
+   */
+  #wrapTerminate(link: Link): void {
+    const w = link.target as { terminate?: unknown }
+    const original = w.terminate
+    if (typeof original !== 'function') return
+    const gone = (): void => {
+      link.terminated = true
+      link.owner.#workerGone(link)
+    }
+    try {
+      w.terminate = function terminate(this: unknown, ...args: unknown[]): unknown {
+        try {
+          gone()
+        } catch {
+          // Reporting never stands between the page and its own call.
+        }
+        return (original as (...a: unknown[]) => unknown).apply(this, args)
+      }
+    } catch (err) {
+      this.#onError(err)
+    }
+  }
+
+  #startLinkTimer(): void {
+    if (this.#linkTimer !== undefined) return
+    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
+    const run = (): void => {
+      if (this.#ended) return
+      const now = this.#clock.now()
+      for (const l of this.#links) {
+        if (l.state === 'linked' && now - l.lastHeard > SILENCE_MS) this.#workerGone(l)
+      }
+      this.#linkTimer = set(run, HEARTBEAT_MS)
+    }
+    this.#linkTimer = set(run, HEARTBEAT_MS)
+  }
+
+  #broadcast(m: PageMessage): void {
+    for (const l of this.#links) {
+      if (l.port === null) continue
+      try {
+        l.port.postMessage(envelope(m))
+      } catch (err) {
+        this.#onError(err)
+      }
+    }
+  }
+
+  #writeLink(link: Link, ev: LinkRecord['ev']): void {
+    this.#sink.json({
+      t: 'link',
+      ts: this.#relNow(),
+      lvl: this.#escalation.level,
+      link: link.id,
+      ev,
+    })
   }
 
   /* ── records ──────────────────────────────────────────────────────────── */
 
-  #relNow(): Mono {
-    return this.#clock.now() - this.anchor.originMono
-  }
-
-  /**
-   * The setup record, emitted once, lazily, immediately before the first seal.
-   *
-   * Lazily because the two fields worth having — the negotiated protocol and the
-   * draft it selected — do not exist until `ready` has resolved and the chunk has
-   * landed, and a setup record that said `draft: null` on every session would be
-   * a worse first frame than one that waits for the first flush.
-   */
   #ensureSetup(): void {
     if (this.#setupSent) return
     this.#setupSent = true
-    const base = {
+    const ctx = this.config.context
+    const record: SetupRecord = {
       t: 'setup',
       ts: this.#relNow(),
       lvl: this.#escalation.level,
-      draft: this.#draft,
-      protocol: this.#protocol,
-      roles: [...this.#roles],
       anchor: this.anchor,
       identity: this.ids(),
+      idSource: this.config.idSource,
       collectorVersion: COLLECTOR_VERSION,
-      // the fail-closed rule: a session whose worker never handshook is
-      // reported partial rather than complete.
-      partial: this.#partialExpected && !this.#partialLinked,
-    } as const
-    const record: SetupRecord = {
-      ...base,
-      ...(this.config.context.environment !== ''
-        ? { environment: this.config.context.environment }
-        : {}),
-      ...(this.config.context.release !== '' ? { release: this.config.context.release } : {}),
-      ...(this.#degraded !== undefined ? { degraded: this.#degraded } : {}),
+      ...(ctx.environment !== '' ? { environment: ctx.environment } : {}),
+      ...(ctx.release !== '' ? { release: ctx.release } : {}),
     }
-    this.#writeCritical(record)
+    this.#queue.json(record)
   }
 
-  #emitTerminal(reason: TerminalRecord['reason']): void {
-    if (this.#terminalSent) return
-    this.#terminalSent = true
-    this.#ensureSetup()
-    const counters: TerminalRecord['counters'] = {
-      ringEvicted: this.#ring.evicted,
-      ringEvictedBytes: this.#ring.evictedBytes,
-      chunksDropped: this.#queue.droppedChunks + this.#droppedRecords,
-      bucketsRefused: this.#rollup.bucketsRefused + this.#transportsRefused,
-      parseFailures: this.#rollup.parseFailures,
-      sampledTypes: [...this.#sampledTypes],
-      ...(this.#overrunAt !== undefined
-        ? { overrunAt: this.#overrunAt - this.anchor.originMono }
-        : {}),
-      ...(this.#overrunSignal !== undefined ? { overrunSignal: this.#overrunSignal } : {}),
-    }
-    // Written past the gate: `terminal` is non-droppable, and this is the record
-    // the overrun policy exists for — "a short honest record plus an explicit 'I stopped here'
-    // is defensible; a long one silently missing control messages is worse than
-    // nothing, because it will be trusted."
-    const record: TerminalRecord = {
-      t: 'terminal',
+  #writeLife(ev: LifeRecord['ev'], gapMs?: number): void {
+    this.#sink.json({
+      t: 'life',
       ts: this.#relNow(),
       lvl: this.#escalation.level,
-      reason,
-      counters,
-      partial: this.#overrun || (this.#partialExpected && !this.#partialLinked),
-    }
-    this.#writeCritical(record)
+      ev,
+      ...(gapMs !== undefined ? { gapMs } : {}),
+    })
   }
 
   /**
-   * A non-droppable record, written past the halt gate.
+   * Stop recording and write the instance's last records: open connections
+   * closed, the open rollup intervals, the `end` record. The caller seals
+   * them as the final body.
    *
-   * `setup` and `terminal` are produced during teardown and during the
-   * overrun, i.e. exactly when `#halted()` is already true — so routing them
-   * through `#writeRecord` would drop the two records that explain why
-   * everything else stopped. Only `abort()` suppresses them, because `abort()`
-   * transmits nothing at all.
+   * What was already buffered is sealed first, so the final body holds only
+   * these few records and can never be refused by the buffer's cap: the `end`
+   * record is the one that must not be lost.
    */
-  #writeCritical(r: EnvelopeRecord): void {
-    if (this.#aborted) return
-    try {
-      this.#queue.json(r)
-    } catch (err) {
-      this.#onError(err)
+  #finish(reason: EndRecord['reason']): void {
+    this.#ended = true
+    const now = this.#clock.now()
+    this.#realm.detach()
+    this.#schedule.stop()
+    this.#escalation.close()
+    this.#seal()
+    this.#realm.closeAll('session-end', now)
+    for (const l of this.#links) this.#closeForwarded(l, 'session-end')
+    this.#customRollup.tick(now)
+    // Probes follow the page into its next session rather than stop.
+    if (reason !== 'new-session') this.#broadcast({ t: 'unlinked' })
+    const record: EndRecord = {
+      t: 'end',
+      ts: this.#relNow(),
+      lvl: this.#escalation.level,
+      reason,
+      // The `end` record rides in the next body, so that body's number is the last.
+      finalSeq: this.#queue.nextSeq,
+      counters: {
+        ...this.#realm.counters(),
+        ...this.#probeOverrun,
+        chunksDropped: this.#dropped(),
+      },
     }
+    this.#sink.json(record)
+  }
+
+  /** Records dropped on the device so far, in this page and its probes. */
+  #dropped(): number {
+    let n = this.#queue.droppedRecords + this.#realm.droppedRecords + this.#forwardRefused
+    for (const l of this.#links) n += l.dropped
+    return n
+  }
+
+  /**
+   * The control plane outran the collector, in this page or in a probe. Stop
+   * collecting rather than degrade: "a short honest record plus an explicit
+   * 'I stopped here' is defensible; a long one silently missing control
+   * messages is worse than nothing, because it will be trusted." The bodies
+   * already sealed still go out.
+   *
+   * A probe's overrun arrives with where and why, which only its own realm
+   * knows; the page's own is already on its realm's counters.
+   */
+  #overrun(probe?: Pick<EndCounters, 'overrunAt' | 'overrunSignal'>): void {
+    if (this.#ended) return
+    this.#probeOverrun = probe
+    this.#finish('overrun')
+    this.#seal(true)
+    void this.#drain()
   }
 
   /* ── the interval ─────────────────────────────────────────────────────── */
@@ -1118,9 +953,9 @@ export class CollectorRuntime implements TransportObserver {
     const ms = this.config.metrics.intervalMs
     const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
     const run = (): void => {
-      if (this.#stopped || this.#aborted) return
+      if (this.#ended) return
       try {
-        this.#tickRollup()
+        this.#tick()
       } catch (err) {
         this.#onError(err)
       }
@@ -1129,14 +964,21 @@ export class CollectorRuntime implements TransportObserver {
     this.#intervalHandle = set(run, ms)
   }
 
+  #tick(): void {
+    const now = this.#clock.now()
+    this.#realm.tick(now)
+    this.#customRollup.tick(now)
+    this.#escalation.tick(now)
+    this.#pacer.notePressure({ objectsPerSec: this.#realm.objectRate, at: now })
+  }
+
   /**
    * Land the post-event timeout on the second it is due.
    *
-   * `#tickRollup` already drives `EscalationController.tick`, but it runs on
+   * `#tick` already drives `EscalationController.tick`, but it runs on
    * `metrics.intervalMs` — 10 s by default and a customer setting — so on its
    * own it would close a 15 s window at 20 s and bill five seconds nobody
-   * captured. Whole seconds are billed per window, so that rounding is money.
-   * One timer per opened window, cleared on the next one and on `#detach`.
+   * captured. One timer per opened window, cleared on the next one.
    */
   #scheduleWindowClose(deadlineMono: Mono): void {
     const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
@@ -1145,7 +987,7 @@ export class CollectorRuntime implements TransportObserver {
     const delay = Math.max(0, deadlineMono - this.#clock.now())
     this.#windowHandle = set(() => {
       this.#windowHandle = undefined
-      if (this.#halted()) return
+      if (this.#ended) return
       try {
         this.#escalation.tick(this.#clock.now())
       } catch (err) {
@@ -1154,266 +996,407 @@ export class CollectorRuntime implements TransportObserver {
     }, delay)
   }
 
-  #tickRollup(): void {
-    const now = this.#clock.now()
-    this.#rollup.tick(now)
-    this.#triggers.tick(now)
-    this.#escalation.tick(now)
-    this.#pacer.notePressure({ objectsPerSec: this.#objectRate(), at: now })
-  }
+  /* ── sealing ──────────────────────────────────────────────────────────── */
 
-  /* ── sealing and release ──────────────────────────────────────────────── */
-
-  async #flush(reason: SealReason): Promise<void> {
-    if (this.#aborted) return
+  /**
+   * A seal the schedule or a connection close asked for, then send. `tick`
+   * closes the open rollup intervals first; a close has already written its
+   * connection's last one.
+   */
+  #sealNow(tick: boolean): void {
+    if (this.#ended) return
     try {
-      // Not on every seal. The first seal fires within milliseconds of
-      // `init()`, frequently before the page has even constructed its
-      // `WebTransport`, and a setup record emitted there would carry
-      // `protocol: null` and `draft: null` on every session — the two fields
-      // that make it worth having. It goes out when the draft resolves
-      // (`#attachDraft`), and at the latest when the session ends.
-      if (reason === 'stop' || reason === 'terminal' || reason === 'pagehide') this.#ensureSetup()
-      if (reason !== 'terminal' && reason !== 'stop') this.#rollup.tick(this.#clock.now())
-      const chunk = await this.#queue.seal(reason)
-      if (chunk === null) return
-      this.#meter.noteBytes(chunk.level, chunk.bytes.byteLength)
-      this.#outbox.push(chunk)
-      if (reason !== 'stop') void this.#drainOutbox({ paced: true })
+      if (tick) this.#tick()
+      if (this.#seal() !== null) void this.#drain()
     } catch (err) {
       this.#onError(err)
     }
   }
 
   /**
-   * The release loop. The pacer shapes the delay; it never seals.
-   *
-   * Rules the flush module documents and this loop obeys: release in segment
-   * order; delete only what ingest confirmed, plus a terminal 4xx that ingest
-   * will refuse forever; keep everything else, because that is what the
-   * persistence is for.
+   * Seal what is buffered into a numbered, keyed body and put it in the
+   * outbox, synchronously. Compression and the stored copy follow on their own.
    */
-  async #drainOutbox(o: { paced: boolean; signal?: AbortSignal | undefined }): Promise<void> {
-    if (this.#pumping || this.#aborted) return
-    this.#pumping = true
+  #seal(final = false): Chunk | null {
+    if (this.#discarded) return null
+    let chunk: Chunk | null
     try {
-      while (this.#outbox.length > 0 && !this.#aborted) {
-        // The caller's deadline ends the loop between chunks as well as
-        // inside a request, so a `stop()` that has run out of time does not
-        // start a sixth upload it cannot finish.
-        if (o.signal?.aborted === true) return
-        const chunk = this.#outbox[0] as Chunk
-        if (o.paced) {
-          const delay = this.#pacer.nextReleaseDelayMs()
-          if (delay > 0) await this.#sleep(delay)
-        }
-        if (this.#aborted) return
-        const outcome = await this.#uploader.send(chunk, o.signal)
-        this.#outbox.shift()
-        if (outcome.ok || outcome.terminal) {
-          if (this.#store !== null) await this.#store.delete(chunk.idempotencyKey)
-        } else if (this.#store === null) {
-          // Nothing durable behind it: keep it in memory for a later attempt
-          // rather than dropping data the customer's page can still send.
-          this.#outbox.push(chunk)
-          return
-        } else {
-          // Persisted. `#adoptBacklog` on the next page load picks it up, and
-          // spinning here would be the congestion the pacer exists to avoid.
-          return
-        }
-      }
+      chunk = this.#queue.seal({ final, lost: this.#lost, dropped: this.#dropped() })
     } catch (err) {
       this.#onError(err)
+      return null
+    }
+    if (chunk === null) return null
+    // Into the outbox before anything else can stop this: the frames have left
+    // the queue, and a body in neither place is lost.
+    this.#outbox.push(chunk)
+    this.#lastSealMono = this.#clock.now()
+    this.#prepared.set(chunk, this.#prepare(chunk))
+    this.#capOutbox()
+    return chunk
+  }
+
+  async #prepare(chunk: Chunk): Promise<void> {
+    try {
+      await compress(chunk)
+      this.#noteBytes(chunk)
+      if (this.#store !== null && !this.#discarded) await this.#store.put(chunk, this.#dest)
+    } catch (err) {
+      this.#onError(err)
+    }
+  }
+
+  /**
+   * Keep the outbox inside the storage quota. A body pushed out of memory is
+   * still sent later if a stored copy exists; without one it is lost, and the
+   * next body says so.
+   */
+  #capOutbox(): void {
+    let bytes = 0
+    for (const c of this.#outbox) bytes += c.bytes.byteLength
+    const cap = Math.max(this.config.storage.quotaBytes, 8 * this.config.upload.byteThreshold)
+    while (bytes > cap && this.#outbox.length > 1) {
+      const dropped = this.#outbox.shift() as Chunk
+      bytes -= dropped.bytes.byteLength
+      if (this.#isOwn(dropped) && this.#store?.has(dropped.idempotencyKey) !== true) {
+        this.#noteLost(dropped.seq)
+      }
+    }
+  }
+
+  #noteBytes(c: Chunk): void {
+    if (this.#metered.has(c)) return
+    this.#metered.add(c)
+    this.#meter.noteBytes(c.level, c.bytes.byteLength)
+  }
+
+  #isOwn(c: Chunk): boolean {
+    return c.instanceId === this.instanceId
+  }
+
+  #noteLost(seq: number): void {
+    this.#lost.push(seq)
+    // Bounded. The list is cumulative on every body, and any body that arrives
+    // has already told the server about the older entries.
+    if (this.#lost.length > 256) this.#lost.shift()
+  }
+
+  /* ── release ──────────────────────────────────────────────────────────── */
+
+  /**
+   * The release loop. One at a time; a call while it runs is absorbed by it,
+   * since it keeps going until the outbox is empty or an upload fails.
+   */
+  #drain(): Promise<void> {
+    if (this.#pumping !== null) return this.#pumping
+    const run = this.#pump().finally(() => {
+      this.#pumping = null
+      this.#urgent = false
+    })
+    this.#pumping = run
+    return run
+  }
+
+  async #pump(): Promise<void> {
+    const signal = this.#life.signal
+    while (this.#outbox.length > 0 && !signal.aborted) {
+      const chunk = this.#outbox[0] as Chunk
+      await this.#prepared.get(chunk)
+      if (!this.#urgent) {
+        const delay = this.#pacer.nextReleaseDelayMs()
+        if (delay > 0) await this.#sleep(delay)
+      }
+      if (signal.aborted) return
+      const outcome = await this.#uploader.send(chunk, signal, pageHidden())
+      if (outcome.ok || outcome.terminal) {
+        this.#retryDelay = 0
+        const at = this.#outbox.indexOf(chunk)
+        if (at !== -1) this.#outbox.splice(at, 1)
+        if (outcome.terminal && this.#isOwn(chunk)) this.#noteLost(chunk.seq)
+        if (this.#store !== null) await this.#store.delete(chunk.idempotencyKey)
+        if (!this.#isOwn(chunk)) this.#releaseInherited()
+        continue
+      }
+      // Kept, at the front. Spinning here would be the congestion the pacer
+      // exists to avoid, so the next attempt waits for a seal, `online`, or the
+      // backoff.
+      this.#scheduleRetry()
+      return
+    }
+  }
+
+  /**
+   * Drain now, without pacing, and resolve when the outbox is empty, an upload
+   * has failed, or `upload.drainDeadlineMs` has passed — whichever is first.
+   */
+  async #drainUrgent(): Promise<void> {
+    this.#urgent = true
+    this.#wake?.()
+    const deadline = deadlineSignal(this.config.upload.drainDeadlineMs)
+    try {
+      await new Promise<void>((resolve) => {
+        deadline.signal?.addEventListener('abort', () => resolve(), { once: true })
+        void this.#drain().then(resolve, resolve)
+      })
     } finally {
-      this.#pumping = false
+      deadline.clear()
     }
   }
 
-  /**
-   * Re-queue what a previous page load persisted and did not manage to send.
-   *
-   * Session-scoped, which is what stops one tab's `stop()` destroying another's
-   * backlog — and which also means the backlog is only reachable when the
-   * customer supplied a stable `sessionId`. A minted one is new every load, so
-   * its predecessor's chunks are orphaned in the store until their TTL;
-   * `ChunkStore` exposes no safe cross-session listing to do better from here.
-   */
-  async #adoptBacklog(): Promise<void> {
-    const store = this.#store
-    if (store === null) return
-    try {
-      for (const entry of store.pending(this.config.sessionId)) {
-        const c = await store.get(entry.key)
-        if (c !== undefined) this.#outbox.push(c)
-      }
-      if (this.#outbox.length > 0) await this.#drainOutbox({ paced: true })
-    } catch (err) {
-      this.#onError(err)
-    }
+  #scheduleRetry(): void {
+    if (this.#retryHandle !== undefined || this.#life.signal.aborted) return
+    this.#retryDelay = Math.min(RETRY_MAX_MS, Math.max(RETRY_FIRST_MS, this.#retryDelay * 2))
+    const delay = Math.round(this.#retryDelay * (0.75 + Math.random() * 0.5))
+    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
+    this.#retryHandle = set(() => {
+      this.#retryHandle = undefined
+      void this.#drain()
+    }, delay)
   }
 
   #sleep(ms: number): Promise<void> {
     const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
     return new Promise((resolve) => {
+      this.#wake = resolve
       set(() => resolve(), ms)
     })
   }
 
-  /* ── page lifecycle ────────────────────────────────────────────── */
-
   /**
-   * The tail beacon.
-   *
-   * "`sendBeacon` carries the tail only, at `pagehide` — it caps around
-   * 64 KB and is best-effort." Synchronous throughout: the page may not survive
-   * a single `await`, so `sealSync` takes the non-secure-context key (flagged
-   * `keyFallback`) and writes the body uncompressed, because `CompressionStream`
-   * is asynchronous by construction.
-   *
-   * **bfcache.** `pagehide` also fires on bfcache entry and the page may then be
-   * restored and carry on. The spec does not say what should happen; the
-   * decision here is to send the tail and **not** tear down, so a restored page
-   * resumes the same session with a fresh connection id (the hook mints one per
-   * `new WebTransport()`) and a `segmentSeq` read back from storage, which is
-   * where the flush queue already gets it. Tearing down instead would silently
-   * end a session the user is still watching.
+   * Send what earlier page loads stored and could not send: every body bound
+   * for this endpoint and key whose instance is gone, from any session.
    */
+  async #sweep(): Promise<void> {
+    const store = this.#store
+    if (store === null) return
+    try {
+      const held = await heldInstances(this.#locks, this.#onError)
+      const cutoff = this.#clock.wall() - SWEEP_AGE_INTERVALS * this.config.upload.intervalMs
+      const left = store.backlog(this.#dest).filter((e) => {
+        if (e.instanceId === this.instanceId) return false
+        return held === null ? e.createdWallMs < cutoff : !held.has(e.instanceId)
+      })
+      const adopted: Chunk[] = []
+      for (const e of left) {
+        const c = await store.get(e.key)
+        if (c !== undefined) adopted.push(c)
+      }
+      if (adopted.length === 0 || this.#discarded) return
+      this.#outbox = [...adopted, ...this.#outbox]
+      await this.#drain()
+    } catch (err) {
+      this.#onError(err)
+    }
+  }
+
+  /* ── page lifecycle ───────────────────────────────────────────────────── */
+
   #installLifecycle(): void {
     if (this.#ports.noLifecycleListeners === true) return
-    const g = globalThis as { addEventListener?: (t: string, f: () => void) => void }
-    if (typeof g.addEventListener !== 'function') return
-    const handler = (e?: { persisted?: boolean }): void => {
-      try {
-        this.#sendTail(e?.persisted === true)
-      } catch (err) {
-        this.#onError(err)
-      }
+    const g = globalThis as {
+      addEventListener?: (t: string, f: (e: unknown) => void, capture?: boolean) => void
     }
-    this.#onPagehide = handler
-    g.addEventListener('pagehide', handler)
+    if (typeof g.addEventListener !== 'function') return
+    // Closing a tab in Firefox cancels the page's running script, once. A
+    // cancel that finds no script running stops the next one, which is the
+    // first `pagehide` listener, at its first call. This one takes it: capture
+    // listeners run first on the window, ahead of every non-capture one, the
+    // page's own included. A cancel that lands later is caught by the second
+    // `pagehide` listener below.
+    const absorb = (): void => {}
+    this.#listeners.push(['pagehide', absorb, true])
+    g.addEventListener('pagehide', absorb, true)
+    const on = (type: string, f: (e: unknown) => void): void => {
+      const guarded = (e: unknown): void => {
+        try {
+          f(e)
+        } catch (err) {
+          this.#onError(err)
+        }
+      }
+      this.#listeners.push([type, guarded, false])
+      g.addEventListener?.(type, guarded)
+    }
+    const pagehide = (e: unknown): void =>
+      this.#pagehide((e as { persisted?: boolean }).persisted === true)
+    on('pagehide', pagehide)
+    // The same work again, resumed where a cancelled first run stopped; a no-op
+    // after a run that finished.
+    on('pagehide', pagehide)
+    on('pageshow', (e) => {
+      if ((e as { persisted?: boolean }).persisted === true) this.#pageshow()
+    })
+    on('visibilitychange', () => this.#visibility())
+    on('online', () => {
+      void this.#drain()
+    })
+  }
+
+  #visibility(): void {
+    if (this.#ended) return
+    if (!pageHidden()) {
+      this.#writeLife('visible')
+      return
+    }
+    this.#writeLife('hidden')
+    this.#broadcast({ t: 'forward' })
+    // A mobile browser may kill a hidden page with no further event, so what
+    // it holds leaves now — unless it sealed a moment ago.
+    if (this.#clock.now() - this.#lastSealMono < HIDDEN_SEAL_GAP_MS) return
+    this.#tick()
+    this.#seal()
+    void this.#drainUrgent()
   }
 
   /**
-   * @param persisted The page is entering the back/forward cache and may be
-   *   restored, so the session is not over and no terminal record is sent.
+   * The page is going away, or into the back/forward cache.
+   *
+   * Synchronous throughout: the page may not survive a single `await`. On a
+   * real unload the `end` record is sealed as its own small body and beaconed
+   * first, so the one record that says how the instance ended is the likeliest
+   * to fit the browser's shared beacon quota; then the tail, then every body
+   * still unconfirmed. Each also goes to IndexedDB under the same key, so one
+   * the browser refuses is sent by the next page load, and one it takes twice
+   * dedupes.
+   *
+   * A persisted `pagehide` is a page entering the back/forward cache, which may
+   * be restored: the tail goes, marked `frozen`, and the instance carries on.
    */
-  #sendTail(persisted: boolean): void {
-    if (this.#halted()) return
-    // the third close condition — "the page reloading or unloading". Before
-    // the seal, so the record that closes the window rides this beacon rather
-    // than waiting for a page load that may never come. On a bfcache entry the
-    // page may be restored and carry on; the window still closed, and the next
-    // trigger opens a new one, which is the honest reading — nobody was
-    // capturing while the page was frozen.
-    this.#escalation.unload()
-    this.#ensureSetup()
-    this.#rollup.tick(this.#clock.now())
-    // The page is going away, and with it any worker it linked: a dedicated
-    // worker gets no `pagehide` and cannot end its own session.
-    if (!persisted) this.#emitTerminal('pagehide')
-    const chunk = this.#queue.sealSync('pagehide')
-    if (chunk === null) return
-    // The credential has to be handed over explicitly: `sendBeacon` can set no
-    // headers, so unless the key rides in the URL the tail is an unauthenticated
-    // POST that ingest refuses — and refuses invisibly, because a beacon cannot
-    // read a response. The fallback path uses a header instead; `sendTail` picks
-    // per path.
-    const outcome = sendTail(this.config.endpoint, chunk.bytes, {
-      maxBytes: this.config.upload.beaconMaxBytes,
-      apiKey: this.config.apiKey,
-      idempotencyKey: chunk.idempotencyKey,
-      ...(this.#ports.beacon !== undefined ? { beacon: this.#ports.beacon } : {}),
-      ...(this.#ports.fetchImpl !== undefined ? { fetchImpl: this.#ports.fetchImpl } : {}),
-      onInternalError: this.#onError,
-    })
-    // Metered only once something took it. `sealSync` does not persist, so a
-    // refused tail is gone; counting its bytes would put them in the usage
-    // estimate while ingest — the actual meter — never sees them. `sendTail` has
-    // already reported the loss.
-    if (outcome === false) return
-    this.#meter.noteBytes(chunk.level, chunk.bytes.byteLength)
+  #pagehide(persisted: boolean): void {
+    if (persisted) {
+      if (this.#ended || this.#frozenAt !== undefined) return
+      this.#frozenAt = this.#clock.now()
+      this.#escalation.unload()
+      this.#tick()
+      this.#writeLife('frozen')
+      this.#seal()
+      this.#beaconOutbox([])
+      this.#beaconed.clear()
+      return
+    }
+    if (this.#ended && this.#unloadStep === 0) return
+    this.#unload()
+  }
+
+  /**
+   * End the instance and send everything, in steps a second call resumes.
+   *
+   * Firefox can stop a `pagehide` listener at any call, so each step is marked
+   * done only once it is, and the second listener picks up from the first
+   * unfinished one. A step cut short repeats: at worst a record or a body goes
+   * twice, which ingest dedupes, rather than not at all.
+   */
+  #unload(): void {
+    if (this.#unloadStep === 0) {
+      this.#escalation.unload()
+      this.#tick()
+      this.#seal()
+      this.#unloadStep = 1
+    }
+    if (this.#unloadStep === 1) {
+      this.#finish('unload')
+      this.#unloadStep = 2
+    }
+    if (this.#unloadStep === 2) {
+      this.#endBody = this.#seal(true)
+      this.#unloadStep = 3
+    }
+    if (this.#unloadStep === 3) {
+      // A seal that failed left the `end` record buffered; one more try.
+      this.#endBody ??= this.#seal(true)
+      this.#beaconOutbox(this.#endBody === null ? [] : [this.#endBody])
+      this.#unloadStep = 4
+    }
+    if (this.#unloadStep === 4) {
+      this.#teardown()
+      this.#unloadStep = 5
+    }
+  }
+
+  #pageshow(): void {
+    const at = this.#frozenAt
+    if (at === undefined || this.#ended) return
+    this.#frozenAt = undefined
+    this.#writeLife('resumed', Math.round(this.#clock.now() - at))
+  }
+
+  /** Beacon `first`, then every other body in the outbox, newest last; store each one. */
+  #beaconOutbox(first: readonly Chunk[]): void {
+    const rest = this.#outbox.filter((c) => !first.includes(c))
+    for (const chunk of [...first, ...rest]) {
+      if (this.#beaconed.has(chunk)) continue
+      const outcome = sendTail(this.config.endpoint, chunk.bytes, {
+        maxBytes: Math.min(this.config.upload.beaconMaxBytes, BEACON_MAX_BYTES),
+        apiKey: this.config.apiKey,
+        idempotencyKey: chunk.idempotencyKey,
+        instanceId: chunk.instanceId,
+        ...(this.#ports.beacon !== undefined ? { beacon: this.#ports.beacon } : {}),
+        ...(this.#ports.fetchImpl !== undefined ? { fetchImpl: this.#ports.fetchImpl } : {}),
+        onInternalError: this.#onError,
+      })
+      this.#beaconed.add(chunk)
+      // Metered only once something took it: ingest, the actual meter, never
+      // sees a body nothing accepted.
+      if (outcome !== false) this.#noteBytes(chunk)
+      if (this.#store !== null) void this.#store.put(chunk, this.#dest)
+    }
   }
 
   /* ── teardown ─────────────────────────────────────────────────────────── */
 
-  /** Stop observing. Synchronous, and the first thing both verbs do. */
-  #detach(): void {
-    try {
-      this.#hook.setObserver(null)
-    } catch (err) {
-      this.#onError(err)
-    }
-    this.#schedule.stop()
-    this.#recorder.disarm()
-    this.#triggers.reset()
-    const clear = this.#ports.clearTimer ?? ((h: unknown) => clearTimeout(h as never))
-    if (this.#intervalHandle !== undefined) {
-      clear(this.#intervalHandle)
-      this.#intervalHandle = undefined
-    }
-    if (this.#windowHandle !== undefined) {
-      clear(this.#windowHandle)
-      this.#windowHandle = undefined
-    }
-  }
-
   /**
-   * Both verbs restore the wrapped globals, and the transport module's
-   * `uninstall` also detaches every per-instance patch on sessions that are
-   * still open — the case `abort()` exists for.
+   * Stop every timer and listener, end uploads in flight, release the locks,
+   * and restore the global, unless the next session in this page keeps the
+   * hook.
    */
-  async #teardown(): Promise<void> {
-    const g = globalThis as { removeEventListener?: (t: string, f: () => void) => void }
-    if (this.#onPagehide !== undefined && typeof g.removeEventListener === 'function') {
-      g.removeEventListener('pagehide', this.#onPagehide)
-      this.#onPagehide = undefined
+  #teardown(opts: { keepHook?: boolean } = {}): void {
+    this.#ended = true
+    this.#realm.detach()
+    this.#schedule.stop()
+    this.#life.abort()
+    this.#wake?.()
+    const clear = this.#ports.clearTimer ?? ((h: unknown) => clearTimeout(h as never))
+    for (const h of [
+      this.#intervalHandle,
+      this.#windowHandle,
+      this.#retryHandle,
+      this.#linkTimer,
+    ]) {
+      if (h !== undefined) clear(h)
     }
-    this.#ring.clear()
-    this.#connections.clear()
+    for (const l of this.#links) {
+      if (l.timeout !== undefined) clear(l.timeout)
+      if (l.onHello !== undefined) l.target.removeEventListener?.('message', l.onHello)
+      l.port?.close()
+    }
+    this.#intervalHandle = undefined
+    this.#windowHandle = undefined
+    this.#retryHandle = undefined
+    this.#linkTimer = undefined
+    const g = globalThis as {
+      removeEventListener?: (t: string, f: (e: unknown) => void, capture?: boolean) => void
+    }
+    for (const [type, f, capture] of this.#listeners) g.removeEventListener?.(type, f, capture)
+    this.#listeners = []
+    this.#releaseLock()
+    for (const release of this.#inheritedLocks.values()) release()
+    this.#inheritedLocks.clear()
+    this.#realm.clear()
+    if (opts.keepHook === true) return
     try {
       this.#hook.uninstall()
     } catch (err) {
       this.#onError(err)
     }
-    this.#store?.close()
-    await Promise.resolve()
   }
 
-  /** Stopped, aborted, or halted by the overrun. Nothing is collected after. */
-  #halted(): boolean {
-    return this.#stopped || this.#aborted || this.#overrun
+  #relNow(): Mono {
+    return this.#clock.now() - this.anchor.originMono
   }
+}
 
-  /**
-   * Every observer method, wrapped.
-   *
-   * `types.ts`: "Every method must also be total: a throw here lands in the
-   * page's own stack." The hook wraps calls too and routes failures to
-   * `onInternalError`, so this is the second of two locks on the same door — and
-   * the cheap one, since it costs a closure per install rather than anything per
-   * chunk.
-   */
-  #guarded(): TransportObserver {
-    const wrap = <A extends unknown[]>(f: (...a: A) => void) => {
-      return (...a: A): void => {
-        try {
-          f.apply(this, a)
-        } catch (err) {
-          this.#onError(err)
-        }
-      }
-    }
-    return {
-      onSessionOpen: wrap(this.onSessionOpen),
-      onSessionProtocol: wrap(this.onSessionProtocol),
-      onSessionClose: wrap(this.onSessionClose),
-      onStreamData: wrap(this.onStreamData),
-      onStreamClose: wrap(this.onStreamClose),
-      onStreamError: wrap(this.onStreamError),
-      onDatagram: wrap(this.onDatagram),
-      onWriterPressure: wrap(this.onWriterPressure),
-      onSendStats: wrap(this.onSendStats),
-    }
-  }
+/** Whether the page is hidden. `false` where there is no document. */
+function pageHidden(): boolean {
+  const d = (globalThis as { document?: { visibilityState?: string } }).document
+  return d?.visibilityState === 'hidden'
 }

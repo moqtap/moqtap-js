@@ -199,7 +199,10 @@ export class StreamDispatcher {
     // `bidi || the first chunk opened af 00`, which is the whole of the
     // draft-17+ control plane. Sniffing only decides among data streams.
     const kind: StreamKind = c.control ? 'control' : this.a.sniff(c.data[0] as number)
-    const opts = this.slackBytes === undefined ? undefined : { slackBytes: this.slackBytes }
+    const opts =
+      this.slackBytes === undefined
+        ? { streamId: c.streamId }
+        : { slackBytes: this.slackBytes, streamId: c.streamId }
 
     switch (kind) {
       case 'control':

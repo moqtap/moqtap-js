@@ -1,5 +1,5 @@
 import type { ClockSource, UploadOutcome } from '../types.js'
-import { UPLOAD_CONTENT_TYPE, uploadUrl } from './beacon.js'
+import { BEACON_MAX_BYTES, UPLOAD_CONTENT_TYPE, uploadUrl } from './beacon.js'
 import { ClockSync } from './clock-sync.js'
 import { deadlineSignal, sleepUntil } from './deadline.js'
 import type { Chunk } from './idb.js'
@@ -138,13 +138,16 @@ export class Uploader {
    * is counted and reported so the caller deletes the chunk rather than keeping
    * a body ingest will always refuse.
    *
-   * Every wait is bounded: each request carries `Limits.uploadTimeoutMs`, and
-   * `signal` — the caller's overall deadline, `Limits.stopDrainDeadlineMs` for
-   * `stop()` — ends the fetch, the backoff sleep and the retry loop together. A
-   * deadline that expires returns a **non-terminal** failure, so the caller
-   * keeps the chunk and it goes out on the next page load instead of being lost.
+   * Every wait is bounded: each request carries `upload.timeoutMs`, and
+   * `signal` — the caller's overall deadline, `upload.drainDeadlineMs` for
+   * `flush()` and `end()` — ends the fetch, the backoff sleep and the retry loop
+   * together. A deadline that expires returns a **non-terminal** failure, so
+   * the caller keeps the chunk and sends it again later instead of losing it.
+   *
+   * `keepalive` lets a request outlive the page, for a body sent as the page is
+   * hidden. The platform caps keepalive bodies, so a larger one goes without it.
    */
-  async send(c: Chunk, signal?: AbortSignal): Promise<UploadOutcome> {
+  async send(c: Chunk, signal?: AbortSignal, keepalive = false): Promise<UploadOutcome> {
     const doFetch = this.#fetch
     if (doFetch === undefined) {
       // No fetch at all: not transient, but not the chunk's fault either. The
@@ -172,10 +175,12 @@ export class Uploader {
         // Credentials in the URL and a safelisted type, so the request needs
         // no CORS preflight; see `uploadUrl`. Gzip is declared by the body's
         // own preamble.
-        res = await doFetch(uploadUrl(this.#endpoint, this.#apiKey, c.idempotencyKey), {
+        const url = uploadUrl(this.#endpoint, this.#apiKey, c.idempotencyKey, c.instanceId)
+        res = await doFetch(url, {
           method: 'POST',
           headers: { 'content-type': UPLOAD_CONTENT_TYPE, ...this.#headers },
           body: c.bytes as unknown as BodyInit,
+          ...(keepalive && c.bytes.byteLength <= BEACON_MAX_BYTES ? { keepalive: true } : {}),
           ...(deadline.signal !== undefined ? { signal: deadline.signal } : {}),
         })
       } catch (err) {
@@ -214,7 +219,7 @@ export class Uploader {
 
   /**
    * The backoff wait, bounded by the caller's deadline: without it a drain that
-   * has already blown its deadline still sits out a 30 s backoff, and `stop()`
+   * has already blown its deadline still sits out a 30 s backoff, and `end()`
    * would be bounded on its fetches only. The injected `sleep` gets the signal
    * too ({@link sleepUntil} clears its own timer with it), but the race is what
    * makes the bound hold even when a test injects a one-argument fake.

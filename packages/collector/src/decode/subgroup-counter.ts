@@ -184,6 +184,8 @@ export function readSubgroupObject(
 export interface CounterOptions {
   /** Header bytes carried across a chunk boundary before declaring desync. */
   readonly slackBytes?: number
+  /** The stream's id, carried on every sample so a per-object record can name it. */
+  readonly streamId?: number
 }
 
 /**
@@ -201,6 +203,7 @@ export class SubgroupCounter extends DataStreamCounter {
   private capped = false
   private pendingHeaderBytes = 0
   private readonly cursor: ObjectCursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+  private readonly streamId: number
 
   constructor(
     private readonly dir: Direction,
@@ -210,6 +213,7 @@ export class SubgroupCounter extends DataStreamCounter {
     opts?: CounterOptions,
   ) {
     super(opts?.slackBytes ?? DEFAULT_HEADER_SLACK_BYTES)
+    this.streamId = opts?.streamId ?? -1
   }
 
   /** The bucket this stream's objects are counted into, once resolved. */
@@ -264,25 +268,37 @@ export class SubgroupCounter extends DataStreamCounter {
     this.pendingHeaderBytes = 0
     const key = this.key
     if (key === null) return
-    const sample: ObjectSample =
-      o.status === undefined
-        ? {
-            key,
-            groupId: o.groupId,
-            objectId: o.objectId,
-            headerBytes,
-            payloadBytes: o.payloadLength,
-            at,
-          }
-        : {
-            key,
-            groupId: o.groupId,
-            objectId: o.objectId,
-            headerBytes,
-            payloadBytes: o.payloadLength,
-            status: o.status,
-            at,
-          }
-    this.sink.onObject(sample)
+    this.sink.onObject(
+      withStream(
+        o.status === undefined
+          ? {
+              key,
+              groupId: o.groupId,
+              objectId: o.objectId,
+              headerBytes,
+              payloadBytes: o.payloadLength,
+              at,
+            }
+          : {
+              key,
+              groupId: o.groupId,
+              objectId: o.objectId,
+              headerBytes,
+              payloadBytes: o.payloadLength,
+              status: o.status,
+              at,
+            },
+        this.streamId,
+      ),
+    )
   }
+}
+
+/**
+ * `s` with its stream id, when the counter was given one. Assigned rather than
+ * spread: this runs once per object.
+ */
+export function withStream(s: ObjectSample, streamId: number): ObjectSample {
+  if (streamId >= 0) (s as { streamId?: number }).streamId = streamId
+  return s
 }

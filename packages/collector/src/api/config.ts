@@ -67,7 +67,8 @@ export interface ResolveOptions {
   readonly mintSessionId?: () => string
 }
 
-function defaultMintSessionId(): string {
+/** A fresh random id: a UUID where `crypto` has one. Never contains a colon. */
+export function mintId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto
   if (typeof c?.randomUUID === 'function') {
     try {
@@ -76,10 +77,9 @@ function defaultMintSessionId(): string {
       // Falls through. randomUUID throws on some insecure-context polyfills.
     }
   }
-  // Not a UUID and not pretending to be one. The key is
-  // sha256(sessionId:segmentSeq) and ingest dedupes exactly, so this path is
-  // weaker; it is reached only where crypto is absent entirely, which is also
-  // where the idempotency key is already flagged `keyFallback`.
+  // Not a UUID and not pretending to be one, and weaker than one: it is
+  // reached only where `crypto` is absent entirely. A collision would merge two
+  // sessions, though never two bodies, since each instance keys its own.
   let r = ''
   for (let i = 0; i < 4; i += 1) r += Math.floor(Math.random() * 0x1_0000_0000).toString(16)
   return `s-${Date.now().toString(16)}-${r}`
@@ -328,6 +328,7 @@ function limitsOf(v: unknown, report: (p: ConfigProblem) => void): Limits {
       'limits.maxHeaderSlackBytes',
       report,
     ),
+    linkTimeoutMs: posInt(l.linkTimeoutMs, d.linkTimeoutMs, 'limits.linkTimeoutMs', report),
   })
 }
 
@@ -395,12 +396,7 @@ function uploadOf(v: unknown, report: (p: ConfigProblem) => void): UploadConfig 
     earlyFlushesMs: early,
     maxAttempts: posInt(u.maxAttempts, d.maxAttempts, 'upload.maxAttempts', report),
     timeoutMs: posInt(u.timeoutMs, d.timeoutMs, 'upload.timeoutMs', report),
-    stopDrainDeadlineMs: posInt(
-      u.stopDrainDeadlineMs,
-      d.stopDrainDeadlineMs,
-      'upload.stopDrainDeadlineMs',
-      report,
-    ),
+    drainDeadlineMs: posInt(u.drainDeadlineMs, d.drainDeadlineMs, 'upload.drainDeadlineMs', report),
     beaconMaxBytes: posInt(u.beaconMaxBytes, d.beaconMaxBytes, 'upload.beaconMaxBytes', report),
   })
 }
@@ -472,8 +468,16 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
     }
   }
 
-  const mint = opts.mintSessionId ?? defaultMintSessionId
-  const sessionId = sessionIdOf(c.sessionId, mint, report)
+  const mint = opts.mintSessionId ?? mintId
+  let minted = false
+  const sessionId = sessionIdOf(
+    c.sessionId,
+    () => {
+      minted = true
+      return mint()
+    },
+    report,
+  )
 
   const ctx = bagOf(c.context, 'context', report) ?? {}
   const d = DEFAULTS.context
@@ -485,6 +489,7 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
     apiKey: c.apiKey,
     endpoint,
     sessionId,
+    idSource: minted ? 'minted' : 'supplied',
     detail: detailOf(c.detail, report),
     context: Object.freeze({
       actorId: str(ctx.actorId, d.actorId, 'context.actorId', report),

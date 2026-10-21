@@ -12,88 +12,99 @@
  * and already buffering, the dormant ring holds the wire bytes from module-eval
  * time, and the runtime drains it into its own ring the moment it attaches.
  *
- * Calls made in the gap — `annotate`, `observe`, `escalate`, `resolve` — are
- * queued and replayed in order. `ids()` answers immediately, from the resolved
- * config, so the caller can put them in their own logs and join later.
+ * Calls made in the gap are queued and replayed in order. `ids()` answers
+ * immediately, from the resolved config and an instance id minted here, so the
+ * caller can put them in their own logs and join later.
  */
 
-import { MQ1004 } from '../codes.js'
+import { MQ1004, MQ1113 } from '../codes.js'
 import type { DraftSet } from '../draft/index.js'
 import { ChunkStore } from '../flush/index.js'
+import { connectionIdOf } from '../transport/index.js'
 import type {
   CollectorConfig,
   DetailLevel,
   Identity,
   MetricDefinition,
+  ResolvedConfig,
   UsageReport,
 } from '../types.js'
-import { type ConfigProblem, resolveConfig } from './config.js'
+import { type ConfigProblem, isStorableSessionId, mintId, resolveConfig } from './config.js'
 import { claimDormantHook, type DormantClaim, setPresenceActive } from './dormant.js'
-import { CollectorRuntime, type RuntimePorts } from './session.js'
+import { linkMessage } from './link.js'
+import type { ConnectionState } from './realm.js'
+import {
+  CollectorRuntime,
+  type LinkEvent,
+  type MessageTarget,
+  type RuntimePorts,
+} from './session.js'
 
-/** The origin-scoped IndexedDB database. One per origin; records are session-scoped. */
+/** The origin-scoped IndexedDB database. One per origin. */
 export const DB_NAME = 'moqtap-collector'
 
-/** What a worker link accepts: a `Worker`, a `MessagePort`, or anything postMessage-shaped. */
-export interface MessageTarget {
-  postMessage(message: unknown): void
-  addEventListener(type: 'message', listener: (e: { data?: unknown }) => void): void
-  removeEventListener?(type: 'message', listener: (e: { data?: unknown }) => void): void
-  start?(): void
-}
-
-/** The handshake envelope. Namespaced so a customer's own traffic is never mistaken for it. */
-export const HANDSHAKE = '__moqtap_collector__'
-export const HELLO = 'hello'
-export const CONFIG = 'config'
+/** A connection as {@link Collector.connections} reports it. */
+export type ConnectionInfo = ConnectionState
 
 export interface Collector {
-  /** Flushes what is buffered, then tears down. Never clears an unflushed backlog. */
-  stop(): Promise<void>
-  /** Drops everything, clears IndexedDB for this session, tears down. Transmits nothing. */
-  abort(): Promise<void>
-  annotate(name: string, data: unknown): void
-  defineMetric(name: string, d: MetricDefinition): void
-  observe(name: string, value: number, labels?: Record<string, string>): void
-  /** Synchronous, available before the first object arrives. */
+  /** Synchronous ids for your own logs. */
   ids(): Identity
-  /** Manual escalation. Opens a billable capture window and records the source. */
+  /** Every connection seen in this page and its linked workers, open ones first. */
+  connections(): readonly ConnectionInfo[]
+  /** The connection id of a `WebTransport` this page created, to join your own logs. */
+  connectionIdOf(transport: WebTransport): string | undefined
+  /**
+   * This worker's WebTransports report into this session. Call once per
+   * worker, including replacements. You can terminate the worker at any time;
+   * nothing sealed is lost.
+   *
+   * **Not automatic, and that is a security decision rather than an omission.**
+   * The page cannot enumerate its workers, so the only automatic form would be
+   * a `message` listener on the page's own global, which also receives
+   * cross-origin `postMessage` from any frame or opener.
+   */
+  linkWorker(target: MessageTarget): void
+  /** Context for connections opened from now on, e.g. `contentId` on a source switch. */
+  setContext(ctx: { contentId?: string; actorId?: string }): void
+  /**
+   * Upload everything recorded so far, now. Ends nothing. Resolves when ingest
+   * has accepted it or it is stored for retry.
+   */
+  flush(): Promise<void>
+  /**
+   * End this session now, upload everything, and restore WebTransport. Unload
+   * already does this, so you only need `end()` when you stop collecting for
+   * good.
+   */
+  end(): Promise<void>
+  /**
+   * End this session and start a new one in this page. Linked workers follow.
+   * Returns the new ids. After `end()` or `discard()` it starts nothing and
+   * returns the ids unchanged.
+   */
+  newSession(ctx?: { contentId?: string; sessionId?: string }): Identity
+  /** Consent withdrawn: delete everything unsent, including stored backlog, and send nothing more. */
+  discard(): Promise<void>
+  /** Add a marker to the session timeline, optionally scoped to one connection. */
+  annotate(name: string, data?: unknown, connectionId?: string): void
+  /** Declare a custom metric. Linked workers may observe it by name. */
+  defineMetric(name: string, d: MetricDefinition): void
+  /** Record a custom metric sample. */
+  observe(name: string, value: number, labels?: Record<string, string>): void
+  /** Raise the detail level for the page and every linked worker, opening one billable capture window. */
   escalate(level: DetailLevel, reason?: string): void
   /**
-   * The incident is over; close the billable capture window. The counterpart to
-   * {@link Collector.escalate}.
+   * Close the capture window. Safe when none is open, and safe to call twice.
    *
    * **It is the primary way a window closes**; `flightRecorder.windowMs` — 15 s
    * — is the backstop for a developer who never calls it. There is deliberately
    * no automatic "the fault recovered" close: the collector sees objects
    * arriving, not a rebuffer ending, and guessing would be wrong in both
    * directions.
-   *
-   * Safe to call with no window open, safe to call twice, and it never throws —
-   * it belongs in a `catch` block beside the reporting call that opened the
-   * window.
    */
   resolve(reason?: string): void
-  /** The collector's own volume by level. A budgeting aid, never the invoice. */
+  /** The collector's own upload volume, for budgeting. Never the invoice. */
   usage(): UsageReport
-  /**
-   * Link a dedicated `Worker` (or a `MessagePort` to one) so its own
-   * realm's collector can be configured.
-   *
-   * **Not automatic, and that is a security decision rather than an omission.**
-   * The page has no way to enumerate its workers, so the only automatic form
-   * available would be a `message` listener on the page's own global — which
-   * also receives cross-origin `postMessage` from any frame or opener, and
-   * replying to one of those would post the customer's `apiKey` to whoever
-   * asked. So the customer names the target, exactly once, and the handshake
-   * goes only there.
-   *
-   * Calling it also arms the **fail-closed** rule: from this moment the
-   * session is `partial` on its setup and terminal records until the worker
-   * answers. If the worker never imports the collector, the message is ignored
-   * and the session is reported partial rather than complete.
-   */
-  linkWorker(target: MessageTarget): void
 }
 
 export interface InitOptions extends RuntimePorts {
@@ -116,14 +127,21 @@ export interface InitOptions extends RuntimePorts {
 class PendingCollector implements Collector {
   #runtime: CollectorRuntime | null = null
   #queued: ((r: CollectorRuntime) => void)[] = []
-  #stopRequest: 'stop' | 'abort' | null = null
+  #endRequest: 'end' | 'discard' | null = null
   #settled: Promise<void> | null = null
-  readonly #identity: Identity
+  /** The current session's config and ids, which `newSession()` replaces. */
+  #config: ResolvedConfig
+  #identity: Identity
   readonly #onError: (e: unknown) => void
-  readonly #workers: MessageTarget[] = []
   readonly #claim: DormantClaim
 
-  constructor(identity: Identity, onError: (e: unknown) => void, claim: DormantClaim) {
+  constructor(
+    config: ResolvedConfig,
+    identity: Identity,
+    onError: (e: unknown) => void,
+    claim: DormantClaim,
+  ) {
+    this.#config = config
     this.#identity = identity
     this.#onError = onError
     this.#claim = claim
@@ -132,34 +150,33 @@ class PendingCollector implements Collector {
   /** Called once the runtime is built and started. Replays the gap. */
   attach(r: CollectorRuntime): void {
     this.#runtime = r
-    // the fail-closed rule, armed retroactively: a `linkWorker()` that
-    // happened before the runtime existed still marks the session `partial`
-    // until that worker answers.
-    if (this.#workers.length > 0) r.expectWorker()
     const queued = this.#queued
     this.#queued = []
+    // Each call runs against the runtime current at its turn: a queued
+    // `newSession()` replaces it for the calls made after it.
     for (const f of queued) {
       try {
-        f(r)
+        f(this.#runtime ?? r)
       } catch (err) {
         this.#onError(err)
       }
     }
-    // A `stop()`/`abort()` that arrived during setup wins: the customer asked to
-    // stop before we finished starting, and starting anyway would transmit after
-    // an opt-out.
-    if (this.#stopRequest === 'abort') this.#settled = r.abort()
-    else if (this.#stopRequest === 'stop') this.#settled = r.stop()
+    // An `end()`/`discard()` that arrived during setup wins: the customer asked
+    // to stop before we finished starting, and starting anyway would transmit
+    // after an opt-out.
+    const current = this.#runtime ?? r
+    if (this.#endRequest === 'discard') this.#settled = current.discard()
+    else if (this.#endRequest === 'end') this.#settled = current.end()
   }
 
   /** Setup failed outright. Nothing will ever attach; make the verbs terminal. */
   fail(): void {
     this.#queued = []
-    // Released whether or not a stop was asked for: no runtime will ever attach,
-    // so this collector is not running, and a later `init()` must not be
-    // reported as one made over a live one.
+    // Released whether or not an end was asked for: no runtime will ever
+    // attach, so this collector is not running, and a later `init()` must not
+    // be reported as one made over a live one.
     this.#claim.release()
-    if (this.#stopRequest !== null) this.#claim.hook.uninstall()
+    if (this.#endRequest !== null) this.#claim.hook.uninstall()
   }
 
   #defer(f: (r: CollectorRuntime) => void): void {
@@ -182,6 +199,10 @@ class PendingCollector implements Collector {
     return this.#runtime?.ids() ?? this.#identity
   }
 
+  connections(): readonly ConnectionInfo[] {
+    return this.#runtime?.connections() ?? []
+  }
+
   usage(): UsageReport {
     const r = this.#runtime
     if (r !== null) return r.usage()
@@ -194,8 +215,70 @@ class PendingCollector implements Collector {
     }
   }
 
-  annotate(name: string, data: unknown): void {
-    this.#defer((r) => r.annotate(name, data))
+  connectionIdOf(transport: WebTransport): string | undefined {
+    return connectionIdOf(transport)
+  }
+
+  annotate(name: string, data?: unknown, connectionId?: string): void {
+    this.#defer((r) => r.annotate(name, data, connectionId))
+  }
+
+  setContext(ctx: { contentId?: string; actorId?: string }): void {
+    const { actorId, contentId } = this.#identity
+    this.#identity = {
+      ...this.#identity,
+      ...withId('actorId', typeof ctx.actorId === 'string' ? ctx.actorId : actorId),
+      ...withId('contentId', typeof ctx.contentId === 'string' ? ctx.contentId : contentId),
+    }
+    this.#defer((r) => r.setContext(ctx))
+  }
+
+  newSession(ctx: { contentId?: string; sessionId?: string } = {}): Identity {
+    const current = this.ids()
+    if (this.#endRequest !== null || this.#settled !== null || this.#runtime?.ended === true) {
+      return current
+    }
+    let sessionId = mintId()
+    let idSource: ResolvedConfig['idSource'] = 'minted'
+    if (typeof ctx.sessionId === 'string' && ctx.sessionId !== '') {
+      if (isStorableSessionId(ctx.sessionId)) {
+        sessionId = ctx.sessionId
+        idSource = 'supplied'
+      } else {
+        // The byte length, not the id, as `init()` reports it.
+        const bytes = new TextEncoder().encode(ctx.sessionId).byteLength
+        this.#onError(new Error(`${MQ1113}: sessionId ${bytes}`))
+      }
+    }
+    const contentId = typeof ctx.contentId === 'string' ? ctx.contentId : current.contentId
+    const config: ResolvedConfig = Object.freeze({
+      ...this.#config,
+      sessionId,
+      idSource,
+      context: Object.freeze({
+        ...this.#config.context,
+        actorId: current.actorId ?? '',
+        contentId: contentId ?? '',
+      }),
+    })
+    const instanceId = mintId()
+    this.#config = config
+    this.#identity = {
+      sessionId,
+      instanceId,
+      ...withId('actorId', current.actorId),
+      ...withId('contentId', contentId),
+    }
+    const swap = (r: CollectorRuntime): void => {
+      const next = r.successor(config, instanceId)
+      if (next !== null) this.#runtime = next
+    }
+    if (this.#runtime !== null) {
+      swap(this.#runtime)
+      return this.ids()
+    }
+    this.#defer(swap)
+    return this.#identity
   }
 
   defineMetric(name: string, d: MetricDefinition): void {
@@ -220,31 +303,36 @@ class PendingCollector implements Collector {
   }
 
   linkWorker(target: MessageTarget): void {
-    if (this.#workers.includes(target)) return
-    this.#workers.push(target)
-    this.#runtime?.expectWorker()
-    const onMessage = (e: { data?: unknown }): void => {
-      const d = e.data as Record<string, unknown> | undefined
-      if (typeof d !== 'object' || d === null || d[HANDSHAKE] !== 1 || d.t !== HELLO) return
-      this.#runtime?.noteWorkerLinked()
-      try {
-        target.postMessage({ [HANDSHAKE]: 1, t: CONFIG, config: this.workerConfig })
-      } catch (err) {
-        this.#onError(err)
-      }
+    if (this.#runtime !== null) {
+      this.#defer((r) => r.linkWorker(target))
+      return
+    }
+    // A `Worker` dispatches its hello to whoever listens at that moment, and
+    // the page may still be opening its store when the worker answers. Listen
+    // from the call, and hand what was heard to the runtime once it runs.
+    let hello: LinkEvent | undefined
+    const early = (e: LinkEvent): void => {
+      if (linkMessage(e.data)?.t === 'hello') hello = e
     }
     try {
-      target.addEventListener('message', onMessage)
+      target.addEventListener('message', early)
       target.start?.()
     } catch (err) {
       this.#onError(err)
     }
+    this.#defer((r) => {
+      target.removeEventListener?.('message', early)
+      r.linkWorker(target, hello)
+    })
   }
 
-  /** The config a worker's own realm is configured with. Set by `init()`. */
-  workerConfig: CollectorConfig | undefined
+  flush(): Promise<void> {
+    const r = this.#runtime
+    if (r === null) return Promise.resolve()
+    return r.flush().catch((err: unknown) => this.#onError(err))
+  }
 
-  stop(): Promise<void> {
+  end(): Promise<void> {
     // Released at the *call*, not at the settlement: the teardown that actually
     // restores the global happens after the drain, and a page that re-inits
     // without awaiting this promise has made no mistake and must not be
@@ -252,25 +340,24 @@ class PendingCollector implements Collector {
     this.#claim.release()
     const r = this.#runtime
     if (r !== null) {
-      // One settlement per collector: a second `stop()` joins the first rather
-      // than sealing and releasing a second time.
-      this.#settled ??= r.stop()
+      // One settlement per collector: a second `end()` joins the first.
+      this.#settled ??= r.end().catch((err: unknown) => this.#onError(err))
       return this.#settled
     }
-    this.#stopRequest ??= 'stop'
+    this.#endRequest ??= 'end'
     return Promise.resolve()
   }
 
-  abort(): Promise<void> {
+  discard(): Promise<void> {
     this.#claim.release()
     const r = this.#runtime
     if (r !== null) {
-      // `abort()` overrides a `stop()` already in flight: the customer has
+      // `discard()` overrides an `end()` already in flight: the customer has
       // withdrawn consent, and the stronger verb wins.
-      this.#settled = r.abort()
+      this.#settled = r.discard().catch((err: unknown) => this.#onError(err))
       return this.#settled
     }
-    this.#stopRequest = 'abort'
+    this.#endRequest = 'discard'
     // Nothing has been sent and nothing can be: the hook is dormant, its ring is
     // memory-only, and tearing it down now restores the page's own global.
     this.#claim.hook.uninstall()
@@ -313,11 +400,11 @@ export function initWith(
   })
 
   // The hook is already installed from module-eval time. Claiming it is what
-  // makes a second `init()` after a `stop()` work — `stop()` uninstalls, and the
+  // makes a second `init()` after an `end()` work — `end()` uninstalls, and the
   // claim re-installs rather than binding to a global that is no longer patched.
   const claim = claimDormantHook()
   if (claim.superseded) {
-    // `init()` over a collector nobody stopped. There is one hook and one
+    // `init()` over a collector nobody ended. There is one hook and one
     // observer on it, so the newer collector takes over — the caller's most
     // recent intent — and the older one goes quiet from here. Named rather than
     // silent: a session that reported almost nothing and never said why is the
@@ -329,17 +416,14 @@ export function initWith(
   // on the page is actually transmitting.
   setPresenceActive(true)
 
+  const instanceId = options.instanceId ?? mintId()
   const identity: Identity = {
     sessionId: resolved.sessionId,
-    connectionId: `${resolved.sessionId}#0`,
-    ...(resolved.context.actorId !== '' ? { actorId: resolved.context.actorId } : {}),
-    ...(resolved.context.contentId !== '' ? { contentId: resolved.context.contentId } : {}),
+    instanceId,
+    ...withId('actorId', resolved.context.actorId),
+    ...withId('contentId', resolved.context.contentId),
   }
-  const pending = new PendingCollector(identity, onError, claim)
-  // The worker gets the *supplied* config with the session id pinned, not the
-  // resolved one: a worker is part of the same logical session, and the
-  // worker's own realm resolves its own defaults.
-  pending.workerConfig = { ...config, sessionId: resolved.sessionId }
+  const pending = new PendingCollector(resolved, identity, onError, claim)
 
   void (async (): Promise<void> => {
     try {
@@ -347,13 +431,14 @@ export function initWith(
       if (options.store !== undefined) store = options.store
       else if (options.persist === false) store = null
       else {
-        store = await ChunkStore.open(DB_NAME, resolved.storage.quotaBytes ?? 0, {
+        store = await ChunkStore.open(DB_NAME, resolved.storage.quotaBytes, {
           onInternalError: onError,
         })
       }
 
       const runtime = new CollectorRuntime(resolved, claim.hook, drafts, {
         ...options,
+        instanceId,
         store,
         onInternalError: onError,
       })
@@ -366,4 +451,12 @@ export function initWith(
   })()
 
   return pending
+}
+
+/** `{ [key]: value }`, or nothing for an empty or absent value, as `ids()` reports them. */
+function withId<K extends 'actorId' | 'contentId'>(
+  key: K,
+  value: string | undefined,
+): Partial<Record<K, string>> {
+  return value === undefined || value === '' ? {} : ({ [key]: value } as Record<K, string>)
 }

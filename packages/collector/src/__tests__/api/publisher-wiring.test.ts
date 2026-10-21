@@ -20,6 +20,7 @@ import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/in
 import type { CollectorConfig, EnvelopeRecord, RollupTrackWire } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
 import { init } from '../support/init.js'
+import { settle } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -48,31 +49,6 @@ async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
     if (!f.raw) out.push(JSON.parse(decoder.decode(f.payload)) as EnvelopeRecord)
   }
   return out
-}
-
-/**
- * Let init()'s async setup, the schedule's zero-delay timers and the pump run.
- *
- * Bare `settle()` is a duration with a turn floor, not a turn count alone. These
- * tests pin `metrics.intervalMs` and assert on records that exist only once a
- * rollup interval has elapsed, and turns do not measure time: `setTimeout(r, 0)`
- * costs ~15 ms on Windows against ~1 ms on Linux, so forty turns are ~600 ms on
- * one and ~60 ms on the other. Turn-based, these passed on Windows and failed in
- * CI reporting an absent rollup — which reads as the collector having recorded
- * nothing, rather than as the interval never having come round.
- *
- * `settle(n)` keeps the pure turn count for the places that only need the session
- * to attach before the next step.
- */
-const SETTLE_MS = 300
-
-const settle = async (times?: number): Promise<void> => {
-  const turns = times ?? 40
-  const until = times === undefined ? Date.now() + SETTLE_MS : 0
-  for (let i = 0; i < turns || Date.now() < until; i += 1) {
-    await Promise.resolve()
-    await new Promise((r) => setTimeout(r, 0))
-  }
 }
 
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
@@ -140,7 +116,7 @@ describe('pub.ackedBytes, through the hook', () => {
     // getStats() promise settles after it.
     await writer.close()
     await settle()
-    await c.stop()
+    await c.end()
     await settle()
 
     const rows = await txRows(posts, '4')
@@ -167,7 +143,7 @@ describe('pub.ackedBytes, through the hook', () => {
     await writer.write(subgroupBytes({ alias: 4n, group: 0n, objects: [{ id: 0n, bytes: 8 }] }))
     await writer.close()
     await settle()
-    await c.stop()
+    await c.end()
     await settle()
 
     const rows = await txRows(posts, '4')
@@ -205,7 +181,7 @@ describe('pub.ackedBytes, through the hook', () => {
     wt.bytesAcknowledged = 3_000
     await writer.close()
     await settle()
-    await c.stop()
+    await c.end()
     await settle()
 
     const rows = await txRows(posts, '4')
@@ -253,7 +229,7 @@ describe('pub.ackedBytes, through the hook', () => {
     wt.bytesAcknowledged = 900
     await writer.close()
     await settle()
-    await c.stop()
+    await c.end()
     await settle()
 
     const rows = await txRows(posts, '4')
@@ -292,7 +268,7 @@ describe('pub.ackedBytes, through the hook', () => {
     // Unchanged: the peer acknowledged nothing further before the close probe.
     await writer.close()
     await settle()
-    await c.stop()
+    await c.end()
     await settle()
 
     const rows = await txRows(posts, '4')

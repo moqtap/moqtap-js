@@ -18,6 +18,7 @@ export type { CollectorPresence, PresenceHandle } from './presence.js'
 export { PRESENCE_KEY, publishPresence, readPresence } from './presence.js'
 export { StreamRegistry } from './stream-registry.js'
 export {
+  connectionIdOf,
   extractSessionOptions,
   installWebTransportHook,
   readNegotiatedProtocol,

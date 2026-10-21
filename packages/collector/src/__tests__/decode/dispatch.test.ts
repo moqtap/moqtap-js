@@ -102,6 +102,37 @@ describe('StreamDispatcher', () => {
     expect(sink.reasons).toEqual([])
   })
 
+  it('names the stream each object arrived on, and none on a datagram', () => {
+    const sink = new Recorder()
+    const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink, { slackBytes: 64 })
+
+    d.onStreamData(
+      chunk({
+        streamId: 11,
+        data: subgroupBytes({
+          alias: 4n,
+          group: 0n,
+          objects: [
+            { id: 0n, bytes: 8 },
+            { id: 1n, bytes: 0, status: 3n },
+          ],
+        }),
+      }),
+    )
+    d.onStreamData(
+      chunk({ streamId: 12, data: fetchBytes(6n, [{ group: 1n, id: 0n, bytes: 9, flags: 0x0c }]) }),
+    )
+    d.onDatagram({
+      sessionId: 's',
+      direction: 'rx',
+      data: datagramBytes({ alias: 4n, group: 1n, id: 2n, bytes: 7 }),
+      at: 5,
+    })
+
+    expect(sink.objects.map((o) => o.streamId)).toEqual([11, 11, 12, undefined])
+    expect(sink.objects[3]).not.toHaveProperty('streamId')
+  })
+
   it('keeps the two directions of one bidi stream in separate framers', () => {
     const sink = new Recorder()
     const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink)

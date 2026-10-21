@@ -129,9 +129,8 @@ export class ReleasePacer {
   /**
    * 0 = healthy, 1 = the arrival rate this session established has collapsed.
    *
-   * Exposed because the api module puts it in the terminal record's session
-   * counters: "we released slowly" is otherwise indistinguishable at ingest from
-   * "we had nothing to send".
+   * Exposed so a caller can tell "we released slowly" from "we had nothing to
+   * send", which look the same at ingest.
    */
   get pressure(): number {
     // Warm-up. One sample establishes a baseline and cannot yet show a change

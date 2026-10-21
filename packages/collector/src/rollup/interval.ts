@@ -84,6 +84,12 @@ export interface RollupEngineOptions extends TrackBucketOptions {
   readonly originMono?: Mono
   /** Customer metrics, drained into each rollup record. */
   readonly custom?: CustomMetrics
+  /**
+   * The connection this engine counts, stamped on every `ctrl` and `rollup`
+   * record it emits. Track aliases are scoped to one connection, so each
+   * connection has an engine of its own. Default `''`: no connection.
+   */
+  readonly conn?: string
   readonly idleEvictIntervals?: number
   readonly suspendToleranceMs?: number
 }
@@ -118,6 +124,7 @@ export class RollupEngine implements CountingSink, MedianSource {
   private readonly opts: RollupEngineOptions
   private readonly bucketOpts: TrackBucketOptions
   private readonly origin: Mono
+  private readonly conn: string
   private readonly idleEvictMs: number
   private readonly suspendToleranceMs: number
 
@@ -152,6 +159,7 @@ export class RollupEngine implements CountingSink, MedianSource {
       ...(opts.stallFloorMs !== undefined ? { stallFloorMs: opts.stallFloorMs } : {}),
     }
     this.origin = opts.originMono ?? 0
+    this.conn = opts.conn ?? ''
     this.startMono = this.origin
     this.idleEvictMs = (opts.idleEvictIntervals ?? IDLE_EVICT_INTERVALS) * opts.intervalMs
     this.suspendToleranceMs = opts.suspendToleranceMs ?? SUSPEND_TOLERANCE_MS
@@ -163,16 +171,15 @@ export class RollupEngine implements CountingSink, MedianSource {
   }
 
   /**
-   * Buckets this engine refused for want of capacity, session-lifetime. Feeds
-   * {@link import('../types.js').TerminalRecord} alongside
-   * the resolver's own count — the two are different refusals and ingest is
-   * given both.
+   * Buckets this engine refused for want of capacity, connection-lifetime.
+   * Feeds the `conn-close` and `end` counters alongside the resolver's own
+   * count — the two are different refusals and ingest is given both.
    */
   get bucketsRefused(): number {
     return this.refused
   }
 
-  /** Parse failures, session-lifetime. Feeds the terminal record's counters. */
+  /** Parse failures, connection-lifetime. Feeds the `conn-close` and `end` counters. */
   get parseFailures(): number {
     return this.failures
   }
@@ -206,6 +213,7 @@ export class RollupEngine implements CountingSink, MedianSource {
     if (!decoded) this.bump('ctrl.undecoded', 1)
     this.opts.sink.json({
       t: 'ctrl',
+      conn: this.conn,
       ts: e.at - this.origin,
       lvl: BASELINE,
       dir: e.dir,
@@ -232,6 +240,16 @@ export class RollupEngine implements CountingSink, MedianSource {
 
   medianSamplesFor(k: BucketKey): number {
     return this.peek(k)?.intervalSamples ?? 0
+  }
+
+  /**
+   * Whether this engine counts the track `k` names, by object identity: the
+   * decoder of one connection hands out its own key objects, and two
+   * connections can carry the same alias.
+   */
+  owns(k: BucketKey): boolean {
+    const cached = this.keyCache.get(k)
+    return cached !== undefined && cached.gen === this.gen
   }
 
   /* ── control-plane and send-side observations ─────────────────────────── */
@@ -337,6 +355,7 @@ export class RollupEngine implements CountingSink, MedianSource {
     const record: RollupRecord = {
       t: 'rollup',
       v: 1,
+      conn: this.conn,
       ts: nowMono - this.origin,
       lvl: BASELINE,
       seq: this.seq++,
@@ -351,6 +370,36 @@ export class RollupEngine implements CountingSink, MedianSource {
 
     this.session = {}
     this.startMono = nowMono
+  }
+
+  /**
+   * The open interval as the rollup record {@link tick} would emit now,
+   * leaving the interval open, or `null` when nothing has happened in it.
+   *
+   * A worker sends this to the page with every forward, so a worker terminated
+   * mid-interval still has its counters up to the last forward reported by the
+   * page. Custom metrics are not included: they are the page's.
+   */
+  snapshot(nowMono: Mono): RollupRecord | null {
+    const tracks: RollupTrackWire[] = []
+    for (const b of this.buckets.values()) if (b.activity > 0) tracks.push(b.peek())
+    const session: Record<string, number> = { ...this.session }
+    for (const [kind, h] of this.controlLatency)
+      flattenHistogram(`ctl.${kind}.latencyMs`, h, session)
+    flattenHistogram('wt.writerReadyMs', this.writerReady, session)
+    if (tracks.length === 0 && !hasAnyKey(session)) return null
+    return {
+      t: 'rollup',
+      v: 1,
+      conn: this.conn,
+      ts: nowMono - this.origin,
+      lvl: BASELINE,
+      seq: this.seq,
+      startMono: this.startMono - this.origin,
+      endMono: nowMono - this.origin,
+      tracks,
+      session,
+    }
   }
 
   /* ── internals ────────────────────────────────────────────────────────── */
@@ -390,6 +439,15 @@ export class RollupEngine implements CountingSink, MedianSource {
     const b = this.buckets.get(bucketKeyString(k))
     if (b !== undefined) this.keyCache.set(k, { bucket: b, gen: this.gen })
     return b
+  }
+
+  /**
+   * Add `n` to a connection counter in the open interval. For what the
+   * engine's own inputs cannot carry, such as object data that arrived before
+   * the session attached.
+   */
+  count(name: string, n: number): void {
+    this.bump(name, n)
   }
 
   private bump(name: string, n: number): void {

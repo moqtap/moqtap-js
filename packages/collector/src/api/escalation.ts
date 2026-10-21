@@ -36,11 +36,10 @@ import type {
   EscalationRecord,
   Mono,
   RecordSink,
-  RollupTrackWire,
   TriggerKind,
   WindowClose,
 } from '../types.js'
-import { bucketKeyString } from '../types.js'
+import { bucketKeyString, bucketKeyWire } from '../types.js'
 import { BASELINE, isElevated, levelIndex } from './defaults.js'
 import type { UsageMeter } from './meter.js'
 
@@ -111,10 +110,6 @@ interface OpenWindow {
   readonly ringEvictedAtOpen: number | undefined
 }
 
-function wireKey(k: BucketKey): RollupTrackWire['key'] {
-  return { d: k.dir, k: k.kind, v: k.id.toString(), e: k.epoch }
-}
-
 /**
  * A cause, with the bucket key reduced to its wire form.
  *
@@ -125,7 +120,7 @@ function wireKey(k: BucketKey): RollupTrackWire['key'] {
 function toWireCause(by: EscalationCause): EscalationRecord['by'] {
   if (by.kind !== 'trigger') return by
   if (by.key === undefined) return { kind: 'trigger', trigger: by.trigger }
-  return { kind: 'trigger', trigger: by.trigger, key: wireKey(by.key) }
+  return { kind: 'trigger', trigger: by.trigger, key: bucketKeyWire(by.key) }
 }
 
 export class EscalationController {
@@ -162,7 +157,7 @@ export class EscalationController {
     return this.#refused
   }
 
-  /** Accepted elevations, session-lifetime. Feeds `usage()` and the terminal record. */
+  /** Accepted elevations, session-lifetime. Feeds `usage()`. */
   get elevations(): number {
     return this.#elevations
   }
@@ -367,7 +362,7 @@ export class EscalationController {
   }
 }
 
-/** Exported for the terminal record's `detail` string on a trigger event. */
+/** A bucket key in its canonical string form, for messages naming a trigger's track. */
 export function describeKey(k: BucketKey): string {
   return bucketKeyString(k)
 }

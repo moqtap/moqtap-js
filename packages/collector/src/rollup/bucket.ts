@@ -28,6 +28,7 @@ import type {
   ObjectSample,
   RollupTrackWire,
 } from '../types.js'
+import { bucketKeyWire } from '../types.js'
 import { Histogram } from './histogram.js'
 
 /**
@@ -473,19 +474,32 @@ export class TrackBucket {
    * loses precision past 2^53.
    */
   drain(): RollupTrackWire {
+    const row = this.peek()
+    for (const kind of TRACK_HISTOGRAMS) this.hist[kind].reset()
+    this.objects = 0
+    this.payloadBytes = 0
+    this.headerBytes = 0
+    this.groups = 0
+    this.groupGaps = 0
+    this.outOfOrder = 0
+    this.duplicates = 0
+    this.statusObjects = 0
+    this.parseFailures = 0
+    this.blockedMs = 0
+    this.ackedBytes = 0
+    this.firstSeen = undefined
+    return row
+  }
+
+  /** The interval row so far, leaving the interval open. */
+  peek(): RollupTrackWire {
     const hist: Partial<Record<HistogramKind, HistogramWire>> = {}
     for (const kind of TRACK_HISTOGRAMS) {
       const w = this.hist[kind].encode()
       if (w !== null) hist[kind] = w
-      this.hist[kind].reset()
     }
-    const row: RollupTrackWire = {
-      key: {
-        d: this.key.dir,
-        k: this.key.kind,
-        v: this.key.id.toString(),
-        e: this.key.epoch,
-      },
+    return {
+      key: bucketKeyWire(this.key),
       ...(this.sharedAlias ? { shared: true as const } : {}),
       firstSeen: (this.firstSeen ?? this.lastSeen) - this.origin,
       lastSeen: this.lastSeen - this.origin,
@@ -504,19 +518,6 @@ export class TrackBucket {
       ...(this.ackedBytes > 0 ? { ackedBytes: this.ackedBytes } : {}),
       hist,
     }
-    this.objects = 0
-    this.payloadBytes = 0
-    this.headerBytes = 0
-    this.groups = 0
-    this.groupGaps = 0
-    this.outOfOrder = 0
-    this.duplicates = 0
-    this.statusObjects = 0
-    this.parseFailures = 0
-    this.blockedMs = 0
-    this.ackedBytes = 0
-    this.firstSeen = undefined
-    return row
   }
 }
 

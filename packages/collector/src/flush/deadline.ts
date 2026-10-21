@@ -3,17 +3,17 @@
  *
  * `fetch` has no timeout. A blackholed or tarpitted endpoint accepts the socket
  * and answers nobody, so a request against one stays pending for the life of
- * the page — and `CollectorRuntime.stop()` awaits that request, which would
- * hang the teardown of someone else's video player. The end-to-end assertion
- * lives in `src/__tests__/harness/non-interference.test.ts`.
+ * the page — and `end()` awaits that request, which would hang the teardown
+ * of someone else's video player. The end-to-end assertion lives in
+ * `src/__tests__/harness/non-interference.test.ts`.
  *
  * Two deadlines, deliberately **one mechanism** rather than two racing timers:
  *
- *  - `Limits.uploadTimeoutMs` bounds one request. A timed-out request is
+ *  - `upload.timeoutMs` bounds one request. A timed-out request is
  *    *transient*, so it retries and the chunk stays queued.
- *  - `Limits.stopDrainDeadlineMs` bounds the whole of `stop()`'s drain, because
- *    `uploadMaxAttempts` requests at `uploadTimeoutMs` each plus backoff is
- *    minutes. `stop()` makes one signal and {@link Uploader.send} composes it
+ *  - `upload.drainDeadlineMs` bounds the whole of a `flush()` or `end()` drain,
+ *    because `maxAttempts` requests at `timeoutMs` each plus backoff is
+ *    minutes. The drain makes one signal and {@link Uploader.send} composes it
  *    with its own per-request timer, so the fetch and the backoff sleep between
  *    attempts both end when it fires.
  *
@@ -114,7 +114,7 @@ export function deadlineSignal(ms: number, outer?: AbortSignal): Deadline {
  *
  * The backoff sleep between upload attempts goes through here. Without it a
  * drain that has already blown its deadline still sits out a 30 s backoff, and
- * the deadline would be a deadline on the fetches only rather than on `stop()`.
+ * the deadline would be a deadline on the fetches only rather than on `end()`.
  * The timer is cleared on either path.
  */
 export function sleepUntil(ms: number, signal?: AbortSignal): Promise<void> {

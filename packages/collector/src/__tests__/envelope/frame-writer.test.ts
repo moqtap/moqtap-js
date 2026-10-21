@@ -27,15 +27,18 @@ const batch: BatchRecord = {
   t: 'batch',
   ts: 0,
   lvl: 'baseline',
+  v: 2,
   sessionId: 'sess-1',
-  segmentSeq: 3,
+  instanceId: 'inst-1',
+  seq: 3,
   idempotencyKey: '0'.repeat(64),
   wall: 1_700_000_000_000,
-  v: 1,
+  dropped: 0,
 }
 
 const ctrl: CtrlRecord = {
   t: 'ctrl',
+  conn: 'c-1',
   ts: 412,
   lvl: 'baseline',
   dir: 'tx',

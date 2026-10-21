@@ -243,12 +243,17 @@ export function replayRing(
   ring: ByteRing,
   a: DraftAdapter,
   window: ReplayWindow,
-  opts?: ReplayOptions & { readonly trigger?: TriggerKind; readonly level?: DetailLevel },
+  opts?: ReplayOptions & {
+    readonly trigger?: TriggerKind
+    readonly level?: DetailLevel
+    readonly conn?: string
+  },
 ): FlightRecord {
   const origin = opts?.originMono ?? 0
   const r = replayWindow(ring, a, window, opts)
   return {
     t: 'flight',
+    conn: opts?.conn ?? '',
     ts: roundMs(window.toMono - origin),
     // The dump is the first record of the capture window the trigger opened, so
     // it carries that window's elevated level and never baseline.
@@ -538,9 +543,11 @@ export interface FlightRecorderOptions {
    * with the negotiated draft. `undefined` means the session is degraded and no
    * re-parse is possible; the fire is counted, not faked.
    */
-  readonly adapter: () => DraftAdapter | undefined
+  readonly adapter: (e: TriggerEvent) => DraftAdapter | undefined
   /** The live `TrackKeys`. See {@link ReplayOptions.keys}. */
-  readonly keys?: () => TrackKeyResolver | undefined
+  readonly keys?: (e: TriggerEvent) => TrackKeyResolver | undefined
+  /** The connection the triggering track belongs to, for `FlightRecord.conn`. Default `''`. */
+  readonly conn?: (e: TriggerEvent) => string
   /** The level the capture window runs at. Defaults to `'headers'`. */
   readonly level?: () => DetailLevel
   readonly originMono?: Mono
@@ -603,7 +610,7 @@ export class FlightRecorder {
 
   /**
    * Stop capturing. **The ring is not cleared**: it belongs to the session, is
-   * shared with the dormant buffer, and `stop()`/`abort()` clear it.
+   * shared with the dormant buffer, and `end()`/`discard()` clear it.
    * A recorder that cleared it here would destroy a buffer it does not own.
    */
   disarm(): void {
@@ -625,7 +632,7 @@ export class FlightRecorder {
       this.skipped++
       return
     }
-    const a = this.o.adapter()
+    const a = this.o.adapter(e)
     if (a === undefined) {
       this.skipped++
       return
@@ -639,7 +646,7 @@ export class FlightRecorder {
       toMono: e.atMono,
     }
 
-    const keys = this.o.keys?.()
+    const keys = this.o.keys?.(e)
     const r = replayWindow(this.o.ring, a, window, {
       ...(keys !== undefined ? { keys } : {}),
       ...(this.o.maxObjects !== undefined ? { maxObjects: this.o.maxObjects } : {}),
@@ -648,6 +655,7 @@ export class FlightRecorder {
     const cols: ColumnarBlock = encodeColumnar(r.rows, origin)
     const record: FlightRecord = {
       t: 'flight',
+      conn: this.o.conn?.(e) ?? '',
       ts: roundMs(e.atMono - origin),
       lvl: this.o.level?.() ?? 'headers',
       trigger: e.kind,

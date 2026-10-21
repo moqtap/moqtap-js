@@ -4,7 +4,7 @@
  * **Importing this module patches `globalThis.WebTransport`**, at module
  * evaluation, so the hook is in place before the first `new WebTransport()`.
  * Until `init()` supplies a key it only buffers recent wire bytes in a bounded
- * ring and makes no network request. `stop()` and `abort()` restore the global.
+ * ring and makes no network request. `end()` and `discard()` restore the global.
  *
  * `@moqtap/collector/draftNN` is the same API with one draft's decoder.
  */

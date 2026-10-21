@@ -86,8 +86,8 @@ export interface ClockAnchor {
 /* ── identity ───────────────────────────────────── */
 
 /**
- * The four identity axes. `actorId` is still carried as a placeholder in the
- * metric definitions rather than resolved here.
+ * Who and what a session is. Connections are not here: a session has any
+ * number of them, each with its own id on its `conn-open` record.
  */
 export interface Identity {
   /**
@@ -95,10 +95,14 @@ export interface Identity {
    * hashed**: accepted raw, treated as personal data, retention short.
    */
   readonly actorId?: string
-  /** One logical session. May span several transports. */
+  /** One playback context. Spans every connection the page and its linked workers open. */
   readonly sessionId: string
-  /** One transport within the session. A reconnect makes a new one. */
-  readonly connectionId: string
+  /**
+   * One `init()` run, normally one page load. Minted every time, so a reload
+   * that keeps a supplied `sessionId` is a second instance of the same session,
+   * with its own upload stream and its own end.
+   */
+  readonly instanceId: string
   readonly contentId?: string
 }
 
@@ -218,7 +222,12 @@ export interface TransportObserver {
    * the session was established without one, as every draft before -15 is.
    */
   onSessionProtocol?(sessionId: string, protocol: string): void
-  onSessionClose(sessionId: string, reason: string, at: Mono): void
+  /**
+   * `info` says how the transport ended: `closed` when its `closed` promise
+   * resolved, with the close code and reason the peer or the page gave, and
+   * `failed` when `ready` or `closed` rejected.
+   */
+  onSessionClose(sessionId: string, reason: string, at: Mono, info?: SessionCloseInfo): void
   onStreamOpen?(sessionId: string, streamId: number, bidi: boolean, o: StreamOrigin): void
   onStreamData(c: StreamChunk): void
   onStreamClose(sessionId: string, streamId: number, at: Mono): void
@@ -226,6 +235,12 @@ export interface TransportObserver {
   onDatagram?(c: DatagramChunk): void
   onWriterPressure?(p: WriterPressure): void
   onSendStats?(sessionId: string, streamId: number, bytesAcknowledged: number, at: Mono): void
+}
+
+export interface SessionCloseInfo {
+  readonly cause: 'closed' | 'failed'
+  readonly code?: number
+  readonly reason?: string
 }
 
 export interface HookOptions {
@@ -236,10 +251,10 @@ export interface HookOptions {
    */
   readonly captureStacks?: boolean
   /**
-   * Default `() => crypto.randomUUID()`. Feeds `sha256(sessionId:segmentSeq)`,
-   * so a collision is a silently discarded and under-billed session at ingest,
-   * which dedupes exactly. The extension's `Date.now() + counter` form is not
-   * good enough for this and is deliberately not carried over.
+   * Default `() => crypto.randomUUID()`. The id of each connection, which
+   * ingest keys a connection's rows on, so a collision merges two connections
+   * into one. The extension's `Date.now() + counter` form is not good enough
+   * for this and is deliberately not carried over.
    */
   readonly sessionId?: () => string
   readonly clock?: ClockSource
@@ -597,6 +612,15 @@ export function bucketKeyString(k: BucketKey): BucketKeyString {
 }
 
 /**
+ * A {@link BucketKey} in the form records carry. `v` is the id as a decimal
+ * string: `JSON.stringify` throws on a bigint, and a number loses precision
+ * past 2^53.
+ */
+export function bucketKeyWire(k: BucketKey): RollupTrackWire['key'] {
+  return { d: k.dir, k: k.kind, v: k.id.toString(), e: k.epoch }
+}
+
+/**
  * Abstract exchange kinds. Latencies key on these, never on wire message
  * names: draft-15 unifies `request_ok`/`request_error` where earlier drafts have
  * per-request-type responses, so a metric keyed on message names fragments
@@ -642,7 +666,7 @@ export interface TrackKeyResolver {
   fetchKey(dir: Direction, requestId: bigint): BucketKey | null
   applyControl(msg: AnyMessage, dir: Direction, streamId: number, at: Mono): void
   pendingFor(streamId: number): PendingRequest | undefined
-  /** Feeds {@link TerminalRecord}'s counters. */
+  /** Feeds the `conn-close` and `end` counters. */
   readonly bucketsRefused: number
 }
 
@@ -661,6 +685,8 @@ export interface ObjectSample {
   readonly payloadBytes: number
   /** Present on a status object (`payloadLength === 0`), absent otherwise. */
   readonly status?: bigint
+  /** The stream the object arrived on; absent on a datagram. */
+  readonly streamId?: number
   readonly at: Mono
 }
 
@@ -889,19 +915,19 @@ export interface UploadConfig {
    * A blackholed or tarpitted endpoint accepts the socket and answers nobody,
    * and `fetch` has no timeout of its own, so without this a single request is
    * pending for the life of the page. It bounds one *request*, not the drain:
-   * `stopDrainDeadlineMs` is what bounds `stop()`.
+   * `drainDeadlineMs` is what bounds `flush()` and `end()`.
    */
   readonly timeoutMs: number
   /**
-   * How long `stop()` may spend draining the outbox before it gives up and
-   * resolves anyway.
+   * How long `flush()` and `end()` may spend draining the outbox before they
+   * give up and resolve anyway.
    *
    * `timeoutMs` alone is not enough — `maxAttempts` requests plus backoff is far
    * past any deadline a page tearing down can wait for — so the drain carries
    * its own overall deadline. Expiry is not data loss: the chunk stays queued
-   * and persisted, which is exactly what the store is for.
+   * and persisted, and is retried until ingest answers.
    */
-  readonly stopDrainDeadlineMs: number
+  readonly drainDeadlineMs: number
   /** The cap on a `sendBeacon` payload. */
   readonly beaconMaxBytes: number
 }
@@ -974,6 +1000,8 @@ export interface Limits {
   readonly dormantRingBytes: number
   /** Header bytes buffered before a stream is declared desynchronised, never more. */
   readonly maxHeaderSlackBytes: number
+  /** How long a linked worker has to answer before its link is recorded as `timeout`. */
+  readonly linkTimeoutMs: number
 }
 
 /** What never leaves the device. */
@@ -1005,6 +1033,8 @@ export interface ResolvedConfig {
   readonly apiKey: string
   readonly endpoint: string
   readonly sessionId: string
+  /** Whether `sessionId` is the one the caller supplied or one minted for them. */
+  readonly idSource: 'minted' | 'supplied'
   readonly detail: DetailLevel
   readonly context: Required<SessionContext>
   readonly metrics: MetricsConfig
@@ -1040,12 +1070,16 @@ export const FRAME_LENGTH_MASK = 0x7fff_ffff
 export type RecordType =
   | 'batch'
   | 'setup'
+  | 'conn-open'
+  | 'conn-close'
   | 'rollup'
   | 'ctrl'
   | 'hdr'
   | 'flight'
   | 'note'
-  | 'terminal'
+  | 'life'
+  | 'link'
+  | 'end'
   | 'escalation'
 
 export interface RecordBase {
@@ -1064,63 +1098,86 @@ export interface RecordBase {
  * `sendBeacon` paths.
  *
  * It carries the idempotency key that `sendBeacon` cannot put in a header,
- * since that path sets no request headers at all. The `fetch()` path sets
- * `Idempotency-Key` as well, so ingest
- * can dedupe without decompressing, but the frame is authoritative and always
- * present.
+ * since that path sets no request headers at all. The URL carries it as well,
+ * so ingest can dedupe without decompressing, but the frame is authoritative
+ * and always present.
  *
- * `segmentSeq` is persisted **with** the chunk, never held in memory: a
- * sequence that resets on reload produces a fresh key per
- * retry and double-counts into the invoice.
+ * `seq` numbers this instance's bodies from zero with no gaps: it is taken at
+ * seal time and only when the body has frames, so a number is never held,
+ * reserved or skipped. A gap the server sees is a body that has not arrived
+ * yet, or one listed in `lost`.
  */
 export interface BatchRecord extends RecordBase {
   readonly t: 'batch'
+  readonly v: 2
   readonly sessionId: string
-  readonly segmentSeq: number
-  /** `sha256(sessionId + ':' + segmentSeq)`, lowercase hex. */
+  readonly instanceId: string
+  readonly seq: number
+  /** `sha256(sessionId + ':' + instanceId + ':' + seq)`, lowercase hex. */
   readonly idempotencyKey: string
-  /**
-   * `true` when the key came from the non-secure-context fallback rather than
-   * `crypto.subtle`. A fallback key has different collision properties and
-   * ingest dedupes exactly, so it must be told rather than left to guess.
-   */
-  readonly keyFallback?: boolean
   readonly wall: Wall
-  readonly v: 1
+  /** This instance's last body. Its `seq` is the `finalSeq` on the `end` record it carries. */
+  readonly final?: true
+  /**
+   * Bodies of this instance that will never arrive: refused by ingest for good,
+   * or given up with no stored copy. Cumulative, so every body that does
+   * arrive carries every loss before it.
+   */
+  readonly lost?: readonly number[]
+  /** Records dropped on the device so far, cumulative: buffer caps and sampling. */
+  readonly dropped: number
 }
 
-/** Sent once per session. */
+/** Sent once per instance, in its first body. */
 export interface SetupRecord extends RecordBase {
   readonly t: 'setup'
-  readonly draft: SupportedDraft | null
-  readonly protocol: string | null
-  /**
-   * A **SET**, never one role: role is a property of a track, not of a
-   * session, and one session is routinely both.
-   */
-  readonly roles: readonly ('publisher' | 'subscriber')[]
+  /** The page's clocks at `init()`. Every `ts` in the instance, workers' included, is relative to it. */
   readonly anchor: ClockAnchor
   readonly identity: Identity
+  readonly idSource: 'minted' | 'supplied'
   /** Carried on every session: "did this regress in 4.2.1" is the second question asked. */
   readonly environment?: string
   readonly release?: string
   readonly collectorVersion: string
-  /**
-   * `true` when a worker never handshook. **Fail closed:** reporting a
-   * partial session as complete is worse than reporting nothing.
-   */
-  readonly partial: boolean
-  /**
-   * Set only on an **in-process reconnect**, where the linkage is observed
-   * fact. A page reload or process restart destroys that knowledge and only
-   * the server can recover it, from `actorId` + `contentId` + time adjacency —
-   * so `by` records which mechanism produced the link, because a heuristic join
-   * inherits every false match `actorId` reuse can produce and the person
-   * chasing the incident needs to know which they are looking at.
-   */
-  readonly continuedFrom?: { readonly sessionId: string; readonly by: 'collector' }
+}
+
+/** Where a connection's transport lives. */
+export type Realm = 'page' | 'worker'
+
+/** One role a connection plays. A connection is routinely both. */
+export type Role = 'publisher' | 'subscriber'
+
+/**
+ * A connection opened: one `WebTransport`, in the page or in a linked worker.
+ *
+ * Sent at open, and again when the draft, the protocol or a new role becomes
+ * known. Ingest merges the copies, and each one carries everything known so far.
+ */
+export interface ConnOpenRecord extends RecordBase {
+  readonly t: 'conn-open'
+  readonly conn: string
+  readonly realm: Realm
+  /** Scheme, host and port only: a path or query can carry a token. */
+  readonly origin: string
+  readonly contentId?: string
+  readonly draft?: SupportedDraft | null
+  readonly protocol?: string | null
+  /** A **set**: role is a property of a track, not of a connection. */
+  readonly roles?: readonly Role[]
   /** The loud failure. Set means: transport-only metrics, raw control bytes still shipped. */
   readonly degraded?: 'draft-mismatch' | 'unsupported-protocol'
+}
+
+export type ConnCloseCause = 'closed' | 'failed' | 'worker-gone' | 'session-end'
+
+/** A connection closed. A connection never ends the session; only `end` does. */
+export interface ConnCloseRecord extends RecordBase {
+  readonly t: 'conn-close'
+  readonly conn: string
+  readonly cause: ConnCloseCause
+  readonly code?: number
+  readonly reason?: string
+  readonly counters: { readonly parseFailures: number; readonly bucketsRefused: number }
 }
 
 /**
@@ -1195,6 +1252,12 @@ export interface RollupTrackWire {
 export interface RollupRecord extends RecordBase {
   readonly t: 'rollup'
   readonly v: 1
+  /**
+   * The connection the tracks and counters belong to: track aliases are scoped
+   * to one connection, so every rollup is too. `''` on the rollup that carries
+   * only the page's custom metrics, which belong to no connection.
+   */
+  readonly conn: string
   readonly seq: number
   readonly startMono: Mono
   readonly endMono: Mono
@@ -1227,6 +1290,7 @@ export interface CustomMetricWire {
  */
 export interface CtrlRecord extends RecordBase {
   readonly t: 'ctrl'
+  readonly conn: string
   readonly dir: Direction
   readonly streamId: number
   /** Byte length of the raw frame that follows. */
@@ -1237,18 +1301,32 @@ export interface CtrlRecord extends RecordBase {
 }
 
 /**
- * An object header, **elevated only, never at baseline**, followed by one raw
- * frame.
+ * One object's header fields, written for every object counted while the
+ * level is above `baseline`, and never at baseline. **No raw frame follows.**
  *
- * A conformant `.moqtrace` export needs object header bytes with arrival times
- * unconditionally, and this record is elevated-only — so a baseline session
- * cannot produce that export. Unresolved, not overlooked.
+ * Decoded fields rather than the header's wire bytes: on a subgroup stream an
+ * object's bytes hold a delta from the object before it and its Payload
+ * Length, so they read only in an unbroken run (and `hdr` is droppable), and
+ * they would put the payload size into a `headers` record. `ts` is the
+ * object's arrival.
+ *
+ * `size` appears from `headers+sizes`. `headers+data` writes the same record
+ * as `headers+sizes`: payload bytes never leave the device.
  */
 export interface HdrRecord extends RecordBase {
   readonly t: 'hdr'
+  readonly conn: string
   readonly key: RollupTrackWire['key']
-  /** Byte length of the raw frame that follows. */
-  readonly n: number
+  /** The stream the object arrived on, as `ctrl.streamId` numbers them; absent on a datagram. */
+  readonly streamId?: number
+  /** Group ID, as a decimal string: the id is a 62-bit varint. */
+  readonly group: string
+  /** Object ID, as a decimal string. */
+  readonly object: string
+  /** Object Status, on a status object only. */
+  readonly status?: number
+  /** Payload bytes. From `headers+sizes`. */
+  readonly size?: number
 }
 
 /**
@@ -1264,6 +1342,8 @@ export interface HdrRecord extends RecordBase {
  */
 export interface FlightRecord extends RecordBase {
   readonly t: 'flight'
+  /** The connection whose track fired the trigger. */
+  readonly conn: string
   readonly trigger: TriggerKind
   readonly windowStart: Mono
   readonly windowEnd: Mono
@@ -1284,30 +1364,65 @@ export interface FlightRecord extends RecordBase {
 export interface NoteRecord extends RecordBase {
   readonly t: 'note'
   readonly name: string
+  /** The connection the annotation is about, when the caller named one. */
+  readonly conn?: string
   /** The `annotate()` payload, verbatim. Never inspected, never reshaped. */
   readonly data: unknown
 }
 
+/** The page's visibility, on the session timeline. */
+export interface LifeRecord extends RecordBase {
+  readonly t: 'life'
+  readonly ev: 'hidden' | 'visible' | 'frozen' | 'resumed'
+  /** On `resumed`: how long the page was in the back/forward cache. */
+  readonly gapMs?: number
+}
+
 /**
- * The last record of a session. Carries the drop and overrun counters,
- * because a collector that silently drops is worse than one that says so.
+ * What became of one `linkWorker()` call. Each link is reported on its own, so
+ * one silent worker among several is named rather than averaged away.
  */
-export interface TerminalRecord extends RecordBase {
-  readonly t: 'terminal'
-  readonly reason: 'stop' | 'abort' | 'pagehide' | 'overrun' | 'session-close'
-  readonly counters: {
-    readonly ringEvicted: number
-    readonly ringEvictedBytes: number
-    readonly chunksDropped: number
-    readonly bucketsRefused: number
-    readonly parseFailures: number
-    /** Record types that were sampled rather than kept whole. */
-    readonly sampledTypes: readonly string[]
-    readonly overrunAt?: Mono
-    readonly overrunSignal?: string
-  }
-  /** `true` when the session is known to be incomplete. Fail closed. */
-  readonly partial: boolean
+export interface LinkRecord extends RecordBase {
+  readonly t: 'link'
+  /** The page's id for this link. */
+  readonly link: string
+  /**
+   * `linked` when the worker answered, `timeout` when it did not answer within
+   * `limits.linkTimeoutMs`, `gone` when it was terminated or stopped answering.
+   */
+  readonly ev: 'linked' | 'timeout' | 'gone'
+}
+
+/**
+ * The counters an instance ends with, because a collector that silently drops
+ * is worse than one that says so.
+ */
+export interface EndCounters {
+  readonly ringEvicted: number
+  readonly ringEvictedBytes: number
+  readonly chunksDropped: number
+  readonly bucketsRefused: number
+  readonly parseFailures: number
+  /** Record types that were sampled rather than kept whole. */
+  readonly sampledTypes: readonly string[]
+  readonly overrunAt?: Mono
+  readonly overrunSignal?: string
+}
+
+/**
+ * This instance is done. It ends this instance only: a session with a supplied
+ * id may have other instances, in other tabs or after a reload.
+ *
+ * `unload` is the page closing, `app` is `end()`, `new-session` is the page
+ * starting the next session, and `overrun` is the collector stopping itself
+ * because the control plane outran it.
+ */
+export interface EndRecord extends RecordBase {
+  readonly t: 'end'
+  readonly reason: 'unload' | 'app' | 'new-session' | 'overrun'
+  /** The `seq` of this instance's last body, the one this record rides in. */
+  readonly finalSeq: number
+  readonly counters: EndCounters
 }
 
 /**
@@ -1352,12 +1467,16 @@ export interface EscalationRecord extends RecordBase {
 export type EnvelopeRecord =
   | BatchRecord
   | SetupRecord
+  | ConnOpenRecord
+  | ConnCloseRecord
   | RollupRecord
   | CtrlRecord
   | HdrRecord
   | FlightRecord
   | NoteRecord
-  | TerminalRecord
+  | LifeRecord
+  | LinkRecord
+  | EndRecord
   | EscalationRecord
 
 /* ── sinks ────────────────────────────────────────────── */
@@ -1370,7 +1489,7 @@ export interface RecordSink {
   json(r: EnvelopeRecord): void
   /**
    * A raw frame. **MUST be preceded by its describing JSON record in the same
-   * body** — a raw frame is unreadable without the `ctrl`/`hdr` record that
+   * body** — a raw frame is unreadable without the `ctrl` record that
    * names it, and each POST is a complete self-contained frame stream,
    * so the pair may never straddle a body.
    */
@@ -1378,12 +1497,12 @@ export interface RecordSink {
 }
 
 /**
- * Why a chunk was sealed. Sealing (the flush schedule) and releasing (the
- * pacer) are separate: the pacer may only slow *release*, never seal less
+ * Why the flush schedule asked for a seal. Sealing (the schedule) and releasing
+ * (the pacer) are separate: the pacer may only slow *release*, never seal less
  * often, which is the only reading under which the "a crash loses at most 60
  * seconds" stays true.
  */
-export type SealReason = 'ready' | 'early' | 'interval' | 'bytes' | 'stop' | 'pagehide' | 'terminal'
+export type SealReason = 'ready' | 'early' | 'interval' | 'bytes'
 
 /**
  * The release pacer's input. Object arrival rate is the only pressure

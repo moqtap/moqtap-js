@@ -100,9 +100,11 @@ export default defineConfig({
   },
   sourcemap: false,
   entry: {
-    // Every entry installs the dormant hook at module-eval time, which is why
-    // package.json marks each as having side effects.
+    // Every entry but `internal` installs the dormant hook at module-eval
+    // time, which is why package.json marks each as having side effects.
     index: 'src/index.ts',
+    // Installs nothing: the parts a test, a harness or the extension builds on.
+    internal: 'src/internal.ts',
     // `draft20`, not `d20` — every other package in this workspace uses the
     // zero-padded form and `d20` would be the only one of its kind.
     //

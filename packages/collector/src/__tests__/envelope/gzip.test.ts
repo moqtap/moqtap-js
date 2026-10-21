@@ -76,6 +76,7 @@ function rollupFrames(intervals: number): Uint8Array {
     const rollup: RollupRecord = {
       t: 'rollup',
       v: 1,
+      conn: 'c-1',
       ts: seq * 1000,
       lvl: 'baseline',
       seq,
@@ -307,6 +308,7 @@ describe('encodeBody', () => {
     const w = new FrameWriter()
     const ctrl: CtrlRecord = {
       t: 'ctrl',
+      conn: 'c-1',
       ts: 9,
       lvl: 'baseline',
       dir: 'rx',

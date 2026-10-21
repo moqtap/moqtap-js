@@ -121,37 +121,36 @@ worst figure above is `writeCall` p95 at 10%; the file starts to fail — on
 oversubscription, which it prints on every run as the calibration arm's reading
 of the known 3 ms stall.
 
-### What this harness bounds: `stop()` against a dead ingest
+### What this harness bounds: `end()` against a dead ingest
 
-`stop()` awaits the outbox drain, which awaits `Uploader.send`. With no deadline
+`end()` awaits the outbox drain, which awaits `Uploader.send`. With no deadline
 on that, a blackholed or tarpitted ingest leaves the promise pending for the
-life of the page — and a player that awaits `collector.stop()` in its own
+life of the page — and a player that awaits `collector.end()` in its own
 teardown, the documented way to use the verb, stops there with it. That is
 precisely the interference this directory exists to forbid, so the bound is
 asserted rather than assumed.
 
 Measured on this machine:
 
-| ingest | `stop()` settles in |
+| ingest | `end()` settles in |
 | --- | ---: |
 | healthy `204` | 8 ms |
 | **blackhole** | **2 008 ms** |
 | **tarpit** | **2 007 ms** |
 
-Both bounded by `Limits.stopDrainDeadlineMs` (2 s), which also caps the
-retry-with-backoff inside `stop()` — bounded on its own at 6.6 s, but still six
+Both bounded by `upload.drainDeadlineMs` (2 s), which also caps the
+retry-with-backoff inside the drain — bounded on its own at 6.6 s, but still six
 seconds of a page's teardown.
 
-What holds it, in `src/flush/deadline.ts`: one `AbortSignal`, made by `stop()`
-from `stopDrainDeadlineMs`, threaded through the drain into every
-`Uploader.send`, where it is composed with that call's own
-`Limits.uploadTimeoutMs` per-request timer (`AbortSignal.timeout` where the
-engine has it, a raced `AbortController` where it does not, cleared either way
-when the fetch settles). One mechanism rather than a timer racing the drain: a
-race would resolve `stop()` while the upload carried on behind it, which is the
-same hang with the evidence removed. An expired deadline is a *transient*
-failure, so the chunk stays queued and persisted and goes out on the next page
-load.
+What holds it: `end()` waits for the drain or the deadline, whichever comes
+first, and then tears down, which aborts the upload still in flight through the
+signal every `Uploader.send` carries. That signal is composed with the call's
+own `upload.timeoutMs` per-request timer in `src/flush/deadline.ts`
+(`AbortSignal.timeout` where the engine has it, a raced `AbortController` where
+it does not, cleared either way when the fetch settles), so nothing carries on
+behind a promise that has already resolved. An expired deadline is a
+*transient* failure: the body keeps its stored copy and the next page load on
+the origin sends it.
 
 `STOP_DEADLINE_MS` in the test is 10 s — the assertion's bar, deliberately far
 above the 2 s the collector actually takes.
@@ -216,7 +215,7 @@ Node global reached for in `src/` outside `__tests__` fails there.
 ## Cost, and why the timing file has a vitest project to itself
 
 The non-interference file takes about 43 s: 29 arm runs of ~1.2 s (four rounds
-of seven arms, plus a discarded warm-up arm), then ~4 s of `stop()` deadline
+of seven arms, plus a discarded warm-up arm), then ~4 s of `end()` deadline
 tests. The bundle-size file takes about 4 s. Both are real fault injection and real bundling; neither is a
 unit test and neither belongs in a watch loop.
 

@@ -69,6 +69,7 @@ export const DEFAULT_LIMITS: Limits = /*#__PURE__*/ Object.freeze({
   controlRatePerSec: 5000,
   dormantRingBytes: 1024 * 1024,
   maxHeaderSlackBytes: 4096,
+  linkTimeoutMs: 5_000,
 })
 
 /** The delivery path. */
@@ -78,7 +79,7 @@ export const DEFAULT_UPLOAD: UploadConfig = /*#__PURE__*/ Object.freeze({
   earlyFlushesMs: /*#__PURE__*/ Object.freeze([45_000]),
   maxAttempts: 5,
   timeoutMs: 10_000,
-  stopDrainDeadlineMs: 2_000,
+  drainDeadlineMs: 2_000,
   beaconMaxBytes: 64 * 1024,
 })
 
@@ -94,8 +95,8 @@ export const UPLOAD_PROVENANCE: { readonly [K in keyof UploadConfig]: string } =
       "Matches the flush module's own default. Guess, pending field data: the right number depends on how long ingest stays down, which nothing has observed.",
     timeoutMs:
       'Ingest being down, slow, or tarpitted must never affect the playback or publishing of the page the collector sits inside. `fetch` carries no timeout of its own, so a blackholed endpoint that accepts the socket and answers nobody leaves one request pending for the life of the page. Guess, pending field data — 10 s is orders of magnitude above a healthy upload (30 ms on the test harness) and well below the point at which a stalled request is still worth waiting for.',
-    stopDrainDeadlineMs:
-      'The bound a per-request timeout cannot give: maxAttempts requests at timeoutMs each, plus backoff, is minutes, and `stop()` is awaited by a page tearing down. Guess, pending field data — 2 s is what a teardown can absorb. Expiry is not loss: the chunk stays queued and persisted.',
+    drainDeadlineMs:
+      'The bound a per-request timeout cannot give: maxAttempts requests at timeoutMs each, plus backoff, is minutes, and `flush()` and `end()` are awaited by the page. Guess, pending field data — 2 s is what a teardown can absorb. Expiry is not loss: the chunk stays queued and is retried.',
     beaconMaxBytes:
       'sendBeacon caps around 64 KB and is best-effort. Platform-imposed, not chosen.',
   })
@@ -126,6 +127,8 @@ export const LIMIT_PROVENANCE: { readonly [K in keyof Limits]: string } =
       'Nothing else sizes the dormant ring. Guess, pending field data — 1 MB is a few seconds of a single 2 Mb/s track, and it is paid by every page that imports the package, keyed or not.',
     maxHeaderSlackBytes:
       "Matches the decode module's DEFAULT_HEADER_SLACK_BYTES. A subgroup header is tens of bytes; 4 KB is a chunk-boundary allowance, not a buffer. Over it the stream is declared desynchronised rather than buffered further.",
+    linkTimeoutMs:
+      'Long enough for a worker that imports the collector after its own bootstrap, short enough that a worker which never will is reported while the session is still live. Guess, pending field data.',
   })
 
 /* ── flight recorder ─────────────────────────────────────────────────────── */
@@ -201,6 +204,7 @@ export const DEFAULTS: ResolvedConfig = /*#__PURE__*/ Object.freeze({
   apiKey: '',
   endpoint: DEFAULT_ENDPOINT,
   sessionId: '',
+  idSource: 'minted',
   detail: BASELINE,
   context: /*#__PURE__*/ Object.freeze({
     actorId: '',
@@ -225,7 +229,9 @@ export const DEFAULT_PROVENANCE: { readonly [K in keyof ResolvedConfig]: string 
     endpoint:
       'Defaults to the hosted ingest at https://moqgest.com/v1/ingest and stays overridable for a self-hosted or proxied collector. Upload is a `fetch()` POST, so whichever origin is in force is the one connect-src entry a page needs.',
     sessionId:
-      'Minted with crypto.randomUUID(). Feeds sha256(sessionId:segmentSeq), and ingest dedupes exactly, so a session with a colliding id is silently discarded. A customer-supplied constant cannot be prevented here.',
+      'Minted with crypto.randomUUID(). A supplied id may repeat across reloads and tabs, which is what instances are for: each `init()` mints its own instance id, which keys its bodies apart.',
+    idSource:
+      'Not a setting: says whether sessionId was supplied or minted, so ingest knows whether another instance may still join the session.',
     detail:
       'Baseline is always on and always the same. Elevation is billable, so the default can only be baseline.',
     context:

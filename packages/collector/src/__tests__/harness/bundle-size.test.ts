@@ -53,13 +53,14 @@ const PKG = resolve(__dirname, '..', '..', '..')
  * The root entry's ceiling: `bun build --target=browser --minify`,
  * `@moqtap/codec/*` external, `gzip -9`. The reference target is 10240 B.
  *
- * 40 KB is a chosen number, not a measured one. The entry, with every draft's
- * adapter, sits around 37.2 KB and moves a few bytes between builds of
- * identical sources. The headroom is deliberate — it grows as drafts are added —
- * and this guard is a backstop against a step change. Bringing the entry down
- * toward the target is its own work, not something done under a failing test.
+ * 45 KB is a chosen number, not a measured one. The entry, with every draft's
+ * adapter and both halves of the page–worker link, sits around 42.8 KB and
+ * moves a few bytes between builds of identical sources. The headroom is
+ * deliberate — it grows as drafts are added — and this guard is a backstop
+ * against a step change. Bringing the entry down toward the target is its own
+ * work, not something done under a failing test.
  */
-const ENTRY_CEILING_GZ = 40_000
+const ENTRY_CEILING_GZ = 45_000
 const SPEC_TARGET_GZ = 10_240
 
 /**
@@ -73,6 +74,11 @@ const TRUNCATION_MARKERS = [
   'sendBeacon', // flush/beacon.ts
   'moqtap-collector', // flush/idb.ts — the database name
   'performance.now', // transport/webtransport-hook.ts
+  '__moqtap_collector__', // api/link.ts — the page–worker link
+  'visibilitychange', // api/session.ts — the hidden-page seal
+  'moqtap:', // flush/locks.ts — the instance lock the start-up sweep reads
+  '1116352408', // envelope/sha256.ts — the first round constant, 0x428a2f98
+  't:"hdr"', // api/realm.ts — object headers while detail is raised
 ] as const
 
 /**

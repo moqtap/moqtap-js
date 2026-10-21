@@ -6,6 +6,7 @@ import type {
   HookOptions,
   InterceptedSession,
   Mono,
+  SessionCloseInfo,
   StreamChunk,
   StreamOrigin,
   TransportObserver,
@@ -255,6 +256,18 @@ import { joinChain } from './patch-chain.js'
 /** One hook per global. The double-install guard (defect 3). */
 const installedHooks = new WeakMap<object, TransportHook>()
 
+/**
+ * The connection id of every transport a hook in this realm attached, keyed by
+ * the page's own object. Weak, so a transport the page drops is not held here.
+ */
+const transportIds = new WeakMap<object, string>()
+
+/** The connection id of a `WebTransport` constructed in this realm since the hook was installed. */
+export function connectionIdOf(transport: unknown): string | undefined {
+  if (typeof transport !== 'object' || transport === null) return undefined
+  return transportIds.get(transport)
+}
+
 const INERT_HOOK: TransportHook = {
   installed: false,
   setObserver() {},
@@ -461,6 +474,7 @@ export function installWebTransportHook(
     ctorOptions: Record<string, unknown> | undefined,
   ): void {
     const sessionId = safeSessionId()
+    transportIds.set(instance, sessionId)
     // Both clocks at session start. `originMono` is on the same
     // `performance.now()` timeline as every `at` this hook stamps, so ingest
     // relativises a session by subtracting it exactly once — see the note on
@@ -1176,28 +1190,32 @@ export function installWebTransportHook(
         },
         () => {},
       )
-      ready.then(undefined, (err: unknown) => reportClose(state, String(err)))
+      ready.then(undefined, (err: unknown) => reportClose(state, String(err), { cause: 'failed' }))
     }
 
     if (isThenable(closed)) {
       closed.then(
         (infoValue: unknown) => {
           const info = infoValue as { closeCode?: number; reason?: string } | undefined
-          const reason =
-            info && typeof info === 'object'
-              ? info.reason || `code ${info.closeCode ?? 0}`
-              : 'closed'
-          reportClose(state, reason)
+          const known = info !== null && typeof info === 'object'
+          const reason = known ? info.reason || `code ${info.closeCode ?? 0}` : 'closed'
+          reportClose(state, reason, {
+            cause: 'closed',
+            ...(known && typeof info.closeCode === 'number' ? { code: info.closeCode } : {}),
+            ...(known && typeof info.reason === 'string' && info.reason !== ''
+              ? { reason: info.reason }
+              : {}),
+          })
         },
-        (err: unknown) => reportClose(state, String(err)),
+        (err: unknown) => reportClose(state, String(err), { cause: 'failed' }),
       )
     }
   }
 
-  function reportClose(state: SessionState, reason: string): void {
+  function reportClose(state: SessionState, reason: string, info: SessionCloseInfo): void {
     if (state.closed) return
     state.closed = true
-    deliver((o) => o.onSessionClose(state.id, reason, clock.now()))
+    deliver((o) => o.onSessionClose(state.id, reason, clock.now(), info))
     // The transport is gone; releasing the patches releases our references to
     // the page's objects with it.
     detachAll(state)

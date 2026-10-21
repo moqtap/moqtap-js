@@ -21,9 +21,9 @@
  *
  *  - **Frame streams concatenate.** `take() ++ take()` parses as one stream,
  *    which is what lets the flush module prepend the mandatory first
- *    `BatchRecord` frame at seal time — when the idempotency key finally exists,
- *    `crypto.subtle` being async — with a `Uint8Array.set` instead of a
- *    re-encode.
+ *    `BatchRecord` frame at seal time, once the sequence number and key exist,
+ *    and lets a page append the frames a worker forwarded, both with a
+ *    `Uint8Array.set` instead of a re-encode.
  *  - **Raw frames are copies.** `StreamChunk.data` is a borrowed view onto the
  *    page's own buffer, valid only for the duration of the callback; the page
  *    may write through the same `ArrayBuffer` on its next frame. A retained view
@@ -103,11 +103,25 @@ export class FrameWriter {
    * One raw frame. Length prefix has bit 31 **set**. The bytes are copied.
    *
    * Raw and never base64. Must be preceded in the same body by the JSON
-   * record that describes it (`ctrl`, `hdr`) — a raw frame alone is unreadable
+   * record that describes it (`ctrl`) — a raw frame alone is unreadable
    * — which is `RecordSink`'s contract, not something this writer can check.
    */
   raw(bytes: Uint8Array): void {
     this.#frame(bytes, true)
+  }
+
+  /**
+   * Frames another writer already encoded, appended verbatim.
+   *
+   * `frames` must be whole frames — the output of {@link take} — and `count`
+   * how many there are. A worker's records reach the page this way, so the
+   * page copies bytes and never parses or re-encodes them.
+   */
+  append(frames: Uint8Array, count: number): void {
+    this.#reserve(frames.byteLength)
+    this.#buf.set(frames, this.#len)
+    this.#len += frames.byteLength
+    this.#frames += count
   }
 
   /**

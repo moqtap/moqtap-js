@@ -2,8 +2,8 @@
  * A second `init()` in the same page.
  *
  * A single-page application that tears down and re-creates its player — a route
- * change, a channel switch, a consent flow that `abort()`s and later re-inits —
- * calls `init()` twice against one document. `stop()` and `abort()` both restore
+ * change, a channel switch, a consent flow that `discard()`s and later re-inits —
+ * calls `init()` twice against one document. `end()` and `discard()` both restore
  * the original global, and `ensureDormantHook` re-installs rather than binding
  * to a global that is no longer patched.
  *
@@ -12,7 +12,7 @@
  * `live` flag. A dormant module singleton still holding that dead hook would
  * hand it to the second `init()`, whose `setObserver` would be a no-op, and the
  * transport the second run opened would never be wrapped — a session reporting
- * a setup record and a terminal record, both from the API surface, and nothing
+ * a setup record and an end record, both from the API surface, and nothing
  * in between: no draft, no rollup, because the decoder never saw a byte.
  *
  * The assertions here are therefore about the *second* run; the first is
@@ -32,6 +32,7 @@ import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/in
 import type { CollectorConfig, EnvelopeRecord, RollupTrackWire } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
 import { init } from '../support/init.js'
+import { settle } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -60,31 +61,6 @@ async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
     if (!f.raw) out.push(JSON.parse(decoder.decode(f.payload)) as EnvelopeRecord)
   }
   return out
-}
-
-/**
- * Let init()'s async setup, the schedule's zero-delay timers and the pump run.
- *
- * Bare `settle()` is a duration with a turn floor, not a turn count alone. These
- * tests pin `metrics.intervalMs` and assert on records that exist only once a
- * rollup interval has elapsed, and turns do not measure time: `setTimeout(r, 0)`
- * costs ~15 ms on Windows against ~1 ms on Linux, so forty turns are ~600 ms on
- * one and ~60 ms on the other. Turn-based, these passed on Windows and failed in
- * CI reporting an absent rollup — which reads as the collector having recorded
- * nothing, rather than as the interval never having come round.
- *
- * `settle(n)` keeps the pure turn count for the places that only need the session
- * to attach before the next step.
- */
-const SETTLE_MS = 300
-
-const settle = async (times?: number): Promise<void> => {
-  const turns = times ?? 40
-  const until = times === undefined ? Date.now() + SETTLE_MS : 0
-  for (let i = 0; i < turns || Date.now() < until; i += 1) {
-    await Promise.resolve()
-    await new Promise((r) => setTimeout(r, 0))
-  }
 }
 
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
@@ -121,9 +97,9 @@ interface Reported {
 async function reported(posts: readonly Uint8Array[]): Promise<Reported> {
   const all: EnvelopeRecord[] = []
   for (const p of posts) all.push(...(await recordsOf(p)))
-  const setup = all.find((r) => r.t === 'setup') as { draft?: number | null } | undefined
+  const opened = all.filter((r) => r.t === 'conn-open') as { draft?: number | null }[]
   return {
-    draft: setup?.draft,
+    draft: [...opened].reverse().find((r) => r.draft !== undefined && r.draft !== null)?.draft,
     tracks: all
       .filter((r): r is EnvelopeRecord & { tracks: RollupTrackWire[] } => r.t === 'rollup')
       .flatMap((r) => r.tracks),
@@ -152,10 +128,10 @@ describe('init() after the previous collector was stopped', () => {
     })
     await settle()
     await runSession()
-    await a.stop()
+    await a.end()
     await settle()
 
-    // `stop()` restored the page's own constructor. That part always worked,
+    // `end()` restored the page's own constructor. That part always worked,
     // and it is the precondition for the assertion below.
     expect(g.WebTransport).toBe(MockWebTransport)
 
@@ -172,7 +148,7 @@ describe('init() after the previous collector was stopped', () => {
     expect(g.WebTransport).not.toBe(MockWebTransport)
 
     await runSession()
-    await b.stop()
+    await b.end()
     await settle()
 
     const one = await reported(first.posts)
@@ -186,7 +162,7 @@ describe('init() after the previous collector was stopped', () => {
     expect(two.tracks.filter((t) => t.key.d === 'tx' && t.key.v === '4').length).toBeGreaterThan(0)
   })
 
-  it('does the same after abort(), which withdraws consent rather than ending a run', async () => {
+  it('does the same after discard(), which withdraws consent rather than ending a run', async () => {
     const a = init(base({ sessionId: 'sess-a' }), {
       persist: false,
       noLifecycleListeners: true,
@@ -194,7 +170,7 @@ describe('init() after the previous collector was stopped', () => {
     })
     await settle()
     await runSession()
-    await a.abort()
+    await a.discard()
     await settle()
 
     const second = recordingFetch()
@@ -207,7 +183,7 @@ describe('init() after the previous collector was stopped', () => {
     expect(g.WebTransport).not.toBe(MockWebTransport)
 
     await runSession()
-    await b.stop()
+    await b.end()
     await settle()
 
     const two = await reported(second.posts)
@@ -215,8 +191,8 @@ describe('init() after the previous collector was stopped', () => {
     expect(two.tracks.length).toBeGreaterThan(0)
   })
 
-  it('survives an abort() taken before the runtime ever attached', async () => {
-    // The other teardown path: `PendingCollector.abort()` tears the dormant
+  it('survives a discard() taken before the runtime ever attached', async () => {
+    // The other teardown path: `PendingCollector.discard()` tears the dormant
     // hook down itself, with no runtime at all, because the customer withdrew
     // consent while the asynchronous setup was still in flight.
     const a = init(base({ sessionId: 'sess-a' }), {
@@ -224,7 +200,7 @@ describe('init() after the previous collector was stopped', () => {
       noLifecycleListeners: true,
       fetchImpl: recordingFetch().impl,
     })
-    await a.abort()
+    await a.discard()
     await settle()
 
     const second = recordingFetch()
@@ -235,7 +211,7 @@ describe('init() after the previous collector was stopped', () => {
     })
     await settle()
     await runSession()
-    await b.stop()
+    await b.end()
     await settle()
 
     const two = await reported(second.posts)
@@ -244,10 +220,10 @@ describe('init() after the previous collector was stopped', () => {
   })
 })
 
-describe('init() before the previous stop() has settled', () => {
+describe('init() before the previous end() has settled', () => {
   it('keeps the new collector alive when the old one finishes tearing down', async () => {
     // The single-page-application shape: the player is torn down and re-created
-    // in the same tick. `stop()` drains and uploads before it restores the
+    // in the same tick. `end()` drains and uploads before it restores the
     // global, so the old collector's teardown lands *after* the new one is
     // already running — and it must not restore the global out from under it.
     const problems: ConfigProblem[] = []
@@ -259,7 +235,7 @@ describe('init() before the previous stop() has settled', () => {
     await settle()
     await runSession()
 
-    const stopping = a.stop()
+    const ending = a.end()
     const second = recordingFetch()
     const b = init(base({ sessionId: 'sess-b' }), {
       persist: false,
@@ -267,7 +243,7 @@ describe('init() before the previous stop() has settled', () => {
       fetchImpl: second.impl,
       onConfigProblem: (p) => problems.push(p),
     })
-    await stopping
+    await ending
     await settle()
 
     // Not a mistake, so not reported as one: the customer did stop the first
@@ -275,7 +251,7 @@ describe('init() before the previous stop() has settled', () => {
     expect(problems.map((p) => p.code)).not.toContain('MQ1004')
 
     await runSession()
-    await b.stop()
+    await b.end()
     await settle()
 
     const two = await reported(second.posts)
@@ -353,12 +329,12 @@ describe('init() over a collector that was never stopped', () => {
     // And the newer collector is the live one, because that is the caller's
     // most recent intent.
     await runSession()
-    await b.stop()
+    await b.end()
     await settle()
     const two = await reported(second.posts)
     expect(two.tracks.length).toBeGreaterThan(0)
 
-    await a.stop()
+    await a.end()
     await settle()
   })
 })

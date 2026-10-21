@@ -3,7 +3,7 @@
  *
  * Importing the package installs the hook at module-eval time — before the
  * importing entry's body, since imports are hoisted — but it wraps, buffers into
- * a bounded ring, and transmits nothing until a key arrives. Three properties
+ * bounded memory, and transmits nothing until a key arrives. Three properties
  * therefore have to hold:
  *
  *  1. **It cannot throw.** A throw at module-eval time takes the customer's
@@ -13,19 +13,24 @@
  *  2. **It transmits nothing.** There is no `fetch`, no `sendBeacon`, no
  *     `IndexedDB`, no timer and no `postMessage` anywhere in this file or in
  *     anything it imports. The only thing the dormant observer does is copy
- *     bytes into a fixed-size ring that continuously overwrites itself.
- *  3. **It is bounded, and the bound is a named key**: `limits.dormantRingBytes`,
- *     defaulted and provenanced in `defaults.ts`.
+ *     bytes into a fixed-size ring that continuously overwrites itself, and
+ *     the control plane into a buffer that stops at its bound.
+ *  3. **It is bounded.** The ring by `limits.dormantRingBytes`, defaulted and
+ *     provenanced in `defaults.ts`; the held control plane by the two bounds in
+ *     `early.ts`.
  *
  * The pre-key bytes are kept because the interesting part of a session is its
  * first second: a page that calls `new WebTransport()` at load and `init()`
- * after its own bootstrap would otherwise lose SETUP, SUBSCRIBE and the first
- * objects. The ring is handed to the live collector at `init()` and re-parsed
- * there, so those bytes are counted rather than merely remembered.
+ * after its own bootstrap, or a worker that connects right after
+ * `initWorker()`, would otherwise lose SETUP, SUBSCRIBE and the first objects.
+ * The control plane is held apart from the ring and replayed into the live
+ * collector's decoder when it attaches; object data goes to the ring, for the
+ * flight recorder, and is counted.
  *
- * If `init()` is never called, nothing happens to the ring, forever: it
- * overwrites itself at a fixed memory cost and no byte of it is parsed, copied
- * out, persisted or sent.
+ * If `init()` is never called, nothing happens to either, forever: the ring
+ * overwrites itself at a fixed memory cost, the held control plane stops
+ * growing at its bound, and no byte of either is parsed, copied out, persisted
+ * or sent.
  */
 
 import { draftOfSetupFrame } from '../draft/setup-probe.js'
@@ -41,6 +46,7 @@ import type {
 } from '../types.js'
 import { COLLECTOR_VERSION } from '../version.js'
 import { DEFAULT_LIMITS } from './defaults.js'
+import { EarlyBuffer, type EarlyConnection } from './early.js'
 
 /**
  * The stream id a datagram's ring entry carries.
@@ -62,11 +68,13 @@ export interface DormantState {
   readonly sessions: Map<string, InterceptedSession>
   readonly protocols: Map<string, string>
   /**
-   * The draft each pre-15 session's SETUP named. Control bytes are never
-   * ringed, so for a handshake before `init()` this is the only record of it.
-   * Only the version is kept: SETUP carries the Authorization Token.
+   * The draft each pre-15 session's SETUP named, read as it crossed. It
+   * survives a held control plane that hit its bound, and a worker whose link
+   * timed out and released it.
    */
   readonly setupDrafts: Map<string, SupportedDraft>
+  /** The control plane held for replay, and the object data counted. */
+  readonly early: EarlyBuffer
   /** Per session, the stream halves already offered to the probe. */
   readonly probed: Map<string, Set<string>>
   /**
@@ -113,15 +121,13 @@ function dormantObserver(s: DormantState): TransportObserver {
       s.protocols.delete(sessionId)
       s.setupDrafts.delete(sessionId)
       s.probed.delete(sessionId)
+      s.early.forget(sessionId)
     },
     onStreamData(c: StreamChunk): void {
-      // Control bytes are not buffered here, for the reason given at the ring
-      // push in `session.ts`. It bites harder in the dormant
-      // window than in the live one: SETUP is the FIRST message of a session
-      // and therefore lands here rather than there, and SETUP is where the
-      // Authorization Token option travels. Nothing consumed these — the
-      // dormant ring's only destination is the live ring, and the replay skips
-      // every control entry — so this drops a copy rather than a capability.
+      s.early.onStream(c)
+      // Control bytes never enter the ring: its only destination is the live
+      // ring, whose replay skips every control entry, and it would keep the
+      // Authorization Token SETUP carries for the life of the session.
       if (c.control) {
         probeSetup(s, c)
         return
@@ -139,9 +145,12 @@ function dormantObserver(s: DormantState): TransportObserver {
         data: c.data,
       })
     },
-    onStreamClose(): void {},
+    onStreamClose(sessionId: string, streamId: number): void {
+      s.early.onStreamClose(sessionId, streamId)
+    },
     onStreamError(): void {},
     onDatagram(c: DatagramChunk): void {
+      s.early.onDatagram(c.sessionId, c.data.byteLength)
       s.ring.push({
         sessionId: c.sessionId,
         streamId: DORMANT_DATAGRAM_STREAM_ID,
@@ -158,7 +167,7 @@ function dormantObserver(s: DormantState): TransportObserver {
  * Install the hook, dormant, and return it. Idempotent.
  *
  * Called at module-eval time from `src/index.ts` and again from `init()`, which
- * is what makes an `init()` after a `stop()` work: `stop()` uninstalls,
+ * is what makes an `init()` after an `end()` work: `end()` uninstalls,
  * and a second `init()` re-installs rather than binding to a global that is no
  * longer patched.
  *
@@ -166,7 +175,7 @@ function dormantObserver(s: DormantState): TransportObserver {
  * installed is dropped and replaced. An uninstalled hook is not a hook: its
  * `live` flag is false, so `setObserver` is a no-op and the global it patched is
  * the page's own constructor again. A collector built on one sees not a single
- * byte — a session with a setup record, a terminal record and nothing in
+ * byte — a session with a setup record, an end record and nothing in
  * between, because those two come from the API surface while everything else
  * comes from the decoder.
  *
@@ -200,6 +209,7 @@ export function ensureDormantHook(): TransportHook {
       protocols: new Map(),
       setupDrafts: new Map(),
       probed: new Map(),
+      early: new EarlyBuffer(),
       patched: false,
     }
     const hook = installWebTransportHook(globalThis, dormantObserver(next), {
@@ -254,16 +264,26 @@ export function dormantState(): DormantState | null {
  * sized by `limits.dormantRingBytes`, which they did not. Copying entries across
  * lets the destination's own bound apply — a customer who configured a 1 MB
  * recorder does not get a 16 MB one because the page connected early.
+ *
+ * The held control plane moves whole and the buffer holds nothing after it:
+ * from here the collector's own observer sees every byte.
  */
 export function drainDormant(): {
   entries: RingEntry[]
   sessions: Map<string, InterceptedSession>
   protocols: Map<string, string>
   setupDrafts: Map<string, SupportedDraft>
+  early: Map<string, EarlyConnection>
 } {
   const s = state
   if (s === null) {
-    return { entries: [], sessions: new Map(), protocols: new Map(), setupDrafts: new Map() }
+    return {
+      entries: [],
+      sessions: new Map(),
+      protocols: new Map(),
+      setupDrafts: new Map(),
+      early: new Map(),
+    }
   }
   const entries = s.ring.snapshot()
   s.ring.clear()
@@ -272,14 +292,23 @@ export function drainDormant(): {
     sessions: new Map(s.sessions),
     protocols: new Map(s.protocols),
     setupDrafts: new Map(s.setupDrafts),
+    early: s.early.take(),
   }
+}
+
+/**
+ * Drop the held control plane and hold no more: no collector will attach in
+ * this realm. The ring is untouched; it is memory-only and overwrites itself.
+ */
+export function releaseDormantEarly(): void {
+  state?.early.release()
 }
 
 /**
  * Uninstall and forget. Both lifecycle verbs "restore the wrapped
  * globals", and the transport module's `uninstall` also detaches every
  * per-instance patch on sessions that are still open — which is the case
- * `abort()` exists for.
+ * `discard()` exists for.
  */
 export function teardownDormant(): void {
   const s = state
@@ -290,6 +319,7 @@ export function teardownDormant(): void {
   if (s === null) return
   try {
     s.ring.clear()
+    s.early.release()
     s.hook.uninstall()
   } catch {
     // Teardown is best-effort by construction: the objects being restored are
@@ -306,7 +336,7 @@ export function teardownDormant(): void {
  *
  * Two variables rather than one because they answer different questions and go
  * false at different moments. `claimHeld` is about the *customer's* intent — it
- * clears the instant `stop()` or `abort()` is called — and a second `init()`
+ * clears the instant `end()` or `discard()` is called — and a second `init()`
  * while it is set is a double `init()` worth reporting. `claimant` is about
  * *authority*, and only a newer claim or the teardown itself clears it.
  */
@@ -327,7 +357,7 @@ export interface DormantClaim {
 /**
  * Take the dormant hook for one collector.
  *
- * **Why a claim rather than the hook itself.** `stop()` is asynchronous — it
+ * **Why a claim rather than the hook itself.** `end()` is asynchronous — it
  * drains and uploads before it restores the global — and a single-page
  * application that switches channel does not await it before re-creating its
  * player. The old collector's teardown therefore lands *after* the new one is

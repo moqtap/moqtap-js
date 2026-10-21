@@ -27,11 +27,12 @@
  * `flightRecorder.triggers` is `{}`, so allocating there costs a default install
  * 32 MiB plus 1.8 MiB of slot arrays it never writes a byte into — every `push`
  * site is behind an `armed` check. {@link ByteRing.reserve} claims the storage
- * instead: the runtime calls it at `init()` when a trigger is configured, so an
- * armed recorder pays at a controlled moment rather than on the first chunk,
- * which arrives on the page's own data path. {@link ByteRing.pushParts} calls it
- * lazily for the dormant ring, which is built at module-eval time and written to
- * only if a WebTransport session actually opens.
+ * instead: a realm calls it when its first WebTransport opens and a trigger is
+ * configured, so an armed recorder pays at a controlled moment rather than on
+ * the first chunk, which arrives on the page's own data path.
+ * {@link ByteRing.pushParts} calls it lazily for the dormant ring, which is
+ * built at module-eval time and written to only if a WebTransport session
+ * actually opens.
  *
  * Validation stays in the constructor. A bad `maxBytes` or `maxEntries` is a
  * configuration error and must throw at `init()`, on the caller's own stack,
@@ -180,12 +181,12 @@ export class ByteRing {
    * Claim the storage now: `maxBytes` for the wire bytes plus the fixed-size
    * metadata arrays.
    *
-   * Idempotent. Call it at the moment the ring is known to be wanted — the
-   * runtime calls it at `init()` when a flight-recorder trigger is configured —
-   * so the allocation happens there rather than on the first chunk, which
-   * arrives on the page's own data path. A ring that is never reserved and never
-   * written costs nothing but this object, which is the default install: triggers
-   * ship off, so nothing ever pushes.
+   * Idempotent. Call it at the moment the ring is known to be wanted — a realm
+   * calls it when its first WebTransport opens and a flight-recorder trigger is
+   * configured — so the allocation happens there rather than on the first
+   * chunk, which arrives on the page's own data path. A ring that is never
+   * reserved and never written costs nothing but this object, which is the
+   * default install: triggers ship off, so nothing ever pushes.
    */
   reserve(): void {
     if (this.reserved) return
@@ -341,19 +342,19 @@ export class ByteRing {
   }
 
   /**
-   * Drop everything held. Called on `stop()` and `abort()`, and when the
-   * dormant pre-key ring is retired.
+   * Drop everything held. Called when an instance ends or is discarded, and
+   * when the dormant pre-key ring is retired.
    *
    * Discarded entries are **not** counted in {@link evicted}: that counter
-   * reports bytes lost to overwrite pressure, which the terminal record uses
-   * to say how much of the session it could not keep. A deliberate teardown is
+   * reports bytes lost to overwrite pressure, which the `end` record uses to
+   * say how much of the session it could not keep. A deliberate teardown is
    * not that, and counting it there would make every clean session look lossy.
-   * The counters and the seq sequence therefore survive a clear, so the
-   * terminal record may be built either side of it.
+   * The counters and the seq sequence therefore survive a clear, so the `end`
+   * record may be built either side of it.
    *
    * The backing buffer is **not** zeroed. Nothing can read a cleared entry back
    * through this class — a slot exposes only its own `[off, off + len)` — and
-   * `clear()` is called from `stop()` and `abort()`, `abort()` on the
+   * `clear()` is called at the end of an instance, including on the
    * `pagehide` path where the tail beacon is racing the page's death; a
    * 32 MB memset there is latency spent on bytes that are already unreachable
    * and about to be collected.

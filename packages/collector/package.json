@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/collector",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "MoQT session collector — dormant WebTransport hook, counting decoder, and metered upload envelope",
   "type": "module",
   "license": "FSL-1.1-MIT",
@@ -86,6 +86,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./internal": {
+      "bun": "./src/internal.ts",
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.js",
+      "require": "./dist/internal.cjs"
     },
     "./draft07": {
       "bun": "./src/drafts/draft07/entry.ts",
@@ -196,6 +202,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "test:browsers": "vitest run --config vitest.browsers.config.ts",
     "size": "bun run scripts/size.ts",
     "smoke": "bun run scripts/smoke.ts",
     "codes": "bun run scripts/error-codes.ts"
@@ -207,6 +214,7 @@
     "@moqtap/codec": "workspace:*",
     "@moqtap/test-vectors": "^0.18.0",
     "@types/node": "^24.13.3",
+    "playwright-core": "1.62.1",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.2.7"

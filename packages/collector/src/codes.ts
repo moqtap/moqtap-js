@@ -64,10 +64,8 @@ export const MQ2002 = 'MQ2002'
 export const MQ2003 = 'MQ2003'
 /** A frame declares more bytes than the body still holds. */
 export const MQ2004 = 'MQ2004'
-/** `segmentSeq` was not a non-negative safe integer. */
+/** A body's `seq` was not a non-negative safe integer. */
 export const MQ2101 = 'MQ2101'
-/** `crypto.subtle` is unavailable, so the key cannot be derived asynchronously. */
-export const MQ2102 = 'MQ2102'
 /** `CompressionStream('gzip')` is unavailable in this environment. */
 export const MQ2201 = 'MQ2201'
 

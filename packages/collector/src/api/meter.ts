@@ -177,11 +177,11 @@ export class UsageMeter {
   /**
    * Close the open window without moving the dial.
    *
-   * Teardown calls this: after `stop()` the session is over, and a meter left
-   * accruing makes `usage()` climb with wall time for as long as the page holds
-   * a reference to it — on a session configured statically at `headers`,
-   * forever. The level is left where it is, because the terminal record is
-   * written after this and still has to say what the session ended at.
+   * The end of an instance calls this: after `end()` the instance is over, and
+   * a meter left accruing makes `usage()` climb with wall time for as long as
+   * the page holds a reference to it — on a session configured statically at
+   * `headers`, forever. The level is left where it is, because the `end` record
+   * is written after this and still has to say what the instance ended at.
    */
   closeWindow(): void {
     if (!this.#open) return

@@ -297,7 +297,7 @@ export class TrackKeys implements TrackKeyResolver {
   }
 
   /**
-   * Distinct ids refused by the bucket cap. Counted on `TerminalRecord`.
+   * Distinct ids refused by the bucket cap. Counted on `conn-close` and `end`.
    *
    * Distinct while the bounded refusal set has room, and refusal *events* past
    * that, where the number only means "a great many" — an unbounded set of

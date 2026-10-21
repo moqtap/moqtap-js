@@ -35,8 +35,8 @@
  *     assignment keeps the graph whole.
  *  2. **The root entry is measured twice:** with `@moqtap/codec/*` external,
  *     which is the collector's own code and what the subsystem breakdown
- *     charges, and whole, which is what a page downloads. The draft entries are
- *     measured whole.
+ *     charges, and whole, which is what a page downloads. The draft entries
+ *     and the internal entry are measured whole.
  *
  * ── Usage
  *
@@ -74,7 +74,9 @@ const DRAFTS: readonly string[] = [...SUPPORTED_DRAFTS]
  * The published entry points, from `package.json`'s `exports` map.
  *
  * **Read the per-draft rows as alternatives, never as a sum.** A page imports
- * one entry: the root, or the draft its relays speak.
+ * one entry: the root, or the draft its relays speak. `./internal` is for tests,
+ * harnesses and the browser extension, and is listed so a change to what it
+ * pulls in is seen.
  */
 const ENTRIES = [
   {
@@ -99,6 +101,13 @@ const ENTRIES = [
     external: [] as readonly string[],
     split: false,
   })),
+  {
+    id: './internal',
+    label: 'internal entry as downloaded: the runtime, with no hook installed',
+    parts: ['internal.ts'] as readonly string[],
+    external: [] as readonly string[],
+    split: false,
+  },
 ] as const
 
 /**
@@ -107,15 +116,15 @@ const ENTRIES = [
  * rather than waiting for someone to add it here.
  */
 const SUBSYSTEM_LABELS: Readonly<Record<string, string>> = {
-  api: 'api — config, lifecycle, session runtime, metering',
-  flush: 'flush — batching, gzip, uploader, IndexedDB',
+  api: 'api — config, lifecycle, page runtime, worker probe and link, metering',
+  flush: 'flush — batching, gzip, uploader, IndexedDB, Web Locks',
   decode: 'decode — the counting decoder and its adapters',
   rollup: 'rollup',
   transport: 'transport — the WebTransport seam',
   draft: 'draft — loader and negotiation',
   drafts: 'drafts — the per-draft adapters',
   recorder: 'recorder — the flight recorder',
-  envelope: 'envelope — framing and records',
+  envelope: 'envelope — framing, records, SHA-256 keys',
   ring: 'ring',
   '(bundler)': '(bundler runtime, chunk glue, and unmapped output)',
 }

@@ -21,6 +21,7 @@ import {
   dormantState,
   drainDormant,
   ensureDormantHook,
+  releaseDormantEarly,
   resetDormantForTest,
   teardownDormant,
 } from '../../api/dormant.js'
@@ -138,13 +139,10 @@ describe('the bounded ring', () => {
     expect((state as NonNullable<typeof state>).ring.bytes).toBeGreaterThan(0)
   })
 
-  it('does not buffer the control plane, so no token sits here in the clear', async () => {
-    // SETUP is the first message of a session, so it lands in the
-    // dormant window rather than the live one, and SETUP is where the
-    // Authorization Token option travels. A chunk arriving at the seam is not
-    // frame-aligned, so it cannot be masked here without a second frame-aligned
-    // parser — and nothing ever read these: the dormant ring's only destination
-    // is the live ring, whose replay skips every control entry.
+  it('keeps the control plane out of the ring', async () => {
+    // SETUP is where the Authorization Token option travels, and the ring
+    // lives as long as the session. The control plane is held apart, until a
+    // collector attaches, and the ring's replay would skip it anyway.
     ensureDormantHook()
     const wt = connect(g as { WebTransport?: unknown })
     await wt.open('moqt-20')
@@ -197,5 +195,65 @@ describe('the bounded ring', () => {
     wt.closeSession('done')
     await settle()
     expect(drainDormant().sessions.size).toBe(0)
+  })
+})
+
+describe('the held control plane', () => {
+  it('holds every control chunk until a collector drains it, once', async () => {
+    ensureDormantHook()
+    const wt = connect(g as { WebTransport?: unknown })
+    await wt.open('moqt-20')
+    await readOneUniStream(wt, [SETUP_PREFIX, bytes(1, 2, 3)])
+    await settle()
+
+    expect(dormantState()?.early.controlBytes).toBe(5)
+    const [held] = drainDormant().early.values()
+    expect(held?.control.map((c) => [...c.data])).toEqual([
+      [0xaf, 0x00],
+      [1, 2, 3],
+    ])
+    expect(dormantState()?.early.controlBytes).toBe(0)
+    expect(drainDormant().early.size).toBe(0)
+  })
+
+  it('counts object data rather than holding it', async () => {
+    ensureDormantHook()
+    const wt = connect(g as { WebTransport?: unknown })
+    await wt.open('moqt-20')
+    await readOneUniStream(wt, [SUBGROUP_PREFIX, bytes(9, 9, 9)])
+    await settle()
+
+    expect(dormantState()?.early.controlBytes).toBe(0)
+    const [held] = drainDormant().early.values()
+    expect(held).toMatchObject({ control: [], dataChunks: 2, dataBytes: 4 })
+  })
+
+  it('forgets a connection that closed before the key arrived', async () => {
+    ensureDormantHook()
+    const wt = connect(g as { WebTransport?: unknown })
+    await wt.open('moqt-20')
+    await readOneUniStream(wt, [SETUP_PREFIX, bytes(1, 2, 3)])
+    await settle()
+    wt.closeSession('done')
+    await settle()
+    expect(dormantState()?.early.controlBytes).toBe(0)
+    expect(drainDormant().early.size).toBe(0)
+  })
+
+  it('holds nothing more once released', async () => {
+    ensureDormantHook()
+    const wt = connect(g as { WebTransport?: unknown })
+    await wt.open('moqt-20')
+    await readOneUniStream(wt, [SETUP_PREFIX, bytes(1, 2, 3)])
+    await settle()
+    releaseDormantEarly()
+    expect(dormantState()?.early.controlBytes).toBe(0)
+
+    const next = connect(g as { WebTransport?: unknown })
+    await next.open('moqt-20')
+    await readOneUniStream(next, [SETUP_PREFIX, bytes(4, 5, 6)])
+    await settle()
+    expect(dormantState()?.early.controlBytes).toBe(0)
+    expect(drainDormant().early.size).toBe(0)
   })
 })

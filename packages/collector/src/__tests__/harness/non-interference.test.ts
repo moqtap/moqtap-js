@@ -259,7 +259,7 @@ let TOLERANCE: Tolerances = TOLERANCE_FLOOR
  */
 const SENSITIVITY_STALL_MS = 3
 
-/** How long `abort()` may take under a fault before it counts as interference. */
+/** How long `discard()` may take under a fault before it counts as interference. */
 const TEARDOWN_DEADLINE_MS = 2_000
 
 /**
@@ -430,11 +430,10 @@ async function runArm(
   })
 
   const t0 = performance.now()
-  // `abort()`, not `stop()`. `stop()` awaits `#drainOutbox`, which awaits an
-  // `Uploader.send` that has no request timeout, so under a blackhole it never
-  // resolves — recorded as a defect, and tested for separately below rather
-  // than being allowed to hang every arm.
-  if (collector !== null) await collector.abort()
+  // `discard()`, not `end()`: under a fault `end()` waits out
+  // `upload.drainDeadlineMs` for ingest, and that bound is tested on its own
+  // below rather than paid in every arm.
+  if (collector !== null) await collector.discard()
   const teardownMs = performance.now() - t0
 
   // Read the counters before `release()`, which answers held requests and would
@@ -831,38 +830,37 @@ describe('ingest health does not reach the page', () => {
     })
   }
 
-  it('abort() under a fault does not block the page', () => {
+  it('discard() under a fault does not block the page', () => {
     for (const name of TREATMENTS) {
       expect
-        .soft(arm(name).teardownMs, `${name}: abort() blocked the caller (worst round)`)
+        .soft(arm(name).teardownMs, `${name}: discard() blocked the caller (worst round)`)
         .toBeLessThan(TEARDOWN_DEADLINE_MS)
     }
   })
 })
 
 /**
- * Neither teardown verb may make ingest's health the page's problem. `abort()`
- * is measured above; `stop()` awaits `#drainOutbox`, which awaits
+ * Neither teardown verb may make ingest's health the page's problem.
+ * `discard()` is measured above; `end()` awaits the outbox drain, which awaits
  * `Uploader.send`, and a blackholed or tarpitted endpoint accepts the socket and
  * answers nobody — so without a deadline that `fetch` never settles and the
- * promise `stop()` hands the page never resolves, hanging any player that awaits
- * `collector.stop()` in its own teardown.
+ * promise `end()` hands the page never resolves, hanging any player that awaits
+ * `collector.end()` in its own teardown.
  *
- * `src/flush/deadline.ts` and its two callers bound it: one `AbortSignal`, made
- * by `stop()` from `Limits.stopDrainDeadlineMs`, threaded through `#drainOutbox`
- * into every `Uploader.send`, where it is composed with that call's own
- * `Limits.uploadTimeoutMs` per-request timer. Not two racing timers — a timer
- * racing the drain would resolve `stop()` while the upload carried on behind it,
- * which is the same hang with the evidence removed. An expired deadline is a
- * *transient* failure, so the chunk stays queued and persisted and the next page
- * load sends it: the deadline gives up on the attempt, never on the data.
+ * `end()` waits for the drain or `upload.drainDeadlineMs`, whichever comes
+ * first, then tears down, which aborts the upload still in flight through the
+ * signal every `Uploader.send` carries — composed in `src/flush/deadline.ts`
+ * with that call's own `upload.timeoutMs` — so nothing carries on behind a
+ * promise that has already resolved. An expired deadline is a *transient*
+ * failure: the body keeps its stored copy and the next page load sends it. The
+ * deadline gives up on the attempt, never on the data.
  *
  * The deadline below is 10 s so that the *bounded* failure — five attempts with
  * backoff against a 5xx, measured at 6.6 s — passes it and only an unbounded
  * wait fails. It is deliberately not tightened to fit: a deadline chosen to make
  * a test pass is not a guarantee.
  */
-describe('stop() must settle even when ingest never answers', () => {
+describe('end() must settle even when ingest never answers', () => {
   /** Generous: the current retry-to-exhaustion path takes 6.6 s and is allowed. */
   const STOP_DEADLINE_MS = 10_000
 
@@ -877,13 +875,13 @@ describe('stop() must settle even when ingest never answers', () => {
     )
     await settle()
     // Short, and on the shipped flush schedule (ready, then +45 s), so no
-    // automatic flush has happened yet and `stop()` owns the first upload —
+    // automatic flush has happened yet and `end()` owns the first upload —
     // which is the case a page hits when it tears down early.
     await runReferencePlayer({ objects: 20, cadenceMs: 8, drainMs: 8 })
 
     const t0 = performance.now()
     const outcome = await Promise.race([
-      collector.stop().then(() => 'settled'),
+      collector.end().then(() => 'settled'),
       new Promise<string>((r) => {
         setTimeout(() => r('still pending'), STOP_DEADLINE_MS)
       }),
@@ -891,7 +889,7 @@ describe('stop() must settle even when ingest never answers', () => {
     const ms = performance.now() - t0
 
     own.release()
-    await collector.abort()
+    await collector.discard()
     restore()
     teardownDormant()
     resetDormantForTest()
@@ -899,44 +897,44 @@ describe('stop() must settle even when ingest never answers', () => {
     return { outcome, ms }
   }
 
-  it('healthy ingest: stop() settles at once', async () => {
+  it('healthy ingest: end() settles at once', async () => {
     const { outcome, ms } = await stopAgainst('ok')
-    console.log(`stop() vs healthy ingest: ${outcome} after ${Math.round(ms)} ms`)
+    console.log(`end() vs healthy ingest: ${outcome} after ${Math.round(ms)} ms`)
     expect(outcome).toBe('settled')
   }, 60_000)
 
   // The assertion message states the guarantee and names the bound that holds
   // it, because that message is what a regression prints.
-  it('blackholed ingest: stop() settles', async () => {
+  it('blackholed ingest: end() settles', async () => {
     const { outcome, ms } = await stopAgainst('blackhole')
     console.log(
-      `stop() vs blackholed ingest: ${outcome} after ` +
+      `end() vs blackholed ingest: ${outcome} after ` +
         `${Math.round(ms)} ms. See the note above this test and the directory README.`,
     )
     expect(
       outcome,
-      'NON-INTERFERENCE VIOLATION: stop() did not settle against a blackholed ingest.\n' +
-        'CollectorRuntime.stop() -> #drainOutbox -> Uploader.send -> fetch(). A ' +
+      'NON-INTERFERENCE VIOLATION: end() did not settle against a blackholed ingest.\n' +
+        'CollectorRuntime.end() -> outbox drain -> Uploader.send -> fetch(). A ' +
         'blackholed endpoint accepts the socket and never answers, so without a ' +
-        'deadline the fetch never settles and the promise stop() gave the page never ' +
+        'deadline the fetch never settles and the promise end() gave the page never ' +
         'resolves.\n' +
-        'The bound is Limits.stopDrainDeadlineMs, built in src/flush/deadline.ts and ' +
-        'threaded through the drain into every Uploader.send, where it composes with ' +
-        "that call's own Limits.uploadTimeoutMs. If this fails, that signal is no " +
-        'longer reaching the fetch. Do not relax this test — it is the guarantee.',
+        'The bound is upload.drainDeadlineMs: end() waits that long for the drain, ' +
+        'then tears down and aborts the upload in flight. If this fails, that wait or ' +
+        'that abort is no longer reaching the fetch. Do not relax this test — it is ' +
+        'the guarantee.',
     ).toBe('settled')
   }, 60_000)
 
   // The harder of the two faults: a tarpit stalls with request bytes still
-  // owed, so the fetch has not even finished sending. A `stop()` bounded only
+  // owed, so the fetch has not even finished sending. An `end()` bounded only
   // against a blackhole would be bounded against only one of the two.
-  it('tarpitted ingest: stop() settles', async () => {
+  it('tarpitted ingest: end() settles', async () => {
     const { outcome, ms } = await stopAgainst('tarpit')
-    console.log(`stop() vs tarpitted ingest: ${outcome} after ${Math.round(ms)} ms.`)
+    console.log(`end() vs tarpitted ingest: ${outcome} after ${Math.round(ms)} ms.`)
     expect(
       outcome,
       'A tarpitted endpoint withholds its answer with the request body ' +
-        'still undrained, and `stop()` must resolve anyway. The fix is a ' +
+        'still undrained, and `end()` must resolve anyway. The fix is a ' +
         'deadline on the drain, not a shorter one on this test.',
     ).toBe('settled')
   }, 60_000)

@@ -1,16 +1,15 @@
 /**
- * Sealing — the schedule, and keying at creation.
+ * Sealing — the schedule, and keying at the seal.
  *
  * Every assertion below is a durability property, not a shape check:
  *
- *  - **The key is stamped before persistence.** A chunk built, keyed, persisted
- *    and then uploaded on the next page load dedupes correctly; one keyed at
- *    upload time gets a fresh key and is ingested twice. So the tests reload the
- *    store and check the key that comes back, not the key the queue computed.
- *  - **A segment number is never reissued.** Ingest dedupes exactly on
- *    `sha256(sessionId:segmentSeq)`, so two different bodies under one key means
- *    one is silently discarded — data lost with no error anywhere.
- *  - **A `ctrl`/`hdr` record and its raw frame live or die together.** A raw
+ *  - **A seal is synchronous and numbers only what it seals.** The sequence is
+ *    the instance's own, in memory, taken only when there are frames, so the
+ *    bodies of one instance are `0, 1, 2, …` with no gap a seal could leave.
+ *  - **The key is derived at the seal.** `sha256(sessionId:instanceId:seq)`,
+ *    on the batch frame of the body it names, so a retry from any page load
+ *    sends the same key.
+ *  - **A `ctrl` record and its raw frame live or die together.** A raw
  *    frame is unreadable without the record that names it (`RecordSink.raw`),
  *    and each POST is a complete self-contained frame stream, so the
  *    pair may never be split by a drop.
@@ -26,20 +25,15 @@ import { describe, expect, it } from 'vitest'
 import {
   BODY_PREAMBLE_BYTES,
   type BodyPreamble,
+  FrameWriter,
   idempotencyKey,
-  idempotencyKeySync,
   readFrames,
   readPreamble,
-  subtleAvailable,
 } from '../../envelope/index.js'
+import type { Chunk as FlushChunk, FlushScheduleOptions, TimerSource } from '../../flush/index.js'
+import { compress, FlushQueue, FlushSchedule } from '../../flush/index.js'
 import type {
-  ChunkBackend,
-  Chunk as FlushChunk,
-  FlushScheduleOptions,
-  TimerSource,
-} from '../../flush/index.js'
-import { ChunkStore, FlushQueue, FlushSchedule, MemoryBackend } from '../../flush/index.js'
-import type {
+  BatchRecord,
   ClockSource,
   CtrlRecord,
   EnvelopeRecord,
@@ -68,6 +62,7 @@ const note = (name: string, data: unknown = 'x'): NoteRecord => ({
 
 const ctrl = (n: number): CtrlRecord => ({
   t: 'ctrl',
+  conn: 'c-1',
   ts: 0,
   lvl: 'baseline',
   dir: 'rx',
@@ -75,6 +70,9 @@ const ctrl = (n: number): CtrlRecord => ({
   n,
   decoded: true,
 })
+
+const queue = (over: Partial<ConstructorParameters<typeof FlushQueue>[0]> = {}): FlushQueue =>
+  new FlushQueue({ sessionId: 's1', instanceId: 'i1', ...over })
 
 const gunzip = async (input: Uint8Array): Promise<Uint8Array> => {
   const ds = new DecompressionStream('gzip')
@@ -127,293 +125,165 @@ const decodeBody = async (bytes: Uint8Array): Promise<DecodedBody> => {
 
 const nameOf = (r: EnvelopeRecord): string | undefined => (r.t === 'note' ? r.name : undefined)
 
-const expectedKey = async (sessionId: string, seq: number): Promise<string> =>
-  subtleAvailable() ? await idempotencyKey(sessionId, seq) : idempotencyKeySync(sessionId, seq)
-
-/** Delegates to a real backend, with one hook. Used to make a seal observably slow. */
-const gatedBackend = (inner: ChunkBackend, gate: () => Promise<void>): ChunkBackend => ({
-  durable: inner.durable,
-  loadIndex: () => inner.loadIndex(),
-  put: (e, c) => inner.put(e, c),
-  get: (k) => inner.get(k),
-  remove: (k) => inner.remove(k),
-  getMeta: async (id) => {
-    await gate()
-    return inner.getMeta(id)
-  },
-  setMeta: (m) => inner.setMeta(m),
-  listMeta: () => inner.listMeta(),
-  removeMeta: (id) => inner.removeMeta(id),
-  close: () => inner.close(),
-})
+const batchOf = async (c: FlushChunk): Promise<BatchRecord> =>
+  (await decodeBody(c.bytes)).records[0] as BatchRecord
 
 /* ── the sealed body ─────────────────────────────────────────────────────── */
 
 describe('FlushQueue.seal', () => {
   it('produces a body ingest can read: preamble, batch frame first, then the records in order', async () => {
-    const q = new FlushQueue({ sessionId: 's1', clock: clockAt(), gzip: false })
-    q.json(note('one'))
-    q.json(ctrl(3))
-    q.raw(new Uint8Array([1, 2, 3]))
-    q.json(note('two'))
-
-    const chunk = await q.seal('interval')
-    expect(chunk).not.toBeNull()
-    const body = await decodeBody((chunk as FlushChunk).bytes)
-
-    expect(body.preamble.version).toBe(1)
-    expect(body.frames.map((f) => f.raw)).toEqual([false, false, false, true, false])
-    expect(body.records.map((r) => r.t)).toEqual(['batch', 'note', 'ctrl', 'note'])
-    expect(body.frames[3]?.payload).toEqual(new Uint8Array([1, 2, 3]))
+    const q = queue()
+    q.json(note('a'))
+    q.json(note('b'))
+    const chunk = q.seal() as FlushChunk
+    const body = await decodeBody(chunk.bytes)
+    expect(body.preamble.gzipped).toBe(false)
+    expect(body.records.map((r) => r.t)).toEqual(['batch', 'note', 'note'])
+    expect(body.records.map(nameOf)).toEqual([undefined, 'a', 'b'])
   })
 
-  it('carries the idempotency key in the first frame, because sendBeacon cannot set a header', async () => {
-    const q = new FlushQueue({ sessionId: 'sess-1', clock: clockAt(), gzip: false })
-    q.json(note('one'))
-    const chunk = (await q.seal('interval')) as FlushChunk
-    const body = await decodeBody(chunk.bytes)
+  it('returns the chunk in the same turn, keyed, with nothing awaited', () => {
+    const q = queue()
+    q.json(note('a'))
+    const chunk = q.seal()
+    // Not a promise: the page can die at the next `await` and the body exists.
+    expect(chunk).not.toBeInstanceOf(Promise)
+    expect(chunk?.idempotencyKey).toBe(idempotencyKey('s1', 'i1', 0))
+  })
 
-    expect(body.records[0]).toMatchObject({
+  it('carries a v2 batch frame naming the session, the instance, the number and the key', async () => {
+    const clock = clockAt(2_500)
+    const q = queue({ clock, level: () => 'headers' })
+    q.json(note('a'))
+    const chunk = q.seal({ dropped: 7 }) as FlushChunk
+    const batch = await batchOf(chunk)
+    expect(batch).toEqual({
       t: 'batch',
-      sessionId: 'sess-1',
-      segmentSeq: 0,
-      idempotencyKey: chunk.idempotencyKey,
-      v: 1,
-    })
-    expect(chunk.idempotencyKey).toBe(await expectedKey('sess-1', 0))
-  })
-
-  it('returns null when there is nothing to seal, rather than an empty keyed body', async () => {
-    const q = new FlushQueue({ sessionId: 's1', gzip: false })
-    expect(await q.seal('interval')).toBeNull()
-    expect(q.sealedChunks).toBe(0)
-  })
-
-  it('gzips the frames and says so in the preamble, which is how the beacon path announces it', async () => {
-    const q = new FlushQueue({ sessionId: 's1', clock: clockAt(), gzip: true })
-    for (let i = 0; i < 200; i++) {
-      q.json(note(`repeated-name-${i % 3}`, 'the same compressible payload'))
-    }
-    const chunk = (await q.seal('interval')) as FlushChunk
-    const body = await decodeBody(chunk.bytes)
-
-    expect(body.preamble.gzipped).toBe(true)
-    expect(body.records).toHaveLength(201)
-    expect(body.records[0]?.t).toBe('batch')
-  })
-
-  it('numbers segments consecutively in memory and never repeats a key', async () => {
-    const q = new FlushQueue({ sessionId: 's1', gzip: false })
-    const keys: string[] = []
-    for (let i = 0; i < 3; i++) {
-      q.json(note(`n${i}`))
-      const c = (await q.seal('interval')) as FlushChunk
-      expect(c.segmentSeq).toBe(i)
-      keys.push(c.idempotencyKey)
-    }
-    expect(new Set(keys).size).toBe(3)
-  })
-
-  it('stamps the level and the wall clock the chunk was created at', async () => {
-    const clock = clockAt(500)
-    const q = new FlushQueue({
+      ts: 2_500,
+      lvl: 'headers',
+      v: 2,
       sessionId: 's1',
-      clock,
-      gzip: false,
-      level: () => 'headers+data',
+      instanceId: 'i1',
+      seq: 0,
+      idempotencyKey: idempotencyKey('s1', 'i1', 0),
+      wall: 1_700_000_002_500,
+      dropped: 7,
     })
-    q.json(note('n'))
-    const c = (await q.seal('bytes')) as FlushChunk
-    expect(c.level).toBe('headers+data')
-    expect(c.createdWallMs).toBe(clock.wall())
-    expect(q.lastSealReason).toBe('bytes')
-  })
-})
-
-/* ── keyed before persistence ────────────────────────────────── */
-
-describe('FlushQueue segment numbers shared between realms', () => {
-  it('takes no number until there is something to send', async () => {
-    // A page whose transports live in a linked worker: its queue exists, but
-    // the worker's uploads must still start at 0.
-    const store = await ChunkStore.open('db', 1 << 20, { backend: new MemoryBackend() })
-    new FlushQueue({ sessionId: 's1', store, gzip: false })
-    const worker = new FlushQueue({ sessionId: 's1', store, gzip: false, reserveAhead: false })
-    worker.json(note('a'))
-    expect(((await worker.seal('ready')) as FlushChunk).segmentSeq).toBe(0)
+    expect(chunk).toMatchObject({ sessionId: 's1', instanceId: 'i1', seq: 0, level: 'headers' })
   })
 
-  it('leaves no gap: the page reserves its tail number, the worker numbers around it', async () => {
-    const store = await ChunkStore.open('db', 1 << 20, { backend: new MemoryBackend() })
-    const page = new FlushQueue({ sessionId: 's1', store, gzip: false })
-    page.reserve()
-    await new Promise((r) => setTimeout(r, 0))
-    const worker = new FlushQueue({ sessionId: 's1', store, gzip: false, reserveAhead: false })
-    const seqs: number[] = []
-    for (const name of ['a', 'b']) {
-      worker.json(note(name))
-      seqs.push(((await worker.seal('interval')) as FlushChunk).segmentSeq)
-    }
-    page.json(note('terminal'))
-    const tail = page.sealSync('pagehide') as FlushChunk
-    seqs.push(tail.segmentSeq)
-    expect([...seqs].sort()).toEqual([0, 1, 2])
-  })
-
-  it('gives a seal that races the first reservation that number, in order', async () => {
-    const store = await ChunkStore.open('db', 1 << 20, { backend: new MemoryBackend() })
-    const q = new FlushQueue({ sessionId: 's1', store, gzip: false })
+  it('marks the final body and lists lost bodies only when there are any', async () => {
+    const q = queue()
     q.json(note('a'))
-    const first = (await q.seal('ready')) as FlushChunk
+    const plain = await batchOf(q.seal() as FlushChunk)
+    expect(plain).not.toHaveProperty('final')
+    expect(plain).not.toHaveProperty('lost')
+
     q.json(note('b'))
-    const second = (await q.seal('interval')) as FlushChunk
-    expect([first.segmentSeq, second.segmentSeq]).toEqual([0, 1])
-  })
-})
-
-describe('FlushQueue with a store', () => {
-  it('persists the chunk under the key it was stamped with, before it is ever uploaded', async () => {
-    const backend = new MemoryBackend()
-    const store = await ChunkStore.open('db', 1 << 20, { backend })
-    const q = new FlushQueue({ sessionId: 's1', store, gzip: false })
-    q.json(note('one'))
-    const chunk = (await q.seal('interval')) as FlushChunk
-
-    const persisted = await store.list('s1')
-    expect(persisted).toHaveLength(1)
-    expect(persisted[0]?.idempotencyKey).toBe(chunk.idempotencyKey)
-    expect(persisted[0]?.segmentSeq).toBe(chunk.segmentSeq)
-    expect(persisted[0]?.bytes).toEqual(chunk.bytes)
+    const last = await batchOf(q.seal({ final: true, lost: [0] }) as FlushChunk)
+    expect(last.final).toBe(true)
+    expect(last.lost).toEqual([0])
   })
 
-  it('keeps a persisted chunk keyed across a reload, and never reissues its number', async () => {
-    const backend = new MemoryBackend()
-    const before = await ChunkStore.open('db', 1 << 20, { backend })
-    const q1 = new FlushQueue({ sessionId: 's1', store: before, gzip: false })
-    q1.json(note('before-reload'))
-    const first = (await q1.seal('interval')) as FlushChunk
-
-    // The page reloads: same origin storage, brand new store and queue.
-    const after = await ChunkStore.open('db', 1 << 20, { backend })
-    const backlog = await after.list('s1')
-    expect(backlog).toHaveLength(1)
-    expect(backlog[0]?.idempotencyKey).toBe(first.idempotencyKey)
-    expect(backlog[0]?.bytes).toEqual(first.bytes)
-
-    const q2 = new FlushQueue({ sessionId: 's1', store: after, gzip: false })
-    q2.json(note('after-reload'))
-    const second = (await q2.seal('interval')) as FlushChunk
-    expect(second.segmentSeq).toBeGreaterThan(first.segmentSeq)
-    expect(second.idempotencyKey).not.toBe(first.idempotencyKey)
-  })
-
-  it('gives two overlapping seals two different segment numbers', async () => {
-    const backend = new MemoryBackend()
-    let release: () => void = () => {}
-    const gate = new Promise<void>((r) => {
-      release = r
-    })
-    let gated = false
-    const store = await ChunkStore.open('db', 1 << 20, {
-      backend: gatedBackend(backend, async () => {
-        if (gated) await gate
-      }),
-    })
-    const q = new FlushQueue({ sessionId: 's1', store, gzip: false })
-
-    gated = true
-    q.json(note('first'))
-    const p1 = q.seal('interval')
-    await Promise.resolve()
-    // The first seal has taken its frames and is waiting on its allocation.
-    q.json(note('second'))
-    const p2 = q.seal('interval')
-    release()
-
-    const [a, b] = (await Promise.all([p1, p2])) as [FlushChunk, FlushChunk]
-    expect(a.segmentSeq).not.toBe(b.segmentSeq)
-    expect(a.idempotencyKey).not.toBe(b.idempotencyKey)
-
-    expect((await decodeBody(a.bytes)).records.map(nameOf)).toEqual([undefined, 'first'])
-    expect((await decodeBody(b.bytes)).records.map(nameOf)).toEqual([undefined, 'second'])
-  })
-
-  it('never throws out of seal when the store refuses the write', async () => {
-    const backend = new MemoryBackend()
-    const failing: ChunkBackend = {
-      ...gatedBackend(backend, () => Promise.resolve()),
-      put: () => Promise.reject(new Error('QuotaExceededError')),
-    }
-    const errors: unknown[] = []
-    const store = await ChunkStore.open('db', 1 << 20, {
-      backend: failing,
-      onInternalError: (e) => errors.push(e),
-    })
-    const q = new FlushQueue({ sessionId: 's1', store, gzip: false })
-    q.json(note('one'))
-    const chunk = await q.seal('interval')
-
-    // The chunk is still returned: durability was lost, the telemetry was not.
-    expect(chunk).not.toBeNull()
-    expect(q.droppedChunks).toBe(0)
-    expect(errors.length).toBeGreaterThan(0)
-  })
-})
-
-/* ── the pagehide path ───────────────────────────────────────── */
-
-describe('FlushQueue.sealSync', () => {
-  it('keys without awaiting and never compresses, because the page may not survive one await', () => {
-    const q = new FlushQueue({ sessionId: 's1', clock: clockAt(), gzip: true })
-    q.json(note('tail'))
-    const chunk = q.sealSync('pagehide') as FlushChunk
-
-    expect(chunk.idempotencyKey).toBe(idempotencyKeySync('s1', chunk.segmentSeq))
-    expect(readPreamble(chunk.bytes)?.gzipped).toBe(false)
-  })
-
-  it('marks keyFallback in the batch frame so ingest is told, not left to guess', async () => {
-    const q = new FlushQueue({ sessionId: 's1', clock: clockAt(), gzip: true })
-    q.json(note('tail'))
-    const chunk = q.sealSync('pagehide') as FlushChunk
-    const body = await decodeBody(chunk.bytes)
-    expect(body.records[0]).toMatchObject({ t: 'batch', keyFallback: true })
-    expect(body.records.map(nameOf)).toEqual([undefined, 'tail'])
-  })
-
-  it('returns null with nothing buffered', () => {
-    const q = new FlushQueue({ sessionId: 's1' })
-    expect(q.sealSync('pagehide')).toBeNull()
-  })
-
-  it('does not reuse a number the async path already took', async () => {
-    const q = new FlushQueue({ sessionId: 's1', gzip: false })
+  it('returns null and takes no number when there is nothing to seal', () => {
+    const q = queue()
+    expect(q.seal()).toBeNull()
+    expect(q.seal()).toBeNull()
+    expect(q.nextSeq).toBe(0)
     q.json(note('a'))
-    const first = (await q.seal('interval')) as FlushChunk
-    q.json(note('b'))
-    const tail = q.sealSync('pagehide') as FlushChunk
-    expect(tail.segmentSeq).toBeGreaterThan(first.segmentSeq)
+    expect(q.seal()?.seq).toBe(0)
   })
 
-  it('raises the persisted counter so a reload cannot reissue the number it took', async () => {
-    const backend = new MemoryBackend()
-    const store = await ChunkStore.open('db', 1 << 20, { backend })
-    const q = new FlushQueue({ sessionId: 's1', store, gzip: false })
-    q.json(note('tail'))
-    const tail = q.sealSync('pagehide') as FlushChunk
+  it('numbers bodies 0, 1, 2 … with no gap and never repeats a key', () => {
+    const q = queue()
+    const keys = new Set<string>()
+    for (let i = 0; i < 5; i++) {
+      q.json(note(`n${i}`))
+      const c = q.seal() as FlushChunk
+      expect(c.seq).toBe(i)
+      keys.add(c.idempotencyKey)
+      // An empty seal in between takes nothing.
+      expect(q.seal()).toBeNull()
+    }
+    expect(keys.size).toBe(5)
+    expect(q.nextSeq).toBe(5)
+  })
 
-    // Let the fire-and-forget raise land, then reload.
-    await new Promise((r) => setTimeout(r, 0))
-    const after = await ChunkStore.open('db', 1 << 20, { backend })
-    expect(await after.nextSegmentSeq('s1')).toBeGreaterThan(tail.segmentSeq)
+  it('keys two instances of one session apart', () => {
+    const a = queue({ instanceId: 'tab-a' })
+    const b = queue({ instanceId: 'tab-b' })
+    a.json(note('a'))
+    b.json(note('b'))
+    expect(a.seal()?.idempotencyKey).not.toBe(b.seal()?.idempotencyKey)
+  })
+
+  it('stamps the wall clock the body was sealed at', () => {
+    const clock = clockAt(10)
+    const q = queue({ clock })
+    q.json(note('a'))
+    clock.t = 99
+    expect(q.seal()?.createdWallMs).toBe(1_700_000_000_099)
   })
 })
 
-/* ── the overrun policy ───────────────────────────────────────────── */
+describe('compress', () => {
+  it('swaps in the gzipped body when it is smaller, under the same key', async () => {
+    const q = queue()
+    for (let i = 0; i < 50; i++) q.json(note('repetitive', 'x'.repeat(200)))
+    const chunk = q.seal() as FlushChunk
+    const key = chunk.idempotencyKey
+    const before = await decodeBody(chunk.bytes)
+    await compress(chunk)
+    const after = await decodeBody(chunk.bytes)
+    expect(after.preamble.gzipped).toBe(true)
+    expect(chunk.bytes.byteLength).toBeLessThan(BODY_PREAMBLE_BYTES + 50 * 200)
+    expect(chunk.idempotencyKey).toBe(key)
+    // The same frames either way, so whichever form an upload sends, ingest
+    // decodes the same body.
+    expect(after.records).toEqual(before.records)
+  })
+
+  it('never makes a body larger', async () => {
+    const q = queue()
+    q.json(ctrl(256))
+    q.raw(crypto.getRandomValues(new Uint8Array(256)))
+    const chunk = q.seal() as FlushChunk
+    const before = chunk.bytes.byteLength
+    await compress(chunk)
+    expect(chunk.bytes.byteLength).toBeLessThanOrEqual(before)
+  })
+})
+
+describe('FlushQueue.append and takeFrames', () => {
+  it('appends frames another queue wrote, verbatim, counted as frames', async () => {
+    const worker = queue()
+    worker.json(ctrl(3))
+    worker.raw(new Uint8Array([1, 2, 3]))
+    const { frames, count } = worker.takeFrames()
+    expect(count).toBe(2)
+    expect(worker.frameCount).toBe(0)
+
+    const page = queue()
+    page.json(note('page'))
+    expect(page.append(frames, count)).toBe(true)
+    expect(page.frameCount).toBe(3)
+    const body = await decodeBody((page.seal() as FlushChunk).bytes)
+    expect(body.records.map((r) => r.t)).toEqual(['batch', 'note', 'ctrl'])
+    expect(body.frames.at(-1)?.raw).toBe(true)
+  })
+
+  it('refuses a forward whole when it would pass the cap, so no pair is split', () => {
+    const page = queue({ maxPendingBytes: 1024 })
+    const w = new FrameWriter()
+    w.json(note('big', 'x'.repeat(2048)))
+    expect(page.append(w.take(), 1)).toBe(false)
+    expect(page.frameCount).toBe(0)
+  })
+})
 
 describe('FlushQueue under its own cap', () => {
   it('drops a ctrl record and its raw frame together, never the frame alone', async () => {
-    const q = new FlushQueue({ sessionId: 's1', gzip: false, maxPendingBytes: 1024 })
+    const q = queue({ maxPendingBytes: 1024 })
     while (q.pendingBytes < 1024) q.json(note('filler', 'x'.repeat(64)))
     const framesBefore = q.frameCount
 
@@ -423,20 +293,20 @@ describe('FlushQueue under its own cap', () => {
     expect(q.frameCount).toBe(framesBefore)
     expect(q.droppedRecords).toBe(2)
 
-    const chunk = (await q.seal('interval')) as FlushChunk
+    const chunk = q.seal() as FlushChunk
     const body = await decodeBody(chunk.bytes)
     expect(body.frames.some((f) => f.raw)).toBe(false)
   })
 
   it('accepts records again once a seal has emptied the buffer', async () => {
-    const q = new FlushQueue({ sessionId: 's1', gzip: false, maxPendingBytes: 1024 })
+    const q = queue({ maxPendingBytes: 1024 })
     while (q.pendingBytes < 1024) q.json(note('filler', 'x'.repeat(64)))
     q.json(note('refused'))
     expect(q.droppedRecords).toBe(1)
 
-    await q.seal('interval')
+    q.seal()
     q.json(note('accepted'))
-    const chunk = (await q.seal('interval')) as FlushChunk
+    const chunk = q.seal() as FlushChunk
     expect((await decodeBody(chunk.bytes)).records.map(nameOf)).toEqual([undefined, 'accepted'])
   })
 })

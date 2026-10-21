@@ -4,84 +4,66 @@
  * A dedicated `Worker` is a separate JavaScript realm with its own
  * `globalThis`, so the page's patched `WebTransport` is not the worker's. The
  * worker installs its own hook at module-eval time by importing this package,
- * and this handshake is how it is told the key. Never blob-URL rewriting: it
- * needs `document_start` MAIN-world execution the SDK lacks, `blob:` workers
- * are blocked by most hardened `worker-src` policies, and substituting a
- * customer's worker is not a behaviour a dependency may have.
+ * and `initWorker()` makes it a probe of the page that links it: it observes
+ * the worker's transports and hands every record to the page, which numbers,
+ * seals and uploads them in its own stream.
  *
  * The page names its worker explicitly through `Collector.linkWorker()` rather
  * than answering hellos automatically, because the page cannot enumerate its
  * own workers: the only automatic mechanism would be a `message` listener on
  * the page's own global, which also receives cross-origin `postMessage` from
- * any frame or opener, and answering one of those would post the customer's
- * `apiKey` to whoever asked for it.
+ * any frame or opener.
  *
- * Fail closed in both directions. A worker that never hears back keeps its own
- * hook dormant, so its `WebTransport` traffic is buffered and discarded rather
- * than sent unkeyed; a page that called `linkWorker()` and never got a hello
- * marks its own session `partial` on the setup and terminal records.
+ * Until the page answers, the dormant hook holds the worker's control plane,
+ * and the probe replays it into the page's session once linked: a worker
+ * that connects right after `initWorker()` keeps its SETUP and first
+ * SUBSCRIBEs. A worker that never hears back releases what it held and keeps
+ * its hook dormant: its `WebTransport` traffic goes only to a bounded ring and
+ * never leaves the worker. The page reports that link as `timeout`.
  */
 
 import type { DraftSet } from '../draft/index.js'
-import type { CollectorConfig } from '../types.js'
-import { ensureDormantHook, teardownDormant } from './dormant.js'
-import {
-  CONFIG,
-  type Collector,
-  HANDSHAKE,
-  HELLO,
-  type InitOptions,
-  initWith,
-  type MessageTarget,
-} from './init.js'
+import { connectionIdOf } from '../transport/index.js'
+import type { DetailLevel } from '../types.js'
+import { DEFAULT_LIMITS } from './defaults.js'
+import { claimDormantHook, ensureDormantHook, releaseDormantEarly } from './dormant.js'
+import { envelope, type LinkedMessage, linkMessage } from './link.js'
+import { type ProbePorts, ProbeRuntime } from './probe.js'
+import type { LinkEvent, MessageTarget } from './session.js'
 
-/**
- * How long the worker waits for the page's answer.
- *
- * **Provenance: guess, pending field data**. Nothing else bounds it. Long
- * enough for a page that calls `linkWorker()` after its own bootstrap, short
- * enough that a worker in a page which never links it stops holding a listener
- * and a ring for a message that is not coming.
- */
-export const WORKER_HANDSHAKE_TIMEOUT_MS = 5_000
-
-export interface WorkerCollector extends Collector {
-  /** `false` when the handshake timed out. The worker then collects nothing. */
-  readonly linked: boolean
+/** A linked worker's view of the collector. Every verb is forwarded to the page. */
+export interface WorkerProbe {
+  /**
+   * Resolves `true` once a page links this worker, `false` after
+   * `limits.linkTimeoutMs` (5 s by default). If `false`, the probe stays inert
+   * and sends nothing.
+   */
+  readonly linked: Promise<boolean>
+  /** The page's ids, or `null` until linked. They follow the page into a new session. */
+  ids(): { sessionId: string; instanceId: string } | null
+  /** The connection id of a `WebTransport` this worker created. */
+  connectionIdOf(transport: WebTransport): string | undefined
+  /** Forwarded to the page's session, optionally scoped to one connection. */
+  annotate(name: string, data?: unknown, connectionId?: string): void
+  /** Forwarded to the page. The metric must be defined on the page. */
+  observe(name: string, value: number, labels?: Record<string, string>): void
+  /** Forwarded. The page owns the capture window and the budget. */
+  escalate(level: DetailLevel, reason?: string): void
+  /** Forwarded. Closes the page's capture window. */
+  resolve(reason?: string): void
 }
 
-export interface InitWorkerOptions extends InitOptions {
+export interface InitWorkerOptions extends ProbePorts {
+  /** How long to wait for the page. Default `limits.linkTimeoutMs`'s default. */
   readonly timeoutMs?: number
   /** The object the handshake runs over. Defaults to the worker's own global. */
   readonly target?: MessageTarget
+  /** `performance.timeOrigin` of this worker. Injected so the suite is deterministic. */
+  readonly timeOrigin?: number
 }
 
-/** A collector that never got a key: every verb is total, and none transmits. */
-function dormantCollector(): WorkerCollector {
-  return {
-    linked: false,
-    stop: async () => {
-      teardownDormant()
-    },
-    abort: async () => {
-      teardownDormant()
-    },
-    annotate: () => {},
-    defineMetric: () => {},
-    observe: () => {},
-    escalate: () => {},
-    resolve: () => {},
-    linkWorker: () => {},
-    ids: () => ({ sessionId: '', connectionId: '' }),
-    usage: () => ({
-      bytesByLevel: { baseline: 0, headers: 0, 'headers+sizes': 0, 'headers+data': 0 },
-      elevatedSeconds: 0,
-      elevatedMinutes: 0,
-      bytesPerElevatedMinute: 0,
-      isEstimate: true,
-    }),
-  }
-}
+/** Calls made before the page answers, replayed once it does. Bounded. */
+const MAX_QUEUED = 1024
 
 function globalTarget(): MessageTarget | null {
   const g = globalThis as unknown as Partial<MessageTarget>
@@ -92,28 +74,45 @@ function globalTarget(): MessageTarget | null {
 /**
  * Call this inside a dedicated `Worker` that opens its own `WebTransport`.
  *
- * Sends one hello and waits for the page's config. **Never rejects**: an
- * unanswered worker resolves to a collector whose `linked` is `false` and whose
- * every verb is inert, because an unhandled rejection inside someone's worker
- * is the failure this package exists not to cause.
+ * Returns at once. Sends one hello and waits for the page's answer; calls made
+ * meanwhile are kept and forwarded once it arrives. **Never throws**, and
+ * `linked` never rejects: an unhandled rejection inside someone's worker is the
+ * failure this package exists not to cause.
  */
-export async function initWorkerWith(
+export function initWorkerWith(
   drafts: DraftSet,
   port?: MessagePort,
   options: InitWorkerOptions = {},
-): Promise<WorkerCollector> {
+): WorkerProbe {
   // Dormant install in this realm too: the worker's global is patched the moment
   // it imports the package, so bytes crossing before the page answers are
   // buffered rather than lost.
   ensureDormantHook()
 
-  const target = (port as unknown as MessageTarget | undefined) ?? options.target ?? globalTarget()
-  if (target === null || target === undefined) return dormantCollector()
+  let probe: ProbeRuntime | null = null
+  let queued: ((p: ProbeRuntime) => void)[] = []
+  const defer = (f: (p: ProbeRuntime) => void): void => {
+    if (probe !== null) {
+      try {
+        f(probe)
+      } catch (err) {
+        options.onInternalError?.(err)
+      }
+      return
+    }
+    if (queued.length < MAX_QUEUED) queued.push(f)
+  }
 
-  const timeoutMs = options.timeoutMs ?? WORKER_HANDSHAKE_TIMEOUT_MS
-  const config = await new Promise<CollectorConfig | null>((resolve) => {
+  const linked = new Promise<boolean>((resolve) => {
+    const target =
+      (port as unknown as MessageTarget | undefined) ?? options.target ?? globalTarget()
+    if (target === null) {
+      resolve(false)
+      return
+    }
     let settled = false
-    const finish = (c: CollectorConfig | null): void => {
+    const set = options.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
+    const finish = (ok: boolean): void => {
       if (settled) return
       settled = true
       try {
@@ -121,53 +120,57 @@ export async function initWorkerWith(
       } catch {
         // A target that cannot be unlistened is not a failure worth reporting.
       }
-      resolve(c)
-    }
-    const onMessage = (e: { data?: unknown }): void => {
-      const d = e.data as Record<string, unknown> | undefined
-      if (typeof d !== 'object' || d === null || d[HANDSHAKE] !== 1 || d.t !== CONFIG) return
-      const c = d.config
-      // Fail closed: an answer that is not a usable config is the same as no
-      // answer, and the key is never invented here. The endpoint may legitimately
-      // be absent — `resolveConfig` has a default for it.
-      if (
-        typeof c !== 'object' ||
-        c === null ||
-        typeof (c as CollectorConfig).apiKey !== 'string'
-      ) {
-        finish(null)
-        return
+      if (!ok) {
+        queued = []
+        // Nothing will attach in this realm to replay it into.
+        releaseDormantEarly()
       }
-      finish(c as CollectorConfig)
+      resolve(ok)
+    }
+    const onMessage = (e: LinkEvent): void => {
+      const m = linkMessage(e.data)
+      const channel = e.ports?.[0]
+      if (m === null || m.t !== 'linked' || channel === undefined || settled) return
+      try {
+        const claim = claimDormantHook()
+        probe = new ProbeRuntime(
+          m as unknown as LinkedMessage,
+          channel,
+          claim.hook,
+          drafts,
+          options,
+        )
+        probe.start()
+        const replay = queued
+        queued = []
+        for (const f of replay) f(probe)
+        finish(true)
+      } catch (err) {
+        options.onInternalError?.(err)
+        finish(false)
+      }
     }
     try {
       target.addEventListener('message', onMessage)
       target.start?.()
-      target.postMessage({ [HANDSHAKE]: 1, t: HELLO, v: 1 })
-    } catch {
-      finish(null)
+      target.postMessage(
+        envelope({ t: 'hello', timeOrigin: options.timeOrigin ?? performance.timeOrigin }),
+      )
+    } catch (err) {
+      options.onInternalError?.(err)
+      finish(false)
       return
     }
-    setTimeout(() => finish(null), timeoutMs)
+    set(() => finish(false), options.timeoutMs ?? DEFAULT_LIMITS.linkTimeoutMs)
   })
 
-  if (config === null) return dormantCollector()
-
-  const collector = initWith(drafts, config, options)
-  // A delegating wrapper rather than a copy: `PendingCollector`'s methods read
-  // private fields, and spreading would detach them from the instance that owns
-  // them.
   return {
-    linked: true,
-    stop: () => collector.stop(),
-    abort: () => collector.abort(),
-    annotate: (n, d) => collector.annotate(n, d),
-    defineMetric: (n, d) => collector.defineMetric(n, d),
-    observe: (n, v, l) => (l === undefined ? collector.observe(n, v) : collector.observe(n, v, l)),
-    escalate: (l, r) => collector.escalate(l, r),
-    resolve: (r) => collector.resolve(r),
-    ids: () => collector.ids(),
-    usage: () => collector.usage(),
-    linkWorker: (t) => collector.linkWorker(t),
+    linked,
+    ids: () => probe?.ids ?? null,
+    connectionIdOf: (transport) => connectionIdOf(transport),
+    annotate: (name, data, connectionId) => defer((p) => p.annotate(name, data, connectionId)),
+    observe: (name, value, labels) => defer((p) => p.observe(name, value, labels)),
+    escalate: (level, reason) => defer((p) => p.escalate(level, reason)),
+    resolve: (reason) => defer((p) => p.resolve(reason)),
   }
 }

@@ -128,13 +128,13 @@ A frame's length prefix declares more bytes than the body still holds.
 
 *Value carried:* the offset, the declared length, then the bytes remaining.
 
-### `MQ2101` — segmentSeq must be a non-negative safe integer
+### `MQ2101` — seq must be a non-negative safe integer
 
-The idempotency key is `sha256(sessionId:segmentSeq)` and ingest dedupes on it exactly. A non-numeric or fractional sequence collapses every chunk onto one key, so ingest keeps the first body and silently discards the rest — the session is under-reported and nothing anywhere says so. Rejected at the call site instead.
+The idempotency key is `sha256(sessionId:instanceId:seq)` and ingest dedupes on it exactly. A non-numeric or fractional sequence collapses every body onto one key, so ingest keeps the first body and silently discards the rest — the session is under-reported and nothing anywhere says so. Rejected at the call site instead.
 
 *Value carried:* the rejected value.
 
-### `MQ2102` — crypto.subtle is unavailable
+### `MQ2102` — crypto.subtle is unavailable **retired**
 
 Usually an insecure context: `crypto.subtle` is absent outside HTTPS and localhost. Use `idempotencyKeySync` and set `BatchRecord.keyFallback`, which tells ingest the key came from the weaker synchronous derivation and should be treated accordingly.
 

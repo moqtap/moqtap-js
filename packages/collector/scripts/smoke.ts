@@ -281,16 +281,14 @@ const EXPECTED: Readonly<
   Record<string, { readonly names: readonly string[]; readonly patches: boolean }>
 > = {
   '.': {
-    names: [
-      'init',
-      'initWorker',
-      'resolveConfig',
-      'ensureDormantHook',
-      'COLLECTOR_VERSION',
-      'NEED',
-    ],
+    names: ['init', 'initWorker', 'DEFAULTS', 'COLLECTOR_VERSION', 'NEED'],
     // The dormant install, and the reason every entry is in the `sideEffects` allowlist.
     patches: true,
+  },
+  './internal': {
+    names: ['resolveConfig', 'ensureDormantHook', 'CollectorRuntime', 'PRESENCE_KEY', 'DB_NAME'],
+    // The one entry that is not in the allowlist, because it installs nothing.
+    patches: false,
   },
   ...Object.fromEntries(
     DRAFT_ENTRIES.map((e) => [
@@ -309,6 +307,78 @@ const EXPECTED: Readonly<
       },
     ]),
   ),
+}
+
+/**
+ * Names only `./internal` may export. The runtime's internals carry no
+ * compatibility promise, so an entry an integrator imports that exposes one
+ * has made that promise by accident.
+ */
+const INTERNAL_ONLY: readonly string[] = [
+  'CollectorRuntime',
+  'resolveConfig',
+  'EscalationController',
+  'UsageMeter',
+  'DB_NAME',
+  'PRESENCE_KEY',
+  'readPresence',
+  'ensureDormantHook',
+  'teardownDormant',
+]
+
+/**
+ * The integrator's surface, run from the build: a session, the next one, a
+ * worker probe with no page to link it, and `discard()` restoring the global.
+ * `fetch` is stubbed so the probe never reaches a network.
+ */
+const SURFACE_BODY = (load: string): string =>
+  [
+    'globalThis.fetch = async () => new Response(null, { status: 202 })',
+    `const m = ${load}`,
+    "const c = m.init({ apiKey: 'pk_smoke', endpoint: 'https://ingest.invalid/v1/ingest', sessionId: 'smoke-1' })",
+    'const first = c.ids()',
+    "const second = c.newSession({ contentId: 'next' })",
+    'const verbs = ["ids", "connections", "connectionIdOf", "linkWorker", "setContext", "flush",',
+    '  "end", "newSession", "discard", "annotate", "defineMetric", "observe", "escalate",',
+    '  "resolve", "usage"].filter((k) => typeof c[k] !== "function")',
+    'const removed = ["stop", "abort"].filter((k) => k in c)',
+    'const probe = m.initWorker()',
+    'const linkedIsPromise = typeof probe.linked?.then === "function"',
+    'const linked = await probe.linked',
+    'await c.discard()',
+    'process.stdout.write(JSON.stringify({ first, second, verbs, removed, linkedIsPromise, linked,',
+    '  restored: globalThis.WebTransport === SENTINEL }))',
+  ].join('\n')
+
+interface SurfaceResult {
+  readonly first: { sessionId: string; instanceId?: string }
+  readonly second: { sessionId: string; instanceId?: string; contentId?: string }
+  readonly verbs: readonly string[]
+  readonly removed: readonly string[]
+  readonly linkedIsPromise: boolean
+  readonly linked: boolean
+  readonly restored: boolean
+}
+
+/** Run {@link SURFACE_BODY} against one entry in its own process. */
+function surface(
+  consumer: string,
+  name: string,
+  specifier: string,
+  cjs: boolean,
+): SurfaceResult | string {
+  const file = join(consumer, 'probes', `${name}.${cjs ? 'cjs' : 'mjs'}`)
+  const load = cjs
+    ? `require(${JSON.stringify(specifier)})`
+    : `await import(${JSON.stringify(specifier)})`
+  // CommonJS has no top-level await; the body runs inside an async function there.
+  const body = SURFACE_BODY(load)
+  writeFileSync(file, `${PROBE_PREAMBLE}\n${cjs ? `;(async () => {\n${body}\n})()` : body}\n`)
+  const r = spawnSync(NODE, [file], { cwd: consumer, encoding: 'utf8' })
+  if (r.status !== 0) {
+    return `${r.stdout ?? ''}\n${r.stderr ?? ''}`.trim().split('\n').slice(0, 8).join('\n')
+  }
+  return JSON.parse(r.stdout) as SurfaceResult
 }
 
 /* ── main ────────────────────────────────────────────────────────────────── */
@@ -382,7 +452,7 @@ function main(): void {
 
     // And the positive backstop: the built output and the declarations are
     // there in both module formats.
-    for (const base of ['index', ...DRAFT_ENTRIES]) {
+    for (const base of ['index', 'internal', ...DRAFT_ENTRIES]) {
       for (const ext of ['js', 'cjs', 'd.ts']) {
         check(files.has(`dist/${base}.${ext}`), `dist/${base}.${ext} ships`)
       }
@@ -412,6 +482,14 @@ function main(): void {
           `exports the right names: ${label}`,
           missing.length ? `missing: ${missing.join(', ')} — got ${r.names.length} names` : '',
         )
+        if (sub !== './internal') {
+          const leaked = INTERNAL_ONLY.filter((n) => r.names.includes(n))
+          check(
+            leaked.length === 0,
+            `exports none of the internals: ${label}`,
+            leaked.length ? `exported: ${leaked.join(', ')} — they belong in ./internal` : '',
+          )
+        }
       }
 
       // ESM and CJS must present the same surface. A mismatch is an interop bug
@@ -434,7 +512,7 @@ function main(): void {
 
     /* 3 ── the documented side-effect boundary ───────────────────────────── */
 
-    section('side-effect boundary — every entry installs the hook')
+    section('side-effect boundary — every entry but internal installs the hook')
     for (const [sub, expected] of Object.entries(EXPECTED)) {
       const specifier = sub === '.' ? pkg.name : `${pkg.name}/${sub.slice(2)}`
       for (const fmt of ['ESM import', 'CJS require']) {
@@ -455,6 +533,45 @@ function main(): void {
         if (expected.patches) {
           check(r.stillFunction, `${specifier} (${fmt}) leaves a constructible WebTransport behind`)
         }
+      }
+    }
+
+    /* 3b ── the integrator's surface, run ────────────────────────────────── */
+
+    section('the integrator’s surface, run from the build')
+    const newest = DRAFT_ENTRIES.at(-1) as string
+    for (const sub of ['.', `./${newest}`]) {
+      const specifier = sub === '.' ? pkg.name : `${pkg.name}/${sub.slice(2)}`
+      for (const cjs of [false, true]) {
+        const label = `${specifier} (${cjs ? 'CJS require' : 'ESM import'})`
+        const name = `surface-${sub.replace(/[^a-z0-9]/gi, '_') || 'root'}-${cjs ? 'cjs' : 'esm'}`
+        const r = surface(consumer, name, specifier, cjs)
+        if (typeof r === 'string') {
+          check(false, `runs: ${label}`, r)
+          continue
+        }
+        check(
+          r.verbs.length === 0 && r.removed.length === 0,
+          `has every Collector verb, and neither stop() nor abort(): ${label}`,
+          [...r.verbs.map((v) => `missing ${v}`), ...r.removed.map((v) => `still has ${v}`)].join(
+            ', ',
+          ),
+        )
+        check(
+          r.first.sessionId === 'smoke-1' &&
+            typeof r.first.instanceId === 'string' &&
+            r.second.sessionId !== 'smoke-1' &&
+            r.second.instanceId !== r.first.instanceId &&
+            r.second.contentId === 'next',
+          `newSession() returns the next session’s ids at once: ${label}`,
+          JSON.stringify({ first: r.first, second: r.second }),
+        )
+        check(
+          r.linkedIsPromise && r.linked === false,
+          `initWorker() returns at once, unlinked with no page: ${label}`,
+          JSON.stringify({ linkedIsPromise: r.linkedIsPromise, linked: r.linked }),
+        )
+        check(r.restored, `discard() restores globalThis.WebTransport: ${label}`)
       }
     }
 
@@ -547,8 +664,11 @@ function typecheck(consumer: string): void {
   writeFileSync(
     join(consumer, 'types', 'esm.ts'),
     [
-      "import { init, resolveConfig, COLLECTOR_VERSION, NEED } from '@moqtap/collector'",
-      "import type { Collector, InitOptions, CollectorConfig, ResolvedConfig } from '@moqtap/collector'",
+      "import { init, initWorker, COLLECTOR_VERSION, NEED } from '@moqtap/collector'",
+      "import type { Collector, CollectorConfig, ResolvedConfig } from '@moqtap/collector'",
+      "import type { ConnectionInfo, Identity, WorkerProbe } from '@moqtap/collector'",
+      "import { resolveConfig } from '@moqtap/collector/internal'",
+      "import type { InitOptions } from '@moqtap/collector/internal'",
       "import { adapter as a19, PROTOCOL_STRINGS } from '@moqtap/collector/draft19'",
       "import { adapter as a20, DRAFT20_ADAPTER } from '@moqtap/collector/draft20'",
       "import type { DraftAdapter, Need, SupportedDraft } from '@moqtap/collector/draft20'",
@@ -571,6 +691,26 @@ function typecheck(consumer: string): void {
       '// notes that a widened one makes every `=== NEED` across the boundary false.',
       'export const need: Need = NEED',
       'export const proto: string = PROTOCOL_STRINGS[20]',
+      '',
+      '// The session verbs, and the two they replaced. `@ts-expect-error` fails the',
+      '// compile if a removed name ever comes back.',
+      'export async function playback(c: Collector): Promise<readonly ConnectionInfo[]> {',
+      "  const next: Identity = c.newSession({ contentId: 'next' })",
+      '  void next.instanceId',
+      "  c.setContext({ contentId: 'switched' })",
+      '  await c.flush()',
+      '  await c.end()',
+      '  await c.discard()',
+      '  // @ts-expect-error `stop()` is `end()`',
+      '  c.stop()',
+      '  // @ts-expect-error `abort()` is `discard()`',
+      '  c.abort()',
+      '  return c.connections()',
+      '}',
+      'export const probe: WorkerProbe = initWorker()',
+      'export const linked: Promise<boolean> = probe.linked',
+      '// @ts-expect-error a probe ends nothing',
+      'probe.end()',
       '',
     ].join('\n'),
   )

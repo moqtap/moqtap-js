@@ -25,17 +25,16 @@
  *     because it reports *queueing* and never delivery. **This is undetectable**
  *     here or anywhere, and no fallback is possible.
  *
- * 1–3 come back as `false`, and a `false` nobody acts on is a **silently lost
- * tail**: `FlushQueue.sealSync` has already emptied the frame writer and
- * deliberately does not persist, so those bytes exist nowhere else — and the
- * tail carries the terminal record, the drop counters and the reason the session
+ * 1–3 come back as `false`. Every tail body is also written to IndexedDB, so
+ * the next page load on the origin sends it — but that may be days away or
+ * never, and the tail carries the `end` record that says how the instance
  * ended.
  *
  * So 1–3 fall back to `fetch(..., {keepalive: true})`: the same property the
  * beacon was wanted for, a request allowed to outlive the document that started
  * it, through a different API that a blocker removing one has not necessarily
  * removed. The primary path is unchanged; the fallback runs only where the
- * primary has already failed and the alternative is losing the segment outright.
+ * primary has already failed.
  */
 
 /** Which mechanism took the body, or `false` if nothing did. */
@@ -59,10 +58,12 @@ export interface SendTailOptions {
    */
   readonly apiKey?: string
   /**
-   * The segment's idempotency key, sent as `?ik=`. It also travels inside the
+   * The body's idempotency key, sent as `?ik=`. It also travels inside the
    * first frame, but the edge cannot reach it there without decompressing.
    */
   readonly idempotencyKey?: string
+  /** The instance that sealed the body, sent as `?i=` so ingest can partition without decompressing. */
+  readonly instanceId?: string
   /** Injected for the suite and for hosts with a different beacon. */
   readonly beacon?: (url: string, data: Blob) => boolean
   /** Injected for the suite. Defaults to the platform `fetch`. */
@@ -111,7 +112,7 @@ function tryBeacon(endpoint: string, blob: Blob, opts: SendTailOptions | undefin
       return nav.sendBeacon(url, data)
     })
   try {
-    return send(uploadUrl(endpoint, opts?.apiKey, opts?.idempotencyKey), blob)
+    return send(uploadUrl(endpoint, opts?.apiKey, opts?.idempotencyKey, opts?.instanceId), blob)
   } catch (err) {
     opts?.onInternalError?.(err)
     return false
@@ -133,17 +134,20 @@ function tryKeepalive(
   if (typeof doFetch !== 'function') return false
 
   try {
-    const pending = doFetch(uploadUrl(endpoint, opts?.apiKey, opts?.idempotencyKey), {
-      method: 'POST',
-      headers: { 'content-type': contentType },
-      body: blob,
-      // The one property that makes this a usable substitute for the beacon
-      // rather than a request the unload cancels.
-      keepalive: true,
-      // Nothing at ingest reads a cookie, and sending one would force an ingest
-      // host's CORS policy to allow credentials it has no use for.
-      credentials: 'omit',
-    })
+    const pending = doFetch(
+      uploadUrl(endpoint, opts?.apiKey, opts?.idempotencyKey, opts?.instanceId),
+      {
+        method: 'POST',
+        headers: { 'content-type': contentType },
+        body: blob,
+        // The one property that makes this a usable substitute for the beacon
+        // rather than a request the unload cancels.
+        keepalive: true,
+        // Nothing at ingest reads a cookie, and sending one would force an ingest
+        // host's CORS policy to allow credentials it has no use for.
+        credentials: 'omit',
+      },
+    )
     // Never let it float. The response arrives after the page is gone, if at
     // all, and an unattended rejection surfaces as an unhandled rejection inside
     // somebody else's application.
@@ -165,21 +169,31 @@ function tryKeepalive(
 export const UPLOAD_CONTENT_TYPE = 'text/plain'
 
 /**
- * `?k=…&ik=…`, appended without disturbing a query the endpoint already carries.
+ * `?k=…&ik=…&i=…`, appended without disturbing a query the endpoint already
+ * carries.
  *
- * The key and the idempotency key travel in the URL on every path: a request
- * with no custom header needs no preflight, and `sendBeacon` cannot set one.
- * The key is the public ingest key, so nothing secret reaches a log.
+ * The key, the idempotency key and the instance travel in the URL on every
+ * path: a request with no custom header needs no preflight, and `sendBeacon`
+ * cannot set one. The key is the public ingest key, so nothing secret reaches
+ * a log.
  *
  * String work rather than `new URL()`: this runs at `pagehide`, `resolveConfig`
  * has already validated the endpoint, and a parse that threw here would cost the
  * tail for nothing.
  */
-export function uploadUrl(endpoint: string, apiKey?: string, idempotencyKey?: string): string {
+export function uploadUrl(
+  endpoint: string,
+  apiKey?: string,
+  idempotencyKey?: string,
+  instanceId?: string,
+): string {
   const params: string[] = []
   if (apiKey !== undefined && apiKey !== '') params.push(`k=${encodeURIComponent(apiKey)}`)
   if (idempotencyKey !== undefined && idempotencyKey !== '') {
     params.push(`ik=${encodeURIComponent(idempotencyKey)}`)
+  }
+  if (instanceId !== undefined && instanceId !== '') {
+    params.push(`i=${encodeURIComponent(instanceId)}`)
   }
   if (params.length === 0) return endpoint
   const sep = endpoint.includes('?') ? '&' : '?'

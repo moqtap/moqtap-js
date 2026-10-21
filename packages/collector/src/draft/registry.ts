@@ -5,7 +5,7 @@
  * sees exactly the decoders that entry names and nothing loads at session time.
  */
 
-import type { DraftAdapter, SetupRecord, SupportedDraft } from '../types.js'
+import type { ConnOpenRecord, DraftAdapter, SupportedDraft } from '../types.js'
 import { draftOfProtocol } from './protocol.js'
 
 export type DraftSet = ReadonlyMap<SupportedDraft, DraftAdapter>
@@ -40,6 +40,6 @@ export function resolveDraft(
   return { ok: true, draft, adapter }
 }
 
-export function degradedReasonOf(reason: ResolveFailure): NonNullable<SetupRecord['degraded']> {
+export function degradedReasonOf(reason: ResolveFailure): NonNullable<ConnOpenRecord['degraded']> {
   return reason === 'not-included' ? 'draft-mismatch' : 'unsupported-protocol'
 }

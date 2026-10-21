@@ -17,13 +17,12 @@
  *     paths.
  *
  *  2. **The key rides in the first frame.** The first frame of every body, on
- *     both paths, is a `BatchRecord` carrying `idempotencyKey` and `segmentSeq`.
- *     The `fetch()` path sets the `Idempotency-Key` header too, so ingest can
- *     dedupe without decompressing, but the frame is authoritative and always
- *     present. The flush module enforces that rule; this module only guarantees
- *     that two frame streams concatenate byte-for-byte, which is what makes
- *     prepending the batch frame at seal time a `Uint8Array.set` rather than a
- *     re-encode.
+ *     both paths, is a `BatchRecord` carrying `idempotencyKey` and `seq`. The
+ *     URL carries the key too, so ingest can dedupe without decompressing, but
+ *     the frame is authoritative and always present. The flush module enforces
+ *     that rule; this module only guarantees that two frame streams concatenate
+ *     byte-for-byte, which is what makes prepending the batch frame at seal
+ *     time a `Uint8Array.set` rather than a re-encode.
  */
 
 import { gzip, gzipSupported } from './gzip.js'

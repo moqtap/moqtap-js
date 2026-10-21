@@ -26,9 +26,10 @@
  *  2. **The body preamble** — The `sendBeacon` path can set no request
  *     headers, so it can announce neither `Content-Encoding: gzip` nor an
  *     `Idempotency-Key`, and the envelope assumes both (`body.ts`).
- *  3. **Async keying** — the digest is sha256 and it has to be stamped
- *     stamped at creation, but `crypto.subtle.digest` is asynchronous and
- *     absent on insecure origins (`idempotency.ts`).
+ *  3. **Synchronous keying** — the digest is sha256, stamped at seal time in
+ *     the same turn the frames are taken, so it is bundled rather than taken
+ *     from `crypto.subtle`, which is asynchronous and absent on insecure
+ *     origins (`idempotency.ts`, `sha256.ts`).
  */
 
 export {
@@ -42,4 +43,5 @@ export {
 } from './body.js'
 export { FrameWriter, readFrames } from './frame-writer.js'
 export { gzip, gzipSupported } from './gzip.js'
-export { idempotencyKey, idempotencyKeySync, subtleAvailable } from './idempotency.js'
+export { idempotencyKey } from './idempotency.js'
+export { sha256, sha256Hex } from './sha256.js'
