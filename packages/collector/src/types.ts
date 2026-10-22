@@ -220,8 +220,10 @@ export interface TransportObserver {
   /**
    * The negotiated `session.protocol`, available only after `ready`. `''` when
    * the session was established without one, as every draft before -15 is.
+   * `at` is when `ready` resolved, which precedes the call for a session
+   * replayed to a new observer.
    */
-  onSessionProtocol?(sessionId: string, protocol: string): void
+  onSessionProtocol?(sessionId: string, protocol: string, at?: Mono): void
   /**
    * `info` says how the transport ended: `closed` when its `closed` promise
    * resolved, with the close code and reason the peer or the page gave, and
@@ -1225,6 +1227,12 @@ export interface SetupRecord extends RecordBase {
   /** The session's tags when the instance started. */
   readonly tags?: Readonly<Record<string, string>>
   readonly collectorVersion: string
+  /**
+   * When this session began, on the anchor's clock. Set on a session
+   * `newSession()` started, which keeps the page's anchor and the connections
+   * already open; absent on the one `init()` started.
+   */
+  readonly startTs?: number
 }
 
 /**
@@ -1247,8 +1255,8 @@ export type Role = 'publisher' | 'subscriber'
 /**
  * A connection opened: one `WebTransport`, in the page or in a linked worker.
  *
- * Sent at open, and again when the draft, the protocol or a new role becomes
- * known. Ingest merges the copies, and each one carries everything known so far.
+ * Sent at open, and again when the transport is ready or the draft, the
+ * protocol, the offered drafts or a new role becomes known. Ingest merges the copies, and each one carries everything known so far.
  */
 export interface ConnOpenRecord extends RecordBase {
   readonly t: 'conn-open'
@@ -1267,12 +1275,22 @@ export interface ConnOpenRecord extends RecordBase {
   readonly roles?: readonly Role[]
   /** The loud failure. Set means: transport-only metrics, raw control bytes still shipped. */
   readonly degraded?: 'draft-mismatch' | 'unsupported-protocol'
+  /**
+   * When the transport's `ready` resolved, on the same clock as `ts`. Absent on
+   * a connection that never became ready.
+   */
+  readonly readyTs?: number
+  /**
+   * The draft numbers the page offered: from the `WebTransport` constructor's
+   * `protocols`, else from the version list of the CLIENT_SETUP it sent.
+   */
+  readonly offered?: readonly number[]
 }
 
 /**
  * The `WebTransport` constructor options a connection reports. The offered
- * protocols are left out, since the negotiated one is on the record, and the
- * certificate hashes are counted, never carried.
+ * protocols are reported as drafts in `offered` instead, and the certificate
+ * hashes are counted, never carried.
  */
 export type ConnOptions = Omit<WebTransportOptionsInfo, 'protocols'>
 

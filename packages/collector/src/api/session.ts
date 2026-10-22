@@ -238,6 +238,8 @@ export class CollectorRuntime {
   }
 
   #setupSent = false
+  /** When this session began on an inherited anchor; `undefined` when the anchor is its own. */
+  #startTs: number | undefined
   #ended = false
   #discarded = false
   #releaseLock: () => void = () => {}
@@ -280,6 +282,7 @@ export class CollectorRuntime {
       originMono: this.#clock.now(),
       originWall: this.#clock.wall(),
     }
+    if (ports.anchor !== undefined) this.#startTs = this.#clock.now() - ports.anchor.originMono
     this.instanceId = ports.instanceId ?? mintId()
     this.#lastSealMono = this.#clock.now()
     this.#dest = { endpoint: config.endpoint, keyHash: sha256Hex(config.apiKey) }
@@ -960,6 +963,7 @@ export class CollectorRuntime {
       ...(ctx.environment !== '' ? { environment: ctx.environment } : {}),
       ...(ctx.release !== '' ? { release: ctx.release } : {}),
       ...(Object.keys(tags).length > 0 ? { tags } : {}),
+      ...(this.#startTs !== undefined ? { startTs: this.#startTs } : {}),
     }
     this.#queue.json(record)
   }

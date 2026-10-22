@@ -1045,6 +1045,28 @@ describe('dormancy', () => {
     expect(rec.protocols).toEqual([{ sessionId: rec.sessions[0]!.id, protocol: 'moqt-20' }])
   })
 
+  it('reports when ready resolved, live and on replay', async () => {
+    const glob = mockGlobal()
+    let mono = 10
+    const readyAt: Array<Mono | undefined> = []
+    const observer: TransportObserver = {
+      onSessionOpen: () => {},
+      onSessionProtocol: (_id, _protocol, at) => readyAt.push(at),
+      onSessionClose: () => {},
+      onStreamData: () => {},
+      onStreamClose: () => {},
+      onStreamError: () => {},
+    }
+    const hook = install(glob, observer, { clock: { now: () => mono, wall: () => 0 } })
+    const wt = connect(glob, 'https://relay.test/moq')
+    await wt.open('')
+    await settle()
+    mono = 500
+    hook.setObserver({ ...observer })
+
+    expect(readyAt).toEqual([10, 10])
+  })
+
   it('announces a session once per observer, however often it is set', async () => {
     const glob = mockGlobal()
     const rec = recorder()

@@ -59,6 +59,65 @@ const CLIENT_SETUP_U16_LEN = 0x20n
 /** SERVER_SETUP in drafts 11-14. */
 const SERVER_SETUP_U16_LEN = 0x21n
 
+/** The most versions a CLIENT_SETUP is read for. Real clients offer a handful. */
+const MAX_OFFERED = 16n
+
+/**
+ * A SETUP frame: SERVER_SETUP's selected version, or CLIENT_SETUP's offered
+ * list.
+ */
+export interface SetupFrame {
+  readonly server: boolean
+  readonly versions: readonly bigint[]
+}
+
+/**
+ * The SETUP frame a `moq-00` control stream opens with, or `undefined` when
+ * these bytes are not one, or not yet a whole one.
+ *
+ * @param b The control stream from its **first byte**. A later chunk finds
+ *   nothing, which is correct: SETUP is the first message, so a mid-stream match
+ *   would be a coincidence rather than a handshake.
+ */
+export function readSetupFrame(b: Uint8Array): SetupFrame | undefined {
+  const type = readRfc9000(b, 0)
+  if (type === NEED) return undefined
+
+  let server: boolean
+  let at: number
+  if (type.value === SERVER_SETUP_VARINT_LEN || type.value === CLIENT_SETUP_VARINT_LEN) {
+    server = type.value === SERVER_SETUP_VARINT_LEN
+    const len = readRfc9000(b, type.next)
+    if (len === NEED) return undefined
+    at = len.next
+  } else if (type.value === SERVER_SETUP_U16_LEN || type.value === CLIENT_SETUP_U16_LEN) {
+    server = type.value === SERVER_SETUP_U16_LEN
+    if (type.next + 2 > b.length) return undefined
+    at = type.next + 2
+  } else {
+    // Not a SETUP frame. On a control stream whose first message must be one,
+    // that means these are not the bytes this probe was written for.
+    return undefined
+  }
+
+  let count = 1n
+  if (!server) {
+    const n = readRfc9000(b, at)
+    // Bounded, so a corrupt count costs a refusal rather than a long loop.
+    if (n === NEED || n.value > MAX_OFFERED) return undefined
+    count = n.value
+    at = n.next
+  }
+  const versions: bigint[] = []
+  for (; count > 0n; count--) {
+    const v = readRfc9000(b, at)
+    if (v === NEED) return undefined
+    versions.push(v.value)
+    at = v.next
+  }
+  return { server, versions }
+}
+
 /**
  * The draft a `moq-00` session negotiated, read off the first control frame, or
  * `undefined` when these bytes do not say.
@@ -66,46 +125,19 @@ const SERVER_SETUP_U16_LEN = 0x21n
  * `undefined` is an ordinary outcome, not a refusal: a partial frame, a client
  * offering several versions, and a version this package has no decoder for all
  * produce it, and only the caller knows whether more bytes are coming.
- *
- * @param b The control stream from its **first byte**. A later chunk finds
- *   nothing, which is correct: SETUP is the first message, so a mid-stream match
- *   would be a coincidence rather than a handshake.
  */
 export function draftOfSetupFrame(b: Uint8Array): SupportedDraft | undefined {
-  const type = readRfc9000(b, 0)
-  if (type === NEED) return undefined
-
-  let isServer: boolean
-  let payloadStart: number
-  if (type.value === SERVER_SETUP_VARINT_LEN || type.value === CLIENT_SETUP_VARINT_LEN) {
-    isServer = type.value === SERVER_SETUP_VARINT_LEN
-    const len = readRfc9000(b, type.next)
-    if (len === NEED) return undefined
-    payloadStart = len.next
-  } else if (type.value === SERVER_SETUP_U16_LEN || type.value === CLIENT_SETUP_U16_LEN) {
-    isServer = type.value === SERVER_SETUP_U16_LEN
-    if (type.next + 2 > b.length) return undefined
-    payloadStart = type.next + 2
-  } else {
-    // Not a SETUP frame. On a control stream whose first message must be one,
-    // that means these are not the bytes this probe was written for.
-    return undefined
-  }
-
-  if (isServer) {
-    const version = readRfc9000(b, payloadStart)
-    if (version === NEED) return undefined
-    return draftOfVersion(version.value)
-  }
-
-  const count = readRfc9000(b, payloadStart)
-  if (count === NEED) return undefined
+  const f = readSetupFrame(b)
   // Exactly one offered version is the one that was selected. Two or more and
-  // this frame does not say which; the server's answer will. The count is only
-  // ever compared, never looped on or allocated against, so a corrupt one costs
-  // nothing here.
-  if (count.value !== 1n) return undefined
-  const version = readRfc9000(b, count.next)
-  if (version === NEED) return undefined
-  return draftOfVersion(version.value)
+  // this frame does not say which; the server's answer will.
+  return f?.versions.length === 1 ? draftOfVersion(f.versions[0] as bigint) : undefined
+}
+
+/**
+ * The draft number a wire version names, supported or not, or `undefined` when
+ * it is not a draft version at all. For reporting what was offered; the parser
+ * choice goes through `draftOfVersion`'s table.
+ */
+export function draftNumberOfVersion(v: bigint): number | undefined {
+  return v >> 8n === 0xff0000n ? Number(v & 0xffn) : undefined
 }

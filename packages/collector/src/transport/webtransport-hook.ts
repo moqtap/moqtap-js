@@ -372,7 +372,7 @@ export function installWebTransportHook(
     deliver((obs) => obs.onSessionOpen(state.session))
     if (state.protocol !== undefined) {
       const protocol = state.protocol
-      deliver((obs) => obs.onSessionProtocol?.(state.id, protocol))
+      deliver((obs) => obs.onSessionProtocol?.(state.id, protocol, state.readyAt))
     }
   }
 
@@ -405,6 +405,8 @@ export function installWebTransportHook(
     readonly session: InterceptedSession
     /** The server's pick, once `ready` has resolved; `''` when there was none. */
     protocol: string | undefined
+    /** When `ready` resolved: replayed with the protocol, so a late observer gets the real time. */
+    readyAt: Mono
     /** The observer this session has already been announced to. */
     announced: TransportObserver | null
     closed: boolean
@@ -500,6 +502,7 @@ export function installWebTransportHook(
       streams: new Map(),
       session,
       protocol: undefined,
+      readyAt: 0,
       announced: null,
       closed: false,
       closeCalled: false,
@@ -1208,7 +1211,10 @@ export function installWebTransportHook(
           // Remembered as well as reported: a key may arrive after the
           // session is established, and the pick is announced exactly once.
           state.protocol = protocol
-          if (state.announced) deliver((o) => o.onSessionProtocol?.(state.id, protocol))
+          state.readyAt = clock.now()
+          if (state.announced) {
+            deliver((o) => o.onSessionProtocol?.(state.id, protocol, state.readyAt))
+          }
         },
         () => {},
       )

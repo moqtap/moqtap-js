@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { draftOfSetupFrame } from '../../draft/setup-probe.js'
+import { draftNumberOfVersion, draftOfSetupFrame, readSetupFrame } from '../../draft/setup-probe.js'
 
 const require_ = createRequire(import.meta.url)
 const VECTORS = dirname(require_.resolve('@moqtap/test-vectors/manifest'))
@@ -89,7 +89,25 @@ describe.each(
         expect(got).toBeUndefined()
       }
     })
+
+    it(`reads every version ${v.id} offers`, () => {
+      const versions = (v.decoded as { supported_versions?: unknown[] }).supported_versions ?? []
+      expect(readSetupFrame(hexToBytes(v.hex))).toEqual({
+        server: false,
+        versions: versions.map((x) => BigInt(String(x))),
+      })
+    })
   }
+})
+
+describe('draftNumberOfVersion', () => {
+  it('names drafts this build cannot parse, and nothing that is not a draft version', () => {
+    expect(draftNumberOfVersion(0xff00000en)).toBe(14)
+    expect(draftNumberOfVersion(0xff000006n)).toBe(6)
+    expect(draftNumberOfVersion(0xff000063n)).toBe(99)
+    expect(draftNumberOfVersion(1n)).toBeUndefined()
+    expect(draftNumberOfVersion(0xfe00000en)).toBeUndefined()
+  })
 })
 
 describe('what it refuses', () => {
@@ -99,6 +117,11 @@ describe('what it refuses', () => {
     expect(draftOfSetupFrame(new Uint8Array([0x21, 0x00]))).toBeUndefined()
     // The header is complete and the version is not.
     expect(draftOfSetupFrame(new Uint8Array([0x21, 0x00, 0x09, 0xc0, 0x00]))).toBeUndefined()
+  })
+
+  it('reads no version list longer than a client would offer', () => {
+    // CLIENT_SETUP claiming 63 versions.
+    expect(readSetupFrame(new Uint8Array([0x20, 0x00, 0x09, 0x3f, 0x01, 0x02]))).toBeUndefined()
   })
 
   it('reads nothing out of a frame that is not a SETUP', () => {

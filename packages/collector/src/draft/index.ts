@@ -29,7 +29,7 @@ export {
   type ResolveFailure,
   resolveDraft,
 } from './registry.js'
-export { draftOfSetupFrame } from './setup-probe.js'
+export { draftNumberOfVersion, draftOfSetupFrame, readSetupFrame } from './setup-probe.js'
 export type { Need, VarintValue } from './varint.js'
 export {
   NEED,

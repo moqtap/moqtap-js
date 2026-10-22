@@ -29,8 +29,10 @@ import { StreamDispatcher, TrackKeys } from '../decode/index.js'
 import {
   type DraftSet,
   degradedReasonOf,
-  draftOfSetupFrame,
+  draftNumberOfVersion,
+  draftOfVersion,
   LEGACY_PROTOCOL,
+  readSetupFrame,
   resolveDraft,
 } from '../draft/index.js'
 import { FlightRecorder, TriggerEngine, type TriggerEvent } from '../recorder/index.js'
@@ -190,6 +192,16 @@ interface Connection {
   draft: SupportedDraft | null
   protocol: string | null
   degraded: ConnOpenRecord['degraded'] | undefined
+  /** When `ready` resolved, relative to the anchor; unset until it does. */
+  readyTs: number | undefined
+  offered: number[] | undefined
+  /**
+   * The offered drafts are known or no longer looked for: they came from the
+   * constructor's `protocols`, the session is draft-15 or later (whose
+   * CLIENT_SETUP carries no version list), or the first chunk the page wrote
+   * on its control stream has been read.
+   */
+  offerProbed: boolean
   roles: Set<Role>
   /** The raw buffer, held until the draft is known. Bounded in bytes. */
   pending: StreamChunk[]
@@ -201,7 +213,7 @@ interface Connection {
    * so the draft is still unknown and is being looked for in the handshake.
    *
    * Set only for the eight drafts before -15. Cleared the moment SETUP names a
-   * version, or when the pre-draft buffer fills — see `#probeLegacyDraft`.
+   * version, or when the pre-draft buffer fills — see `#probeSetup`.
    */
   awaitingSetup: boolean
   /**
@@ -273,6 +285,31 @@ function connOptionsOf(o: WebTransportOptionsInfo | undefined): ConnOptions | un
   if (o === undefined) return undefined
   const { protocols: _offered, ...rest } = o
   return Object.keys(rest).length > 0 ? rest : undefined
+}
+
+/**
+ * Distinct draft numbers, in the order offered, or `undefined` for none.
+ */
+function offeredOf<T>(
+  items: readonly T[],
+  draftOf: (x: T) => number | undefined,
+): number[] | undefined {
+  const out: number[] = []
+  for (const x of items) {
+    const d = draftOf(x)
+    if (d !== undefined && !out.includes(d)) out.push(d)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * The draft an offered protocol names. Read by pattern, unlike the exact table
+ * that picks a parser: this only reports, and a draft this build cannot parse
+ * is worth reporting. `moq-00` names no single draft and adds nothing.
+ */
+function draftOfOffered(p: string): number | undefined {
+  const m = /^moqt-(\d{1,3})$/.exec(p)
+  return m === null ? undefined : Number(m[1])
 }
 
 export class RealmObserver {
@@ -484,6 +521,7 @@ export class RealmObserver {
       return
     }
     const config = this.#o.config
+    const offered = offeredOf(s.options?.protocols ?? [], draftOfOffered)
     const rollup = new RollupEngine({
       intervalMs: config.metrics.intervalMs,
       maxBuckets: config.metrics.maxTracks,
@@ -506,6 +544,9 @@ export class RealmObserver {
       draft: null,
       protocol: null,
       degraded: undefined,
+      readyTs: undefined,
+      offered,
+      offerProbed: offered !== undefined,
       roles: new Set(),
       pending: [],
       pendingBytes: 0,
@@ -522,33 +563,34 @@ export class RealmObserver {
     this.#writeConnOpen(c, s.anchor.originMono - this.#origin)
   }
 
-  onSessionProtocol(sessionId: string, protocol: string): void {
+  /** `ready` resolved. Every path below sends the connection record again, with `readyTs`. */
+  onSessionProtocol(sessionId: string, protocol: string, at?: Mono): void {
     const c = this.#connections.get(sessionId)
     if (c === undefined || c.dispatcher !== null) return
+    c.readyTs = (at ?? this.#o.clock.now()) - this.#origin
     c.protocol = protocol === '' ? null : protocol
     if (protocol === LEGACY_PROTOCOL || protocol === '') {
       // Drafts before -15 negotiate `moq-00` over QUIC and nothing over
       // WebTransport, so the version comes from SETUP: read by the dormant hook
-      // if the handshake preceded `init()`, else by `#probeLegacyDraft`.
+      // if the handshake preceded `init()`, else by `#probeSetup`.
       const known = this.#dormantSetupDrafts.get(sessionId)
       if (known !== undefined) {
         this.#attachDraft(c, LEGACY_PROTOCOL, known)
         return
       }
       c.awaitingSetup = true
+      this.#writeConnOpen(c)
       return
     }
+    c.offerProbed = true
     this.#attachDraft(c, protocol)
   }
 
   onSessionClose(sessionId: string, _reason: string, at: Mono, info?: SessionCloseInfo): void {
     const c = this.#connections.get(sessionId)
     if (c === undefined) return
-    if (c.awaitingSetup && c.draft === null) {
-      // Seen but never identified, which the connection record has to say.
-      c.degraded ??= 'unsupported-protocol'
-      this.#writeConnOpen(c)
-    }
+    // A pre-15 connection that closes before SETUP named its version carries
+    // no `degraded`: nothing showed the version to be one this build can't read.
     this.#close(c, at, info ?? { cause: 'closed' })
     this.#host.onConnClosed()
   }
@@ -579,6 +621,8 @@ export class RealmObserver {
       this.#skipEarly(conn, c.control, c.data.byteLength)
       return
     }
+    // The probe may attach a dispatcher.
+    if (c.control) this.#probeSetup(conn, c)
     const d = conn.dispatcher
     if (d !== null) {
       d.onStreamData(c)
@@ -863,6 +907,8 @@ export class RealmObserver {
       protocol: c.protocol,
       roles: [...c.roles],
       ...(c.degraded !== undefined ? { degraded: c.degraded } : {}),
+      ...(c.readyTs !== undefined ? { readyTs: c.readyTs } : {}),
+      ...(c.offered !== undefined ? { offered: c.offered } : {}),
     }
     this.#writeCritical(record)
   }
@@ -950,39 +996,65 @@ export class RealmObserver {
   /* ── draft loading ────────────────────────────────────────────────────── */
 
   /**
-   * Try to read the negotiated draft out of a buffered control chunk.
+   * Read the SETUP frame a pre-15 control stream opens with: the draft, from
+   * SERVER_SETUP or from a CLIENT_SETUP offering one version, and the offered
+   * drafts from CLIENT_SETUP.
    *
    * Only for `moq-00` sessions, where the ALPN names eight drafts at once. Only
-   * the **first** chunk of each control stream is offered: SETUP is the first
+   * the **first** chunk of each control-stream half is read: SETUP is the first
    * message on the stream, so a match anywhere else would be a coincidence and
    * not a handshake.
    */
-  #probeLegacyDraft(c: Connection, chunk: StreamChunk): void {
-    if (!c.awaitingSetup || !chunk.control) return
+  #probeSetup(c: Connection, chunk: StreamChunk): void {
+    const offer = !c.offerProbed && chunk.direction === 'tx'
+    if (!c.awaitingSetup && !offer) return
     const half = `${chunk.streamId}/${chunk.direction}`
     if (c.probedStreams.has(half)) return
     c.probedStreams.add(half)
-    const draft = draftOfSetupFrame(chunk.data)
-    if (draft === undefined) return
+    if (offer) c.offerProbed = true
+    const f = readSetupFrame(chunk.data)
+    if (f === undefined) return
+    if (offer && !f.server) c.offered = offeredOf(f.versions, draftNumberOfVersion)
+    if (c.awaitingSetup) {
+      // SERVER_SETUP's version is the selected one, and so is a CLIENT_SETUP's
+      // when it offers exactly one.
+      const draft = f.versions.length === 1 ? draftOfVersion(f.versions[0] as bigint) : undefined
+      if (draft !== undefined) {
+        c.awaitingSetup = false
+        this.#attachDraft(c, LEGACY_PROTOCOL, draft)
+        return
+      }
+      if (f.server) {
+        // The server selected a version this build has no decoder for.
+        this.#giveUp(c, 'unsupported-protocol')
+        return
+      }
+    }
+    if (offer && c.offered !== undefined) this.#writeConnOpen(c)
+  }
+
+  /**
+   * The loud failure. The adapter is withheld entirely — two incompatible
+   * varint families disagree on the same bytes and return plausible wrong
+   * numbers — so the connection degrades to transport-only metrics and the raw
+   * control bytes it already shipped. The pending buffer is released rather
+   * than held: nothing will ever parse it.
+   */
+  #giveUp(c: Connection, reason: NonNullable<ConnOpenRecord['degraded']>): void {
     c.awaitingSetup = false
-    this.#attachDraft(c, LEGACY_PROTOCOL, draft)
+    c.degraded = reason
+    c.pending = []
+    c.pendingBytes = 0
+    c.pendingDatagrams = []
+    this.#writeConnOpen(c)
+    this.#host.onConnReady()
   }
 
   #attachDraft(c: Connection, protocol: string, known?: SupportedDraft): void {
     const result = resolveDraft(this.#o.drafts, protocol, known)
     if (c.closed || this.#halted) return
     if (!result.ok) {
-      // The loud failure. The adapter is withheld entirely — two incompatible
-      // varint families disagree on the same bytes and return plausible wrong
-      // numbers — so the connection degrades to transport-only metrics and the
-      // raw control bytes it already shipped. The pending buffer is released
-      // rather than held: nothing will ever parse it.
-      c.degraded = degradedReasonOf(result.reason)
-      c.pending = []
-      c.pendingBytes = 0
-      c.pendingDatagrams = []
-      this.#writeConnOpen(c)
-      this.#host.onConnReady()
+      this.#giveUp(c, degradedReasonOf(result.reason))
       return
     }
     c.adapter = result.adapter
@@ -1005,12 +1077,6 @@ export class RealmObserver {
   }
 
   #bufferPending(c: Connection, chunk: StreamChunk): void {
-    this.#probeLegacyDraft(c, chunk)
-    // The probe may have just attached a dispatcher.
-    if (c.dispatcher !== null) {
-      c.dispatcher.onStreamData(chunk)
-      return
-    }
     const cap = this.#o.config.limits.dormantRingBytes
     if (c.pendingBytes + chunk.data.byteLength > cap) {
       if (c.awaitingSetup) {
@@ -1019,13 +1085,7 @@ export class RealmObserver {
         // is where a `moq-00` connection gives up — reported as unsupported,
         // which is what it is: MoQT of some version this build could not
         // identify.
-        c.awaitingSetup = false
-        c.degraded = 'unsupported-protocol'
-        c.pending = []
-        c.pendingBytes = 0
-        c.pendingDatagrams = []
-        this.#writeConnOpen(c)
-        this.#host.onConnReady()
+        this.#giveUp(c, 'unsupported-protocol')
         return
       }
       // Counted, not silently truncated: a connection that lost its opening

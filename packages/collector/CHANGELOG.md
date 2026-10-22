@@ -5,6 +5,22 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-10-22
+
+### Added
+
+- Each connection reports when it became ready, so Insight tells failed
+  connection attempts apart from connections that dropped.
+- Each connection reports the drafts the page offered, so Insight can name them
+  when none was negotiated.
+- A session started by `newSession()` reports when it began, so its first
+  object time is measured from then.
+
+### Changed
+
+- A draft-07 to draft-14 connection that closes before the server's SETUP reply
+  is no longer reported as an unsupported protocol.
+
 ## [0.7.0] - 2026-10-22
 
 ### Added

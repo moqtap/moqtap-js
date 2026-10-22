@@ -629,7 +629,43 @@ describe('connections', () => {
     wt.failToOpen(new Error('handshake refused'))
     await settle()
     await c.end()
-    expect(of(await allRecords(posts), 'conn-close')[0]?.cause).toBe('failed')
+    const all = await allRecords(posts)
+    expect(of(all, 'conn-close')[0]?.cause).toBe('failed')
+    // Never ready, so no record says it was.
+    expect(of(all, 'conn-open').some((r) => r.readyTs !== undefined)).toBe(false)
+  })
+
+  it('sends the connection again when the transport is ready, saying when', async () => {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    await openTransport()
+    await c.end()
+
+    const opens = of(await allRecords(posts), 'conn-open')
+    expect(opens[0]?.readyTs).toBeUndefined()
+    const ready = opens.find((r) => r.readyTs !== undefined)
+    expect(ready).toMatchObject({ draft: 20 })
+    expect(ready?.readyTs).toBeGreaterThanOrEqual(opens[0]?.ts as number)
+  })
+
+  it('reports the drafts the page offered, from the protocols it passed', async () => {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    const wt = new (g.WebTransport as new (u: string, o: unknown) => MockWebTransport)(
+      'https://relay.test/moq',
+      { protocols: ['moqt-23', 'moqt-22', 'moq-00', 'moqt-22', 'h3'], allowPooling: true },
+    )
+    await wt.open('moqt-22')
+    await settle(5)
+    await c.end()
+
+    const opens = of(await allRecords(posts), 'conn-open')
+    expect(opens[0]?.offered).toEqual([23, 22])
+    expect(opens[0]?.options).toEqual({ allowPooling: true })
+    const [conn] = connections(opens).values()
+    expect(conn).toMatchObject({ draft: 22, offered: [23, 22] })
   })
 })
 
@@ -1057,6 +1093,7 @@ describe('a pre-15 session over WebTransport', () => {
     const all = await allRecords(posts)
     const [conn] = connections(all).values()
     expect(conn?.draft).toBe(14)
+    expect(conn?.offered).toEqual([13, 14])
     // And the handshake itself: CLIENT_SETUP out, SERVER_SETUP in.
     expect(of(all, 'ctrl').map((r) => [r.dir, r.decoded])).toEqual([
       ['tx', true],
@@ -1064,12 +1101,68 @@ describe('a pre-15 session over WebTransport', () => {
     ])
   })
 
-  it('says so when the connection closes with its draft never named', async () => {
+  it('sends the connection again when the transport is ready, before SETUP names the draft', async () => {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    await openTransport('')
+    await c.end()
+
+    const opens = of(await allRecords(posts), 'conn-open')
+    expect(opens.length).toBeGreaterThanOrEqual(2)
+    expect(opens[0]?.readyTs).toBeUndefined()
+    expect(opens[1]).toMatchObject({ draft: null, protocol: null })
+    expect(opens[1]?.readyTs).toBeGreaterThanOrEqual(opens[0]?.ts as number)
+  })
+
+  it('reports the drafts offered in CLIENT_SETUP when the page passed no protocols', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
     await settle()
     const wt = await openTransport('')
+    await legacyHandshake(wt)
+    await settle()
+    await c.end()
+
+    const [conn] = connections(await allRecords(posts)).values()
+    expect(conn).toMatchObject({ draft: 14, offered: [13, 14] })
+  })
+
+  it('leaves a connection that closes before SERVER_SETUP undegraded, with what it offered', async () => {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    const wt = await openTransport('')
+    const bidi = (await wt.createBidirectionalStream()) as unknown as {
+      writable: WritableStream<Uint8Array>
+    }
+    await bidi.writable.getWriter().write(CLIENT_SETUP_TWO_VERSIONS)
+    await settle()
     wt.closeSession()
+    await settle()
+    await c.end()
+
+    const [conn] = connections(await allRecords(posts)).values()
+    expect(conn?.draft).toBeNull()
+    expect(conn?.degraded).toBeUndefined()
+    expect(conn?.offered).toEqual([13, 14])
+    expect(typeof conn?.readyTs).toBe('number')
+  })
+
+  it('says so when SERVER_SETUP selects a version this build cannot read', async () => {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    const wt = await openTransport('')
+    const bidi = (await wt.createBidirectionalStream()) as unknown as {
+      readable: ReadableStream<Uint8Array>
+      inbound: { push(b: Uint8Array): void; close(): void }
+    }
+    // SERVER_SETUP selecting draft-06.
+    bidi.inbound.push(hex('210009c0000000ff00000600'))
+    bidi.inbound.close()
+    const reader = bidi.readable.getReader()
+    while (!(await reader.read()).done) {}
     await settle()
     await c.end()
 
@@ -1487,6 +1580,10 @@ describe('newSession() — the next playback in the same page', () => {
       contentId: 'movie-2',
     })
     expect(setup?.idSource).toBe('minted')
+    // The second session runs on the first one's clock, from where it began.
+    expect(of(a, 'setup')[0]?.startTs).toBeUndefined()
+    expect(setup?.startTs).toBeGreaterThanOrEqual(0)
+    expect(setup?.startTs).toBeLessThanOrEqual(of(b, 'end')[0]?.ts as number)
     for (const records of [a, b]) {
       const batches = of(records, 'batch')
       expect(batches.map((x) => x.seq)).toEqual(batches.map((_, i) => i))
