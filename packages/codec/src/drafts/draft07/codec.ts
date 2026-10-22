@@ -889,7 +889,7 @@ const dataStreamDecoders = new Map<bigint, Decoder>([[MSG_OBJECT_DATAGRAM, decod
 
 // ─── Public API ────────────────────────────────────────────────────────────────
 
-function encodeMessage(message: Draft07Message): Uint8Array {
+export function encodeMessage(message: Draft07Message): Uint8Array {
   // Check if it's a data stream message (no type+length framing)
   if (message.type === 'object_datagram') {
     const writer = new BufferWriter()
@@ -914,7 +914,7 @@ function encodeMessage(message: Draft07Message): Uint8Array {
   return writer.finish()
 }
 
-function decodeMessage(bytes: Uint8Array): DecodeResult<Draft07Message> {
+export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft07Message> {
   try {
     const reader = new BufferReader(bytes, 0)
     const typeId = reader.readVarInt()

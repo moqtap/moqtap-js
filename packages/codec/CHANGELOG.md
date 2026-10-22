@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [0.13.4] - 2026-10-22
+
+### Fixed
+
+- Importing `decodeMessage` from `@moqtap/codec/draft07` no longer bundles the
+  draft-07 encoders.
+
 ## [0.13.3] - 2026-10-21
 
 ### Fixed

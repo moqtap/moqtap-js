@@ -8,11 +8,14 @@ export { DecodeError } from '../../core/types.js'
 export type { Draft07Codec } from './codec.js'
 export {
   createDraft07Codec,
+  createStreamDecoder,
   decodeDatagram,
   decodeFetchStream,
+  decodeMessage,
   decodeSubgroupStream,
   encodeDatagram,
   encodeFetchStream,
+  encodeMessage,
   encodeSubgroupStream,
   redactAuthTokens,
 } from './codec.js'
@@ -119,21 +122,3 @@ export type {
   UnsubscribeAnnounces,
 } from './types.js'
 export { decodeVarInt, encodeVarInt } from './varint.js'
-
-import type { DecodeResult } from '../../core/types.js'
-import { createDraft07Codec } from './codec.js'
-import type { Draft07Message } from './types.js'
-
-const defaultCodec = createDraft07Codec()
-
-export function encodeMessage(message: Draft07Message): Uint8Array {
-  return defaultCodec.encodeMessage(message)
-}
-
-export function decodeMessage(bytes: Uint8Array): DecodeResult<Draft07Message> {
-  return defaultCodec.decodeMessage(bytes)
-}
-
-export function createStreamDecoder(): TransformStream<Uint8Array, Draft07Message> {
-  return defaultCodec.createStreamDecoder()
-}
