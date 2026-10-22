@@ -2,7 +2,7 @@
  * Closing the tab delivers the instance's last bodies, in every engine.
  *
  * A real page in Chromium, Firefox and WebKit, a real loopback ingest, and
- * `page.close()`. Before the close, ingest stops answering, so one body sits in
+ * `page.close()`, with a connection attempt begun before it. Before the close, ingest stops answering, so one body sits in
  * the outbox unconfirmed, and one more record is buffered and never sealed.
  * After it, ingest must receive all three: the unconfirmed body again, the tail
  * holding the buffered record, and the final body with `end{unload}`.
@@ -60,7 +60,20 @@ function decode(bytes: Uint8Array): Body {
   return { seq: batch.seq, final: batch.final === true, records: records.slice(1) }
 }
 
+// A session begins with a WebTransport. The page's stands in for one that
+// never connects, in every engine and with no network: still connecting when
+// the tab closes.
 const PAGE = `<!doctype html><meta charset="utf-8"><title>unload</title>
+<script>
+window.WebTransport = class {
+  constructor(url) {
+    this.url = String(url)
+    this.ready = new Promise(() => {})
+    this.closed = new Promise(() => {})
+  }
+  close() {}
+}
+</script>
 <script type="module">
 import './collector.js'
 window.collector = window.collectorInit({
@@ -68,6 +81,7 @@ window.collector = window.collectorInit({
   endpoint: location.origin + '/v1/ingest',
   onInternalError: (err) => (window.errors ??= []).push(String(err)),
 })
+new WebTransport(location.origin + '/moq')
 </script>`
 
 beforeAll(async () => {

@@ -5,6 +5,29 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-22
+
+### Changed
+
+- A session begins when the page or a linked worker constructs a
+  `WebTransport`, not at `init()`. Before that nothing is recorded, stored or
+  uploaded, so a page without one produces no session. `ids()` answers
+  beforehand with the ids the session is uploaded under.
+- Clock zero is the session's begin. Context set before it is sent with
+  `setup`; annotations, metric samples and `escalate()` calls before it are
+  dropped.
+- A session ends 30 s after its last connection closes, with `end` reason
+  `idle`. The next `WebTransport` begins a new session with new ids and the
+  context so far.
+- `newSession()` with no connection open ends the session; the next
+  `WebTransport` begins the new one.
+- Metric definitions carry into each new session.
+
+### Fixed
+
+- A connection that failed to open before `init()`, or before its worker was
+  linked, is reported.
+
 ## [0.7.1] - 2026-10-22
 
 ### Added

@@ -22,7 +22,7 @@ export const HANDSHAKE = '__moqtap_collector__'
  * from another release stays unlinked and the page reports the link as
  * `timeout` rather than mixing two record formats in one session.
  */
-export const LINK_VERSION = 3
+export const LINK_VERSION = 4
 
 /**
  * How often a probe hands its records to the page, in ms. Fixed rather than
@@ -51,8 +51,11 @@ export interface LinkedMessage {
    * session-relative time: `page.timeOrigin + anchor.originMono -
    * worker.timeOrigin`. The page computes it from the worker's hello, so every
    * record the probe writes is already on the page's timeline.
+   *
+   * Absent while the page's session has not begun: the probe records nothing
+   * and says `open` when this worker constructs a `WebTransport`.
    */
-  readonly base: Mono
+  readonly base?: Mono | undefined
   readonly level: DetailLevel
   readonly config: RealmConfig
 }
@@ -120,6 +123,8 @@ export type CallMessage =
       readonly key?: BucketKey
     }
   | { readonly t: 'overrun'; readonly at: Mono; readonly signal: string }
+  /** This worker constructed a `WebTransport`: the page's session begins. */
+  | { readonly t: 'open' }
 
 export type ProbeMessage = ForwardMessage | CallMessage
 
@@ -131,15 +136,17 @@ export type PageMessage =
   /** This instance has ended. The probe stops observing. */
   | { readonly t: 'unlinked' }
   /**
-   * The page started a new session. The probe reports into it from now on,
-   * its open connections included. The clock base is unchanged: a page keeps
-   * one timeline across its sessions.
+   * The page's session changed. With `base`, the probe records into it from
+   * now on, its open connections included. Without, the session has not begun
+   * and the probe records nothing until this worker constructs a
+   * `WebTransport`, as after `linked` without one.
    */
   | {
       readonly t: 'session'
       readonly sessionId: string
       readonly instanceId: string
       readonly level: DetailLevel
+      readonly base?: Mono | undefined
     }
   /** Context for connections opened from now on. */
   | { readonly t: 'context'; readonly contentId: string }

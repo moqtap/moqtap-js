@@ -17,7 +17,7 @@ import {
 } from '../../flush/index.js'
 import type { CollectorConfig, Directive } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
-import { init } from '../support/init.js'
+import { attempt, init } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
 import { allRecords, of, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
@@ -89,6 +89,7 @@ describe('flushMs: someone is watching the session', () => {
     const t = timers((ms) => (ms === 2_000 ? 10 : ms))
     const c = init(base(), { ...quiet, fetchImpl: impl, ...t.ports })
     await settle()
+    attempt()
     c.annotate('first')
     await c.flush()
     expect(posts).toHaveLength(1)
@@ -107,6 +108,7 @@ describe('flushMs: someone is watching the session', () => {
     const t = timers()
     const c = init(base(), { ...quiet, fetchImpl: impl, ...t.ports })
     await settle()
+    attempt()
     c.annotate('x')
     await c.flush()
     expect(t.asked).toContain(DIRECTIVE_FLUSH_MIN_MS)
@@ -121,6 +123,7 @@ describe('flushMs: someone is watching the session', () => {
     const t = timers()
     const c = init(base(), { ...quiet, fetchImpl: impl, ...t.ports })
     await settle()
+    attempt()
     c.annotate('x')
     await c.flush()
     expect(t.asked).not.toContain(2_000)
@@ -170,6 +173,7 @@ describe('elevate: a capture window covers the session', () => {
     const t = timers()
     const c = init(base(), { ...quiet, fetchImpl: impl, ...t.ports })
     await settle()
+    attempt()
     c.annotate('x')
     await c.flush()
     expect(t.asked.some((ms) => near(ms, DIRECTIVE_ELEVATE_MAX_SPAN_MS))).toBe(true)
@@ -194,6 +198,7 @@ describe('elevate: a capture window covers the session', () => {
     const c = init(base({ upload: { maxAttempts: 1 } }), { ...quiet, fetchImpl: impl })
     firstInstance = c.ids().instanceId
     await settle()
+    attempt()
     c.annotate('kept for later')
     await c.flush()
     failing = false

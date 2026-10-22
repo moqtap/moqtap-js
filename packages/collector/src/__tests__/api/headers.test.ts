@@ -35,7 +35,7 @@ import type {
 } from '../../types.js'
 import { datagramBytes, fetchBytes, subgroupBytes, subscribeBytes } from '../decode/vectors.js'
 import { init } from '../support/init.js'
-import { settle } from '../support/settle.js'
+import { settle, until } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -435,9 +435,11 @@ describe('a linked worker forwards its headers compressed', () => {
     await settle(5)
     const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 0 })
     expect(await probe.linked).toBe(true)
+    // The worker's connection begins the session, and detail can be raised in it.
+    const peer = await connect()
+    await until(() => c.connections().length > 0)
     c.escalate('headers+sizes')
     await settle(5)
-    const peer = await connect()
     for (let group = 0; group < 6; group += 1) {
       const objects = Array.from({ length: 100 }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
       await peer.stream(subgroupBytes({ alias: 4n, group: BigInt(group), objects }))

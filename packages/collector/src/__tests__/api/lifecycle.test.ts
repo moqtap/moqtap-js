@@ -47,7 +47,7 @@ import type {
   LinkRecord,
 } from '../../types.js'
 import { chunks, concatBytes, encodeControl, subscribeBytes } from '../decode/vectors.js'
-import { init } from '../support/init.js'
+import { attempt, init } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
@@ -274,6 +274,7 @@ describe('end() — the instance is done', () => {
   it('opens its first body with the batch frame, then the setup record', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl, instanceId: 'inst-1' })
+    attempt()
     await settle()
     await c.end()
 
@@ -296,6 +297,7 @@ describe('end() — the instance is done', () => {
     const { posts, impl } = recordingFetch()
     const { sessionId: _omit, ...minted } = base()
     const c = init(minted, { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     await c.end()
     expect(of(await allRecords(posts), 'setup')[0]?.idSource).toBe('minted')
@@ -304,19 +306,22 @@ describe('end() — the instance is done', () => {
   it('ends with an end record in the final body, which names that body', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
+    attempt()
+    // The session's first body, sent as it began.
+    await c.flush()
     c.annotate('a')
     await c.flush()
     c.annotate('b')
     await c.end()
 
-    // `flush()`'s body, what was buffered at `end()`, and the end record's own.
+    // The session's first upload as it began, `flush()`'s body, what was
+    // buffered at `end()`, and the end record's own.
     const batches = await batchesOf(posts)
-    expect(batches.map((b) => b.seq)).toEqual([0, 1, 2])
-    expect(batches.map((b) => b.final)).toEqual([undefined, undefined, true])
+    expect(batches.map((b) => b.seq)).toEqual([0, 1, 2, 3])
+    expect(batches.map((b) => b.final)).toEqual([undefined, undefined, undefined, true])
     const end = of(await allRecords(posts), 'end')
     expect(end).toHaveLength(1)
-    expect(end[0]).toMatchObject({ reason: 'app', finalSeq: 2 })
+    expect(end[0]).toMatchObject({ reason: 'app', finalSeq: 3 })
     expect(end[0]?.counters).toHaveProperty('bucketsRefused')
   })
 
@@ -364,10 +369,12 @@ describe('end() — the instance is done', () => {
       store: s,
       fetchImpl: impl,
     })
+    attempt()
     await settle()
     await c.end()
-    // The body it could not send is still there for the next page load.
-    expect(s.backlog({ endpoint: ENDPOINT, keyHash: sha256Hex('pk_test') }).length).toBe(1)
+    // The bodies it could not send, the begin's and the end's, are still
+    // there for the next page load.
+    expect(s.backlog({ endpoint: ENDPOINT, keyHash: sha256Hex('pk_test') }).length).toBe(2)
   })
 
   it('settles when ingest never answers, and keeps the body', async () => {
@@ -388,18 +395,21 @@ describe('end() — the instance is done', () => {
       store: s,
       fetchImpl: impl,
     })
+    attempt()
     await settle()
 
     const t0 = Date.now()
     await c.end()
     expect(opened).toBeGreaterThan(0)
     expect(Date.now() - t0).toBeLessThan(5_000)
-    expect(s.chunks).toBe(1)
+    // The begin's body and the end's.
+    expect(s.chunks).toBe(2)
   })
 
   it('is safe to call twice', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     await Promise.all([c.end(), c.end()])
     expect(of(await allRecords(posts), 'end')).toHaveLength(1)
@@ -410,10 +420,13 @@ describe('flush() — send now, end nothing', () => {
   it('uploads what was recorded and keeps the session going', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
+    attempt()
+    // The session's first body, sent as it began.
+    await c.flush()
     c.annotate('before')
     await c.flush()
-    expect(posts).toHaveLength(1)
+    // The session's first upload as it began, and the flush's.
+    expect(posts).toHaveLength(2)
     expect(of(await allRecords(posts), 'end')).toHaveLength(0)
 
     c.annotate('after')
@@ -437,11 +450,13 @@ describe('discard() — drop, transmit nothing, tear down', () => {
     const s = await store()
     const { impl } = recordingFetch(503)
     const c = init(base({ upload: { maxAttempts: 1 } }), { ...quiet, store: s, fetchImpl: impl })
-    await settle()
+    attempt()
+    // The session's first body, sent as it began.
+    await c.flush()
     c.annotate('marker', { a: 1 })
     await c.flush()
     await settle()
-    expect(s.chunks).toBe(1)
+    expect(s.chunks).toBe(2)
     await c.discard()
     expect(s.chunks).toBe(0)
   })
@@ -467,6 +482,7 @@ describe('an upload that fails is retried in the same page', () => {
       setTimer: (fn, ms) => setTimeout(fn, Math.min(ms, 20)),
       clearTimer: (h) => clearTimeout(h as never),
     })
+    attempt()
     await settle()
     c.annotate('during-the-drop')
     await c.flush()
@@ -493,14 +509,17 @@ describe('an upload that fails is retried in the same page', () => {
         locks: null,
         fetchImpl: impl,
       })
-      await settle()
+      attempt()
+      // The session's first body, sent as it began.
+      await c.flush()
       c.annotate('queued')
       await c.flush()
       expect(posts).toEqual([])
       up = true
       life.fire('online')
       await settle()
-      expect(posts).toHaveLength(1)
+      // The begin's body and the flush's.
+      expect(posts).toHaveLength(2)
       await c.end()
     } finally {
       life.restore()
@@ -515,6 +534,7 @@ describe('an upload that fails is retried in the same page', () => {
       return 400
     })
     const c = init(base(), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     c.annotate('refused')
     await c.flush()
@@ -546,10 +566,12 @@ describe('stored bodies of a gone instance are swept by the next page load', () 
     await s.put(stored('elsewhere', 0), { endpoint: ENDPOINT, keyHash: sha256Hex('pk_other') })
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, store: s, fetchImpl: impl, locks: fakeLocks(['alive']) })
+    attempt()
     await settle()
 
-    expect(posts.map((p) => new URL(p.url).searchParams.get('ik'))).toEqual(['key-dead-0'])
-    expect(new URL((posts[0] as Post).url).searchParams.get('i')).toBe('dead')
+    const swept = posts.filter((p) => new URL(p.url).searchParams.get('i') !== c.ids().instanceId)
+    expect(swept.map((p) => new URL(p.url).searchParams.get('ik'))).toEqual(['key-dead-0'])
+    expect(new URL((swept[0] as Post).url).searchParams.get('i')).toBe('dead')
     expect(s.has('key-dead-0')).toBe(false)
     expect(s.has('key-alive-0')).toBe(true)
     expect(s.has('key-elsewhere-0')).toBe(true)
@@ -562,15 +584,18 @@ describe('stored bodies of a gone instance are swept by the next page load', () 
     await s.put(stored('recent', 0, Date.now()), dest)
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, store: s, fetchImpl: impl })
+    attempt()
     await settle()
 
-    expect(posts.map((p) => new URL(p.url).searchParams.get('ik'))).toEqual(['key-old-0'])
+    const swept = posts.filter((p) => new URL(p.url).searchParams.get('i') !== c.ids().instanceId)
+    expect(swept.map((p) => new URL(p.url).searchParams.get('ik'))).toEqual(['key-old-0'])
     await c.discard()
   })
 
   it('holds its own instance lock while it lives', async () => {
     const locks = fakeLocks()
     const c = init(base(), { ...quiet, locks, instanceId: 'me', fetchImpl: recordingFetch().impl })
+    attempt()
     await settle()
     expect(locks.held.has('moqtap:me')).toBe(true)
     await c.end()
@@ -673,6 +698,7 @@ describe('every elevation records what raised it', () => {
   it('emits an escalation record naming the manual call and its reason', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     c.escalate('headers+sizes', 'user reported a stall')
     await c.end()
@@ -690,6 +716,7 @@ describe('every elevation records what raised it', () => {
   it('attributes a record to the level that produced it', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     c.escalate('headers')
     c.annotate('while-elevated', {})
@@ -700,6 +727,7 @@ describe('every elevation records what raised it', () => {
   it('closes the window with resolve(), and resolve() with nothing open is harmless', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     expect(() => c.resolve('nothing was ever raised')).not.toThrow()
     c.escalate('headers', 'user reported a stall')
@@ -726,6 +754,7 @@ describe('every elevation records what raised it', () => {
         return { now: () => (t += 3_600_000), wall: () => t }
       })(),
     })
+    attempt()
     await settle()
     c.escalate('headers+sizes')
     // The ceiling is checked on the metrics interval, so one has to run.
@@ -743,6 +772,7 @@ describe('customer metrics and annotations', () => {
   it('folds observe() into a rollup of their own, which belongs to no connection', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base({ metrics: { intervalMs: 100 } }), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     c.defineMetric('decodeMs', { unit: 'ms', agg: 'histogram' })
     for (let i = 0; i < 200; i += 1) c.observe('decodeMs', i)
@@ -757,6 +787,7 @@ describe('customer metrics and annotations', () => {
   it('carries an annotation payload through verbatim', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     c.annotate('quality-switch', { to: '720p', nested: [1, 2] })
     await c.end()
@@ -790,7 +821,7 @@ describe('worker links', () => {
     listener?.({ data: 'hello' })
     expect(sent).toEqual([])
 
-    listener?.({ data: { __moqtap_collector__: 3, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 4, t: 'hello', timeOrigin: 0 } })
     expect(sent).toHaveLength(1)
     const linked = sent[0]?.message as Record<string, unknown>
     expect(linked).toMatchObject({ t: 'linked', sessionId: 'sess-fixed', instanceId: 'inst-1' })
@@ -802,6 +833,7 @@ describe('worker links', () => {
   it('records a link that is never answered as a timeout, per link', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base({ limits: { linkTimeoutMs: 20 } }), { ...quiet, fetchImpl: impl })
+    attempt()
     c.linkWorker({ postMessage: () => {}, addEventListener: () => {} })
     c.linkWorker({ postMessage: () => {}, addEventListener: () => {} })
     await settle(40, 20)
@@ -827,8 +859,9 @@ describe('worker links', () => {
     const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 4_000 })
     expect(await probe.linked).toBe(true)
     expect(probe.ids()).toEqual({ sessionId: c.ids().sessionId, instanceId: c.ids().instanceId })
-    probe.annotate('from-the-worker')
+    // The worker's connection begins the session; its calls count from then.
     const wt = await openTransport()
+    probe.annotate('from-the-worker')
     await deliverControl(wt, [subscribeBytes(1n, 'video')])
     // Forwarded on the probe's own tick, with nothing asking for it.
     await settle(40, FORWARD_INTERVAL_MS)
@@ -839,9 +872,10 @@ describe('worker links', () => {
     expect(of(all, 'link')).toEqual([expect.objectContaining({ link: 'w1', ev: 'linked' })])
     const [conn] = connections(all).values()
     expect(conn).toMatchObject({ realm: 'worker', draft: 20 })
-    // On the page's timeline: the worker's readings plus the three seconds.
+    // On the page's timeline: the worker's readings plus the three seconds,
+    // less the moment the page took to hear of the attempt that began it.
     const opened = of(all, 'conn-open')[0] as ConnOpenRecord
-    expect(opened.ts).toBeGreaterThanOrEqual(3_000)
+    expect(opened.ts).toBeGreaterThan(2_900)
     expect(opened.ts).toBeLessThan(13_000)
     expect(of(all, 'ctrl').every((r) => r.conn === conn?.conn)).toBe(true)
     expect(of(all, 'note').map((n) => n.name)).toContain('from-the-worker')
@@ -871,11 +905,13 @@ describe('worker links', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(worker)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 3, t: 'hello', timeOrigin: 0 } })
-    // Speak for the worker over the port the page handed it: one open
-    // connection in its last forward.
+    listener?.({ data: { __moqtap_collector__: 4, t: 'hello', timeOrigin: 0 } })
+    // Speak for the worker over the port the page handed it: it attempted a
+    // connection, which begins the session, and that connection is open in
+    // its last forward.
+    port?.postMessage({ __moqtap_collector__: 4, t: 'open' })
     port?.postMessage({
-      __moqtap_collector__: 3,
+      __moqtap_collector__: 4,
       t: 'fwd',
       n: 0,
       dropped: 0,
@@ -932,9 +968,10 @@ describe('a linked worker whose control plane outran it', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 3, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 4, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 4, t: 'open' })
     port?.postMessage({
-      __moqtap_collector__: 3,
+      __moqtap_collector__: 4,
       t: 'overrun',
       at: 1_234,
       signal: 'control-plane rate exceeded 1/s',
@@ -976,13 +1013,14 @@ describe('a linked worker that falls silent', () => {
     })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 3, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 4, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 4, t: 'open' })
     await settle(5)
     t += 11_000
     // The heartbeat runs every 10 ms here; let one see the silence.
     await settle(10, 20)
     port?.postMessage({
-      __moqtap_collector__: 3,
+      __moqtap_collector__: 4,
       t: 'fwd',
       n: 0,
       dropped: 0,
@@ -1240,7 +1278,9 @@ describe('the page going away', () => {
           return true
         },
       })
-      await settle()
+      attempt()
+      // The session's first body goes out as it begins, before the page goes.
+      await c.flush()
       before?.(c)
       life.fire('pagehide', { persisted })
       const bodies: EnvelopeRecord[][] = []
@@ -1254,12 +1294,14 @@ describe('the page going away', () => {
 
   it('beacons the end record first, in a small body of its own, then the tail', async () => {
     const { bodies } = await beaconed(false, (c) => c.annotate('in-the-tail'))
+    // The session's first body went out as it began; these two follow it.
     expect(bodies).toHaveLength(2)
     const [endBody, tail] = bodies
-    expect(endBody?.map((r) => r.t)).toEqual(['batch', 'end'])
-    expect(endBody?.[1]).toMatchObject({ reason: 'unload', finalSeq: 1 })
-    expect(endBody?.[0]).toMatchObject({ seq: 1, final: true })
-    expect(tail?.[0]).toMatchObject({ seq: 0 })
+    // The connection still being attempted is closed by the end.
+    expect(endBody?.map((r) => r.t)).toEqual(['batch', 'conn-close', 'end'])
+    expect(endBody?.[2]).toMatchObject({ reason: 'unload', finalSeq: 2 })
+    expect(endBody?.[0]).toMatchObject({ seq: 2, final: true })
+    expect(tail?.[0]).toMatchObject({ seq: 1 })
     expect(tail?.some((r) => r.t === 'note')).toBe(true)
   })
 
@@ -1283,6 +1325,7 @@ describe('the page going away', () => {
     try {
       const { posts, impl } = recordingFetch()
       const c = init(base(), { persist: false, locks: null, fetchImpl: impl, beacon: () => true })
+      attempt()
       await settle()
       life.fire('pagehide', { persisted: true })
       life.fire('pageshow', { persisted: true })
@@ -1299,11 +1342,15 @@ describe('the page going away', () => {
     try {
       const { calls, impl } = tailFetch()
       const c = init(base(), { persist: false, locks: null, fetchImpl: impl, beacon: () => false })
-      await settle()
+      attempt()
+      // The session's first body, sent as it began.
+      await c.flush()
+      const before = calls.length
       life.fire('pagehide', { persisted: false })
-      expect(calls).toHaveLength(1)
-      expect(calls[0]?.init.keepalive).toBe(true)
-      expect(new URL(calls[0]?.url ?? '').searchParams.get('k')).toBe('pk_test')
+      const tail = calls.slice(before)
+      expect(tail).toHaveLength(1)
+      expect(tail[0]?.init.keepalive).toBe(true)
+      expect(new URL(tail[0]?.url ?? '').searchParams.get('k')).toBe('pk_test')
       await c.discard()
     } finally {
       life.restore()
@@ -1323,13 +1370,15 @@ describe('the page going away', () => {
         locks: null,
         beacon: () => false,
       })
+      attempt()
       await settle()
       life.fire('pagehide', { persisted: false })
       await settle(5)
 
-      expect(errors.map(String).filter((e) => /MQ5001/.test(e))).toHaveLength(1)
-      // The next page load on the origin sends it.
-      expect(s.chunks).toBe(1)
+      // The end's body, and the begin's, which no upload could take either.
+      expect(errors.map(String).filter((e) => /MQ5001/.test(e))).toHaveLength(2)
+      // The next page load on the origin sends them.
+      expect(s.chunks).toBe(2)
       await c.discard()
     } finally {
       gf.fetch = savedFetch
@@ -1349,9 +1398,12 @@ describe('the page going away', () => {
           locks: null,
           beacon: () => accepted,
         })
-        await settle()
+        attempt()
+        // The session's first body, sent as it began.
+        await c.flush()
+        const before = c.usage().bytesByLevel.baseline
         life.fire('pagehide', { persisted: false })
-        const bytes = c.usage().bytesByLevel.baseline
+        const bytes = c.usage().bytesByLevel.baseline - before
         await c.discard()
         return bytes
       } finally {
@@ -1374,6 +1426,7 @@ describe('the page going away', () => {
         beacon: () => true,
         clock: { now: () => t, wall: () => t },
       })
+      attempt()
       await settle()
       c.escalate('headers', 'user reported a stall')
       t += 200
@@ -1400,6 +1453,7 @@ describe('the page going away', () => {
         fetchImpl: impl,
         clock: { now: () => t, wall: () => t },
       })
+      attempt()
       await settle()
       c.annotate('before-hide')
       t += 10_000
@@ -1497,6 +1551,7 @@ describe('the page going away', () => {
             return true
           },
         })
+        attempt()
         await settle()
         c.annotate('in-the-tail')
         armed = true
@@ -1555,6 +1610,7 @@ describe('newSession() — the next playback in the same page', () => {
   it('ends the first session in a final body and numbers the second from zero', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     c.annotate('first')
     const first = c.ids()
@@ -1628,6 +1684,7 @@ describe('newSession() — the next playback in the same page', () => {
   it('works before setup has finished, in the order the calls were made', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
+    attempt()
     c.annotate('first')
     const second = c.newSession()
     c.annotate('second')
@@ -1656,6 +1713,7 @@ describe('newSession() — the next playback in the same page', () => {
     let up = false
     const { posts, impl } = recordingFetch(() => (up ? 200 : 0))
     const c = init(base({ upload: { maxAttempts: 1 } }), { ...quiet, fetchImpl: impl })
+    attempt()
     await settle()
     c.annotate('offline')
     const first = c.ids()
@@ -1674,6 +1732,7 @@ describe('newSession() — the next playback in the same page', () => {
     const dest = { endpoint: ENDPOINT, keyHash: sha256Hex('pk_test') }
     const { impl } = recordingFetch(0)
     const c = init(base({ upload: { maxAttempts: 1 } }), { ...quiet, store: s, fetchImpl: impl })
+    attempt()
     await settle()
     c.annotate('first')
     await c.flush()

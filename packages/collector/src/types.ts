@@ -95,11 +95,14 @@ export interface Identity {
    * hashed**: accepted raw, treated as personal data, retention short.
    */
   readonly actorId?: string
-  /** One playback context. Spans every connection the page and its linked workers open. */
+  /**
+   * The WebTransport activity of a page and its linked workers, from the first
+   * `WebTransport` constructed until 30 s after the last connection closed.
+   */
   readonly sessionId: string
   /**
-   * One `init()` run, normally one page load. Minted every time, so a reload
-   * that keeps a supplied `sessionId` is a second instance of the same session,
+   * One session's recording in one page. Minted every time, so a reload that
+   * keeps a supplied `sessionId` is a second instance of the same session,
    * with its own upload stream and its own end.
    */
   readonly instanceId: string
@@ -1034,8 +1037,8 @@ export interface CollectorConfig {
    */
   readonly endpoint?: string
   /**
-   * The session's id, when you want it to match one of your own. Absent means
-   * one is minted.
+   * The first session's id, when you want it to match one of your own. Absent
+   * means one is minted, as it is for every session that follows.
    *
    * At most 128 UTF-8 bytes, well-formed UTF-16, and free of control
    * characters, because that is what ingest can store. Anything else is
@@ -1567,12 +1570,13 @@ export interface EndCounters {
  * id may have other instances, in other tabs or after a reload.
  *
  * `unload` is the page closing, `app` is `end()`, `new-session` is the page
- * starting the next session, and `overrun` is the collector stopping itself
- * because the control plane outran it.
+ * starting the next session, `overrun` is the collector stopping itself
+ * because the control plane outran it, and `idle` is the session's last
+ * connection having closed with none attempted in the 30 s after.
  */
 export interface EndRecord extends RecordBase {
   readonly t: 'end'
-  readonly reason: 'unload' | 'app' | 'new-session' | 'overrun'
+  readonly reason: 'unload' | 'app' | 'new-session' | 'overrun' | 'idle'
   /** The `seq` of this instance's last body, the one this record rides in. */
   readonly finalSeq: number
   readonly counters: EndCounters

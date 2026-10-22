@@ -230,13 +230,13 @@ Appended once when the per-session error-report budget is spent. `observe()` sit
 
 ### `MQ5001` — tail segment refused by both sendBeacon and keepalive fetch
 
-The last segment of a session is delivered on `pagehide`, when the page is going away and an ordinary `fetch` will not survive. Both paths refused it — usually because it exceeds the platform's beacon cap, around 64 KB. It is not persisted, so it is lost; everything already sealed and queued is unaffected and goes out on the next page load.
+The last segment of a session is delivered on `pagehide`, when the page is going away and an ordinary `fetch` will not survive. Both paths refused it — usually because it exceeds the platform's beacon cap, around 64 KB. It is not persisted, so it is lost; everything already sealed and queued is unaffected and goes out with the next session on the same origin.
 
 *Value carried:* the segment size in bytes.
 
 ### `MQ5002` — drain deadline expired
 
-`stop()` is awaited by a page tearing down, so the drain is bounded. Expiry is not data loss: the chunk stays queued and persisted, and the next page load sends it. The deadline gives up on the attempt, never on the data.
+`stop()` is awaited by a page tearing down, so the drain is bounded. Expiry is not data loss: the chunk stays queued and persisted, and the next session on the same origin sends it. The deadline gives up on the attempt, never on the data.
 
 *Value carried:* the deadline in milliseconds.
 

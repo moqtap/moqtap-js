@@ -36,7 +36,7 @@ import type {
   EnvelopeRecord,
   LinkRecord,
 } from '../../types.js'
-import { init } from '../support/init.js'
+import { attempt, init } from '../support/init.js'
 import { settle } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
@@ -259,6 +259,7 @@ describe('a worker’s records uploaded through the page, then an unload', () =>
         fetchImpl: net.fetchImpl,
         beacon: net.beacon,
       })
+      attempt()
       const channel = new MessageChannel()
       page.linkWorker(channel.port1)
       const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2)
@@ -285,6 +286,8 @@ describe('a worker’s records uploaded through the page, then an unload', () =>
         clock: { now: () => performance.now(), wall: () => Date.now() + 600_000 },
         fetchImpl: net.fetchImpl,
       })
+      // It sends them once a session begins there.
+      attempt()
       await settle()
       await next.end()
       await net.settled()
@@ -326,6 +329,7 @@ describe('a worker’s hello that arrives while the page is still starting', () 
       locks: null,
       fetchImpl: net.fetchImpl,
     })
+    attempt()
     const w = fakeWorker()
     page.linkWorker(w.target)
     w.hello()
@@ -344,6 +348,7 @@ describe('a worker’s hello that arrives while the page is still starting', () 
   it('links a replacement worker as well as the first', async () => {
     const net = ingest()
     const page = init(base(), { noLifecycleListeners: true, locks: null, fetchImpl: net.fetchImpl })
+    attempt()
     const a = fakeWorker()
     page.linkWorker(a.target)
     await settle()
@@ -375,7 +380,13 @@ describe('two pages of the same session numbering at the same moment', () => {
         locks: null,
         fetchImpl: net.fetchImpl,
       })
-    const [a, b] = await Promise.all([open(), open()])
+    // One realm has one hook, so the first page begins before the second
+    // takes the hook over; the second begins on the connection still open.
+    const a = await open()
+    attempt()
+    const b = await open()
+    // Each session's first body, sent as it began.
+    await Promise.all([a.flush(), b.flush()])
     a.annotate('a')
     b.annotate('b')
     await Promise.all([a.end(), b.end()])
@@ -383,11 +394,12 @@ describe('two pages of the same session numbering at the same moment', () => {
 
     const v = view(net.received)
     expect([...v.keys()].sort()).toEqual([a.ids().instanceId, b.ids().instanceId].sort())
+    // Each: the connection's first upload, the annotation, and the end.
     for (const instance of v.values()) {
-      expect(instance.seqs).toEqual([0, 1])
+      expect(instance.seqs).toEqual([0, 1, 2])
       expect(instance.missing).toEqual([])
     }
-    expect(new Set(net.received.map((r) => r.key)).size).toBe(4)
+    expect(new Set(net.received.map((r) => r.key)).size).toBe(6)
   })
 })
 
@@ -400,6 +412,7 @@ describe('a worker terminated while its records are on their way', () => {
       locks: null,
       fetchImpl: net.fetchImpl,
     })
+    attempt()
     const a = fakeWorker()
     page.linkWorker(a.target)
     a.hello()
@@ -436,6 +449,7 @@ describe('an upload that fails while the page lives on', () => {
       locks: null,
       fetchImpl: net.fetchImpl,
     })
+    attempt()
     for (let i = 0; i < 3; i += 1) {
       page.annotate('tick', { i })
       await page.flush()
@@ -466,6 +480,7 @@ describe('the page unloading while a seal is still being stored', () => {
         fetchImpl: net.fetchImpl,
         beacon: net.beacon,
       })
+      attempt()
       const w = fakeWorker()
       page.linkWorker(w.target)
       w.hello()

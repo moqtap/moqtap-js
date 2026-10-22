@@ -16,8 +16,10 @@
  * once compressed, not by its raw size.
  *
  * Every timestamp is written on the page's timeline from the start: the page
- * sends the offset between the two clocks in its answer to the hello, and the
- * probe's realm uses it as its origin.
+ * sends the offset between the two clocks with each session it records the
+ * worker into, and the probe's realm uses it as its origin. Until the page's
+ * session begins there is none, and the probe records nothing; the worker's
+ * first `WebTransport` is what it tells the page instead.
  */
 
 import type { DraftSet } from '../draft/index.js'
@@ -32,6 +34,7 @@ import type { TriggerEvent } from '../recorder/index.js'
 import type { TransportHook } from '../transport/index.js'
 import type { ClockSource, DetailLevel, Mono } from '../types.js'
 import { levelIndex } from './defaults.js'
+import { armDormant, type DormantState, dormantPending } from './dormant.js'
 import { TRIGGER_CAPTURE_LEVEL } from './escalation.js'
 import {
   type CallMessage,
@@ -89,7 +92,10 @@ const RAW_CAP_THRESHOLDS = 128
 const PLAIN_CAP_THRESHOLDS = 8
 
 export class ProbeRuntime {
-  readonly #base: Mono
+  /** The page's clock base; `undefined` while the page's session has not begun. */
+  #base: Mono | undefined
+  /** What holds this worker's transports while no session records them; `undefined` is the dormant hook's own. */
+  #dormant: DormantState | undefined
   readonly #port: MessagePort
   readonly #hook: TransportHook
   readonly #drafts: DraftSet
@@ -104,7 +110,7 @@ export class ProbeRuntime {
 
   #ids: { sessionId: string; instanceId: string }
   #config: RealmConfig
-  #realm: RealmObserver
+  #realm: RealmObserver | null = null
   #level: DetailLevel
   #ready = false
   #stopped = false
@@ -153,19 +159,22 @@ export class ProbeRuntime {
       maxPendingBytes: (this.#compresses ? RAW_CAP_THRESHOLDS : PLAIN_CAP_THRESHOLDS) * threshold,
       onInternalError: this.#onError,
     })
-    this.#realm = this.#observer()
   }
 
-  /** A realm observing this worker's transports into the buffer the forwards empty. */
-  #observer(): RealmObserver {
+  /**
+   * Start a realm observing this worker's transports into the buffer the
+   * forwards empty, on the page's clock `base`.
+   */
+  #record(base: Mono): void {
+    this.#base = base
     const buffer = this.#buffer
     const ratio = (): number => Math.max(GATE_MIN_RATIO, this.#ratio)
-    return new RealmObserver({
+    const realm = new RealmObserver({
       realm: 'worker',
       config: this.#config,
       hook: this.#hook,
       drafts: this.#drafts,
-      originMono: this.#base,
+      originMono: base,
       clock: this.#clock,
       host: {
         sink: {
@@ -182,7 +191,7 @@ export class ProbeRuntime {
         },
         onConnClosed: () => this.#forward(),
         onOverrun: (at, signal) => {
-          this.#call({ t: 'overrun', at: at - this.#base, signal })
+          this.#call({ t: 'overrun', at: at - base, signal })
           this.#forward()
         },
         onPressure: () => {},
@@ -190,6 +199,23 @@ export class ProbeRuntime {
         onError: this.#onError,
       },
     })
+    this.#realm = realm
+    const from = this.#dormant
+    this.#dormant = undefined
+    realm.start(from)
+  }
+
+  /**
+   * Record nothing, and tell the page when this worker constructs a
+   * `WebTransport`: that begins the page's session, which answers with the
+   * clock base. A construction made before the link is already waiting in the
+   * dormant hook, so the page hears of it at once.
+   */
+  #arm(first: boolean): void {
+    this.#base = undefined
+    const open = (): void => this.#call({ t: 'open' })
+    if (first && dormantPending()) open()
+    else this.#dormant = armDormant(this.#hook, open)
   }
 
   get ids(): { sessionId: string; instanceId: string } {
@@ -198,7 +224,9 @@ export class ProbeRuntime {
 
   start(): void {
     this.#port.onmessage = (e: MessageEvent) => this.#fromPage(e.data)
-    this.#realm.start()
+    const base = this.#base
+    if (base === undefined) this.#arm(true)
+    else this.#record(base)
     const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
     const forward = (): void => {
       if (this.#stopped) return
@@ -214,7 +242,7 @@ export class ProbeRuntime {
     const tick = (): void => {
       if (this.#stopped) return
       try {
-        this.#realm.tick(this.#clock.now())
+        this.#realm?.tick(this.#clock.now())
       } catch (err) {
         this.#onError(err)
       }
@@ -254,7 +282,8 @@ export class ProbeRuntime {
    * one runs follows it, so the page receives the frames in order.
    */
   #forward(): void {
-    if (this.#stopped) return
+    const realm = this.#realm
+    if (this.#stopped || realm === null) return
     if (this.#compressing) {
       this.#forwardAgain = true
       return
@@ -262,8 +291,8 @@ export class ProbeRuntime {
     const now = this.#clock.now()
     const hasFrames = this.#buffer.frameCount > 0
     if (!hasFrames && now - this.#lastPost < HEARTBEAT_MS) return
-    const conns = this.#realm.snapshots(now)
-    const dropped = this.#buffer.droppedRecords + this.#realm.droppedRecords
+    const conns = realm.snapshots(now)
+    const dropped = this.#buffer.droppedRecords + realm.droppedRecords
     const ready = this.#ready
     this.#lastPost = now
     if (!hasFrames) {
@@ -355,7 +384,7 @@ export class ProbeRuntime {
     this.#call({
       t: 'trigger',
       kind: e.kind,
-      at: e.atMono - this.#base,
+      at: e.atMono - (this.#base ?? 0),
       ...(e.key !== undefined ? { key: e.key } : {}),
     })
   }
@@ -382,7 +411,7 @@ export class ProbeRuntime {
           ...this.#config,
           context: { ...this.#config.context, contentId: m.contentId },
         }
-        this.#realm.setContentId(m.contentId)
+        this.#realm?.setContentId(m.contentId)
       }
     } catch (err) {
       this.#onError(err)
@@ -390,10 +419,11 @@ export class ProbeRuntime {
   }
 
   /**
-   * The page started a new session. What this probe holds goes out first, and
-   * a fresh realm takes over the hook: the transports still open are announced
-   * to it, so each reappears in the new session as a connection of its own,
-   * as the page's own transports do.
+   * The page's session changed. What this probe holds goes out first. With a
+   * clock base, a fresh realm takes over the hook: the transports still open
+   * are announced to it, so each reappears in the new session as a connection
+   * of its own, as the page's own transports do. Without, the probe waits for
+   * this worker's next `WebTransport`.
    */
   #follow(m: Extract<PageMessage, { t: 'session' }>): void {
     if (this.#stopped) return
@@ -401,18 +431,21 @@ export class ProbeRuntime {
     this.#ids = { sessionId: m.sessionId, instanceId: m.instanceId }
     this.#level = m.level
     this.#ready = false
-    this.#realm.detach()
-    this.#realm.clear()
-    this.#realm = this.#observer()
-    this.#realm.start()
+    const realm = this.#realm
+    if (realm === null && m.base === undefined) return
+    this.#realm = null
+    realm?.detach()
+    realm?.clear()
+    if (m.base === undefined) this.#arm(false)
+    else this.#record(m.base)
   }
 
   /** The page's instance ended: stop observing and restore this worker's global. */
   #stop(): void {
     if (this.#stopped) return
     this.#stopped = true
-    this.#realm.detach()
-    this.#realm.clear()
+    this.#realm?.detach()
+    this.#realm?.clear()
     const clear = this.#ports.clearTimer ?? ((h: unknown) => clearTimeout(h as never))
     if (this.#forwardHandle !== undefined) clear(this.#forwardHandle)
     if (this.#intervalHandle !== undefined) clear(this.#intervalHandle)

@@ -41,7 +41,8 @@ const vitals = init({
 That is a complete baseline session: control messages plus an interval
 rollup, reporting per-track object rate, bitrate, group cadence, group gaps,
 duplicates, out-of-order arrivals, stall duration and control-exchange
-latencies.
+latencies. The session begins when the page constructs its first
+`WebTransport`; until then nothing is recorded or sent.
 
 ## Content Security Policy
 
@@ -66,7 +67,7 @@ runtime chunk loading.
 | Key              | What it controls                                                  |
 | ---------------- | ----------------------------------------------------------------- |
 | `endpoint`       | Where uploads go. Defaults to the hosted ingest.                   |
-| `sessionId`      | Your own id for the session, up to 128 UTF-8 bytes; else minted    |
+| `sessionId`      | Your own id for the first session, up to 128 UTF-8 bytes; else minted |
 | `context`        | `actorId`, `contentId`, `environment`, `release`, `tags`           |
 | `detail`         | `baseline`, `headers`, `headers+sizes` or `headers+data`           |
 | `metrics`        | How often the rollup closes, how many tracks it follows            |
@@ -133,23 +134,40 @@ Raised detail is recorded as a `remote` escalation and billed like any other.
 
 ## Sessions, instances and connections
 
-- **Session**: one playback context, by default the page. It ends when the page
-  closes, or when you call `end()` or `newSession()`.
-- **Instance**: one `init()`, normally one page load. A reload that passes the
+- **Session**: the WebTransport activity of one page and its linked workers.
+  It begins when a `WebTransport` is constructed, in the page or in a linked
+  worker, whether or not it connects. It ends when its last connection has
+  closed and no other is attempted within 30 s, when the page closes, or when
+  you call `end()` or `newSession()`. The next `WebTransport` after that
+  begins a new session, with new ids and the context so far.
+- **Instance**: one session's recording in one page. A reload that passes the
   same `sessionId` is a second instance of the same session.
-- **Connection**: one WebTransport, in the page or in a linked worker. It opens
-  and closes by itself and never ends the session.
+- **Connection**: one WebTransport, in the page or in a linked worker. A
+  connection that fails to open is still reported, in the session its attempt
+  began or joined.
+
+A page that never constructs a `WebTransport` has no session: it records,
+stores and uploads nothing, and is not billed. Every session counts toward
+usage, including one whose only connection failed to open.
+
+Before a session begins, `ids()` already answers with the ids it will be
+uploaded under, and context passed to `init()` or `setContext()` is sent with
+it. Annotations, metric samples and `escalate()` calls made before then are
+not recorded; metric definitions are kept. A capture window still open when
+a session ends closes with it, and the next session starts at `detail`.
 
 Without any call, the collector:
 
 | When                                   | It                                                         |
 | -------------------------------------- | ---------------------------------------------------------- |
+| a `WebTransport` is constructed        | begins a session, unless one is running                    |
 | a connection closes                    | records why, and uploads that connection's records         |
+| no connection is open for 30 s         | ends the session                                           |
 | the page is hidden                     | uploads what it holds                                      |
 | the page closes                        | ends the session and uploads the rest                      |
 | the page enters the back/forward cache | uploads what it holds; the session goes on if restored     |
 | an upload fails                        | retries it                                                 |
-| the page closes with an upload unsent  | sends it on the next page load on the same origin          |
+| the page closes with an upload unsent  | sends it with the next session on the same origin          |
 | a linked worker is terminated          | records its connections closed, with what it last reported |
 
 A tab killed with no `pagehide` while visible loses at most the last 60 s.
@@ -179,7 +197,8 @@ vitals.resolve() // safe with nothing open, and safe to call twice
 // Connections opened from now on carry this content id. The user and tags
 // apply from now on too; tags add to the session's.
 vitals.setContext({ contentId: 'live/room-43', actorId: 'user-81', tags: { cdn: 'edge-2' } })
-// Or one session per playback: ends this one and returns the new ids.
+// Or one session per playback: ends this one and returns the new ids. With no
+// connection open, the new session begins with the next WebTransport.
 vitals.newSession({ contentId: 'vod/episode-2' })
 
 await vitals.flush() // upload everything recorded so far; ends nothing
@@ -249,9 +268,11 @@ vitals.annotate('joined', undefined, vitals.connectionIdOf(transport))
 ```
 
 The worker's `annotate`, `observe`, `escalate` and `resolve` go to the page's
-session, and calls made before the worker is linked are kept. All
-configuration comes from the page's `init()`. `ids()` answers with the page's
-ids once linked, and follows the page into a `newSession()`.
+session, and calls made before the worker is linked are kept until it is. As
+in the page, those made before a session begins are not recorded; a
+`WebTransport` the worker constructs begins one. All configuration comes from
+the page's `init()`. `ids()` answers with the page's ids once linked, and
+follows the page into each new session.
 
 If the worker also runs an RPC library such as Comlink on its global, give the
 link its own channel so neither side sees the other's messages:
@@ -280,8 +301,8 @@ its own release.
 
 `@moqtap/collector/worker` and `@moqtap/collector/draft07/worker` through
 `@moqtap/collector/draft22/worker` export `initWorker` alone, without the
-page's uploader, storage and session. A draft-14 worker is 30.2 KB gzipped
-through `@moqtap/collector/draft14/worker`, against 46.4 KB through
+page's uploader, storage and session. A draft-14 worker is 30.8 KB gzipped
+through `@moqtap/collector/draft14/worker`, against 47.5 KB through
 `@moqtap/collector/draft14`. Like every entry, importing one wraps the
 worker's `WebTransport`.
 
@@ -291,9 +312,10 @@ worker's `WebTransport`.
 
 Open the browser's developer tools, play a stream, and filter the Network panel
 for your `endpoint` (`moqgest.com` by default). Uploads come from the page,
-never from a worker. The first one goes out as soon as a session is ready.
+never from a worker. The first one goes out as soon as a session begins, when
+the page or a linked worker constructs a `WebTransport`.
 
-**No upload requests at all** means the collector never saw a session:
+**No upload requests at all** means the collector never saw a `WebTransport`:
 
 - **The player opens its `WebTransport` in a Worker.** This is the most common
   cause. The collector in the page cannot see a worker's connections; add

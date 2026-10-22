@@ -68,6 +68,7 @@ import type {
 import { COLLECTOR_VERSION } from '../version.js'
 import { addTags, type ConfigProblem, mintId, sentActorId } from './config.js'
 import { levelIndex } from './defaults.js'
+import { armDormant, type DormantState, dormantPending } from './dormant.js'
 import { EscalationController } from './escalation.js'
 import {
   type CallMessage,
@@ -119,14 +120,38 @@ export interface RuntimePorts {
   /** The instance id. Injected so the suite is deterministic. */
   readonly instanceId?: string
   /**
-   * The clock anchor of the session this one follows in the same page. A page
-   * keeps one timeline across its sessions, so a linked probe's clock offset
-   * stays valid when it follows the page into the next one.
+   * Begin nothing until a `WebTransport` is constructed in the page or a
+   * linked worker: until then nothing is recorded, stored or sent. The runtime
+   * that records the session takes over at that moment, and {@link onSession}
+   * names it.
    */
-  readonly anchor?: ClockAnchor
+  readonly armed?: boolean | undefined
+  /** Clock zero. Default: now. */
+  readonly anchor?: ClockAnchor | undefined
+  /**
+   * When this session began on {@link anchor}, which an earlier session in the
+   * page set: one started by `newSession()` while connections were open keeps
+   * the page's timeline, so a linked probe's clock offset stays valid.
+   */
+  readonly startTs?: number | undefined
+  /**
+   * Another runtime took over: the session began, ended idle, or
+   * `newSession()` started the next. Called before the new runtime starts,
+   * so a runtime that hands over again at once is named after this one.
+   */
+  readonly onSession?: ((r: CollectorRuntime) => void) | undefined
+  /** The customer's metric definitions, which carry from one session to the next. */
+  readonly custom?: CustomMetrics | undefined
   /** `CollectorConfig.onInternalError`, which `ResolvedConfig` deliberately omits. */
   readonly onInternalError?: (err: unknown) => void
 }
+
+/**
+ * How long a session outlives its last connection. A connection attempted
+ * within it joins the session; after it the session ends, and the next attempt
+ * begins another.
+ */
+export const IDLE_END_MS = 30_000
 
 /** The backoff a failed upload waits before the outbox tries again, in ms. */
 const RETRY_FIRST_MS = 1_000
@@ -168,6 +193,8 @@ interface Link {
   dropped: number
   /** Its open connections as of the last forward. */
   conns: readonly ConnectionSnapshot[]
+  /** The worker's `performance.timeOrigin`, from its hello. */
+  origin: number
   /** `terminate()` was called on it: gone for good, whatever arrives after. */
   terminated: boolean
   timeout: unknown
@@ -178,6 +205,11 @@ export class CollectorRuntime {
   readonly config: ResolvedConfig
   readonly anchor: ClockAnchor
   readonly instanceId: string
+  /** Waiting for the session's first `WebTransport`; see {@link RuntimePorts.armed}. */
+  readonly #armed: boolean
+  /** What holds the page's transports until this session's realm starts; `undefined` is the dormant hook's own. */
+  #dormant: DormantState | undefined
+  #idleHandle: unknown
 
   readonly #clock: ClockSource
   readonly #ports: RuntimePorts
@@ -278,11 +310,9 @@ export class CollectorRuntime {
         // An error handler that throws is where reporting stops.
       }
     }
-    this.anchor = ports.anchor ?? {
-      originMono: this.#clock.now(),
-      originWall: this.#clock.wall(),
-    }
-    if (ports.anchor !== undefined) this.#startTs = this.#clock.now() - ports.anchor.originMono
+    this.anchor = ports.anchor ?? this.#anchorNow()
+    this.#startTs = ports.startTs
+    this.#armed = ports.armed === true
     this.instanceId = ports.instanceId ?? mintId()
     this.#lastSealMono = this.#clock.now()
     this.#dest = { endpoint: config.endpoint, keyHash: sha256Hex(config.apiKey) }
@@ -307,14 +337,15 @@ export class CollectorRuntime {
       onInternalError: this.#onError,
     })
     const queue = this.#queue
+    // Before its session begins a runtime records nothing at all.
     this.#sink = {
       json: (r: EnvelopeRecord): void => {
-        if (this.#discarded) return
+        if (this.#discarded || this.#armed) return
         this.#ensureSetup()
         queue.json(r)
       },
       raw: (b: Uint8Array): void => {
-        if (!this.#discarded) queue.raw(b)
+        if (!this.#discarded && !this.#armed) queue.raw(b)
       },
       get pendingBytes(): number {
         return queue.pendingBytes
@@ -333,7 +364,10 @@ export class CollectorRuntime {
         level: () => this.#escalation.level,
         onTrigger: (e: TriggerEvent) => this.#escalation.onTrigger(e.kind, e.atMono, e.key),
         onConnReady: () => this.#schedule.ready(this.#clock.now()),
-        onConnClosed: () => this.#sealNow(false),
+        onConnClosed: () => {
+          this.#sealNow(false)
+          this.#noteClosed()
+        },
         onOverrun: () => this.#overrun(),
         onPressure: (p) => this.#pacer.notePressure(p),
         onBytes: (n) => this.#schedule.noteBytes(n),
@@ -341,7 +375,8 @@ export class CollectorRuntime {
       },
     })
 
-    this.#custom = new CustomMetrics({ onError: (m) => this.#onError(new Error(m)) })
+    this.#custom =
+      ports.custom ?? new CustomMetrics({ onError: (m) => this.#onError(new Error(m)) })
     this.#customRollup = new RollupEngine({
       intervalMs: config.metrics.intervalMs,
       maxBuckets: 1,
@@ -402,16 +437,94 @@ export class CollectorRuntime {
   /* ── startup ──────────────────────────────────────────────────────────── */
 
   start(): void {
+    if (this.#armed) {
+      this.#arm(true)
+      return
+    }
     this.#begin()
     void this.#sweep()
   }
 
   #begin(): void {
     this.#releaseLock = holdInstanceLock(this.#locks, this.instanceId, this.#onError)
-    this.#realm.start()
+    this.#realm.start(this.#dormant)
+    this.#dormant = undefined
     this.#schedule.start(this.#clock.now())
     this.#startInterval()
     this.#installLifecycle()
+  }
+
+  /**
+   * Wait for a `WebTransport` in the page. Its construction begins the
+   * session there and then, with clock zero at that moment, inside the
+   * constructor's call: the runtime that records it is the hook's observer
+   * before the constructor returns. One made before this runtime started,
+   * still held by the dormant hook, begins it at once.
+   */
+  #arm(first: boolean): void {
+    this.#installLifecycle()
+    if (!this.#hook.installed) return
+    const begin = (from?: DormantState): void => {
+      if (from !== undefined) this.#dormant = from
+      try {
+        this.#beginNow()
+      } catch (err) {
+        this.#onError(err)
+      }
+    }
+    const s = this.#dormant
+    if (s !== undefined) {
+      s.onOpen = begin
+      if (dormantPending(s)) begin()
+    } else if (first && dormantPending()) begin()
+    else this.#dormant = armDormant(this.#hook, begin)
+  }
+
+  /** Begin the session this runtime was waiting for, in a runtime that records it. */
+  #beginNow(): void {
+    if (this.#ended) return
+    this.#handOver(this.#withContext(), this.instanceId, { anchor: this.#anchorNow() })
+  }
+
+  /** This session's config with the context as it stands, which the next one starts from. */
+  #withContext(over?: Pick<ResolvedConfig, 'sessionId' | 'idSource'>): ResolvedConfig {
+    return Object.freeze({
+      ...this.config,
+      ...over,
+      context: Object.freeze({ ...this.config.context, ...this.#context }),
+    })
+  }
+
+  #anchorNow(): ClockAnchor {
+    return { originMono: this.#clock.now(), originWall: this.#clock.wall() }
+  }
+
+  /** A connection is open or being attempted, in the page or a linked worker. */
+  #open(): boolean {
+    return (
+      this.#links.some((l) => l.conns.length > 0) ||
+      this.#realm.connections().some((c) => c.state !== 'closed')
+    )
+  }
+
+  /**
+   * A connection closed, or the session began with none open yet. With none
+   * open, the session ends {@link IDLE_END_MS} from now unless one is
+   * attempted meanwhile, and the next attempt begins a new one, with the
+   * context so far.
+   */
+  #noteClosed(): void {
+    if (this.#ended || this.#armed || this.#open()) return
+    this.#cancel(this.#idleHandle)
+    this.#idleHandle = this.#timer(() => {
+      this.#idleHandle = undefined
+      if (this.#ended || this.#open()) return
+      this.#finish('idle')
+      this.#seal(true)
+      this.#handOver(this.#withContext({ sessionId: mintId(), idSource: 'minted' }), mintId(), {
+        armed: true,
+      })
+    }, IDLE_END_MS)
   }
 
   /* ── the public verbs ─────────────────────────────────────────────────── */
@@ -448,8 +561,9 @@ export class CollectorRuntime {
     return this.#ended
   }
 
+  /** Before the session begins there is nothing to capture, and the call is dropped. */
   escalate(level: DetailLevel, reason?: string): void {
-    if (this.#ended) return
+    if (this.#ended || this.#armed) return
     this.#escalation.escalate(level, reason)
   }
 
@@ -460,7 +574,7 @@ export class CollectorRuntime {
    * error handling and will be called for incidents that never escalated.
    */
   resolve(reason?: string): void {
-    if (this.#ended) return
+    if (this.#ended || this.#armed) return
     this.#escalation.resolve(reason)
   }
 
@@ -523,6 +637,7 @@ export class CollectorRuntime {
   }
 
   observe(name: string, value: number, labels?: Record<string, string>): void {
+    if (this.#armed) return
     if (labels === undefined) this.#custom.observe(name, value)
     else this.#custom.observe(name, value, labels)
   }
@@ -542,12 +657,18 @@ export class CollectorRuntime {
 
   /**
    * End this instance: report its open connections closed, write `end{app}`,
-   * send everything, and restore the patched global.
+   * send everything, and restore the patched global. Before the session
+   * begins there is nothing of it to end, only earlier sessions' bodies to send.
    */
   async end(): Promise<void> {
     if (this.#ended) return
-    this.#finish('app')
-    this.#seal(true)
+    if (this.#armed) {
+      this.#ended = true
+      this.#broadcast({ t: 'unlinked' })
+    } else {
+      this.#finish('app')
+      this.#seal(true)
+    }
     try {
       await this.#drainUrgent()
       // Whatever is still unsent keeps its stored copy for the next page load.
@@ -590,32 +711,60 @@ export class CollectorRuntime {
    * the transport hook, the store, every worker link and every body not yet
    * sent. `null` once this instance has ended.
    *
+   * With a connection open, the next session begins at once and inherits it.
+   * With none, it begins with the next `WebTransport`, like the first.
+   *
    * Synchronous, like the seal: the old session's last body is numbered and
    * keyed before this returns. A probe forward already on its way lands in
    * the new session.
    */
   successor(next: ResolvedConfig, instanceId: string): CollectorRuntime | null {
     if (this.#ended) return null
-    this.#finish('new-session')
-    this.#seal(true)
+    const open = !this.#armed && this.#open()
+    if (!this.#armed) {
+      this.#finish('new-session')
+      this.#seal(true)
+    }
+    return this.#handOver(
+      next,
+      instanceId,
+      open
+        ? { anchor: this.anchor, startTs: this.#clock.now() - this.anchor.originMono }
+        : { armed: true },
+    )
+  }
+
+  /** Hand everything a page keeps across its sessions to the runtime of the next one. */
+  #handOver(
+    next: ResolvedConfig,
+    instanceId: string,
+    ports: Pick<RuntimePorts, 'armed' | 'anchor' | 'startTs'>,
+  ): CollectorRuntime {
     const runtime = new CollectorRuntime(next, this.#hook, this.#drafts, {
       ...this.#ports,
       instanceId,
-      anchor: this.anchor,
+      armed: false,
+      anchor: undefined,
+      startTs: undefined,
+      custom: this.#custom,
+      ...ports,
     })
     // The session's tags so far, `setContext()`'s included, go on with it.
     runtime.#context.tags = this.#context.tags
+    runtime.#dormant = this.#dormant
+    this.#dormant = undefined
     const outbox = this.#outbox
     // Every link, gone ones included: a worker silent past the limit is linked
     // again when it speaks, and the ids `w1, w2 …` stay unique in the page.
     const links = this.#links
     const locks = new Map(this.#inheritedLocks)
-    locks.set(this.instanceId, this.#releaseLock)
+    if (!this.#armed) locks.set(this.instanceId, this.#releaseLock)
     this.#outbox = []
     this.#links = []
     this.#inheritedLocks.clear()
     this.#releaseLock = () => {}
     this.#teardown({ keepHook: true })
+    this.#ports.onSession?.(runtime)
     runtime.#adopt(this, outbox, links, locks)
     return runtime
   }
@@ -634,13 +783,18 @@ export class CollectorRuntime {
     }
     this.#outbox = [...outbox, ...this.#outbox]
     for (const [id, release] of locks) this.#inheritedLocks.set(id, release)
-    this.#begin()
+    if (!this.#armed) {
+      this.#begin()
+      if (from.#armed) void this.#sweep()
+    }
+    const now = this.#clock.now()
     for (const link of links) {
       link.owner = this
       link.conns = []
       link.ready = false
+      link.lastHeard = now
       this.#links.push(link)
-      if (link.state === 'linked') this.#writeLink(link, 'linked')
+      if (link.state === 'linked' || link.state === 'timeout') this.#writeLink(link, link.state)
       try {
         link.port?.postMessage(
           envelope<PageMessage>({
@@ -648,15 +802,27 @@ export class CollectorRuntime {
             sessionId: this.config.sessionId,
             instanceId: this.instanceId,
             level: this.#escalation.level,
+            base: this.#armed ? undefined : this.#baseFor(link),
           }),
         )
       } catch (err) {
         this.#onError(err)
       }
     }
-    if (this.#links.length > 0) this.#startLinkTimer()
+    if (!this.#armed && this.#links.length > 0) this.#startLinkTimer()
     this.#releaseInherited()
     if (this.#outbox.length > 0) void this.#drain()
+    // A session a worker began may see that worker's connection close before
+    // its first forward arrives; it ends all the same.
+    this.#noteClosed()
+    // Last: a connection already waiting begins the next session at once, and
+    // this one hands over what it now holds.
+    if (this.#armed) this.#arm(false)
+  }
+
+  /** What a probe subtracts from its own clock to land on this session's. */
+  #baseFor(link: Link): Mono {
+    return (this.#ports.timeOrigin ?? performance.timeOrigin) + this.anchor.originMono - link.origin
   }
 
   /** Let go of an earlier session's lock once none of its bodies is left to send. */
@@ -693,13 +859,13 @@ export class CollectorRuntime {
       ready: false,
       dropped: 0,
       conns: [],
+      origin: 0,
       terminated: false,
       timeout: undefined,
       onHello: undefined,
     }
     this.#links.push(link)
-    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
-    link.timeout = set(() => {
+    link.timeout = this.#timer(() => {
       const owner = link.owner
       if (link.state !== 'waiting' || owner.#ended) return
       link.state = 'timeout'
@@ -733,13 +899,13 @@ export class CollectorRuntime {
     }
     const port = channel.port1
     link.port = port
+    link.origin = workerTimeOrigin
     port.onmessage = (e: MessageEvent) => link.owner.#fromProbe(link, e.data)
-    const pageTimeOrigin = this.#ports.timeOrigin ?? performance.timeOrigin
     const linked: LinkedMessage = {
       t: 'linked',
       sessionId: this.config.sessionId,
       instanceId: this.instanceId,
-      base: pageTimeOrigin + this.anchor.originMono - workerTimeOrigin,
+      base: this.#armed ? undefined : this.#baseFor(link),
       level: this.#escalation.level,
       config: {
         metrics: this.config.metrics,
@@ -764,6 +930,12 @@ export class CollectorRuntime {
     const m = linkMessage(data) as (ForwardMessage | CallMessage) | null
     if (m === null) return
     try {
+      // Before the session begins, all a probe says that matters is that its
+      // worker attempted a connection.
+      if (this.#armed) {
+        if (m.t === 'open') this.#beginNow()
+        return
+      }
       this.#heard(link)
       switch (m.t) {
         case 'fwd':
@@ -807,7 +979,11 @@ export class CollectorRuntime {
   #forwarded(link: Link, m: ForwardMessage): void {
     link.dropped = Math.max(link.dropped, m.dropped)
     // A terminated worker's connections were reported closed when it went.
-    if (!link.terminated) link.conns = m.conns
+    if (!link.terminated) {
+      const before = link.conns.length
+      link.conns = m.conns
+      if (m.conns.length < before) this.#noteClosed()
+    }
     if (m.ready && !link.ready) {
       link.ready = true
       this.#schedule.ready(this.#clock.now())
@@ -864,6 +1040,7 @@ export class CollectorRuntime {
     this.#closeForwarded(link, 'worker-gone')
     link.conns = []
     this.#sealNow(false)
+    this.#noteClosed()
   }
 
   /** Report a link's open connections closed, from its last forward. */
@@ -912,16 +1089,15 @@ export class CollectorRuntime {
 
   #startLinkTimer(): void {
     if (this.#linkTimer !== undefined) return
-    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
     const run = (): void => {
       if (this.#ended) return
       const now = this.#clock.now()
       for (const l of this.#links) {
         if (l.state === 'linked' && now - l.lastHeard > SILENCE_MS) this.#workerGone(l)
       }
-      this.#linkTimer = set(run, HEARTBEAT_MS)
+      this.#linkTimer = this.#timer(run, HEARTBEAT_MS)
     }
-    this.#linkTimer = set(run, HEARTBEAT_MS)
+    this.#linkTimer = this.#timer(run, HEARTBEAT_MS)
   }
 
   #broadcast(m: PageMessage): void {
@@ -998,7 +1174,7 @@ export class CollectorRuntime {
     for (const l of this.#links) this.#closeForwarded(l, 'session-end')
     this.#customRollup.tick(now)
     // Probes follow the page into its next session rather than stop.
-    if (reason !== 'new-session') this.#broadcast({ t: 'unlinked' })
+    if (reason !== 'new-session' && reason !== 'idle') this.#broadcast({ t: 'unlinked' })
     const record: EndRecord = {
       t: 'end',
       ts: this.#relNow(),
@@ -1044,7 +1220,6 @@ export class CollectorRuntime {
 
   #startInterval(): void {
     const ms = this.config.metrics.intervalMs
-    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
     const run = (): void => {
       if (this.#ended) return
       try {
@@ -1052,9 +1227,9 @@ export class CollectorRuntime {
       } catch (err) {
         this.#onError(err)
       }
-      this.#intervalHandle = set(run, ms)
+      this.#intervalHandle = this.#timer(run, ms)
     }
-    this.#intervalHandle = set(run, ms)
+    this.#intervalHandle = this.#timer(run, ms)
   }
 
   #tick(): void {
@@ -1074,11 +1249,9 @@ export class CollectorRuntime {
    * captured. One timer per opened window, cleared on the next one.
    */
   #scheduleWindowClose(deadlineMono: Mono): void {
-    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
-    const clear = this.#ports.clearTimer ?? ((h: unknown) => clearTimeout(h as never))
-    if (this.#windowHandle !== undefined) clear(this.#windowHandle)
+    this.#cancel(this.#windowHandle)
     const delay = Math.max(0, deadlineMono - this.#clock.now())
-    this.#windowHandle = set(() => {
+    this.#windowHandle = this.#timer(() => {
       this.#windowHandle = undefined
       if (this.#ended) return
       try {
@@ -1279,24 +1452,31 @@ export class CollectorRuntime {
     if (this.#retryHandle !== undefined || this.#life.signal.aborted) return
     this.#retryDelay = Math.min(RETRY_MAX_MS, Math.max(RETRY_FIRST_MS, this.#retryDelay * 2))
     const delay = Math.round(this.#retryDelay * (0.75 + Math.random() * 0.5))
-    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
-    this.#retryHandle = set(() => {
+    this.#retryHandle = this.#timer(() => {
       this.#retryHandle = undefined
       void this.#drain()
     }, delay)
   }
 
   #sleep(ms: number): Promise<void> {
-    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
     return new Promise((resolve) => {
       this.#wake = resolve
-      set(() => resolve(), ms)
+      this.#timer(() => resolve(), ms)
     })
+  }
+
+  #timer(fn: () => void, ms: number): unknown {
+    return (this.#ports.setTimer ?? ((f: () => void, d: number) => setTimeout(f, d)))(fn, ms)
+  }
+
+  #cancel(h: unknown): void {
+    if (h !== undefined) (this.#ports.clearTimer ?? ((t: unknown) => clearTimeout(t as never)))(h)
   }
 
   /**
    * Send what earlier page loads stored and could not send: every body bound
-   * for this endpoint and key whose instance is gone, from any session.
+   * for this endpoint and key whose instance is gone, from any session. Only
+   * once a session has begun: a page that never has one sends nothing.
    */
   async #sweep(): Promise<void> {
     const store = this.#store
@@ -1365,7 +1545,7 @@ export class CollectorRuntime {
   }
 
   #visibility(): void {
-    if (this.#ended) return
+    if (this.#ended || this.#armed) return
     if (!pageHidden()) {
       this.#writeLife('visible')
       return
@@ -1395,6 +1575,13 @@ export class CollectorRuntime {
    * be restored: the tail goes, marked `frozen`, and the instance carries on.
    */
   #pagehide(persisted: boolean): void {
+    // Waiting for a session, a page holds only earlier sessions' bodies.
+    if (this.#armed) {
+      if (this.#ended) return
+      this.#beaconOutbox([])
+      if (persisted) this.#beaconed.clear()
+      return
+    }
     if (persisted) {
       if (this.#ended || this.#frozenAt !== undefined) return
       this.#frozenAt = this.#clock.now()
@@ -1487,17 +1674,17 @@ export class CollectorRuntime {
     this.#schedule.stop()
     this.#life.abort()
     this.#wake?.()
-    const clear = this.#ports.clearTimer ?? ((h: unknown) => clearTimeout(h as never))
     for (const h of [
       this.#intervalHandle,
       this.#windowHandle,
       this.#retryHandle,
       this.#linkTimer,
+      this.#idleHandle,
     ]) {
-      if (h !== undefined) clear(h)
+      this.#cancel(h)
     }
     for (const l of this.#links) {
-      if (l.timeout !== undefined) clear(l.timeout)
+      this.#cancel(l.timeout)
       if (l.onHello !== undefined) l.target.removeEventListener?.('message', l.onHello)
       l.port?.close()
     }
@@ -1505,6 +1692,7 @@ export class CollectorRuntime {
     this.#windowHandle = undefined
     this.#retryHandle = undefined
     this.#linkTimer = undefined
+    this.#idleHandle = undefined
     const g = globalThis as {
       removeEventListener?: (t: string, f: (e: unknown) => void, capture?: boolean) => void
     }

@@ -51,7 +51,7 @@ import {
 import { installWebTransportHook } from '../../transport/index.js'
 import type { BatchRecord, ClockSource, EndRecord, EnvelopeRecord } from '../../types.js'
 import { subscribeBytes } from '../decode/vectors.js'
-import { init } from '../support/init.js'
+import { attempt, init } from '../support/init.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -331,8 +331,15 @@ async function run(seed: number, steps: number, tuning: ProbeTuning = {}): Promi
 
   const probes: Probe[] = []
   let marker = 0
-  let pageTransport: MockWebTransport | undefined
-  let pageQueue: ReadableStreamDefaultReader<unknown> | undefined
+  // The page's own connection, open for the whole run: the session begins
+  // with it and never goes without one, so every new session begins at once
+  // and nothing either side writes falls before a session.
+  const pageTransport = new (g.WebTransport as new (u: string) => MockWebTransport)(
+    'https://relay.test/page',
+  )
+  await pageTransport.open('moqt-20')
+  const pageQueue = pageTransport.incomingBidirectionalStreams.getReader()
+  await turns()
 
   const spawn = async (): Promise<void> => {
     const id = probes.length + 1
@@ -442,16 +449,8 @@ async function run(seed: number, steps: number, tuning: ProbeTuning = {}): Promi
       2,
       'page-ctrl',
       async () => {
-        if (pageTransport === undefined) {
-          pageTransport = new (g.WebTransport as new (u: string) => MockWebTransport)(
-            'https://relay.test/page',
-          )
-          await pageTransport.open('moqt-20')
-          pageQueue = pageTransport.incomingBidirectionalStreams.getReader()
-          await turns()
-        }
         const m = `trk-pg-${pad(++marker, 4)}`
-        await deliver(pageTransport, pageQueue as never, subscribeBytes(BigInt(marker * 2), m))
+        await deliver(pageTransport, pageQueue, subscribeBytes(BigInt(marker * 2), m))
         written.push({ marker: m, at: vt.now })
       },
     ],
@@ -592,6 +591,8 @@ async function run(seed: number, steps: number, tuning: ProbeTuning = {}): Promi
     doc.document = { visibilityState: 'visible' }
     const store = await ChunkStore.open('db', 1024 * 1024, { backend })
     const next = init(config, { ...ports, store })
+    // It sends what was left once its own session begins.
+    attempt('https://relay.test/next')
     await turns(20)
     await vt.advance(1_000)
     await next.end()

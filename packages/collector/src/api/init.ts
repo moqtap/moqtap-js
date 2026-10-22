@@ -54,7 +54,10 @@ export const DB_NAME = 'moqtap-collector'
 export type ConnectionInfo = ConnectionState
 
 export interface Collector {
-  /** Synchronous ids for your own logs. */
+  /**
+   * Synchronous ids for your own logs: the session the next `WebTransport`
+   * begins, or the one it began.
+   */
   ids(): Identity
   /** Every connection seen in this page and its linked workers, open ones first. */
   connections(): readonly ConnectionInfo[]
@@ -90,8 +93,9 @@ export interface Collector {
   end(): Promise<void>
   /**
    * End this session and start a new one in this page. Linked workers follow.
-   * Returns the new ids. After `end()` or `discard()` it starts nothing and
-   * returns the ids unchanged.
+   * With a connection open the new session begins at once; with none, it
+   * begins with the next `WebTransport`. Returns the new ids. After `end()` or
+   * `discard()` it starts nothing and returns the ids unchanged.
    */
   newSession(ctx?: { contentId?: string; sessionId?: string }): Identity
   /** Consent withdrawn: delete everything unsent, including stored backlog, and send nothing more. */
@@ -158,9 +162,16 @@ class PendingCollector implements Collector {
     this.#claim = claim
   }
 
+  /** The runtime took over from its predecessor on its own: a session began or ended. */
+  swap(r: CollectorRuntime): void {
+    this.#runtime = r
+    this.#config = r.config
+  }
+
   /** Called once the runtime is built and started. Replays the gap. */
   attach(r: CollectorRuntime): void {
-    this.#runtime = r
+    // The session may already have begun as it started, in the runtime it handed over to.
+    this.#runtime ??= r
     const queued = this.#queued
     this.#queued = []
     // Each call runs against the runtime current at its turn: a queued
@@ -283,15 +294,13 @@ class PendingCollector implements Collector {
       ...withId('actorId', current.actorId),
       ...withId('contentId', contentId),
     }
-    const swap = (r: CollectorRuntime): void => {
-      const next = r.successor(config, instanceId)
-      if (next !== null) this.#runtime = next
-    }
+    // The runtime that takes over is named through `swap()`.
+    const next = (r: CollectorRuntime): void => void r.successor(config, instanceId)
     if (this.#runtime !== null) {
-      swap(this.#runtime)
+      next(this.#runtime)
       return this.ids()
     }
-    this.#defer(swap)
+    this.#defer(next)
     return this.#identity
   }
 
@@ -450,10 +459,14 @@ export function initWith(
         })
       }
 
+      // Armed: the session begins with the first WebTransport, and nothing
+      // before it is recorded or sent.
       const runtime = new CollectorRuntime(resolved, claim.hook, drafts, {
         ...options,
         instanceId,
         store,
+        armed: true,
+        onSession: (r) => pending.swap(r),
         onInternalError: onError,
       })
       runtime.start()

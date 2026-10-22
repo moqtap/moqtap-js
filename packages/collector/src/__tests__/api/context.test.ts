@@ -10,7 +10,7 @@ import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { MQ1114 } from '../../codes.js'
 import { sha256Hex } from '../../envelope/index.js'
 import type { CollectorConfig } from '../../types.js'
-import { init } from '../support/init.js'
+import { attempt, init } from '../support/init.js'
 import { settle } from '../support/settle.js'
 import { allRecords, of, type Post, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
@@ -52,6 +52,7 @@ describe('tags', () => {
       fetchImpl: impl,
     })
     await settle()
+    attempt()
     await c.end()
     expect(of(await allRecords(posts), 'setup')[0]?.tags).toEqual({
       experiment: 'abr-b',
@@ -63,6 +64,7 @@ describe('tags', () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
     await settle()
+    attempt()
     await c.end()
     expect(of(await allRecords(posts), 'setup')[0]).not.toHaveProperty('tags')
   })
@@ -120,6 +122,7 @@ describe('setContext()', () => {
       fetchImpl: impl,
     })
     await settle()
+    attempt()
     c.annotate('before')
     c.setContext({ contentId: 'live/2', actorId: 'viewer-4', tags: { cdn: 'edge-1' } })
     c.setContext({ tags: { experiment: 'b' } })
@@ -151,6 +154,7 @@ describe('setContext()', () => {
       fetchImpl: impl,
     })
     await settle()
+    attempt()
     c.annotate('something to send')
     c.setContext({})
     c.setContext({ tags: { '': 'bad' } })
@@ -166,6 +170,7 @@ describe('setContext()', () => {
       fetchImpl: impl,
     })
     await settle()
+    attempt()
     c.setContext({ tags: { cdn: 'edge-1' } })
     c.newSession({ contentId: 'vod/2' })
     c.annotate('second')
@@ -188,6 +193,7 @@ describe('privacy.hashActorId', () => {
     expect(c.ids().actorId).toBe(hashed('alice@example.com'))
     expect(c.ids().actorId).toMatch(/^[0-9a-f]{32}$/)
     await settle()
+    attempt()
     c.annotate('before the change')
     c.setContext({ actorId: 'bob@example.com' })
     expect(c.ids().actorId).toBe(hashed('bob@example.com'))
@@ -205,6 +211,7 @@ describe('privacy.hashActorId', () => {
     c.setContext({ actorId: 'carol' })
     expect(c.ids().actorId).toBe(hashed('carol'))
     await settle()
+    attempt()
     c.newSession()
     expect(c.ids().actorId).toBe(hashed('carol'))
     await c.end()
@@ -216,6 +223,7 @@ describe('privacy.hashActorId', () => {
     const c = init(base({ context: { actorId: 'dave' } }), { ...quiet, fetchImpl: impl })
     expect(c.ids().actorId).toBe('dave')
     await settle()
+    attempt()
     await c.end()
     expect(of(await allRecords(posts), 'setup')[0]?.identity.actorId).toBe('dave')
   })

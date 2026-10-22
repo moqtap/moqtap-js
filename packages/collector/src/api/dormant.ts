@@ -40,6 +40,8 @@ import { type PresenceHandle, publishPresence } from '../transport/presence.js'
 import type {
   DatagramChunk,
   InterceptedSession,
+  Mono,
+  SessionCloseInfo,
   StreamChunk,
   SupportedDraft,
   TransportObserver,
@@ -60,6 +62,23 @@ import { EarlyBuffer, type EarlyConnection } from './early.js'
  */
 export const DORMANT_DATAGRAM_STREAM_ID = -1
 
+/**
+ * A connection that opened and closed before a session could claim it, kept so
+ * the session that begins still reports it: an attempt that failed at once is
+ * the one most worth seeing.
+ */
+export interface ClosedEarly {
+  readonly session: InterceptedSession
+  readonly protocol: string | undefined
+  readonly readyAt: Mono | undefined
+  readonly reason: string
+  readonly at: Mono
+  readonly info: SessionCloseInfo | undefined
+}
+
+/** Connections closed before a session claimed them, kept per realm. */
+const MAX_CLOSED_EARLY = 8
+
 /** What the dormant hook accumulated before a key arrived. */
 export interface DormantState {
   readonly hook: TransportHook
@@ -67,6 +86,12 @@ export interface DormantState {
   /** Sessions the hook opened before `init()`. Replayed to the live observer. */
   readonly sessions: Map<string, InterceptedSession>
   readonly protocols: Map<string, string>
+  /** When each session's `ready` resolved. */
+  readonly readyAt: Map<string, Mono>
+  /** Sessions that opened and closed here, oldest first. Bounded. */
+  readonly closed: ClosedEarly[]
+  /** Called with this state on every `WebTransport` constructed while it observes. */
+  onOpen?: ((s: DormantState) => void) | undefined
   /**
    * The draft each pre-15 session's SETUP named, read as it crossed. It
    * survives a held control plane that hit its bound, and a worker whose link
@@ -112,13 +137,28 @@ function dormantObserver(s: DormantState): TransportObserver {
   return {
     onSessionOpen(session: InterceptedSession): void {
       s.sessions.set(session.id, session)
+      s.onOpen?.(s)
     },
-    onSessionProtocol(sessionId: string, protocol: string): void {
+    onSessionProtocol(sessionId: string, protocol: string, at?: Mono): void {
       s.protocols.set(sessionId, protocol)
+      if (at !== undefined) s.readyAt.set(sessionId, at)
     },
-    onSessionClose(sessionId: string): void {
+    onSessionClose(sessionId: string, reason: string, at: Mono, info?: SessionCloseInfo): void {
+      const session = s.sessions.get(sessionId)
+      if (session !== undefined) {
+        s.closed.push({
+          session,
+          protocol: s.protocols.get(sessionId),
+          readyAt: s.readyAt.get(sessionId),
+          reason,
+          at,
+          info,
+        })
+        if (s.closed.length > MAX_CLOSED_EARLY) s.closed.shift()
+      }
       s.sessions.delete(sessionId)
       s.protocols.delete(sessionId)
+      s.readyAt.delete(sessionId)
       s.setupDrafts.delete(sessionId)
       s.probed.delete(sessionId)
       s.early.forget(sessionId)
@@ -198,20 +238,11 @@ export function ensureDormantHook(): TransportHook {
   }
   if (installFailed) return inert()
   try {
-    const ring = new ByteRing({ maxBytes: DEFAULT_LIMITS.dormantRingBytes })
-    const next: DormantState = {
-      // Placeholder, replaced immediately below. `installWebTransportHook` needs
-      // an observer that already closes over the state it writes into, and the
-      // state needs the hook, so one of the two is assigned after construction.
-      hook: inert(),
-      ring,
-      sessions: new Map(),
-      protocols: new Map(),
-      setupDrafts: new Map(),
-      probed: new Map(),
-      early: new EarlyBuffer(),
-      patched: false,
-    }
+    // The hook is a placeholder, replaced immediately below.
+    // `installWebTransportHook` needs an observer that already closes over the
+    // state it writes into, and the state needs the hook, so one of the two is
+    // assigned after construction.
+    const next = freshState(inert())
     const hook = installWebTransportHook(globalThis, dormantObserver(next), {
       // A throw inside the collector must never reach the page. There is
       // no customer error callback yet — `init()` has not been called — so a
@@ -251,6 +282,42 @@ export function clearPresence(): void {
   presence = null
 }
 
+function freshState(hook: TransportHook, onOpen?: (s: DormantState) => void): DormantState {
+  return {
+    hook,
+    ring: new ByteRing({ maxBytes: DEFAULT_LIMITS.dormantRingBytes }),
+    sessions: new Map(),
+    protocols: new Map(),
+    readyAt: new Map(),
+    closed: [],
+    onOpen,
+    setupDrafts: new Map(),
+    probed: new Map(),
+    early: new EarlyBuffer(),
+    patched: false,
+  }
+}
+
+/**
+ * Buffer `hook`'s transports dormant again, into a state of their own, and call
+ * `onOpen` on every `WebTransport` constructed from now on, including any
+ * already open, which the hook announces at once.
+ *
+ * What a realm does between sessions: it records nothing until a connection
+ * is attempted, and the session that attempt begins starts with its control
+ * plane intact.
+ */
+export function armDormant(hook: TransportHook, onOpen: (s: DormantState) => void): DormantState {
+  const s = freshState(hook, onOpen)
+  hook.setObserver(dormantObserver(s))
+  return s
+}
+
+/** A connection was attempted in this realm before anything claimed it. */
+export function dormantPending(s: DormantState | null = state): boolean {
+  return s !== null && (s.sessions.size > 0 || s.closed.length > 0)
+}
+
 /** The dormant buffer, or `null` when the hook never installed. */
 export function dormantState(): DormantState | null {
   return state
@@ -268,14 +335,15 @@ export function dormantState(): DormantState | null {
  * The held control plane moves whole and the buffer holds nothing after it:
  * from here the collector's own observer sees every byte.
  */
-export function drainDormant(): {
+export function drainDormant(from: DormantState | null = state): {
   entries: RingEntry[]
   sessions: Map<string, InterceptedSession>
   protocols: Map<string, string>
   setupDrafts: Map<string, SupportedDraft>
   early: Map<string, EarlyConnection>
+  closed: ClosedEarly[]
 } {
-  const s = state
+  const s = from
   if (s === null) {
     return {
       entries: [],
@@ -283,16 +351,21 @@ export function drainDormant(): {
       protocols: new Map(),
       setupDrafts: new Map(),
       early: new Map(),
+      closed: [],
     }
   }
   const entries = s.ring.snapshot()
   s.ring.clear()
+  const sessions = new Map(s.sessions)
+  // Handed over: whatever drains them observes them from here.
+  s.sessions.clear()
   return {
     entries,
-    sessions: new Map(s.sessions),
+    sessions,
     protocols: new Map(s.protocols),
     setupDrafts: new Map(s.setupDrafts),
     early: s.early.take(),
+    closed: s.closed.splice(0),
   }
 }
 

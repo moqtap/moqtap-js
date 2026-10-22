@@ -75,7 +75,7 @@ import {
   type WriterPressure,
 } from '../types.js'
 import { levelIndex } from './defaults.js'
-import { DORMANT_DATAGRAM_STREAM_ID, drainDormant } from './dormant.js'
+import { DORMANT_DATAGRAM_STREAM_ID, type DormantState, drainDormant } from './dormant.js'
 import { type EarlyConnection, halfOf } from './early.js'
 
 /**
@@ -327,6 +327,8 @@ export class RealmObserver {
   #dormantSetupDrafts: ReadonlyMap<string, SupportedDraft> = new Map()
   #contentId: string
   #halted = false
+  /** This realm is the hook's observer. */
+  #live = false
   #skipRaw = false
   #ctrlWindowStart = 0
   #ctrlInWindow = 0
@@ -399,14 +401,15 @@ export class RealmObserver {
   }
 
   /**
-   * Take over from the dormant hook and start observing.
+   * Take over from the dormant hook, or from the buffer `from` that held this
+   * realm's transports since its last session, and start observing.
    *
    * Order matters. The dormant ring's pre-key bytes are moved into this
    * realm's own ring before the observer goes live, so no byte arrives at a
    * dispatcher before the ring it may be replayed from is populated.
    */
-  start(): void {
-    const dormant = drainDormant()
+  start(from?: DormantState): void {
+    const dormant = drainDormant(from)
     this.#dormantSetupDrafts = dormant.setupDrafts
     if (this.#armed() && dormant.entries.length > 0) {
       // Dormant bytes mean this realm has already opened a WebTransport, so the
@@ -420,9 +423,18 @@ export class RealmObserver {
     // first and then the negotiated protocol — which is the ordinary case on a
     // page that connects at load and calls `init()` after its own bootstrap.
     this.#o.hook.setObserver(this.#guarded())
+    this.#live = true
     // Synchronously after, so the held control plane reaches each decoder
     // before any live byte can.
     this.#adoptEarly(dormant.early)
+    // Attempts that ended before this realm started: opened, readied if they
+    // got that far, and closed, at the times they did.
+    for (const c of dormant.closed) {
+      const id = c.session.id
+      this.onSessionOpen(c.session)
+      if (c.protocol !== undefined) this.onSessionProtocol(id, c.protocol, c.readyAt)
+      this.onSessionClose(id, c.reason, c.at, c.info)
+    }
   }
 
   /**
@@ -478,10 +490,15 @@ export class RealmObserver {
    */
   detach(): void {
     this.#halted = true
-    try {
-      this.#o.hook.setObserver(null)
-    } catch (err) {
-      this.#host.onError(err)
+    // Once, and only by a realm that started: the hook may already be
+    // buffering for the realm's next session.
+    if (this.#live) {
+      this.#live = false
+      try {
+        this.#o.hook.setObserver(null)
+      } catch (err) {
+        this.#host.onError(err)
+      }
     }
     this.#recorder.disarm()
     this.#triggers.reset()

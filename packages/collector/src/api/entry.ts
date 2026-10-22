@@ -5,8 +5,9 @@ import { type InitWorkerOptions, initWorkerWith, type WorkerProbe } from './work
 
 export interface EntryPoint {
   /**
-   * Start collecting in this page. One session per page until `end()`.
-   * Returns at once. Throws only for a missing `apiKey` or an unusable
+   * Start collecting in this page. A session begins with the first
+   * `WebTransport` the page or a linked worker constructs; before that nothing
+   * is recorded or sent. Returns at once. Throws only for a missing `apiKey` or an unusable
    * `endpoint`; every other configuration problem is reported and defaulted.
    */
   init(config: CollectorConfig, options?: InitOptions): Collector

@@ -17,7 +17,7 @@
  * Until the page answers, the dormant hook holds the worker's control plane,
  * and the probe replays it into the page's session once linked: a worker
  * that connects right after `initWorker()` keeps its SETUP and first
- * SUBSCRIBEs. A worker that never hears back releases what it held and keeps
+ * SUBSCRIBEs, and its connection begins the page's session if none has. A worker that never hears back releases what it held and keeps
  * its hook dormant: its `WebTransport` traffic goes only to a bounded ring and
  * never leaves the worker. The page reports that link as `timeout`.
  */
