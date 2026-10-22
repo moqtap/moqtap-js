@@ -33,6 +33,9 @@ import type {
  * Without that, one refused alias at 200 datagrams a second would write 200
  * parse failures a second into a field that is supposed to say how many buckets
  * were refused.
+ *
+ * `fields` receives the datagram's priority before the sink hears of it, for
+ * `StreamDispatcher.fieldsOf`.
  */
 export function countDatagram(
   dir: Direction,
@@ -41,6 +44,7 @@ export function countDatagram(
   keys: TrackKeyResolver,
   sink: CountingSink,
   a: DraftAdapter,
+  fields?: { priority: number },
 ): void {
   const counts = a.decodeDatagram(bytes)
   if (counts === null) {
@@ -55,6 +59,7 @@ export function countDatagram(
     return
   }
 
+  if (fields !== undefined) fields.priority = counts.priority
   const sample: ObjectSample =
     counts.status === undefined
       ? {

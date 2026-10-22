@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/collector",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "MoQT session collector — dormant WebTransport hook, counting decoder, and metered upload envelope",
   "type": "module",
   "license": "FSL-1.1-MIT",
@@ -28,54 +28,105 @@
     "./src/index.ts",
     "./dist/index.js",
     "./dist/index.cjs",
+    "./src/worker.ts",
+    "./dist/worker.js",
+    "./dist/worker.cjs",
     "./src/drafts/draft07/entry.ts",
     "./dist/draft07.js",
     "./dist/draft07.cjs",
+    "./src/drafts/draft07/worker.ts",
+    "./dist/draft07-worker.js",
+    "./dist/draft07-worker.cjs",
     "./src/drafts/draft08/entry.ts",
     "./dist/draft08.js",
     "./dist/draft08.cjs",
+    "./src/drafts/draft08/worker.ts",
+    "./dist/draft08-worker.js",
+    "./dist/draft08-worker.cjs",
     "./src/drafts/draft09/entry.ts",
     "./dist/draft09.js",
     "./dist/draft09.cjs",
+    "./src/drafts/draft09/worker.ts",
+    "./dist/draft09-worker.js",
+    "./dist/draft09-worker.cjs",
     "./src/drafts/draft10/entry.ts",
     "./dist/draft10.js",
     "./dist/draft10.cjs",
+    "./src/drafts/draft10/worker.ts",
+    "./dist/draft10-worker.js",
+    "./dist/draft10-worker.cjs",
     "./src/drafts/draft11/entry.ts",
     "./dist/draft11.js",
     "./dist/draft11.cjs",
+    "./src/drafts/draft11/worker.ts",
+    "./dist/draft11-worker.js",
+    "./dist/draft11-worker.cjs",
     "./src/drafts/draft12/entry.ts",
     "./dist/draft12.js",
     "./dist/draft12.cjs",
+    "./src/drafts/draft12/worker.ts",
+    "./dist/draft12-worker.js",
+    "./dist/draft12-worker.cjs",
     "./src/drafts/draft13/entry.ts",
     "./dist/draft13.js",
     "./dist/draft13.cjs",
+    "./src/drafts/draft13/worker.ts",
+    "./dist/draft13-worker.js",
+    "./dist/draft13-worker.cjs",
     "./src/drafts/draft14/entry.ts",
     "./dist/draft14.js",
     "./dist/draft14.cjs",
+    "./src/drafts/draft14/worker.ts",
+    "./dist/draft14-worker.js",
+    "./dist/draft14-worker.cjs",
     "./src/drafts/draft15/entry.ts",
     "./dist/draft15.js",
     "./dist/draft15.cjs",
+    "./src/drafts/draft15/worker.ts",
+    "./dist/draft15-worker.js",
+    "./dist/draft15-worker.cjs",
     "./src/drafts/draft16/entry.ts",
     "./dist/draft16.js",
     "./dist/draft16.cjs",
+    "./src/drafts/draft16/worker.ts",
+    "./dist/draft16-worker.js",
+    "./dist/draft16-worker.cjs",
     "./src/drafts/draft17/entry.ts",
     "./dist/draft17.js",
     "./dist/draft17.cjs",
+    "./src/drafts/draft17/worker.ts",
+    "./dist/draft17-worker.js",
+    "./dist/draft17-worker.cjs",
     "./src/drafts/draft18/entry.ts",
     "./dist/draft18.js",
     "./dist/draft18.cjs",
+    "./src/drafts/draft18/worker.ts",
+    "./dist/draft18-worker.js",
+    "./dist/draft18-worker.cjs",
     "./src/drafts/draft19/entry.ts",
     "./dist/draft19.js",
     "./dist/draft19.cjs",
+    "./src/drafts/draft19/worker.ts",
+    "./dist/draft19-worker.js",
+    "./dist/draft19-worker.cjs",
     "./src/drafts/draft20/entry.ts",
     "./dist/draft20.js",
     "./dist/draft20.cjs",
+    "./src/drafts/draft20/worker.ts",
+    "./dist/draft20-worker.js",
+    "./dist/draft20-worker.cjs",
     "./src/drafts/draft21/entry.ts",
     "./dist/draft21.js",
     "./dist/draft21.cjs",
+    "./src/drafts/draft21/worker.ts",
+    "./dist/draft21-worker.js",
+    "./dist/draft21-worker.cjs",
     "./src/drafts/draft22/entry.ts",
     "./dist/draft22.js",
-    "./dist/draft22.cjs"
+    "./dist/draft22.cjs",
+    "./src/drafts/draft22/worker.ts",
+    "./dist/draft22-worker.js",
+    "./dist/draft22-worker.cjs"
   ],
   "engines": {
     "node": ">=18"
@@ -86,6 +137,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./worker": {
+      "bun": "./src/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js",
+      "require": "./dist/worker.cjs"
     },
     "./internal": {
       "bun": "./src/internal.ts",
@@ -99,11 +156,23 @@
       "import": "./dist/draft07.js",
       "require": "./dist/draft07.cjs"
     },
+    "./draft07/worker": {
+      "bun": "./src/drafts/draft07/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft07-worker.js",
+      "require": "./dist/draft07-worker.cjs"
+    },
     "./draft08": {
       "bun": "./src/drafts/draft08/entry.ts",
       "types": "./dist/draft08.d.ts",
       "import": "./dist/draft08.js",
       "require": "./dist/draft08.cjs"
+    },
+    "./draft08/worker": {
+      "bun": "./src/drafts/draft08/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft08-worker.js",
+      "require": "./dist/draft08-worker.cjs"
     },
     "./draft09": {
       "bun": "./src/drafts/draft09/entry.ts",
@@ -111,11 +180,23 @@
       "import": "./dist/draft09.js",
       "require": "./dist/draft09.cjs"
     },
+    "./draft09/worker": {
+      "bun": "./src/drafts/draft09/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft09-worker.js",
+      "require": "./dist/draft09-worker.cjs"
+    },
     "./draft10": {
       "bun": "./src/drafts/draft10/entry.ts",
       "types": "./dist/draft10.d.ts",
       "import": "./dist/draft10.js",
       "require": "./dist/draft10.cjs"
+    },
+    "./draft10/worker": {
+      "bun": "./src/drafts/draft10/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft10-worker.js",
+      "require": "./dist/draft10-worker.cjs"
     },
     "./draft11": {
       "bun": "./src/drafts/draft11/entry.ts",
@@ -123,11 +204,23 @@
       "import": "./dist/draft11.js",
       "require": "./dist/draft11.cjs"
     },
+    "./draft11/worker": {
+      "bun": "./src/drafts/draft11/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft11-worker.js",
+      "require": "./dist/draft11-worker.cjs"
+    },
     "./draft12": {
       "bun": "./src/drafts/draft12/entry.ts",
       "types": "./dist/draft12.d.ts",
       "import": "./dist/draft12.js",
       "require": "./dist/draft12.cjs"
+    },
+    "./draft12/worker": {
+      "bun": "./src/drafts/draft12/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft12-worker.js",
+      "require": "./dist/draft12-worker.cjs"
     },
     "./draft13": {
       "bun": "./src/drafts/draft13/entry.ts",
@@ -135,11 +228,23 @@
       "import": "./dist/draft13.js",
       "require": "./dist/draft13.cjs"
     },
+    "./draft13/worker": {
+      "bun": "./src/drafts/draft13/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft13-worker.js",
+      "require": "./dist/draft13-worker.cjs"
+    },
     "./draft14": {
       "bun": "./src/drafts/draft14/entry.ts",
       "types": "./dist/draft14.d.ts",
       "import": "./dist/draft14.js",
       "require": "./dist/draft14.cjs"
+    },
+    "./draft14/worker": {
+      "bun": "./src/drafts/draft14/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft14-worker.js",
+      "require": "./dist/draft14-worker.cjs"
     },
     "./draft15": {
       "bun": "./src/drafts/draft15/entry.ts",
@@ -147,11 +252,23 @@
       "import": "./dist/draft15.js",
       "require": "./dist/draft15.cjs"
     },
+    "./draft15/worker": {
+      "bun": "./src/drafts/draft15/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft15-worker.js",
+      "require": "./dist/draft15-worker.cjs"
+    },
     "./draft16": {
       "bun": "./src/drafts/draft16/entry.ts",
       "types": "./dist/draft16.d.ts",
       "import": "./dist/draft16.js",
       "require": "./dist/draft16.cjs"
+    },
+    "./draft16/worker": {
+      "bun": "./src/drafts/draft16/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft16-worker.js",
+      "require": "./dist/draft16-worker.cjs"
     },
     "./draft17": {
       "bun": "./src/drafts/draft17/entry.ts",
@@ -159,11 +276,23 @@
       "import": "./dist/draft17.js",
       "require": "./dist/draft17.cjs"
     },
+    "./draft17/worker": {
+      "bun": "./src/drafts/draft17/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft17-worker.js",
+      "require": "./dist/draft17-worker.cjs"
+    },
     "./draft18": {
       "bun": "./src/drafts/draft18/entry.ts",
       "types": "./dist/draft18.d.ts",
       "import": "./dist/draft18.js",
       "require": "./dist/draft18.cjs"
+    },
+    "./draft18/worker": {
+      "bun": "./src/drafts/draft18/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft18-worker.js",
+      "require": "./dist/draft18-worker.cjs"
     },
     "./draft19": {
       "bun": "./src/drafts/draft19/entry.ts",
@@ -171,11 +300,23 @@
       "import": "./dist/draft19.js",
       "require": "./dist/draft19.cjs"
     },
+    "./draft19/worker": {
+      "bun": "./src/drafts/draft19/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft19-worker.js",
+      "require": "./dist/draft19-worker.cjs"
+    },
     "./draft20": {
       "bun": "./src/drafts/draft20/entry.ts",
       "types": "./dist/draft20.d.ts",
       "import": "./dist/draft20.js",
       "require": "./dist/draft20.cjs"
+    },
+    "./draft20/worker": {
+      "bun": "./src/drafts/draft20/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft20-worker.js",
+      "require": "./dist/draft20-worker.cjs"
     },
     "./draft21": {
       "bun": "./src/drafts/draft21/entry.ts",
@@ -183,11 +324,23 @@
       "import": "./dist/draft21.js",
       "require": "./dist/draft21.cjs"
     },
+    "./draft21/worker": {
+      "bun": "./src/drafts/draft21/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft21-worker.js",
+      "require": "./dist/draft21-worker.cjs"
+    },
     "./draft22": {
       "bun": "./src/drafts/draft22/entry.ts",
       "types": "./dist/draft22.d.ts",
       "import": "./dist/draft22.js",
       "require": "./dist/draft22.cjs"
+    },
+    "./draft22/worker": {
+      "bun": "./src/drafts/draft22/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/draft22-worker.js",
+      "require": "./dist/draft22-worker.cjs"
     }
   },
   "files": [
@@ -208,7 +361,7 @@
     "codes": "bun run scripts/error-codes.ts"
   },
   "dependencies": {
-    "@moqtap/codec": ">=0.13.0"
+    "@moqtap/codec": ">=0.13.3"
   },
   "devDependencies": {
     "@moqtap/codec": "workspace:*",

@@ -26,6 +26,12 @@
  * `escalate()` is the customer's own toggle, which no automatic deadline may
  * end, and the ring is the flight recorder's axis, which a manual raise never
  * reads.
+ *
+ * A **remote** window is one ingest asked for, for a capture window someone
+ * opened on the session's release, user or content. It ends at the time it was
+ * asked for, and `resolve()` leaves it alone: the page's incident being over
+ * says nothing about the capture someone else is running. Unload, the ceiling
+ * and a manual `escalate()` end it as they end any window.
  */
 
 import type {
@@ -59,6 +65,7 @@ export type EscalationCause =
   | { readonly kind: 'manual'; readonly reason?: string }
   | { readonly kind: 'trigger'; readonly trigger: TriggerKind; readonly key?: BucketKey }
   | { readonly kind: 'ceiling' }
+  | { readonly kind: 'remote'; readonly reason?: string }
   | { readonly kind: 'window'; readonly closed: WindowClose; readonly reason?: string }
 
 /**
@@ -108,6 +115,8 @@ interface OpenWindow {
   readonly deadline: Mono | undefined
   /** `RingPressure.evictedBytes()` when the window opened. `undefined`: not ring-bounded. */
   readonly ringEvictedAtOpen: number | undefined
+  /** Ingest asked for it; `deadline` is the end it asked for. */
+  readonly remote?: true
 }
 
 /**
@@ -192,7 +201,7 @@ export class EscalationController {
    * out of an error handler would replace the customer's fault with its own.
    */
   resolve(reason?: string): void {
-    if (this.#window === undefined) return
+    if (this.#window === undefined || this.#window.remote === true) return
     this.#apply(
       this.#o.configured,
       reason === undefined
@@ -237,6 +246,40 @@ export class EscalationController {
       ringEvictedAtOpen: this.#o.ring?.evictedBytes(),
     }
     this.#o.onWindowOpen?.(deadline)
+  }
+
+  /**
+   * Ingest asked for detail raised to `to` until `deadlineMono`.
+   *
+   * Asked again while its window is open, as it is on every upload, it holds
+   * until the later end. A level the session already sits at or above, by its
+   * configuration or a window the page or a trigger opened, is left as it is.
+   * The ceiling refuses it like any other raise.
+   */
+  remote(to: DetailLevel, deadlineMono: Mono, reason?: string): void {
+    if (levelIndex(to) <= levelIndex(BASELINE)) return
+    const w = this.#window
+    if (w?.remote === true && levelIndex(this.#level) >= levelIndex(to)) {
+      if (w.deadline !== undefined && deadlineMono > w.deadline) {
+        this.#window = { ...w, deadline: deadlineMono }
+        this.#o.onWindowOpen?.(deadlineMono)
+      }
+      return
+    }
+    if (levelIndex(this.#level) >= levelIndex(to)) return
+    const opened = this.#apply(
+      to,
+      reason === undefined || reason === '' ? { kind: 'remote' } : { kind: 'remote', reason },
+    )
+    const now = this.#window
+    if (!opened || now === undefined) return
+    this.#window = {
+      openedMono: now.openedMono,
+      deadline: deadlineMono,
+      ringEvictedAtOpen: undefined,
+      remote: true,
+    }
+    this.#o.onWindowOpen?.(deadlineMono)
   }
 
   /**

@@ -22,9 +22,9 @@
  * never leaves the worker. The page reports that link as `timeout`.
  */
 
-import type { DraftSet } from '../draft/index.js'
+import { type DraftSet, draftSet } from '../draft/index.js'
 import { connectionIdOf } from '../transport/index.js'
-import type { DetailLevel } from '../types.js'
+import type { DetailLevel, DraftAdapter } from '../types.js'
 import { DEFAULT_LIMITS } from './defaults.js'
 import { claimDormantHook, ensureDormantHook, releaseDormantEarly } from './dormant.js'
 import { envelope, type LinkedMessage, linkMessage } from './link.js'
@@ -60,6 +60,18 @@ export interface InitWorkerOptions extends ProbePorts {
   readonly target?: MessageTarget
   /** `performance.timeOrigin` of this worker. Injected so the suite is deterministic. */
   readonly timeOrigin?: number
+}
+
+/**
+ * In a Worker that opens its own WebTransport: report it through the page
+ * that links this worker. Never uploads, never ends anything. Returns at once.
+ */
+export type InitWorker = (port?: MessagePort, options?: InitWorkerOptions) => WorkerProbe
+
+/** `initWorker` bound to the decoders one entry point was built with. */
+export function workerEntryPoint(adapters: readonly DraftAdapter[]): InitWorker {
+  const drafts = draftSet(adapters)
+  return (port, options) => initWorkerWith(drafts, port, options)
 }
 
 /** Calls made before the page answers, replayed once it does. Bounded. */

@@ -221,8 +221,7 @@ function fakeWorker(): {
       port?.postMessage(
         envelope({
           t: 'fwd',
-          frames: frames.buffer,
-          byteLength: frames.byteLength,
+          parts: [{ frames: frames.buffer, byteLength: frames.byteLength, n: names.length }],
           n: names.length,
           dropped: 0,
           ready: true,

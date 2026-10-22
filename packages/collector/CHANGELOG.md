@@ -5,6 +5,59 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-22
+
+### Added
+
+- `@moqtap/collector/worker` and `@moqtap/collector/draftNN/worker` export
+  `initWorker` without the page side. A draft-14 worker is 30.2 KB gzipped
+  through `draft14/worker`, against 46.4 KB through `draft14`.
+- `hdr` records carry `priority` and `subgroup` where the object's header
+  states them. A fetch object that leaves its priority off carries the one last
+  stated on its stream.
+- `conn-open` carries `relay` (scheme, host and port) and `options`, the
+  `WebTransport` options the page passed, with certificate hashes as a count.
+- `conn-close` carries `by`: `client` when the page called `close()`, `relay`
+  when the transport closed without it, `local` when it failed without it.
+- Rollup track rows carry `gapRanges`, the missing groups as ranges (16 per
+  interval, the rest counted in `gapRangesDropped`), and `resets`, the
+  streams reset by error code. A stream reset before it named a track counts
+  as `resets.untracked` on the connection.
+- `context.tags`: up to 16 labels of your own on the session, sent on the
+  `setup` record. A tag outside the bounds is reported as MQ1114 and left out.
+- `setContext()` takes `tags`, which add to the session's, and writes a
+  `context` record with what it set. Tags carry into `newSession()`.
+- `privacy.hashActorId`: `actorId` is sent as the first 32 hex digits of
+  `sha256(apiKey + ':' + actorId)`, and `ids()` reports the hash.
+- Ingest's answer to an upload can ask, in `x-moqtap-directive`, for a
+  shorter seal interval while someone watches the session (1 to 10 s, for at
+  most 10 minutes), and for raised detail while a capture window covers it (up
+  to `headers+sizes`, for at most 30 minutes, within the elevated-minute
+  budget). A raise is recorded as `by: { kind: 'remote' }`; `resolve()` does
+  not close it.
+
+### Changed
+
+- A linked worker compresses its reports before the page receives them, and
+  sheds object headers only when their compressed size outruns the upload. At
+  raised detail it keeps every header at object rates where 0.6.0 dropped most
+  of them, and the page does not compress them on its main thread.
+- **Breaking.** A page and a worker of different releases do not link. Update
+  both bundles together.
+- Requires `@moqtap/codec` 0.13.3 or later.
+
+### Removed
+
+- **Breaking.** The `trackSwitch` flight-recorder trigger, which was accepted
+  and never fired. A `trackSwitch` key is reported as MQ1109 and ignored.
+
+### Fixed
+
+- Subgroup streams on drafts 07-13 and fetch streams on drafts 07-19 are
+  counted with each draft's own layout. Drafts 07-11 counted no subgroup
+  objects and drafts 07-14 no fetch objects; drafts 12-13 misread some object
+  ids, and drafts 15-19 some fetch ids and statuses.
+
 ## [0.6.0] - 2026-10-21
 
 ### Added

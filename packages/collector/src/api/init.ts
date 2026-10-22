@@ -23,13 +23,20 @@ import { ChunkStore } from '../flush/index.js'
 import { connectionIdOf } from '../transport/index.js'
 import type {
   CollectorConfig,
+  ContextUpdate,
   DetailLevel,
   Identity,
   MetricDefinition,
   ResolvedConfig,
   UsageReport,
 } from '../types.js'
-import { type ConfigProblem, isStorableSessionId, mintId, resolveConfig } from './config.js'
+import {
+  type ConfigProblem,
+  isStorableSessionId,
+  mintId,
+  resolveConfig,
+  sentActorId,
+} from './config.js'
 import { claimDormantHook, type DormantClaim, setPresenceActive } from './dormant.js'
 import { linkMessage } from './link.js'
 import type { ConnectionState } from './realm.js'
@@ -64,8 +71,12 @@ export interface Collector {
    * cross-origin `postMessage` from any frame or opener.
    */
   linkWorker(target: MessageTarget): void
-  /** Context for connections opened from now on, e.g. `contentId` on a source switch. */
-  setContext(ctx: { contentId?: string; actorId?: string }): void
+  /**
+   * Context from now on: `contentId` for connections opened from now on, e.g.
+   * on a source switch, `actorId` once the user signs in, and `tags` added to
+   * the session's.
+   */
+  setContext(ctx: ContextUpdate): void
   /**
    * Upload everything recorded so far, now. Ends nothing. Resolves when ingest
    * has accepted it or it is stored for retry.
@@ -223,11 +234,14 @@ class PendingCollector implements Collector {
     this.#defer((r) => r.annotate(name, data, connectionId))
   }
 
-  setContext(ctx: { contentId?: string; actorId?: string }): void {
+  setContext(ctx: ContextUpdate): void {
     const { actorId, contentId } = this.#identity
     this.#identity = {
       ...this.#identity,
-      ...withId('actorId', typeof ctx.actorId === 'string' ? ctx.actorId : actorId),
+      ...withId(
+        'actorId',
+        typeof ctx.actorId === 'string' ? sentActorId(ctx.actorId, this.#config) : actorId,
+      ),
       ...withId('contentId', typeof ctx.contentId === 'string' ? ctx.contentId : contentId),
     }
     this.#defer((r) => r.setContext(ctx))

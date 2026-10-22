@@ -162,8 +162,6 @@ describe('the flight recorder claims memory only when it is armed', () => {
   it.each([
     ['stall', STALL],
     ['cadence', { cadence: { multiple: 3, minSamples: 8 } }],
-    // Presence is the whole config for this one — `Record<string, never>`.
-    ['trackSwitch', { trackSwitch: {} }],
   ] as const)('reserves the ring when only the %s trigger is set', async (_name, triggers) => {
     const reserve = vi.spyOn(ByteRing.prototype, 'reserve')
     const c = init(armed(triggers), ports)

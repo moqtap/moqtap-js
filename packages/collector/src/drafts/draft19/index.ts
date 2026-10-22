@@ -51,6 +51,7 @@ const DIALECT: WalkDialect = /*#__PURE__*/ Object.freeze({
   fetchGroupIsAbsolute: false,
   markerGroupIsAbsolute: true,
   fetchObjectIdIsAbsolute: true,
+  datagramDefaultPriorityBit: 0x08,
 })
 
 /**

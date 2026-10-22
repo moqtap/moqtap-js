@@ -12,13 +12,13 @@ import { decodeSubgroupStream } from '@moqtap/codec/draft20'
 import { describe, expect, it } from 'vitest'
 import { SubgroupCounter } from '../../decode/subgroup-counter.js'
 import { TrackKeys } from '../../decode/track-key.js'
-import { VI64_READER } from '../../draft/varint.js'
+import { DRAFT20_ADAPTER } from '../../drafts/draft20/index.js'
 import type { ObjectSample } from '../../types.js'
 import { chunks, filled, Recorder, type SubgroupSpec, subgroupBytes } from './vectors.js'
 
 function count(bytes: Uint8Array, chunkSize = bytes.length, at = 100): Recorder {
   const sink = new Recorder()
-  const c = new SubgroupCounter('rx', new TrackKeys(), sink, VI64_READER)
+  const c = new SubgroupCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
   for (const part of chunks(bytes, chunkSize)) c.push(part, at)
   c.end()
   return sink
@@ -124,7 +124,7 @@ describe('SubgroupCounter', () => {
   it('skips payload bytes by arithmetic and never buffers them', () => {
     const bytes = subgroupBytes({ alias: 2n, group: 0n, objects: [{ id: 0n, bytes: 200_000 }] })
     const sink = new Recorder()
-    const c = new SubgroupCounter('rx', new TrackKeys(), sink, VI64_READER)
+    const c = new SubgroupCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
     let peak = 0
     for (const part of chunks(bytes, 4096)) {
       c.push(part, 1)
@@ -140,7 +140,7 @@ describe('SubgroupCounter', () => {
     const bytes = subgroupBytes({ alias: 42n, group: 0n, objects: [{ id: 0n, bytes: 1 }] })
     const sink = new Recorder()
     const keys = new TrackKeys()
-    const c = new SubgroupCounter('tx', keys, sink, VI64_READER)
+    const c = new SubgroupCounter('tx', keys, sink, DRAFT20_ADAPTER)
     c.push(bytes, 1)
     expect(sink.objects[0]?.key).toEqual({ dir: 'tx', kind: 'alias', id: 42n, epoch: 0 })
   })
@@ -159,7 +159,7 @@ describe('SubgroupCounter', () => {
 
   it('reports nothing further once a stream has desynchronised', () => {
     const sink = new Recorder()
-    const c = new SubgroupCounter('rx', new TrackKeys(), sink, VI64_READER)
+    const c = new SubgroupCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
     c.push(new Uint8Array([0x00, 0x01]), 1)
     c.push(subgroupBytes({ alias: 1n, group: 1n, objects: [{ id: 0n, bytes: 2 }] }), 2)
     expect(sink.objects).toEqual([])
@@ -171,7 +171,7 @@ describe('SubgroupCounter', () => {
     // a decode fault puts a normal event in the field that finds real ones.
     const bytes = subgroupBytes({ alias: 3n, group: 0n, objects: [{ id: 0n, bytes: 40 }] })
     const sink = new Recorder()
-    const c = new SubgroupCounter('rx', new TrackKeys(), sink, VI64_READER)
+    const c = new SubgroupCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
     c.push(bytes.subarray(0, 6), 1)
     c.end()
     expect(sink.reasons).toEqual([])
@@ -188,10 +188,67 @@ describe('SubgroupCounter', () => {
     bytes.set(propsLen, head.length + 1)
 
     const sink = new Recorder()
-    const c = new SubgroupCounter('rx', new TrackKeys(), sink, VI64_READER)
+    const c = new SubgroupCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
     c.push(bytes, 1)
     c.push(filled(4096), 2)
     expect(sink.reasons).toEqual(['subgroup-desync'])
     expect(c.bufferedBytes).toBe(0)
+  })
+})
+
+describe('SubgroupCounter header fields', () => {
+  /** Each object's priority and subgroup, read off the counter while it is reported. */
+  function fields(spec: SubgroupSpec): [number, bigint | null][] {
+    const seen: [number, bigint | null][] = []
+    const sink = new Recorder()
+    const c = new SubgroupCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
+    sink.onObject = (): void => {
+      seen.push([c.priority, c.subgroupId])
+    }
+    for (const part of chunks(subgroupBytes(spec), 3)) c.push(part, 1)
+    c.end()
+    return seen
+  }
+
+  const two = [
+    { id: 5n, bytes: 4 },
+    { id: 6n, bytes: 4 },
+  ]
+
+  it('reads the priority and an implied subgroup of 0', () => {
+    expect(fields({ alias: 1n, group: 0n, priority: 7, objects: two })).toEqual([
+      [7, 0n],
+      [7, 0n],
+    ])
+  })
+
+  it('reads an explicit Subgroup ID', () => {
+    expect(
+      fields({
+        alias: 1n,
+        group: 0n,
+        headerType: 0x14,
+        subgroupId: 3n,
+        priority: 200,
+        objects: two,
+      }),
+    ).toEqual([
+      [200, 3n],
+      [200, 3n],
+    ])
+  })
+
+  it('takes the first object’s id under SUBGROUP_ID_MODE 0b01', () => {
+    expect(fields({ alias: 1n, group: 0n, headerType: 0x12, objects: two })).toEqual([
+      [128, 5n],
+      [128, 5n],
+    ])
+  })
+
+  it('has no priority under DEFAULT_PRIORITY', () => {
+    expect(fields({ alias: 1n, group: 0n, headerType: 0x30, objects: two })).toEqual([
+      [-1, 0n],
+      [-1, 0n],
+    ])
   })
 })

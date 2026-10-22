@@ -754,7 +754,7 @@ describe('worker links', () => {
     listener?.({ data: 'hello' })
     expect(sent).toEqual([])
 
-    listener?.({ data: { __moqtap_collector__: 2, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 3, t: 'hello', timeOrigin: 0 } })
     expect(sent).toHaveLength(1)
     const linked = sent[0]?.message as Record<string, unknown>
     expect(linked).toMatchObject({ t: 'linked', sessionId: 'sess-fixed', instanceId: 'inst-1' })
@@ -835,11 +835,11 @@ describe('worker links', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(worker)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 2, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 3, t: 'hello', timeOrigin: 0 } })
     // Speak for the worker over the port the page handed it: one open
     // connection in its last forward.
     port?.postMessage({
-      __moqtap_collector__: 2,
+      __moqtap_collector__: 3,
       t: 'fwd',
       n: 0,
       dropped: 0,
@@ -896,9 +896,9 @@ describe('a linked worker whose control plane outran it', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 2, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 3, t: 'hello', timeOrigin: 0 } })
     port?.postMessage({
-      __moqtap_collector__: 2,
+      __moqtap_collector__: 3,
       t: 'overrun',
       at: 1_234,
       signal: 'control-plane rate exceeded 1/s',
@@ -940,13 +940,13 @@ describe('a linked worker that falls silent', () => {
     })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 2, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 3, t: 'hello', timeOrigin: 0 } })
     await settle(5)
     t += 11_000
     // The heartbeat runs every 10 ms here; let one see the silence.
     await settle(10, 20)
     port?.postMessage({
-      __moqtap_collector__: 2,
+      __moqtap_collector__: 3,
       t: 'fwd',
       n: 0,
       dropped: 0,
@@ -1703,9 +1703,11 @@ function forwardedRecords(forwards: readonly ForwardMessage[]): EnvelopeRecord[]
   const decoder = new TextDecoder()
   const all: EnvelopeRecord[] = []
   for (const f of forwards) {
-    if (f.frames === undefined) continue
-    for (const frame of readFrames(new Uint8Array(f.frames, 0, f.byteLength))) {
-      if (!frame.raw) all.push(JSON.parse(decoder.decode(frame.payload)) as EnvelopeRecord)
+    for (const part of f.parts ?? []) {
+      if (!('frames' in part)) throw new Error('a small forward arrives uncompressed')
+      for (const frame of readFrames(new Uint8Array(part.frames, 0, part.byteLength))) {
+        if (!frame.raw) all.push(JSON.parse(decoder.decode(frame.payload)) as EnvelopeRecord)
+      }
     }
   }
   return all

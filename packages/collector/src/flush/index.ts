@@ -79,6 +79,16 @@ export { BEACON_MAX_BYTES, type SendTailOptions, sendTail } from './beacon.js'
 export { ClockSync } from './clock-sync.js'
 export { type Deadline, deadlineSignal, NO_DEADLINE, sleepUntil } from './deadline.js'
 export {
+  DIRECTIVE_ELEVATE_MAX_LEVEL,
+  DIRECTIVE_ELEVATE_MAX_SPAN_MS,
+  DIRECTIVE_FLUSH_MAX_MS,
+  DIRECTIVE_FLUSH_MAX_SPAN_MS,
+  DIRECTIVE_FLUSH_MIN_MS,
+  DIRECTIVE_HEADER,
+  parseDirective,
+} from './directive.js'
+export { FrameBuffer, type FrameBufferOptions } from './frame-buffer.js'
+export {
   type Chunk,
   type ChunkBackend,
   type ChunkDestination,

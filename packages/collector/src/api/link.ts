@@ -22,7 +22,7 @@ export const HANDSHAKE = '__moqtap_collector__'
  * from another release stays unlinked and the page reports the link as
  * `timeout` rather than mixing two record formats in one session.
  */
-export const LINK_VERSION = 2
+export const LINK_VERSION = 3
 
 /**
  * How often a probe hands its records to the page, in ms. Fixed rather than
@@ -57,13 +57,37 @@ export interface LinkedMessage {
   readonly config: RealmConfig
 }
 
+/** Whole frames, transferred as they are. The page appends them to its open body. */
+export interface FramesPart {
+  readonly frames: ArrayBuffer
+  readonly byteLength: number
+  /** How many frames. */
+  readonly n: number
+}
+
+/**
+ * Whole frames the probe compressed, transferred: the deflate data of one gzip
+ * member, with its trailer's CRC-32 and length. The page seals them as the end
+ * of a body of their own and never inflates them.
+ */
+export interface DeflatePart {
+  readonly deflate: ArrayBuffer
+  readonly byteLength: number
+  readonly crc: number
+  /** Uncompressed length. */
+  readonly size: number
+  /** How many frames. */
+  readonly n: number
+}
+
+export type ForwardPart = FramesPart | DeflatePart
+
 /** Probe → page, every forward interval with records or every heartbeat without. */
 export interface ForwardMessage {
   readonly t: 'fwd'
-  /** Whole frames, transferred. Absent on a heartbeat. */
-  readonly frames?: ArrayBuffer
-  readonly byteLength?: number
-  /** How many frames `frames` holds. */
+  /** The frames in the order they were written. Absent on a heartbeat. */
+  readonly parts?: readonly ForwardPart[]
+  /** How many frames `parts` holds in all. */
   readonly n: number
   /** Records the probe dropped so far, cumulative. */
   readonly dropped: number

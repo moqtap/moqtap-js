@@ -304,6 +304,11 @@ export class RollupEngine implements CountingSink, MedianSource {
     this.bucketFor(k)?.onAcked(deltaBytes, at)
   }
 
+  /** A stream carrying this track was reset with `code`. */
+  observeReset(k: BucketKey, code: number, at: Mono): void {
+    this.bucketFor(k)?.onReset(code, at)
+  }
+
   /**
    * Two concurrent subscriptions share this alias.
    *

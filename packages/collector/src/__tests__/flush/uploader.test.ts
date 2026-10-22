@@ -20,7 +20,15 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Chunk } from '../../flush/index.js'
-import { ClockSync, RECV_HEADER, SEND_HEADER, sendTail, Uploader } from '../../flush/index.js'
+import {
+  ClockSync,
+  DIRECTIVE_HEADER,
+  parseDirective,
+  RECV_HEADER,
+  SEND_HEADER,
+  sendTail,
+  Uploader,
+} from '../../flush/index.js'
 import type { ClockSource } from '../../types.js'
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -279,6 +287,78 @@ describe('Uploader, the clock handshake', () => {
     const out = await u.send(chunk())
     expect(out.serverWallMs).toBeUndefined()
     expect(u.clockOffsetMs).toBeUndefined()
+  })
+})
+
+describe('Uploader, the directive', () => {
+  it('hands back what ingest asked for on an accepted upload', async () => {
+    const directive = {
+      flushMs: 2_000,
+      until: 9_000,
+      elevate: { level: 'headers', until: 8_000, reason: 'r' },
+    }
+    const f = scripted([ok({ [DIRECTIVE_HEADER]: JSON.stringify(directive) })])
+    const outcome = await uploaderWith(f.impl).send(chunk(0))
+    expect(outcome).toMatchObject({ ok: true, directive })
+  })
+
+  it('carries none when ingest sent none, or one it cannot read', async () => {
+    const f = scripted([ok(), ok({ [DIRECTIVE_HEADER]: '{not json' })])
+    const u = uploaderWith(f.impl)
+    expect(await u.send(chunk(0))).not.toHaveProperty('directive')
+    expect(await u.send(chunk(1))).not.toHaveProperty('directive')
+  })
+
+  it('reads none off a refusal', async () => {
+    const f = scripted([status(403, { [DIRECTIVE_HEADER]: '{"flushMs":2000}' })])
+    expect(await uploaderWith(f.impl).send(chunk(0))).not.toHaveProperty('directive')
+  })
+})
+
+describe('parseDirective', () => {
+  it('keeps what it can read and nothing else', () => {
+    expect(
+      parseDirective(
+        JSON.stringify({
+          flushMs: 2_000,
+          until: 10,
+          extra: 1,
+          elevate: { level: 'headers+sizes', until: 20, reason: 'window', x: 1 },
+        }),
+      ),
+    ).toEqual({
+      flushMs: 2_000,
+      until: 10,
+      elevate: { level: 'headers+sizes', until: 20, reason: 'window' },
+    })
+    expect(parseDirective('{"elevate":{"level":"headers","until":5}}')).toEqual({
+      elevate: { level: 'headers', until: 5, reason: '' },
+    })
+    expect(parseDirective('{"flushMs":2000}')).toEqual({ flushMs: 2_000 })
+  })
+
+  it('reads nothing from a header that is not a directive', () => {
+    for (const raw of [
+      null,
+      '',
+      'null',
+      '[]',
+      '"x"',
+      '{}',
+      '{"flushMs":"2000"}',
+      '{"until":5}',
+      '{"elevate":{"level":"verbose","until":5}}',
+      '{"elevate":{"level":"headers"}}',
+      `{"flushMs":2000,"pad":"${'x'.repeat(2_048)}"}`,
+    ]) {
+      expect(parseDirective(raw)).toBeUndefined()
+    }
+  })
+
+  it('cuts a long reason without splitting a character', () => {
+    const reason = String.fromCodePoint(0x1f600).repeat(300)
+    const d = parseDirective(JSON.stringify({ elevate: { level: 'headers', until: 1, reason } }))
+    expect(d?.elevate?.reason).toBe(String.fromCodePoint(0x1f600).repeat(200))
   })
 })
 

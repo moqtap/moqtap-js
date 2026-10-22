@@ -119,19 +119,17 @@ describe('automated mode ships off', () => {
     })
     expect(c.flightRecorder.triggers.stall).toEqual({ afterMs: 500 })
     expect(c.flightRecorder.triggers.cadence).toBeUndefined()
-    expect(c.flightRecorder.triggers.trackSwitch).toBeUndefined()
   })
 
   it('fills in the parameters of a trigger that IS named', () => {
     const c = resolveConfig({
       ...MINIMAL,
-      flightRecorder: { triggers: { cadence: {} as never, trackSwitch: {} } },
+      flightRecorder: { triggers: { cadence: {} as never } },
     })
     // The cadence multiple and a warm-up are filled in, so a named trigger is
     // usable without the customer knowing every knob.
     expect(c.flightRecorder.triggers.cadence?.multiple).toBe(3)
     expect(c.flightRecorder.triggers.cadence?.minSamples).toBeGreaterThan(0)
-    expect(c.flightRecorder.triggers.trackSwitch).toEqual({})
   })
 
   it('reports the string-array form rather than silently ignoring it', () => {

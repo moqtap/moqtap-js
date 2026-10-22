@@ -69,21 +69,9 @@ describe('automated mode ships off', () => {
     h.engine.onObject(sample(VIDEO, 0))
     h.engine.onObject(sample(VIDEO, 60_000))
     h.engine.tick(600_000)
-    h.engine.onTrackChange(VIDEO, 600_000)
 
     expect(h.fired).toEqual([])
     expect(h.engine.capturesFired).toBe(0)
-  })
-
-  it('ignores a track change unless trackSwitch is configured', () => {
-    const h = harness({ stall: { afterMs: 1000 } })
-    h.engine.onTrackChange(VIDEO, 10)
-    expect(h.fired).toEqual([])
-
-    const on = harness({ trackSwitch: {} })
-    on.engine.onTrackChange(VIDEO, 10)
-    expect(on.fired.map((e) => e.kind)).toEqual(['trackSwitch'])
-    expect(on.fired[0]?.key).toBe(VIDEO)
   })
 })
 

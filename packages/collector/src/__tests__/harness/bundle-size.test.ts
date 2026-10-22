@@ -53,14 +53,15 @@ const PKG = resolve(__dirname, '..', '..', '..')
  * The root entry's ceiling: `bun build --target=browser --minify`,
  * `@moqtap/codec/*` external, `gzip -9`. The reference target is 10240 B.
  *
- * 45 KB is a chosen number, not a measured one. The entry, with every draft's
- * adapter and both halves of the page–worker link, sits around 42.8 KB and
- * moves a few bytes between builds of identical sources. The headroom is
+ * 49 KB is a chosen number, not a measured one. The entry, with every draft's
+ * adapter, both halves of the page–worker link, the probe's compressor and
+ * the reading of ingest's directives, sits around 47.6 KB and moves a few bytes
+ * between builds of identical sources. The headroom is
  * deliberate — it grows as drafts are added — and this guard is a backstop
  * against a step change. Bringing the entry down toward the target is its own
  * work, not something done under a failing test.
  */
-const ENTRY_CEILING_GZ = 45_000
+const ENTRY_CEILING_GZ = 49_000
 const SPEC_TARGET_GZ = 10_240
 
 /**
@@ -79,6 +80,27 @@ const TRUNCATION_MARKERS = [
   'moqtap:', // flush/locks.ts — the instance lock the start-up sweep reads
   '1116352408', // envelope/sha256.ts — the first round constant, 0x428a2f98
   't:"hdr"', // api/realm.ts — object headers while detail is raised
+] as const
+
+/**
+ * Strings from the page side only. A worker entry that contains one has
+ * pulled in code a worker never runs.
+ */
+const PAGE_ONLY_MARKERS = [
+  'indexedDB', // flush/idb.ts
+  'sendBeacon', // flush/beacon.ts
+  'retry-after', // flush/uploader.ts
+  'moqtap:', // flush/locks.ts
+  '1116352408', // envelope/sha256.ts
+  'pagehide', // api/session.ts, the page runtime and its flush schedule
+] as const
+
+/** Strings every worker entry must reach, so a truncated graph cannot pass. */
+const WORKER_MARKERS = [
+  '__moqtap_collector__', // api/link.ts
+  'CompressionStream', // envelope/gzip.ts, the probe's compressor
+  'performance.now', // transport/webtransport-hook.ts
+  't:"hdr"', // api/realm.ts
 ] as const
 
 /**
@@ -181,6 +203,16 @@ function buildOne(name: string, source: string, external: readonly string[]): On
     gzippedBytes: gzip(minified),
     readable: readFileSync(raw, 'utf8'),
   }
+}
+
+/** One minified single-file bundle, everything inlined. */
+function buildMin(name: string, source: string): { code: string; gzippedBytes: number } {
+  const entry = join(out, `${name}.ts`)
+  writeFileSync(entry, source)
+  const file = join(out, `${name}.min.js`)
+  runBun(['build', entry, '--target=browser', '--minify', '--outfile', file])
+  const code = readFileSync(file, 'utf8')
+  return { code, gzippedBytes: gzip(code) }
 }
 
 function build(): Built {
@@ -320,6 +352,58 @@ describe('the other half of the budget: per draft', () => {
       expect(m.readable, `${other} reached the draft-20 entry`).not.toContain(other)
     }
     expect(m.gzippedBytes).toBeLessThanOrEqual(ENTRY_CEILING_GZ + DRAFT_CEILING_GZ)
+  })
+})
+
+describe('the worker entries carry no page code', () => {
+  // The draft entries cannot stay out of a worker's bundle: `init` and
+  // `initWorker` come from one object, so importing either keeps both. Each
+  // `/worker` entry is built whole, codec inlined, and must miss every one.
+  const workers: readonly (readonly [string, readonly string[]])[] = [
+    ['worker', ['worker.ts']],
+    ...SUPPORTED_DRAFTS.map((d) => {
+      const nn = d < 10 ? `0${d}` : `${d}`
+      return [`draft${nn}/worker`, ['drafts', `draft${nn}`, 'worker.ts']] as const
+    }),
+  ]
+
+  it('names markers the page entry does reach', () => {
+    for (const marker of PAGE_ONLY_MARKERS) {
+      expect(built.all, `"${marker}" is not in the page entry, so it guards nothing`).toContain(
+        marker,
+      )
+    }
+  })
+
+  it.each(workers)('%s', (id, parts) => {
+    const m = buildMin(`w-${id.replace(/\W+/g, '-')}`, shimFor(...parts))
+    for (const marker of WORKER_MARKERS) {
+      expect(m.code, `"${marker}" is missing: the ${id} graph was truncated`).toContain(marker)
+    }
+    for (const marker of PAGE_ONLY_MARKERS) {
+      expect(
+        m.code,
+        `"${marker}" reached ${id}. Find the import that pulls page code into the worker ` +
+          'side (api/worker.ts, api/probe.ts, api/realm.ts and what they import).',
+      ).not.toContain(marker)
+    }
+  })
+
+  it('is smaller than a draft entry imported for initWorker alone', () => {
+    const entry = buildMin(
+      'd14-init-worker',
+      [
+        `import { initWorker as C } from ${JSON.stringify(join(PKG, 'src', 'drafts', 'draft14', 'entry.ts').replaceAll('\\', '/'))}`,
+        ';(globalThis as unknown as Record<string, unknown>).__keep = C',
+        '',
+      ].join('\n'),
+    )
+    const worker = buildMin('d14-worker', shimFor('drafts', 'draft14', 'worker.ts'))
+    console.log(
+      `[size] draft-14 in a worker: ${entry.gzippedBytes} B gz through ./draft14, ` +
+        `${worker.gzippedBytes} B gz through ./draft14/worker`,
+    )
+    expect(worker.gzippedBytes).toBeLessThan(entry.gzippedBytes)
   })
 })
 

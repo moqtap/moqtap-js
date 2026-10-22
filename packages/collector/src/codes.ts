@@ -53,6 +53,8 @@ export const MQ1111 = 'MQ1111'
 export const MQ1112 = 'MQ1112'
 /** A supplied `sessionId` is one ingest cannot store. Replaced by a minted id. */
 export const MQ1113 = 'MQ1113'
+/** A context tag was left out: past the 16th, or a key or value outside its bounds. */
+export const MQ1114 = 'MQ1114'
 
 /* ── 2xxx — envelope ─────────────────────────────────────────────────────── */
 

@@ -531,3 +531,62 @@ describe('FlushSchedule', () => {
     expect(errors).toHaveLength(1)
   })
 })
+
+describe('FlushSchedule.shorten, while ingest asks for a live view', () => {
+  /** Armed past the early flush, so only the interval is left. */
+  function steady(): { timers: FakeTimers; schedule: FlushSchedule; fired: SealReason[] } {
+    const timers = new FakeTimers()
+    const { schedule, fired } = scheduleWith(timers, { earlyFlushesMs: [] })
+    schedule.start(0)
+    timers.advance(0)
+    fired.length = 0
+    return { timers, schedule, fired }
+  }
+
+  it('seals on the shorter interval for as long as asked, then on the configured one', () => {
+    const { timers, schedule, fired } = steady()
+    timers.advance(10_000)
+    schedule.shorten(2_000, 7_000)
+    timers.advance(6_999)
+    expect(fired).toEqual(['interval', 'interval', 'interval'])
+    timers.advance(1)
+    // Its end rearms the configured interval from there.
+    timers.advance(59_999)
+    expect(fired).toHaveLength(3)
+    timers.advance(1)
+    expect(fired).toHaveLength(4)
+  })
+
+  it('holds until the later end when asked again, without restarting the beat', () => {
+    const { timers, schedule, fired } = steady()
+    schedule.shorten(2_000, 5_000)
+    timers.advance(1_000)
+    schedule.shorten(2_000, 6_000)
+    timers.advance(1_000)
+    expect(fired).toEqual(['interval'])
+    // Past the first end, at 5 s, and up to the second, at 7 s.
+    timers.advance(4_000)
+    expect(fired).toHaveLength(3)
+    timers.advance(2_000)
+    expect(fired).toHaveLength(3)
+  })
+
+  it('never lengthens the configured interval', () => {
+    const timers = new FakeTimers()
+    const { schedule, fired } = scheduleWith(timers, { earlyFlushesMs: [], intervalMs: 3_000 })
+    schedule.start(0)
+    timers.advance(0)
+    schedule.shorten(10_000, 30_000)
+    timers.advance(9_000)
+    expect(fired.filter((r) => r === 'interval')).toHaveLength(3)
+  })
+
+  it('does nothing once stopped, and leaves no timer behind', () => {
+    const { timers, schedule } = steady()
+    schedule.shorten(2_000, 60_000)
+    schedule.stop()
+    expect(timers.pending).toBe(0)
+    schedule.shorten(2_000, 60_000)
+    expect(timers.pending).toBe(0)
+  })
+})

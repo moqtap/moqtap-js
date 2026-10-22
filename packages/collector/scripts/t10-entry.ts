@@ -12,7 +12,7 @@
 
 import { SubgroupCounter } from '../src/decode/subgroup-counter.js'
 import { TrackKeys } from '../src/decode/track-key.js'
-import { VI64_READER } from '../src/draft/varint.js'
+import { DRAFT20_ADAPTER } from '../src/drafts/draft20/index.js'
 import type {
   BucketKey,
   ControlFrameEvent,
@@ -52,7 +52,7 @@ export function benchCounter(
     const sink = new NullSink()
     const t0 = performance.now()
     for (const s of streams) {
-      const c = new SubgroupCounter('rx', new TrackKeys(), sink, VI64_READER)
+      const c = new SubgroupCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
       for (let i = 0; i < s.length; i += chunkSize) {
         c.push(s.subarray(i, Math.min(i + chunkSize, s.length)), 100)
       }

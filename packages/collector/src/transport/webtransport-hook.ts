@@ -2,6 +2,7 @@ import { MQ6001 } from '../codes.js'
 import type {
   ClockAnchor,
   ClockSource,
+  CloseBy,
   Direction,
   HookOptions,
   InterceptedSession,
@@ -407,6 +408,8 @@ export function installWebTransportHook(
     /** The observer this session has already been announced to. */
     announced: TransportObserver | null
     closed: boolean
+    /** The page called `close()`: whatever ends the transport after that, the page ended it. */
+    closeCalled: boolean
   }
 
   function detachAll(state: SessionState): void {
@@ -499,6 +502,7 @@ export function installWebTransportHook(
       protocol: undefined,
       announced: null,
       closed: false,
+      closeCalled: false,
     }
     sessions.add(state)
 
@@ -569,6 +573,13 @@ export function installWebTransportHook(
           )
         },
     )
+
+    // Only to tell who closed: a transport whose `closed` resolves without the
+    // page having asked was closed by the peer.
+    patchMethod(instance, 'close', addSession, (orig) => (...args: unknown[]) => {
+      state.closeCalled = true
+      return orig(...args)
+    })
 
     tapIncomingStreams(state, instance.incomingBidirectionalStreams, true, addSession)
     tapIncomingStreams(state, instance.incomingUnidirectionalStreams, false, addSession)
@@ -698,6 +709,11 @@ export function installWebTransportHook(
       (value, at) => emitStreamData(state, streamId, bidi, 'rx', value, at, undefined),
       (at) => halfDone(state, streamId, at, 'read'),
       (err) => {
+        const code = resetCodeOf(err)
+        if (code !== undefined) {
+          const at = clock.now()
+          deliver((o) => o.onStreamReset?.(state.id, streamId, 'rx', code, at))
+        }
         deliver((o) => o.onStreamError(state.id, streamId, err))
         halfDone(state, streamId, clock.now(), 'read')
       },
@@ -1002,7 +1018,13 @@ export function installWebTransportHook(
       const origAbort = (w.abort as (reason?: unknown) => Promise<unknown>).bind(writer)
       w.abort = (reason?: unknown) => {
         try {
-          onDone(clock.now())
+          const at = clock.now()
+          // The code the transport sends in RESET_STREAM: the error's own, else 0.
+          if (who.streamId >= 0) {
+            const code = streamErrorCodeOf(reason) ?? 0
+            deliver((o) => o.onStreamReset?.(who.sessionId, who.streamId, 'tx', code, at))
+          }
+          onDone(at)
         } catch (err) {
           fail(err)
         }
@@ -1190,7 +1212,9 @@ export function installWebTransportHook(
         },
         () => {},
       )
-      ready.then(undefined, (err: unknown) => reportClose(state, String(err), { cause: 'failed' }))
+      ready.then(undefined, (err: unknown) =>
+        reportClose(state, String(err), { cause: 'failed', by: failedBy(state) }),
+      )
     }
 
     if (isThenable(closed)) {
@@ -1201,15 +1225,25 @@ export function installWebTransportHook(
           const reason = known ? info.reason || `code ${info.closeCode ?? 0}` : 'closed'
           reportClose(state, reason, {
             cause: 'closed',
+            by: state.closeCalled ? 'client' : 'relay',
             ...(known && typeof info.closeCode === 'number' ? { code: info.closeCode } : {}),
             ...(known && typeof info.reason === 'string' && info.reason !== ''
               ? { reason: info.reason }
               : {}),
           })
         },
-        (err: unknown) => reportClose(state, String(err), { cause: 'failed' }),
+        (err: unknown) => reportClose(state, String(err), { cause: 'failed', by: failedBy(state) }),
       )
     }
+  }
+
+  /**
+   * A transport that failed rather than closed: the page's own doing if it had
+   * called `close()`, and otherwise the browser's, since nothing on the page
+   * says whether the peer or the network ended it.
+   */
+  function failedBy(state: SessionState): CloseBy {
+    return state.closeCalled ? 'client' : 'local'
   }
 
   function reportClose(state: SessionState, reason: string, info: SessionCloseInfo): void {
@@ -1438,6 +1472,31 @@ export function installWebTransportHook(
 }
 
 /* ── free functions ──────────────────────────────────────────────────────── */
+
+/** A `WebTransportError`'s `streamErrorCode`, when it carries one. Never throws. */
+function streamErrorCodeOf(err: unknown): number | undefined {
+  try {
+    if (err === null || typeof err !== 'object') return undefined
+    const code = (err as { streamErrorCode?: unknown }).streamErrorCode
+    return typeof code === 'number' && Number.isInteger(code) && code >= 0 ? code : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The code a receive stream was reset with, or `undefined` when its error is
+ * not a reset: a session ending fails every stream with `source: 'session'`.
+ */
+function resetCodeOf(err: unknown): number | undefined {
+  try {
+    if (err === null || typeof err !== 'object') return undefined
+    if ((err as { source?: unknown }).source !== 'stream') return undefined
+  } catch {
+    return undefined
+  }
+  return streamErrorCodeOf(err)
+}
 
 function pickCtor<T>(glob: Record<string, unknown>, name: string): T | undefined {
   const fromTarget = glob[name]

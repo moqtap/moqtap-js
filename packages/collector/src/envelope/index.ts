@@ -41,7 +41,14 @@ export {
   readPreamble,
   writePreamble,
 } from './body.js'
-export { FrameWriter, readFrames } from './frame-writer.js'
+export { type FrameSpan, FrameWriter, readFrames, splitFrames } from './frame-writer.js'
 export { gzip, gzipSupported } from './gzip.js'
 export { idempotencyKey } from './idempotency.js'
+export {
+  crc32,
+  crc32Combine,
+  type DeflateSegment,
+  deflateSegment,
+  joinSegment,
+} from './segment.js'
 export { sha256, sha256Hex } from './sha256.js'

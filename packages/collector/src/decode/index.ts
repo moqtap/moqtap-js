@@ -54,7 +54,6 @@ export {
   StreamDispatcher,
   sniffStream,
 } from './dispatch.js'
-export type { FetchCounterOptions, FetchObjectInfo } from './fetch-counter.js'
 export { FetchCounter, readFetchHeader, readFetchObject } from './fetch-counter.js'
 export type { Desync, ParseRun } from './stream-walk.js'
 export { DataStreamCounter, DEFAULT_HEADER_SLACK_BYTES, DESYNC } from './stream-walk.js'

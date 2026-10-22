@@ -74,6 +74,8 @@ export interface SubgroupSpec {
    */
   readonly headerType?: number
   readonly subgroupId?: bigint
+  /** Publisher Priority, where the type puts it on the wire. Defaults to 128. */
+  readonly priority?: number
   readonly objects: readonly ObjSpec[]
 }
 
@@ -84,7 +86,7 @@ export function subgroupStream(s: SubgroupSpec): SubgroupStream {
     trackAlias: s.alias,
     groupId: s.group,
     subgroupId: s.subgroupId ?? 0n,
-    publisherPriority: 128,
+    publisherPriority: s.priority ?? 128,
     objects: s.objects.map(objectPayload),
   }
 }
@@ -104,6 +106,9 @@ export interface FetchObjSpec {
    * Object MUST include a Group ID Delta and Object ID Delta").
    */
   readonly flags?: number
+  /** Written only where the flags ask for the field. */
+  readonly subgroup?: bigint
+  readonly priority?: number
 }
 
 function fetchObject(o: FetchObjSpec): FetchObjectPayload {
@@ -114,9 +119,9 @@ function fetchObject(o: FetchObjSpec): FetchObjectPayload {
     payloadByteOffset: 0,
     serializationFlags: o.flags ?? 0x0c,
     groupId: o.group,
-    subgroupId: 0n,
+    subgroupId: o.subgroup ?? 0n,
     objectId: o.id,
-    publisherPriority: 128,
+    publisherPriority: o.priority ?? 128,
     payloadLength: len,
     payload: filled(len),
     extensionData: new Uint8Array(0),
@@ -139,6 +144,7 @@ export interface DatagramSpec {
   /** Type Flags. `0x00` is the plain form: Object ID and Priority both present. */
   readonly type?: number
   readonly status?: bigint
+  readonly priority?: number
 }
 
 export function datagramBytes(d: DatagramSpec): Uint8Array {
@@ -149,7 +155,7 @@ export function datagramBytes(d: DatagramSpec): Uint8Array {
     trackAlias: d.alias,
     groupId: d.group,
     objectId: d.id,
-    publisherPriority: 128,
+    publisherPriority: d.priority ?? 128,
     payloadLength: len,
     payload: filled(len),
   }

@@ -85,9 +85,36 @@ function assertNoCodecRootImport(): void {
 
 assertNoCodecRootImport()
 
+const TYPED_ENTRIES: Record<string, string> = {
+  // Every entry but `internal` installs the dormant hook at module-eval
+  // time, which is why package.json marks each as having side effects.
+  index: 'src/index.ts',
+  // Installs nothing: the parts a test, a harness or the extension builds on.
+  internal: 'src/internal.ts',
+  // `draft20`, not `d20` — every other package in this workspace uses the
+  // zero-padded form and `d20` would be the only one of its kind.
+  //
+  // One entry per draft: the same API with that draft's decoder and no other's.
+  ...Object.fromEntries(DRAFTS.map((d) => [`draft${d}`, `src/drafts/draft${d}/entry.ts`])),
+  // `initWorker` without the page side, for a dedicated worker.
+  worker: 'src/worker.ts',
+}
+
+/**
+ * One per draft, flat (`draft14-worker` for `./draft14/worker`): dist/ holds no
+ * subdirectories, which `scripts/smoke.ts` holds it to. Their declarations are
+ * `worker`'s, which package.json points them at: the decoder a worker entry
+ * carries is not in its types, and a declaration build per entry runs the
+ * build out of memory.
+ */
+const DRAFT_WORKER_ENTRIES: Record<string, string> = Object.fromEntries(
+  DRAFTS.map((d) => [`draft${d}-worker`, `src/drafts/draft${d}/worker.ts`]),
+)
+
 export default defineConfig({
   ...baseConfig,
   dts: {
+    entry: TYPED_ENTRIES,
     compilerOptions: {
       composite: false,
       rootDir: undefined,
@@ -99,17 +126,6 @@ export default defineConfig({
     },
   },
   sourcemap: false,
-  entry: {
-    // Every entry but `internal` installs the dormant hook at module-eval
-    // time, which is why package.json marks each as having side effects.
-    index: 'src/index.ts',
-    // Installs nothing: the parts a test, a harness or the extension builds on.
-    internal: 'src/internal.ts',
-    // `draft20`, not `d20` — every other package in this workspace uses the
-    // zero-padded form and `d20` would be the only one of its kind.
-    //
-    // One entry per draft: the same API with that draft's decoder and no other's.
-    ...Object.fromEntries(DRAFTS.map((d) => [`draft${d}`, `src/drafts/draft${d}/entry.ts`])),
-  },
+  entry: { ...TYPED_ENTRIES, ...DRAFT_WORKER_ENTRIES },
   external: CODEC_ALLOWED,
 })

@@ -34,8 +34,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installWebTransportHook, type TransportHook } from '../../transport/index.js'
 import type {
   DatagramChunk,
+  Direction,
   InterceptedSession,
   Mono,
+  SessionCloseInfo,
   StreamChunk,
   StreamOrigin,
   TransportObserver,
@@ -60,6 +62,8 @@ interface Recorder {
   readonly sessions: InterceptedSession[]
   readonly protocols: Array<{ sessionId: string; protocol: string }>
   readonly sessionCloses: Array<{ sessionId: string; reason: string; at: Mono }>
+  readonly closeInfos: SessionCloseInfo[]
+  readonly resets: Array<{ streamId: number; dir: Direction; code: number }>
   readonly opens: Array<{
     sessionId: string
     streamId: number
@@ -79,6 +83,8 @@ function recorder(): Recorder {
     sessions: [],
     protocols: [],
     sessionCloses: [],
+    closeInfos: [],
+    resets: [],
     opens: [],
     data: [],
     streamCloses: [],
@@ -89,7 +95,11 @@ function recorder(): Recorder {
     observer: {
       onSessionOpen: (s) => r.sessions.push(s),
       onSessionProtocol: (sessionId, protocol) => r.protocols.push({ sessionId, protocol }),
-      onSessionClose: (sessionId, reason, at) => r.sessionCloses.push({ sessionId, reason, at }),
+      onSessionClose: (sessionId, reason, at, info) => {
+        r.sessionCloses.push({ sessionId, reason, at })
+        if (info !== undefined) r.closeInfos.push(info)
+      },
+      onStreamReset: (_sessionId, streamId, dir, code) => r.resets.push({ streamId, dir, code }),
       onStreamOpen: (sessionId, streamId, bidi, origin) =>
         r.opens.push({ sessionId, streamId, bidi, origin }),
       // `StreamChunk.data` is a borrowed view onto the page's own buffer and is
@@ -520,6 +530,45 @@ describe('session close', () => {
     wt.closeSession('', 7)
     await settle()
     expect(rec.sessionCloses[0]!.reason).toBe('code 7')
+  })
+
+  it('says the peer closed a session the page did not close, with its code and reason', async () => {
+    const glob = mockGlobal()
+    const rec = recorder()
+    install(glob, rec.observer)
+    const wt = connect(glob)
+    wt.closeSession('going away', 5)
+    await settle()
+    expect(rec.closeInfos).toEqual([
+      { cause: 'closed', by: 'relay', code: 5, reason: 'going away' },
+    ])
+  })
+
+  it('says the page closed a session it called close() on', async () => {
+    const glob = mockGlobal()
+    const rec = recorder()
+    install(glob, rec.observer)
+    const wt = connect(glob)
+    wt.close({ closeCode: 9, reason: 'switching' })
+    await settle()
+    expect(rec.closeInfos).toEqual([
+      { cause: 'closed', by: 'client', code: 9, reason: 'switching' },
+    ])
+  })
+
+  it('says the browser ended a session that failed on its own, and the page one it closed', async () => {
+    const glob = mockGlobal()
+    const rec = recorder()
+    install(glob, rec.observer)
+    connect(glob).errorSession(new Error('network lost'))
+    const mine = connect(glob)
+    mine.failOnClose = new Error('closed before ready')
+    mine.close()
+    await settle()
+    expect(rec.closeInfos).toEqual([
+      { cause: 'failed', by: 'local' },
+      { cause: 'failed', by: 'client' },
+    ])
   })
 
   it('reports a failure to establish, once', async () => {
@@ -1176,6 +1225,64 @@ describe('non-interference', () => {
     expect(rec.streamErrors).toHaveLength(1)
     expect(String(rec.streamErrors[0]!.error)).toContain('stream reset')
     expect(rec.streamCloses.map((c) => c.streamId)).toEqual([0])
+  })
+
+  it('reports a peer reset of a receive stream with its code, before the stream closes', async () => {
+    const glob = mockGlobal()
+    const rec = recorder()
+    const order: string[] = []
+    install(glob, {
+      ...rec.observer,
+      onStreamReset: (...a) => {
+        order.push('reset')
+        rec.observer.onStreamReset?.(...a)
+      },
+      onStreamClose: (...a) => {
+        order.push('close')
+        rec.observer.onStreamClose(...a)
+      },
+    })
+    const wt = connect(glob)
+    const src = wt.deliverUniStream()
+    const arrived = await wt.incomingUnidirectionalStreams.getReader().read()
+    const reader = (arrived.value as ReadableStream<Uint8Array>).getReader()
+
+    const pending = reader.read()
+    src.error(Object.assign(new Error('reset'), { source: 'stream', streamErrorCode: 4 }))
+    await expect(pending).rejects.toThrow('reset')
+    expect(rec.resets).toEqual([{ streamId: 0, dir: 'rx', code: 4 }])
+    expect(order).toEqual(['reset', 'close'])
+  })
+
+  it('reports no reset for a stream that failed with its session', async () => {
+    const glob = mockGlobal()
+    const rec = recorder()
+    install(glob, rec.observer)
+    const wt = connect(glob)
+    const src = wt.deliverUniStream()
+    const arrived = await wt.incomingUnidirectionalStreams.getReader().read()
+    const reader = (arrived.value as ReadableStream<Uint8Array>).getReader()
+
+    const pending = reader.read()
+    src.error(Object.assign(new Error('gone'), { source: 'session', streamErrorCode: null }))
+    await expect(pending).rejects.toThrow('gone')
+    expect(rec.streamErrors).toHaveLength(1)
+    expect(rec.resets).toEqual([])
+  })
+
+  it('reports the page aborting a send stream, with the code the transport sends', async () => {
+    const glob = mockGlobal()
+    const rec = recorder()
+    install(glob, rec.observer)
+    const wt = connect(glob)
+    const one = (await wt.createUnidirectionalStream()).getWriter()
+    const two = (await wt.createUnidirectionalStream()).getWriter()
+    await one.abort(Object.assign(new Error('cancelled'), { streamErrorCode: 6 }))
+    await two.abort()
+    expect(rec.resets).toEqual([
+      { streamId: 0, dir: 'tx', code: 6 },
+      { streamId: 1, dir: 'tx', code: 0 },
+    ])
   })
 
   it('leaves the page’s chunk object identical, never a copy', async () => {

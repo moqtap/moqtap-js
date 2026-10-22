@@ -92,6 +92,22 @@ export const STALL_FLOOR_MS = 100
 export const MAX_GAP_RUN = 1_000_000
 
 /**
+ * Missing group ranges a row lists per interval. Past it the rest are counted
+ * in `gapRangesDropped`: ranges are rare on a healthy track, and a publisher
+ * that skips groups as a matter of course is described by `groupGaps` alone.
+ */
+export const MAX_GAP_RANGES = 16
+
+/**
+ * Distinct reset codes a row lists per interval. Past it the rest are counted
+ * under {@link OTHER_RESET_CODE}.
+ */
+export const MAX_RESET_CODES = 32
+
+/** The `resets` key for codes past {@link MAX_RESET_CODES}. */
+export const OTHER_RESET_CODE = 'other'
+
+/**
  * Exact median over a fixed sliding window, O(1) memory, no allocation.
  *
  * The one piece of per-track state that genuinely **cannot** move server-side.
@@ -229,6 +245,11 @@ export class TrackBucket {
   private parseFailures = 0
   private blockedMs = 0
   private ackedBytes = 0
+  /** Missing group ranges, inclusive. Allocated only on a track that has one. */
+  private gapRanges: [bigint, bigint][] | undefined
+  private gapRangesDropped = 0
+  /** Streams reset, by code. Allocated only on a track that has one. */
+  private resets: Map<string, number> | undefined
   private firstSeen: Mono | undefined
   private lastSeen: Mono = 0
 
@@ -332,8 +353,21 @@ export class TrackBucket {
       this.objects +
       this.parseFailures +
       (this.blockedMs > 0 ? 1 : 0) +
-      (this.ackedBytes > 0 ? 1 : 0)
+      (this.ackedBytes > 0 ? 1 : 0) +
+      (this.resets !== undefined ? 1 : 0)
     )
+  }
+
+  /**
+   * A stream carrying this track was reset with `code`: by the peer on a
+   * receive track, by the page on a send track.
+   */
+  onReset(code: number, at: Mono): void {
+    this.resets ??= new Map()
+    let k = String(code)
+    if (!this.resets.has(k) && this.resets.size >= MAX_RESET_CODES) k = OTHER_RESET_CODE
+    this.resets.set(k, (this.resets.get(k) ?? 0) + 1)
+    this.observedAt(at)
   }
 
   /** Last time anything at all happened on this track. Drives idle eviction. */
@@ -417,7 +451,10 @@ export class TrackBucket {
       this.groups++
       if (max !== undefined) {
         const missing = s.groupId - max - 1n
-        if (missing > 0n) this.groupGaps += clampGapRun(missing)
+        if (missing > 0n) {
+          this.groupGaps += clampGapRun(missing)
+          this.noteGapRange(max + 1n, s.groupId - 1n)
+        }
       }
       if (this.lastNewGroupAt !== undefined) {
         this.hist.groupCadenceMs.observe(at - this.lastNewGroupAt)
@@ -436,7 +473,7 @@ export class TrackBucket {
     } else if (s.groupId < max) {
       // Group-level lateness only. Object-level reordering *within* a group is
       // deliberately not counted: object ids ascend per subgroup, not per
-      // group, and `SubgroupHeaderInfo` carries no subgroup id, so every
+      // group, and `ObjectSample` carries no subgroup id, so every
       // multi-subgroup track would report continuous reordering that is not
       // happening. Under-reporting with no false positives beats the reverse
       // for a number an operator alerts on.
@@ -466,6 +503,13 @@ export class TrackBucket {
     }
   }
 
+  /** Rare enough to allocate: a gap is a loss, not a per-object event. */
+  private noteGapRange(from: bigint, to: bigint): void {
+    this.gapRanges ??= []
+    if (this.gapRanges.length >= MAX_GAP_RANGES) this.gapRangesDropped++
+    else this.gapRanges.push([from, to])
+  }
+
   /**
    * The interval row, and a reset of the interval state.
    *
@@ -487,6 +531,9 @@ export class TrackBucket {
     this.parseFailures = 0
     this.blockedMs = 0
     this.ackedBytes = 0
+    this.gapRanges = undefined
+    this.gapRangesDropped = 0
+    this.resets = undefined
     this.firstSeen = undefined
     return row
   }
@@ -516,6 +563,15 @@ export class TrackBucket {
       // fields that can never be anything but 0, on every interval.
       ...(this.blockedMs > 0 ? { blockedMs: this.blockedMs } : {}),
       ...(this.ackedBytes > 0 ? { ackedBytes: this.ackedBytes } : {}),
+      ...(this.gapRanges !== undefined
+        ? {
+            gapRanges: this.gapRanges.map(
+              ([from, to]) => [from.toString(), to.toString()] as const,
+            ),
+          }
+        : {}),
+      ...(this.gapRangesDropped > 0 ? { gapRangesDropped: this.gapRangesDropped } : {}),
+      ...(this.resets !== undefined ? { resets: Object.fromEntries(this.resets) } : {}),
       hist,
     }
   }

@@ -19,7 +19,7 @@ import { SUPPORTED_DRAFTS } from '../../draft/protocol.js'
 import { degradedReasonOf, draftSet, resolveDraft } from '../../draft/registry.js'
 import { ALL_ADAPTERS } from '../../drafts/all.js'
 import { adapter as draft14 } from '../../drafts/draft14/index.js'
-import { type DraftAdapter, NEED } from '../../types.js'
+import { type DraftAdapter, NEED, newCursor } from '../../types.js'
 
 /** A real draft-20 control frame: type 0x10, uint16 length, payload. */
 const GOAWAY = encodeMessage({
@@ -134,7 +134,7 @@ describe('the resolved adapter walks real draft-20 wire bytes', () => {
     expect(header.groupId).toBe(3n)
     expect(header.propertiesPresent).toBe(false)
 
-    const cursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+    const cursor = newCursor()
     const first = must(
       adapter.readSubgroupObject(stream, header.next, header, cursor),
       'readSubgroupObject',
@@ -194,7 +194,7 @@ describe('the resolved adapter walks real draft-20 wire bytes', () => {
     const header = must(adapter.readFetchHeader(stream, 0), 'readFetchHeader')
     expect(header.requestId).toBe(42n)
 
-    const cursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+    const cursor = newCursor()
     const a = must(adapter.readFetchObject(stream, header.next, cursor), 'readFetchObject')
     expect([a.groupId, a.objectId, a.payloadLength]).toEqual([3n, 0n, 4])
 
@@ -261,7 +261,7 @@ describe('the resolved adapter walks real draft-20 wire bytes', () => {
     const header = must(adapter.readFetchHeader(stream, 0), 'readFetchHeader')
     expect(header.requestId).toBe(8n)
 
-    const cursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+    const cursor = newCursor()
     const a = must(adapter.readFetchObject(stream, header.next, cursor), 'readFetchObject')
     expect([a.groupId, a.objectId, a.payloadLength]).toEqual([3n, 7n, 4])
 
@@ -280,7 +280,7 @@ describe('the resolved adapter walks real draft-20 wire bytes', () => {
     const adapter = adapterFor('moqt-19')
     const bytes = Uint8Array.of(0x05, 0x08, 0x82, 0x0c, 0x00, 0x00, 0x00)
     const header = must(adapter.readFetchHeader(bytes, 0), 'readFetchHeader')
-    const cursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+    const cursor = newCursor()
     expect(adapter.readFetchObject(bytes, header.next, cursor)).toBe(NEED)
   })
 

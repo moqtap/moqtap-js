@@ -59,6 +59,9 @@ export class FlushSchedule {
   #handles: unknown[] = []
   #intervalHandle: unknown
   #byteHandle: unknown
+  /** A shorter interval ingest asked for, until its timer ends it. */
+  #shortMs: number | undefined
+  #shortHandle: unknown
   #bytes = 0
   #started = false
   #stopped = false
@@ -145,11 +148,34 @@ export class FlushSchedule {
     }, 0)
   }
 
+  /**
+   * Seal every `ms` for the next `forMs`, then go back to the configured
+   * interval. Asked again, it holds until the later end; asked for a different
+   * interval, it starts over on it. Never longer than the configured interval.
+   */
+  shorten(ms: number, forMs: number): void {
+    if (!this.#started || this.#stopped || !(ms > 0) || !(forMs > 0)) return
+    const next = Math.min(ms, this.#intervalMs)
+    if (this.#shortHandle !== undefined) this.#timers.clearTimer(this.#shortHandle)
+    this.#shortHandle = this.#timers.setTimer(() => {
+      this.#shortHandle = undefined
+      this.#shortMs = undefined
+      this.#rearmInterval()
+    }, forMs)
+    if (next === this.#shortMs) return
+    this.#shortMs = next
+    this.#rearmInterval()
+  }
+
   /** Idempotent. After this nothing fires, including timers already queued. */
   stop(): void {
     this.#stopped = true
     for (const h of this.#handles) this.#timers.clearTimer(h)
     this.#handles = []
+    if (this.#shortHandle !== undefined) {
+      this.#timers.clearTimer(this.#shortHandle)
+      this.#shortHandle = undefined
+    }
     if (this.#byteHandle !== undefined) {
       this.#timers.clearTimer(this.#byteHandle)
       this.#byteHandle = undefined
@@ -171,7 +197,7 @@ export class FlushSchedule {
     this.#intervalHandle = this.#timers.setTimer(() => {
       this.#fire('interval')
       this.#rearmInterval()
-    }, this.#intervalMs)
+    }, this.#shortMs ?? this.#intervalMs)
     this.#handles.push(this.#intervalHandle)
   }
 

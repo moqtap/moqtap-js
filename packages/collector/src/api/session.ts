@@ -27,6 +27,11 @@ import {
   type ChunkDestination,
   type ChunkStore,
   compress,
+  DIRECTIVE_ELEVATE_MAX_LEVEL,
+  DIRECTIVE_ELEVATE_MAX_SPAN_MS,
+  DIRECTIVE_FLUSH_MAX_MS,
+  DIRECTIVE_FLUSH_MAX_SPAN_MS,
+  DIRECTIVE_FLUSH_MIN_MS,
   deadlineSignal,
   FlushQueue,
   FlushSchedule,
@@ -44,6 +49,8 @@ import { connectionIdOf, type TransportHook } from '../transport/index.js'
 import type {
   ClockAnchor,
   ClockSource,
+  ContextRecord,
+  ContextUpdate,
   DetailLevel,
   EndCounters,
   EndRecord,
@@ -55,13 +62,16 @@ import type {
   RecordSink,
   ResolvedConfig,
   SetupRecord,
+  UploadOutcome,
   UsageReport,
 } from '../types.js'
 import { COLLECTOR_VERSION } from '../version.js'
-import { mintId } from './config.js'
+import { addTags, type ConfigProblem, mintId, sentActorId } from './config.js'
+import { levelIndex } from './defaults.js'
 import { EscalationController } from './escalation.js'
 import {
   type CallMessage,
+  type DeflatePart,
   envelope,
   type ForwardMessage,
   HEARTBEAT_MS,
@@ -127,6 +137,13 @@ const RETRY_MAX_MS = 60_000
  * seal is recent enough that sealing again would only add an upload.
  */
 const HIDDEN_SEAL_GAP_MS = 5_000
+
+/**
+ * The most of the page's own buffered frames a compressed forward's body takes
+ * in front of it, uncompressed. Past it they are sealed and compressed first,
+ * in a body of their own.
+ */
+const SEGMENT_PREFIX_MAX_BYTES = 8 * 1024
 
 /** How old a stored body must be before a page without Web Locks takes it as left behind. */
 const SWEEP_AGE_INTERVALS = 3
@@ -214,7 +231,11 @@ export class CollectorRuntime {
    */
   readonly #inheritedLocks = new Map<string, () => void>()
   /** What `ids()` and connections opened from now on carry. `setContext()` changes it. */
-  readonly #context: { actorId: string; contentId: string }
+  readonly #context: {
+    actorId: string
+    contentId: string
+    tags: Readonly<Record<string, string>>
+  }
 
   #setupSent = false
   #ended = false
@@ -242,7 +263,11 @@ export class CollectorRuntime {
     this.#ports = ports
     this.#hook = hook
     this.#drafts = drafts
-    this.#context = { actorId: config.context.actorId, contentId: config.context.contentId }
+    this.#context = {
+      actorId: config.context.actorId,
+      contentId: config.context.contentId,
+      tags: config.context.tags,
+    }
     this.#clock = ports.clock ?? platformClock
     this.#onError = (err: unknown): void => {
       try {
@@ -450,17 +475,44 @@ export class CollectorRuntime {
 
   /**
    * Context for connections opened from now on, in this page and its linked
-   * workers. `ids()` carries it at once; the instance's setup record carries
-   * what was set before the instance's first body.
+   * workers. `ids()` carries it at once, and a `context` record says from when.
+   * Tags add to the session's.
    */
-  setContext(ctx: { contentId?: string; actorId?: string }): void {
+  setContext(ctx: ContextUpdate): void {
     if (this.#ended) return
-    if (typeof ctx.actorId === 'string') this.#context.actorId = ctx.actorId
+    const c = this.#context
+    const record: { -readonly [K in keyof ContextRecord]: ContextRecord[K] } = {
+      t: 'context',
+      ts: this.#relNow(),
+      lvl: this.#escalation.level,
+    }
     if (typeof ctx.contentId === 'string') {
-      this.#context.contentId = ctx.contentId
+      c.contentId = ctx.contentId
       this.#realm.setContentId(ctx.contentId)
       this.#broadcast({ t: 'context', contentId: ctx.contentId })
+      if (ctx.contentId !== '') record.contentId = ctx.contentId
     }
+    if (typeof ctx.actorId === 'string') {
+      c.actorId = sentActorId(ctx.actorId, this.config)
+      if (c.actorId !== '') record.actorId = c.actorId
+    }
+    if (ctx.tags !== undefined) {
+      const { merged, accepted } = addTags(c.tags, ctx.tags, (p) => this.#report(p))
+      c.tags = merged
+      if (Object.keys(accepted).length > 0) record.tags = accepted
+    }
+    if (
+      record.contentId !== undefined ||
+      record.actorId !== undefined ||
+      record.tags !== undefined
+    ) {
+      this.#sink.json(record)
+    }
+  }
+
+  /** A rejected argument, in the form `init()` reports a rejected option. */
+  #report(p: ConfigProblem): void {
+    this.#onError(new Error(`${p.code}: ${p.key}${p.got === undefined ? '' : ` ${p.got}`}`))
   }
 
   defineMetric(name: string, d: Parameters<CustomMetrics['defineMetric']>[1]): void {
@@ -548,6 +600,8 @@ export class CollectorRuntime {
       instanceId,
       anchor: this.anchor,
     })
+    // The session's tags so far, `setContext()`'s included, go on with it.
+    runtime.#context.tags = this.#context.tags
     const outbox = this.#outbox
     // Every link, gone ones included: a worker silent past the limit is linked
     // again when it speaks, and the ids `w1, w2 …` stay unique in the page.
@@ -755,11 +809,44 @@ export class CollectorRuntime {
       link.ready = true
       this.#schedule.ready(this.#clock.now())
     }
-    if (m.frames === undefined || m.n === 0) return
+    if (m.parts === undefined || m.n === 0) return
     this.#ensureSetup()
-    const frames = new Uint8Array(m.frames, 0, m.byteLength ?? m.frames.byteLength)
-    if (this.#queue.append(frames, m.n)) this.#schedule.noteBytes(frames.byteLength)
-    else this.#forwardRefused += m.n
+    for (const part of m.parts) {
+      if ('deflate' in part) {
+        this.#sealSegment(part)
+        continue
+      }
+      const frames = new Uint8Array(part.frames, 0, part.byteLength)
+      if (this.#queue.append(frames, part.n)) this.#schedule.noteBytes(frames.byteLength)
+      else this.#forwardRefused += part.n
+    }
+  }
+
+  /**
+   * Frames a probe compressed: the end of a body of their own, sealed now
+   * behind what the page has buffered, and sent. Nothing is inflated or
+   * compressed here.
+   */
+  #sealSegment(part: DeflatePart): void {
+    if (this.#discarded) return
+    if (this.#queue.pendingBytes > SEGMENT_PREFIX_MAX_BYTES) this.#seal()
+    let chunk: Chunk
+    try {
+      chunk = this.#queue.sealSegment(
+        {
+          deflate: new Uint8Array(part.deflate, 0, part.byteLength),
+          crc: part.crc,
+          size: part.size,
+        },
+        { lost: this.#lost, dropped: this.#dropped() },
+      )
+    } catch (err) {
+      this.#onError(err)
+      this.#forwardRefused += part.n
+      return
+    }
+    this.#admit(chunk)
+    void this.#drain()
   }
 
   /**
@@ -861,6 +948,7 @@ export class CollectorRuntime {
     if (this.#setupSent) return
     this.#setupSent = true
     const ctx = this.config.context
+    const tags = this.#context.tags
     const record: SetupRecord = {
       t: 'setup',
       ts: this.#relNow(),
@@ -871,6 +959,7 @@ export class CollectorRuntime {
       collectorVersion: COLLECTOR_VERSION,
       ...(ctx.environment !== '' ? { environment: ctx.environment } : {}),
       ...(ctx.release !== '' ? { release: ctx.release } : {}),
+      ...(Object.keys(tags).length > 0 ? { tags } : {}),
     }
     this.#queue.json(record)
   }
@@ -1027,13 +1116,19 @@ export class CollectorRuntime {
       return null
     }
     if (chunk === null) return null
-    // Into the outbox before anything else can stop this: the frames have left
-    // the queue, and a body in neither place is lost.
+    this.#admit(chunk)
+    return chunk
+  }
+
+  /**
+   * Into the outbox before anything else can stop this: the frames have left
+   * the queue, and a body in neither place is lost.
+   */
+  #admit(chunk: Chunk): void {
     this.#outbox.push(chunk)
     this.#lastSealMono = this.#clock.now()
     this.#prepared.set(chunk, this.#prepare(chunk))
     this.#capOutbox()
-    return chunk
   }
 
   async #prepare(chunk: Chunk): Promise<void> {
@@ -1108,6 +1203,8 @@ export class CollectorRuntime {
       }
       if (signal.aborted) return
       const outcome = await this.#uploader.send(chunk, signal, pageHidden())
+      // Addressed to the instance the body came from, by the `i` it carried.
+      if (outcome.directive !== undefined && this.#isOwn(chunk)) this.#obey(outcome)
       if (outcome.ok || outcome.terminal) {
         this.#retryDelay = 0
         const at = this.#outbox.indexOf(chunk)
@@ -1122,6 +1219,37 @@ export class CollectorRuntime {
       // backoff.
       this.#scheduleRetry()
       return
+    }
+  }
+
+  /**
+   * Do what ingest asked, within bounds: a shorter seal interval while someone
+   * watches the session, and raised detail while a capture window covers it.
+   * Its times are the server's clock, so they are read against the server's
+   * time in the same answer.
+   */
+  #obey(outcome: UploadOutcome): void {
+    const d = outcome.directive
+    if (d === undefined || this.#ended) return
+    try {
+      const serverNow = outcome.serverWallMs ?? this.#clock.wall()
+      if (d.flushMs !== undefined) {
+        const ms = Math.min(DIRECTIVE_FLUSH_MAX_MS, Math.max(DIRECTIVE_FLUSH_MIN_MS, d.flushMs))
+        const span = d.until === undefined ? DIRECTIVE_FLUSH_MAX_SPAN_MS : d.until - serverNow
+        const forMs = Math.min(DIRECTIVE_FLUSH_MAX_SPAN_MS, span)
+        if (forMs > 0) this.#schedule.shorten(ms, forMs)
+      }
+      const e = d.elevate
+      if (e !== undefined) {
+        const forMs = Math.min(DIRECTIVE_ELEVATE_MAX_SPAN_MS, e.until - serverNow)
+        const level =
+          levelIndex(e.level) > levelIndex(DIRECTIVE_ELEVATE_MAX_LEVEL)
+            ? DIRECTIVE_ELEVATE_MAX_LEVEL
+            : e.level
+        if (forMs > 0) this.#escalation.remote(level, this.#clock.now() + forMs, e.reason)
+      }
+    } catch (err) {
+      this.#onError(err)
     }
   }
 

@@ -38,6 +38,7 @@ import type {
   DraftAdapter,
   ExchangeKind,
   Mono,
+  ObjectHeaderFields,
   ObjectSample,
   ParseFailureReason,
   StreamChunk,
@@ -114,6 +115,11 @@ export class StreamDispatcher {
   private readonly observeLatency: ((kind: ExchangeKind, ms: number) => void) | undefined
   private readonly slackBytes: number | undefined
   private readonly maskAuthParams: boolean
+  /** The datagram being counted, for {@link fieldsOf}. */
+  private readonly datagram: { priority: number; subgroupId: null } = {
+    priority: -1,
+    subgroupId: null,
+  }
 
   constructor(
     private readonly a: DraftAdapter,
@@ -156,6 +162,18 @@ export class StreamDispatcher {
     return null
   }
 
+  /**
+   * The priority and subgroup of the object `s`, which must be the one the sink
+   * is being told about right now: a stream's counter holds only its latest.
+   * Read only at raised detail, so a baseline object pays nothing for them.
+   */
+  fieldsOf(s: ObjectSample): ObjectHeaderFields | null {
+    if (s.streamId === undefined) return this.datagram
+    const c = this.streams.get(slot(s.streamId, s.key.dir))?.counter
+    if (c instanceof SubgroupCounter || c instanceof FetchCounter) return c
+    return null
+  }
+
   onStreamData(c: StreamChunk): void {
     const k = slot(c.streamId, c.direction)
     let e = this.streams.get(k)
@@ -191,7 +209,7 @@ export class StreamDispatcher {
   }
 
   onDatagram(c: DatagramChunk): void {
-    countDatagram(c.direction, c.data, c.at, this.keys, this.sink, this.a)
+    countDatagram(c.direction, c.data, c.at, this.keys, this.sink, this.a, this.datagram)
   }
 
   private open(c: StreamChunk): Entry {
@@ -219,15 +237,12 @@ export class StreamDispatcher {
       case 'subgroup':
         return {
           kind,
-          counter: new SubgroupCounter(c.direction, this.keys, this.sink, this.a.varint, opts),
+          counter: new SubgroupCounter(c.direction, this.keys, this.sink, this.a, opts),
         }
       case 'fetch':
         return {
           kind,
-          counter: new FetchCounter(c.direction, this.keys, this.sink, this.a.varint, {
-            ...opts,
-            draft: this.a.draft,
-          }),
+          counter: new FetchCounter(c.direction, this.keys, this.sink, this.a, opts),
         }
       default:
         // A padding stream (`0x132B3E28`) lands here, as does any type

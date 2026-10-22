@@ -14,8 +14,9 @@ import { decodeFetchStream } from '@moqtap/codec/draft20'
 import { describe, expect, it } from 'vitest'
 import { FetchCounter } from '../../decode/fetch-counter.js'
 import { TrackKeys } from '../../decode/track-key.js'
-import { VI64_READER } from '../../draft/varint.js'
-import type { SupportedDraft } from '../../types.js'
+import { DRAFT19_ADAPTER } from '../../drafts/draft19/index.js'
+import { DRAFT20_ADAPTER } from '../../drafts/draft20/index.js'
+import type { DraftAdapter } from '../../types.js'
 import { chunks, type FetchObjSpec, fetchBytes, Recorder } from './vectors.js'
 
 /**
@@ -32,9 +33,13 @@ const MIXED: readonly FetchObjSpec[] = [
   { group: 10n, id: 0n, bytes: 50, flags: 0x0c },
 ]
 
-function count(bytes: Uint8Array, chunkSize = bytes.length, draft: SupportedDraft = 20): Recorder {
+function count(
+  bytes: Uint8Array,
+  chunkSize = bytes.length,
+  adapter: DraftAdapter = DRAFT20_ADAPTER,
+): Recorder {
   const sink = new Recorder()
-  const c = new FetchCounter('rx', new TrackKeys(), sink, VI64_READER, { draft })
+  const c = new FetchCounter('rx', new TrackKeys(), sink, adapter)
   for (const part of chunks(bytes, chunkSize)) c.push(part, 1)
   c.end()
   return sink
@@ -83,7 +88,7 @@ describe('FetchCounter', () => {
   it('keys the bucket on the request id in the header, with no epoch', () => {
     const sink = new Recorder()
     const keys = new TrackKeys()
-    const c = new FetchCounter('rx', keys, sink, VI64_READER)
+    const c = new FetchCounter('rx', keys, sink, DRAFT20_ADAPTER)
     c.push(fetchBytes(11n, [{ group: 0n, id: 0n, bytes: 1, flags: 0x0c }]), 1)
     // `FetchStreamHeader` is `{type, requestId}` and nothing else, and a
     // request id is never reused in a session, so the id is natively stable.
@@ -96,8 +101,11 @@ describe('FetchCounter', () => {
       { group: 2n, id: 3n, bytes: 1, flags: 0x0c },
       { group: 2n, id: 9n, bytes: 1, flags: 0x04 }, // wire delta = 9 - 3 = 6
     ])
-    expect(count(bytes, bytes.length, 20).objects.map((o) => o.objectId)).toEqual([3n, 9n])
-    expect(count(bytes, bytes.length, 19).objects.map((o) => o.objectId)).toEqual([3n, 6n])
+    expect(count(bytes).objects.map((o) => o.objectId)).toEqual([3n, 9n])
+    expect(count(bytes, bytes.length, DRAFT19_ADAPTER).objects.map((o) => o.objectId)).toEqual([
+      3n,
+      6n,
+    ])
   })
 
   it('abandons a stream whose first object references a prior object', () => {
@@ -116,7 +124,7 @@ describe('FetchCounter', () => {
   it('skips a large payload without buffering it', () => {
     const bytes = fetchBytes(3n, [{ group: 0n, id: 0n, bytes: 120_000, flags: 0x0c }])
     const sink = new Recorder()
-    const c = new FetchCounter('rx', new TrackKeys(), sink, VI64_READER)
+    const c = new FetchCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
     let peak = 0
     for (const part of chunks(bytes, 8192)) {
       c.push(part, 1)
@@ -129,9 +137,80 @@ describe('FetchCounter', () => {
   it('does not report a truncated stream as a parse failure', () => {
     const bytes = fetchBytes(5n, [{ group: 1n, id: 1n, bytes: 60, flags: 0x0c }])
     const sink = new Recorder()
-    const c = new FetchCounter('rx', new TrackKeys(), sink, VI64_READER)
+    const c = new FetchCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
     c.push(bytes.subarray(0, 5), 1)
     c.end()
     expect(sink.reasons).toEqual([])
+  })
+})
+
+describe('FetchCounter header fields', () => {
+  /**
+   * Subgroup by every encoding, a priority stated then inherited, a DATAGRAM-
+   * mode object with no subgroup, and a marker between them that changes
+   * neither.
+   */
+  const FIELDS: readonly FetchObjSpec[] = [
+    { group: 1n, id: 0n, bytes: 1, flags: 0x1f, subgroup: 4n, priority: 9 },
+    { group: 1n, id: 1n, bytes: 1, flags: 0x01, subgroup: 4n },
+    { group: 1n, id: 2n, bytes: 1, flags: 0x02, subgroup: 5n },
+    { group: 2n, id: 0n, bytes: 1, flags: 0x1c, subgroup: 0n, priority: 1 },
+    { group: 3n, id: 0n, bytes: 0, flags: 0x8c },
+    { group: 4n, id: 0n, bytes: 1, flags: 0x4c },
+    { group: 4n, id: 1n, bytes: 1, flags: 0x02, subgroup: 1n },
+  ]
+
+  function fields(bytes: Uint8Array, adapter: DraftAdapter = DRAFT20_ADAPTER) {
+    const seen: [number, bigint | null][] = []
+    const sink = new Recorder()
+    const c = new FetchCounter('rx', new TrackKeys(), sink, adapter)
+    sink.onObject = (): void => {
+      seen.push([c.priority, c.subgroupId])
+    }
+    for (const part of chunks(bytes, 3)) c.push(part, 1)
+    c.end()
+    return seen
+  }
+
+  it('resolves each object’s subgroup and priority as the codec does', () => {
+    const bytes = fetchBytes(4n, FIELDS)
+    const oneShot = decodeFetchStream(bytes)
+    expect(oneShot.ok).toBe(true)
+    if (!oneShot.ok) return
+    const real = oneShot.value.objects.filter((o) => o.serializationFlags < 0x80)
+    const want = real.map((o): [number, bigint | null] => [
+      o.publisherPriority,
+      (o.serializationFlags & 0x40) === 0 ? o.subgroupId : null,
+    ])
+    expect(fields(bytes)).toEqual(want)
+    expect(want).toEqual([
+      [9, 4n],
+      [9, 4n],
+      [9, 5n],
+      [1, 0n],
+      [1, null],
+      [1, 1n],
+    ])
+  })
+
+  it('has no priority until an object states one', () => {
+    const bytes = fetchBytes(4n, [
+      { group: 1n, id: 0n, bytes: 1, flags: 0x0c },
+      { group: 1n, id: 1n, bytes: 1, flags: 0x10, priority: 3 },
+    ])
+    expect(fields(bytes)).toEqual([
+      [-1, 0n],
+      [3, 0n],
+    ])
+  })
+
+  it('reads the same fields through an older draft’s walk', () => {
+    // Draft-19 reads the same flags; only its id arithmetic differs, and these
+    // objects state their ids where it would matter.
+    const bytes = fetchBytes(
+      4n,
+      FIELDS.filter((o) => o.flags !== 0x8c),
+    )
+    expect(fields(bytes, DRAFT19_ADAPTER)).toEqual(fields(bytes))
   })
 })

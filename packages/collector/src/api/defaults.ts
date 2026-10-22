@@ -138,7 +138,7 @@ export const DEFAULT_FLIGHT_RECORDER: FlightRecorderConfig = /*#__PURE__*/ Objec
   // it, rather than as a constant nobody can see.
   depth: '32MB',
   // Automated capture ships OFF: a fresh install can never generate spend the
-  // customer did not ask for. Absent means off for all three triggers.
+  // customer did not ask for. Absent means off for both triggers.
   triggers: /*#__PURE__*/ Object.freeze({}),
   // The post-event timeout — the backstop for a developer who arms a trigger
   // and never calls resolve(). 15 s, decided rather than guessed, and short on
@@ -172,6 +172,7 @@ export const TRIGGER_DEFAULTS = /*#__PURE__*/ Object.freeze({
  */
 export const DEFAULT_PRIVACY: PrivacyConfig = /*#__PURE__*/ Object.freeze({
   maskAuthParams: true,
+  hashActorId: false,
 })
 
 /**
@@ -211,6 +212,7 @@ export const DEFAULTS: ResolvedConfig = /*#__PURE__*/ Object.freeze({
     contentId: '',
     environment: '',
     release: '',
+    tags: /*#__PURE__*/ Object.freeze({}),
   }),
   metrics: DEFAULT_METRICS,
   flightRecorder: DEFAULT_FLIGHT_RECORDER,
@@ -235,7 +237,7 @@ export const DEFAULT_PROVENANCE: { readonly [K in keyof ResolvedConfig]: string 
     detail:
       'Baseline is always on and always the same. Elevation is billable, so the default can only be baseline.',
     context:
-      'Every field absent. actorId is accepted raw, never hashed, and treated as personal data — the one field with real privacy weight, where no default can be right. contentId, environment and release are absent for the ordinary reason that only the customer knows them; their cardinality is bounded nowhere, and ingest alarms on growth rate instead.',
+      'Every field absent. actorId is treated as personal data — the one field with real privacy weight, where no default can be right — and sent as given unless privacy.hashActorId is on. contentId, environment, release and tags are absent for the ordinary reason that only the customer knows them; their cardinality is bounded nowhere, and ingest alarms on growth rate instead.',
     metrics: 'See METRICS_PROVENANCE — one line per key.',
     flightRecorder:
       'depth 32MB, unvalidated; triggers all absent, so automated capture ships off; windowMs 15 s, decided rather than guessed.',
@@ -245,7 +247,7 @@ export const DEFAULT_PROVENANCE: { readonly [K in keyof ResolvedConfig]: string 
     storage:
       'quotaBytes 8 MB. Guess, pending field data — the observed backlog distribution sets the real number. Explicitly NOT derived from flightRecorder.depth.',
     privacy:
-      'Masking defaults to ON. Not a guess and not pending field data — the default IS the decision, because a safe outcome that depends on having read the documentation is not a safe outcome.',
+      'Masking defaults to ON. Not a guess and not pending field data — the default IS the decision, because a safe outcome that depends on having read the documentation is not a safe outcome. hashActorId defaults to off: the customer chooses what the id is, and a hash nobody asked for is one nobody can look a user up by.',
     limits: 'See LIMIT_PROVENANCE — one line per key.',
   })
 

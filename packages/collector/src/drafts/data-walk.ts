@@ -233,6 +233,16 @@ export interface WalkDialect {
    * object, `prior + delta` when it is not.
    */
   readonly fetchObjectIdIsAbsolute: boolean
+
+  /* ── datagrams ────────────────────────────────────────────────────────── */
+
+  /**
+   * The datagram type bit that leaves Publisher Priority off the wire (`0x08`,
+   * drafts 15 on), or 0 where every datagram carries it (07-14). The codec
+   * reports 128 for an absent priority, so the bit is what tells a stated 128
+   * from a default.
+   */
+  readonly datagramDefaultPriorityBit: number
 }
 
 /* ── stream sniff ─────────────────────────────────────────────────── */
@@ -306,18 +316,24 @@ export function readSubgroupHeader(
   p = group.next
 
   // Where the field is conditional, bit 2 is the condition in every draft that
-  // has one. Modes that resolve the id from context (0, or the first object's
-  // Object ID) put nothing on the wire, and the id itself is not carried out of
-  // this walk, so neither needs distinguishing here.
-  if (d.subgroupIdAlways || (flags & 0x04) !== 0) {
+  // has one. Without it the id is 0, or with bit 1 set the first object's
+  // Object ID: draft-11's 0x0A, drafts 12-16's 0x12, and SUBGROUP_ID_MODE 0b01
+  // from draft-17 are the same bits.
+  let subgroupId = 0n
+  const explicit = d.subgroupIdAlways || (flags & 0x04) !== 0
+  if (explicit) {
     const sub = d.readVarint(b, p)
     if (sub === NEED) return NEED
+    subgroupId = sub.value
     p = sub.next
   }
 
   // DEFAULT_PRIORITY (bit 5) set ⇒ the Publisher Priority byte is absent.
+  let priority = -1
   if (d.priorityAlways || (flags & 0x20) === 0) {
-    if (p + 1 > b.length) return NEED
+    const byte = b[p]
+    if (byte === undefined) return NEED
+    priority = byte
     p += 1
   }
 
@@ -325,6 +341,9 @@ export function readSubgroupHeader(
     trackAlias: alias.value,
     groupId: group.value,
     propertiesPresent: blockPresent(d, flags),
+    subgroupId,
+    subgroupIsFirstObjectId: !explicit && (flags & 0x02) !== 0,
+    priority,
     headerBytes: p - i,
     next: p,
   }
@@ -474,7 +493,8 @@ function readPlainFetchObject(
   p = obj.next
 
   // Publisher Priority, one byte, unconditional in this generation.
-  if (p + 1 > b.length) return NEED
+  const priority = b[p]
+  if (priority === undefined) return NEED
   p += 1
 
   if (d.fetchPlainBlock !== BLOCK_NONE) {
@@ -496,6 +516,10 @@ function readPlainFetchObject(
     p = s.next
   }
 
+  // Complete: only now may the cursor move.
+  prev.prevSubgroupId = sub.value
+  prev.prevPriority = priority
+  prev.hadSubgroup = true
   const info = finishFetchObject(prev, i, p, group.value, obj.value, payloadLength)
   return status === undefined ? info : { ...info, status }
 }
@@ -559,7 +583,10 @@ function readFlaggedFetchObject(
     const len = d.readVarint(b, p)
     if (len === NEED) return NEED
     p = len.next
-    return finishFetchObject(prev, i, p, groupId, objectId, Number(len.value))
+    // A marker has no Subgroup ID or Priority of its own: the prior ones stay
+    // with the last object before it.
+    const info = finishFetchObject(prev, i, p, groupId, objectId, Number(len.value))
+    return { ...info, marker: true }
   }
 
   const datagramMode = d.fetchDatagramMode && (flags & 0x40) !== 0
@@ -582,14 +609,22 @@ function readFlaggedFetchObject(
     return NEED
   }
 
+  // 0b00 is Subgroup ID 0, 0b01 the prior object's, 0b10 the prior's plus one,
+  // 0b11 a field. DATAGRAM mode has none at all.
+  let subgroupId = prev.prevSubgroupId
   if (!datagramMode) {
     if (subgroupEncoding === 0x03) {
       const sg = d.readVarint(b, p)
       if (sg === NEED) return NEED
       p = sg.next
-    } else if (subgroupEncoding !== 0x00 && prev.first) {
+      subgroupId = sg.value
+    } else if (subgroupEncoding === 0x00) {
+      subgroupId = 0n
+    } else if (prev.first) {
       // 0b01 and 0b10 name the *prior* object's Subgroup ID; there is none.
       return NEED
+    } else if (subgroupEncoding === 0x02) {
+      subgroupId += 1n
     }
   }
 
@@ -606,8 +641,12 @@ function readFlaggedFetchObject(
     return NEED
   }
 
+  // Absent, the priority is the prior object's.
+  let priority = prev.prevPriority
   if (priorityPresent) {
-    if (p + 1 > b.length) return NEED
+    const byte = b[p]
+    if (byte === undefined) return NEED
+    priority = byte
     p += 1
   }
 
@@ -630,6 +669,10 @@ function readFlaggedFetchObject(
     p = s.next
   }
 
+  // Complete: only now may the cursor move.
+  if (!datagramMode) prev.prevSubgroupId = subgroupId
+  prev.prevPriority = priority
+  prev.hadSubgroup = !datagramMode
   const info = finishFetchObject(prev, i, p, groupId, objectId, payloadLength)
   return status === undefined ? info : { ...info, status }
 }

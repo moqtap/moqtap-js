@@ -232,13 +232,27 @@ export interface TransportObserver {
   onStreamData(c: StreamChunk): void
   onStreamClose(sessionId: string, streamId: number, at: Mono): void
   onStreamError(sessionId: string, streamId: number, error: unknown): void
+  /**
+   * A stream half was reset: `rx` when the peer reset a stream the page reads,
+   * `tx` when the page aborted one it writes. `code` is the application error
+   * code RESET_STREAM carries.
+   */
+  onStreamReset?(sessionId: string, streamId: number, d: Direction, code: number, at: Mono): void
   onDatagram?(c: DatagramChunk): void
   onWriterPressure?(p: WriterPressure): void
   onSendStats?(sessionId: string, streamId: number, bytesAcknowledged: number, at: Mono): void
 }
 
+/**
+ * Who ended a transport: `client` when the page called `close()`, `relay`
+ * when the transport closed cleanly without the page asking, and `local` when
+ * it failed without the page asking.
+ */
+export type CloseBy = 'client' | 'relay' | 'local'
+
 export interface SessionCloseInfo {
   readonly cause: 'closed' | 'failed'
+  readonly by?: CloseBy
   readonly code?: number
   readonly reason?: string
 }
@@ -491,6 +505,17 @@ export interface SubgroupHeaderInfo {
    * desynchronises on the first object.
    */
   readonly propertiesPresent: boolean
+  /**
+   * The Subgroup ID the header states: the field where it is on the wire, 0
+   * where the type says zero. Not yet known under
+   * {@link subgroupIsFirstObjectId}, where it is 0 here and the first object's
+   * id on the stream.
+   */
+  readonly subgroupId: bigint
+  /** The Subgroup ID is the first object's Object ID (drafts 11 on, by type). */
+  readonly subgroupIsFirstObjectId: boolean
+  /** Publisher Priority, 0-255, or -1 where the type leaves the byte off the wire. */
+  readonly priority: number
   readonly headerBytes: number
   readonly next: number
 }
@@ -514,16 +539,35 @@ export interface FetchHeaderInfo {
  *
  * Required, not an optimisation: both stream types delta-encode. A subgroup
  * object's id is `prevObjectId + 1 + delta` after the first, and a fetch
- * object's group and object ids resolve against the previous object's. Subgroup
- * id and publisher priority are
- * deliberately absent — they are read positionally when their flag bits are set
- * and never needed to *resolve* an id, so the counting decoder does not track
- * them.
+ * object's group and object ids resolve against the previous object's.
+ *
+ * The last three fields are a fetch stream's alone. A fetch object may leave
+ * its Subgroup ID and Publisher Priority off the wire and mean the prior
+ * object's, so the walk keeps them; an End-of-Range marker has neither and
+ * leaves them as they were.
  */
 export interface ObjectCursor {
   first: boolean
   prevObjectId: bigint
   prevGroupId: bigint
+  /** The last object's Subgroup ID: what a later object's "prior" refers to. */
+  prevSubgroupId: bigint
+  /** The last stated Publisher Priority on the stream, or -1 before any. */
+  prevPriority: number
+  /** The last object had a Subgroup ID: false for a DATAGRAM-mode fetch object. */
+  hadSubgroup: boolean
+}
+
+/** A cursor before the first object of a stream. */
+export function newCursor(): ObjectCursor {
+  return {
+    first: true,
+    prevObjectId: 0n,
+    prevGroupId: 0n,
+    prevSubgroupId: 0n,
+    prevPriority: -1,
+    hadSubgroup: false,
+  }
 }
 
 export interface ObjectHeaderInfo {
@@ -540,6 +584,11 @@ export interface ObjectHeaderInfo {
   readonly headerBytes: number
   /** Offset of the next object's first byte: payload skipped, never viewed. */
   readonly next: number
+  /**
+   * An End-of-Range marker on a fetch stream: a statement that a range of
+   * objects does not exist, is unknown or timed out. Not an object.
+   */
+  readonly marker?: true
 }
 
 export interface DatagramCounts {
@@ -549,6 +598,20 @@ export interface DatagramCounts {
   readonly headerBytes: number
   readonly payloadBytes: number
   readonly status?: bigint
+  /** Publisher Priority, or -1 where the datagram leaves it off. */
+  readonly priority: number
+}
+
+/**
+ * The header fields of the object a counter has just reported, read only while
+ * its `onObject` runs. Kept off {@link ObjectSample} so a baseline object costs
+ * nothing for them.
+ */
+export interface ObjectHeaderFields {
+  /** Publisher Priority, or -1 where the object's header does not carry one. */
+  readonly priority: number
+  /** Subgroup ID, or `null` where the object has none: a datagram, or a DATAGRAM-mode fetch object. */
+  readonly subgroupId: bigint | null
 }
 
 /* ── the bucket key: the track-state decision ─────────────────────── */
@@ -750,8 +813,8 @@ export interface CountingSink {
  * no evidence for it. Widening this union means widening `BOUNDARIES` with it.
  *
  * A per-subgroup count is absent because nothing carries the identity it needs
- * — `SubgroupHeaderInfo` has no subgroup id, the same gap that stops
- * `outOfOrder` being counted within a group.
+ * — `ObjectSample` has no subgroup id, the same gap that stops `outOfOrder`
+ * being counted within a group.
  */
 export type HistogramKind =
   | 'interArrivalMs'
@@ -807,16 +870,15 @@ export interface MetricDefinition {
 export const DETAIL_LEVELS = ['baseline', 'headers', 'headers+sizes', 'headers+data'] as const
 export type DetailLevel = (typeof DETAIL_LEVELS)[number]
 
-export type TriggerKind = 'stall' | 'trackSwitch' | 'cadence'
+export type TriggerKind = 'stall' | 'cadence'
 
 /**
- * Flight-recorder triggers. **Absent means OFF, and all three default to
+ * Flight-recorder triggers. **Absent means OFF, and both default to
  * absent**, so automated mode ships off and a fresh install can never generate
  * spend the customer did not ask for.
  *
- * This object shape is the resolution of the contradiction: the section
- * shows `triggers: ['stall', 'trackSwitch', 'cadence']` in one fragment and
- * `{ multiple: 3 }` in another, and no single shape admits both.
+ * An object keyed by kind rather than a list of kinds, because a list cannot
+ * carry each trigger's parameters.
  *
  * `cadence.multiple` is a multiple of *the track's own observed median*
  * interval, not an absolute millisecond figure: `{ multiple: 3 }` fires at
@@ -826,7 +888,6 @@ export type TriggerKind = 'stall' | 'trackSwitch' | 'cadence'
  */
 export interface TriggerConfig {
   readonly stall?: { readonly afterMs: number }
-  readonly trackSwitch?: Record<string, never>
   readonly cadence?: { readonly multiple: number; readonly minSamples: number }
 }
 
@@ -871,13 +932,27 @@ export interface FlightRecorderConfig {
  */
 export interface SessionContext {
   /**
-   * Accepted raw, never hashed, **treated as personal data**. The field
-   * with real privacy weight, and the one no default can be right for.
+   * **Treated as personal data**: the field with real privacy weight, and the
+   * one no default can be right for. Sent as given, unless
+   * {@link PrivacyConfig.hashActorId} is on.
    */
   readonly actorId?: string
   readonly contentId?: string
   readonly environment?: string
   readonly release?: string
+  /**
+   * Your own labels for the session, found by exact key and value later. At
+   * most 16; a key is 1 to 32 characters and a value 1 to 128. A tag outside
+   * those bounds is reported as MQ1114 and left out.
+   */
+  readonly tags?: Readonly<Record<string, string>>
+}
+
+/** What `setContext()` changes. Tags are added to the session's, a key named again replacing its value. */
+export interface ContextUpdate {
+  readonly actorId?: string
+  readonly contentId?: string
+  readonly tags?: Readonly<Record<string, string>>
 }
 
 /** The rollup: how often it closes, and how many tracks it will follow. */
@@ -1016,6 +1091,14 @@ export interface PrivacyConfig {
    * somebody who has decided their tokens may be shipped to our ingest.
    */
   readonly maskAuthParams: boolean
+  /**
+   * Send `actorId` as the first 32 hex digits of
+   * `sha256(apiKey + ':' + actorId)`, so the raw id never leaves the device.
+   * The same id under the same key always hashes the same, so a user's sessions
+   * still group, and `ids()` reports the hash to look them up by. Off by
+   * default.
+   */
+  readonly hashActorId: boolean
 }
 
 /**
@@ -1081,6 +1164,7 @@ export type RecordType =
   | 'link'
   | 'end'
   | 'escalation'
+  | 'context'
 
 export interface RecordBase {
   readonly t: RecordType
@@ -1138,7 +1222,20 @@ export interface SetupRecord extends RecordBase {
   /** Carried on every session: "did this regress in 4.2.1" is the second question asked. */
   readonly environment?: string
   readonly release?: string
+  /** The session's tags when the instance started. */
+  readonly tags?: Readonly<Record<string, string>>
   readonly collectorVersion: string
+}
+
+/**
+ * `setContext()` changed the session's context: what the call set, from this
+ * record on. Tags add to the session's.
+ */
+export interface ContextRecord extends RecordBase {
+  readonly t: 'context'
+  readonly contentId?: string
+  readonly actorId?: string
+  readonly tags?: Readonly<Record<string, string>>
 }
 
 /** Where a connection's transport lives. */
@@ -1159,6 +1256,10 @@ export interface ConnOpenRecord extends RecordBase {
   readonly realm: Realm
   /** Scheme, host and port only: a path or query can carry a token. */
   readonly origin: string
+  /** The relay the transport was opened to: scheme, host and port, as {@link origin}. */
+  readonly relay: string
+  /** What the page passed the `WebTransport` constructor, when it passed any of these. */
+  readonly options?: ConnOptions
   readonly contentId?: string
   readonly draft?: SupportedDraft | null
   readonly protocol?: string | null
@@ -1168,6 +1269,13 @@ export interface ConnOpenRecord extends RecordBase {
   readonly degraded?: 'draft-mismatch' | 'unsupported-protocol'
 }
 
+/**
+ * The `WebTransport` constructor options a connection reports. The offered
+ * protocols are left out, since the negotiated one is on the record, and the
+ * certificate hashes are counted, never carried.
+ */
+export type ConnOptions = Omit<WebTransportOptionsInfo, 'protocols'>
+
 export type ConnCloseCause = 'closed' | 'failed' | 'worker-gone' | 'session-end'
 
 /** A connection closed. A connection never ends the session; only `end` does. */
@@ -1175,6 +1283,9 @@ export interface ConnCloseRecord extends RecordBase {
   readonly t: 'conn-close'
   readonly conn: string
   readonly cause: ConnCloseCause
+  /** Who ended the transport, on a `closed` or `failed` cause. */
+  readonly by?: CloseBy
+  /** The close code and reason the transport ended with, when it closed rather than failed. */
   readonly code?: number
   readonly reason?: string
   readonly counters: { readonly parseFailures: number; readonly bucketsRefused: number }
@@ -1240,6 +1351,20 @@ export interface RollupTrackWire {
    * same reason as {@link blockedMs}.
    */
   readonly ackedBytes?: number
+  /**
+   * The groups `groupGaps` counted, as `[from, to]` ranges of decimal group
+   * ids, both included, in the order they were found: at most 16 per interval.
+   * Absent when the interval found none.
+   */
+  readonly gapRanges?: readonly (readonly [fromGroup: string, toGroup: string])[]
+  /** Ranges found past the 16 `gapRanges` holds. Absent when none were. */
+  readonly gapRangesDropped?: number
+  /**
+   * Streams carrying this track that were reset this interval, by RESET_STREAM
+   * error code as a decimal string: by the peer on a receive track, by the page
+   * on a send track. At most 32 codes; the rest are counted under `other`.
+   */
+  readonly resets?: Readonly<Record<string, number>>
   readonly hist: Partial<Record<HistogramKind, HistogramWire>>
 }
 
@@ -1327,6 +1452,16 @@ export interface HdrRecord extends RecordBase {
   readonly status?: number
   /** Payload bytes. From `headers+sizes`. */
   readonly size?: number
+  /**
+   * Publisher Priority, where the object's header carries it. On a fetch
+   * object that leaves it off, the priority last stated on its stream.
+   */
+  readonly priority?: number
+  /**
+   * Subgroup ID, as a decimal string, where the object has one: never on a
+   * datagram or a DATAGRAM-mode fetch object.
+   */
+  readonly subgroup?: string
 }
 
 /**
@@ -1446,6 +1581,11 @@ export interface EscalationRecord extends RecordBase {
       }
     | { readonly kind: 'ceiling' }
     | {
+        /** Ingest asked for it: someone opened a capture window covering this session. */
+        readonly kind: 'remote'
+        readonly reason?: string
+      }
+    | {
         /**
          * The window ended on one of the four conditions that close one.
          *
@@ -1478,6 +1618,7 @@ export type EnvelopeRecord =
   | LinkRecord
   | EndRecord
   | EscalationRecord
+  | ContextRecord
 
 /* ── sinks ────────────────────────────────────────────── */
 
@@ -1522,6 +1663,28 @@ export interface UploadOutcome {
   readonly terminal: boolean
   /** The server's wall clock, for the four-timestamp handshake. */
   readonly serverWallMs?: number
+  /** What ingest asked of the collector in its answer, if anything. */
+  readonly directive?: Directive
+}
+
+/**
+ * What an ingest response may ask, in its `x-moqtap-directive` header. Times
+ * are the server's wall clock, in epoch milliseconds.
+ *
+ *  - `flushMs`: seal and upload this often until `until`, while someone is
+ *    watching the session. 1 to 10 s, for at most 10 minutes.
+ *  - `elevate`: raise detail to `level` until `until`, as `escalate()` would,
+ *    for a capture window someone opened. At most `headers+sizes`, for at most
+ *    30 minutes, and within `budget.elevatedMinutes`.
+ */
+export interface Directive {
+  readonly flushMs?: number
+  readonly until?: number
+  readonly elevate?: {
+    readonly level: DetailLevel
+    readonly until: number
+    readonly reason: string
+  }
 }
 
 /**

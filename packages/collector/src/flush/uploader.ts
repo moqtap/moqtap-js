@@ -1,7 +1,8 @@
-import type { ClockSource, UploadOutcome } from '../types.js'
+import type { ClockSource, Directive, UploadOutcome } from '../types.js'
 import { BEACON_MAX_BYTES, UPLOAD_CONTENT_TYPE, uploadUrl } from './beacon.js'
 import { ClockSync } from './clock-sync.js'
 import { deadlineSignal, sleepUntil } from './deadline.js'
+import { DIRECTIVE_HEADER, parseDirective } from './directive.js'
 import type { Chunk } from './idb.js'
 
 /**
@@ -199,9 +200,14 @@ export class Uploader {
       lastStatus = res.status
       if (res.ok) {
         const serverWallMs = this.#note(res, t1, t4)
-        return serverWallMs === undefined
-          ? { ok: true, status: res.status, terminal: false }
-          : { ok: true, status: res.status, terminal: false, serverWallMs }
+        const directive = this.#directive(res)
+        return {
+          ok: true,
+          status: res.status,
+          terminal: false,
+          ...(serverWallMs !== undefined ? { serverWallMs } : {}),
+          ...(directive !== undefined ? { directive } : {}),
+        }
       }
       if (res.status >= 400 && res.status < 500 && !RETRYABLE_4XX.has(res.status)) {
         this.#terminalDrops += 1
@@ -269,6 +275,16 @@ export class Uploader {
     if (t2 === undefined || t3 === undefined) return undefined
     if (this.#sync.samples < this.#clockSamples) this.#sync.sample(t1, t2, t3, t4)
     return t3
+  }
+
+  /** Ingest's directive, if it sent one the collector can read. */
+  #directive(res: Response): Directive | undefined {
+    try {
+      return parseDirective(res.headers.get(DIRECTIVE_HEADER))
+    } catch (err) {
+      this.#onError?.(err)
+      return undefined
+    }
   }
 
   #retryAfterMs(res: Response): number | undefined {

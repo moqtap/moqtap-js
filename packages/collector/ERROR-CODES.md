@@ -80,11 +80,11 @@ A draft number in `drafts` is not one this build ships an adapter for. It is dro
 
 ### `MQ1108` — flightRecorder.triggers must be an object keyed by trigger kind, not an array
 
-Both shapes have been documented at one time or another — `['stall','trackSwitch','cadence']` in one place and `{ multiple: 3 }` in another. The object won, because an array cannot carry the cadence trigger's `{ multiple, minSamples }`. An array is reported rather than ignored, so that a caller who copied the older form is told which one survived.
+Triggers are an object keyed by kind, such as `{ stall: { afterMs: 2000 }, cadence: { multiple: 3 } }`, because an array cannot carry each trigger's parameters. An array is reported rather than ignored, so that a caller who wrote one is told which shape is expected.
 
 ### `MQ1109` — unknown trigger kind; ignored
 
-A key under `flightRecorder.triggers` is not `stall`, `trackSwitch` or `cadence`. It is ignored. Reported because a mistyped trigger is a trigger that silently never fires, which looks identical to a trigger that never had cause to.
+A key under `flightRecorder.triggers` is not `stall` or `cadence`. It is ignored. Reported because a mistyped trigger is a trigger that silently never fires, which looks identical to a trigger that never had cause to.
 
 ### `MQ1110` — expected an array of positive millisecond offsets
 
@@ -103,6 +103,12 @@ A top-level key on the config object is not one `CollectorConfig` accepts. It is
 A supplied `sessionId` must be at most 128 UTF-8 bytes, well-formed UTF-16 (no unpaired surrogate) and free of C0 and C1 control characters and DEL. Ingest refuses an upload whose id breaks any of these without storing any of it, so the collector refuses the id at `init()` instead: the session is collected under a minted id, which `vitals.ids()` returns. The value carried is the length rather than the id itself, because the id is the thing that may hold a control character or run arbitrarily long, and this message lands in your logs. 128 bytes is room for a UUID, a prefixed UUID or a hash in hex.
 
 *Value carried:* the supplied id's length in UTF-8 bytes.
+
+### `MQ1114` — a context tag was left out
+
+`context.tags` and `setContext({ tags })` take at most 16 tags. A key must be a string of 1 to 32 characters and a value a string of 1 to 128, with no unpaired surrogate. A tag past the 16th, or outside those bounds, is left out and the rest are kept: ingest finds sessions by the exact key and value, so a cut value would match nothing it was meant to.
+
+*Value carried:* the tag key, cut to 32 characters.
 
 ## 2xxx — envelope — framing, body, idempotency, gzip
 

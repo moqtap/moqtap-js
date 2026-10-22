@@ -44,9 +44,11 @@ import {
   type ConnCloseCause,
   type ConnCloseRecord,
   type ConnOpenRecord,
+  type ConnOptions,
   type ControlFrameEvent,
   type DatagramChunk,
   type DetailLevel,
+  type Direction,
   type DraftAdapter,
   type EndCounters,
   type EnvelopeRecord,
@@ -67,6 +69,7 @@ import {
   type StreamChunk,
   type SupportedDraft,
   type TransportObserver,
+  type WebTransportOptionsInfo,
   type WriterPressure,
 } from '../types.js'
 import { levelIndex } from './defaults.js'
@@ -119,7 +122,11 @@ export type RealmConfig = Pick<
 
 /** Where a realm's records go, and who it tells about what it sees. */
 export interface RealmHost {
-  /** The buffer records are written into. `pendingBytes` drives the droppable gate. */
+  /**
+   * The buffer records are written into. `pendingBytes` drives the droppable
+   * gate: what the buffer will cost to upload, which a host that compresses
+   * before it forwards weighs below its raw size.
+   */
   readonly sink: RecordSink & { readonly pendingBytes: number }
   /** The detail level records are stamped with. */
   level(): DetailLevel
@@ -172,6 +179,7 @@ interface Connection {
   readonly id: string
   readonly session: InterceptedSession
   readonly origin: string
+  readonly options: ConnOptions | undefined
   readonly contentId: string
   readonly rollup: RollupEngine
   /** The sink the decoder writes into, bound to this connection's rollup. */
@@ -258,6 +266,13 @@ export function originOf(url: string): string {
   if (m === null) return ''
   // Userinfo can carry credentials too.
   return (m[1] as string).replace(/\/\/[^@/]*@/, '//')
+}
+
+/** The options a connection reports: everything the hook kept but the offered protocols. */
+function connOptionsOf(o: WebTransportOptionsInfo | undefined): ConnOptions | undefined {
+  if (o === undefined) return undefined
+  const { protocols: _offered, ...rest } = o
+  return Object.keys(rest).length > 0 ? rest : undefined
 }
 
 export class RealmObserver {
@@ -481,6 +496,7 @@ export class RealmObserver {
       id: s.id,
       session: s,
       origin: originOf(s.url),
+      options: connOptionsOf(s.options),
       contentId: this.#contentId,
       rollup,
       sink: this.#connectionSink(() => c, rollup),
@@ -604,6 +620,20 @@ export class RealmObserver {
 
   onStreamError(_sessionId: string, _streamId: number, error: unknown): void {
     this.#host.onError(error)
+  }
+
+  /**
+   * Counted against the track the stream carried, which the dispatcher still
+   * knows: the hook reports the reset before the stream's close. A stream reset
+   * before its header named a track is counted on the connection.
+   */
+  onStreamReset(sessionId: string, streamId: number, d: Direction, code: number, at: Mono): void {
+    if (this.#halted) return
+    const conn = this.#connections.get(sessionId)
+    if (conn === undefined) return
+    const key = conn.dispatcher?.trackForStream(streamId, d) ?? null
+    if (key !== null) conn.rollup.observeReset(key, code, at)
+    else if (conn.dispatcher !== null) conn.rollup.count('resets.untracked', 1)
   }
 
   onDatagram(c: DatagramChunk): void {
@@ -778,8 +808,12 @@ export class RealmObserver {
   /**
    * One object's header, while detail is raised. Through the droppable gate,
    * so a buffer near its cap sheds these before anything that explains them.
+   *
+   * Priority and subgroup are read off the counter that reported `s`, here and
+   * not on the sample, so a baseline object never carries them.
    */
   #writeHdr(c: Connection, s: ObjectSample, lvl: DetailLevel): void {
+    const f = c.dispatcher?.fieldsOf(s) ?? null
     const r: HdrRecord = {
       t: 'hdr',
       ts: s.at - this.#origin,
@@ -791,6 +825,8 @@ export class RealmObserver {
       object: s.objectId.toString(),
       ...(s.status !== undefined ? { status: Number(s.status) } : {}),
       ...(levelIndex(lvl) >= SIZES ? { size: s.payloadBytes } : {}),
+      ...(f !== null && f.priority >= 0 ? { priority: f.priority } : {}),
+      ...(f !== null && f.subgroupId !== null ? { subgroup: f.subgroupId.toString() } : {}),
     }
     this.#writeRecord(r)
   }
@@ -804,7 +840,7 @@ export class RealmObserver {
     }
   }
 
-  /** The flush buffer is close to its own hard cap. Droppable types give way. */
+  /** The buffer, as its host weighs it, is close to its cap. Droppable types give way. */
   #underPressure(): boolean {
     return this.#host.sink.pendingBytes > 6 * this.#o.config.upload.byteThreshold
   }
@@ -820,6 +856,8 @@ export class RealmObserver {
       conn: c.id,
       realm: this.#o.realm,
       origin: c.origin,
+      relay: c.origin,
+      ...(c.options !== undefined ? { options: c.options } : {}),
       ...(c.contentId !== '' ? { contentId: c.contentId } : {}),
       draft: c.draft,
       protocol: c.protocol,
@@ -852,6 +890,7 @@ export class RealmObserver {
       lvl: this.#host.level(),
       conn: c.id,
       cause: info.cause,
+      ...(detail.by !== undefined ? { by: detail.by } : {}),
       ...(detail.code !== undefined ? { code: detail.code } : {}),
       ...(detail.reason !== undefined ? { reason: detail.reason } : {}),
       counters: {
@@ -1011,7 +1050,7 @@ export class RealmObserver {
    */
   #armed(): boolean {
     const t = this.#o.config.flightRecorder.triggers
-    return t.stall !== undefined || t.cadence !== undefined || t.trackSwitch !== undefined
+    return t.stall !== undefined || t.cadence !== undefined
   }
 
   #depthBytes(): number {
@@ -1136,6 +1175,7 @@ export class RealmObserver {
       onStreamData: wrap(this.onStreamData),
       onStreamClose: wrap(this.onStreamClose),
       onStreamError: wrap(this.onStreamError),
+      onStreamReset: wrap(this.onStreamReset),
       onDatagram: wrap(this.onDatagram),
       onWriterPressure: wrap(this.onWriterPressure),
       onSendStats: wrap(this.onSendStats),

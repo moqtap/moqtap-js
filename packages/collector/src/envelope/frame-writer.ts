@@ -125,6 +125,30 @@ export class FrameWriter {
   }
 
   /**
+   * Hand back the buffer behind an earlier {@link take} once nothing reads it,
+   * to write into from now on when it is the larger. A probe forwarding
+   * hundreds of kilobytes four times a second otherwise leaves as much
+   * garbage, and a worker carrying that much unreleased `ArrayBuffer` memory
+   * slows down at everything it allocates.
+   */
+  recycle(taken: Uint8Array): void {
+    const buf = new Uint8Array(
+      taken.buffer,
+      taken.byteOffset,
+      taken.buffer.byteLength - taken.byteOffset,
+    )
+    if (buf.byteLength <= this.#buf.byteLength || buf.byteLength < this.#len) return
+    buf.set(this.#buf.subarray(0, this.#len))
+    this.#buf = buf
+    this.#view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+  }
+
+  /** The frames so far, as a view the next write may overwrite. Nothing is reset. */
+  peek(): Uint8Array {
+    return this.#buf.subarray(0, this.#len)
+  }
+
+  /**
    * The frames, with no preamble, and reset.
    *
    * The returned view owns its buffer outright: the writer allocates a fresh
@@ -212,6 +236,41 @@ export function* readFrames(body: Uint8Array): Generator<{ raw: boolean; payload
     yield { raw, payload: body.subarray(i, i + length) }
     i += length
   }
+}
+
+/** Part of a frame stream: whole frames, and how many. */
+export interface FrameSpan {
+  readonly bytes: Uint8Array
+  readonly count: number
+}
+
+/**
+ * Cut a frame stream of `count` frames into spans of about `target` bytes.
+ *
+ * Cuts fall only in front of a JSON frame: a raw frame is unreadable without
+ * the record before it, so the two never land in different bodies. A span is
+ * longer than `target` only by the frames that cannot be parted from its last
+ * cut. The spans are views into `frames`.
+ */
+export function splitFrames(frames: Uint8Array, count: number, target: number): FrameSpan[] {
+  if (frames.byteLength <= target) return [{ bytes: frames, count }]
+  const view = new DataView(frames.buffer, frames.byteOffset, frames.byteLength)
+  const out: FrameSpan[] = []
+  let start = 0
+  let n = 0
+  let i = 0
+  while (i + PREFIX_BYTES <= frames.byteLength) {
+    const prefix = view.getUint32(i, false)
+    if ((prefix & FRAME_RAW_FLAG) === 0 && n > 0 && i - start >= target) {
+      out.push({ bytes: frames.subarray(start, i), count: n })
+      start = i
+      n = 0
+    }
+    i += PREFIX_BYTES + ((prefix & FRAME_LENGTH_MASK) >>> 0)
+    n += 1
+  }
+  out.push({ bytes: frames.subarray(start), count: n })
+  return out
 }
 
 /**

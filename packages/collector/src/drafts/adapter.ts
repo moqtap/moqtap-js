@@ -33,7 +33,7 @@ import type {
   SupportedDraft,
   VarintReader,
 } from '../types.js'
-import { asAnyMessage } from '../types.js'
+import { asAnyMessage, NEED } from '../types.js'
 import {
   type ControlDecodeResult,
   controlFrameEnd,
@@ -70,6 +70,8 @@ interface DecodedDatagram {
   readonly payload?: { readonly byteLength: number }
   readonly objectStatus?: bigint
   readonly status?: bigint
+  /** Every draft names it the same; 128 where the datagram leaves it off. */
+  readonly publisherPriority?: number
 }
 
 type DatagramResult =
@@ -81,6 +83,19 @@ export interface CodecBinding {
   readonly decodeMessage: (frame: Uint8Array) => ControlDecodeResult
   readonly decodeDatagram: (bytes: Uint8Array) => DatagramResult
   readonly redactAuthTokens: (frame: Uint8Array) => ControlRedaction
+}
+
+/**
+ * A datagram's Publisher Priority where it is on the wire, else -1.
+ * The type is re-read for its default-priority bit, because the decoded 128 is
+ * the same whether the datagram stated it or left it off.
+ */
+function datagramPriority(d: WalkDialect, bytes: Uint8Array, decoded: number | undefined): number {
+  if (decoded === undefined) return -1
+  if (d.datagramDefaultPriorityBit === 0) return decoded
+  const t = d.readVarint(bytes, 0)
+  if (t === NEED) return -1
+  return (Number(t.value & 0xffn) & d.datagramDefaultPriorityBit) === 0 ? decoded : -1
 }
 
 export function makeAdapter(
@@ -141,6 +156,7 @@ export function makeAdapter(
           objectId: v.objectId,
           headerBytes: Math.max(0, res.bytesRead - payloadBytes),
           payloadBytes,
+          priority: datagramPriority(d, bytes, v.publisherPriority),
         }
         const status = v.objectStatus ?? v.status
         return status === undefined ? counts : { ...counts, status }

@@ -14,26 +14,33 @@
  * natively stable; ingest chains it back to a track through the control records,
  * which carry the stream id.
  *
- * A fetch object carries **no Object Status**. Status is only present on
+ * From draft-16 a fetch object carries **no Object Status**. Status is only present on
  * subscription-delivered objects (Section 11.2.1.1) — which is also the one way
  * the two copies of a doubly delivered object differ. Reading a status varint
  * here would desynchronise the stream exactly as omitting it does on a subgroup
  * stream.
-
+ *
+ * The walk is draft-20's, and right from draft-20 on (see
+ * {@link FETCH_HAND_WALK_FROM}). Every older draft differs somewhere a value
+ * depends on: absolute Group IDs (15-17), absolute marker Group IDs (16-19),
+ * absolute Object IDs (15-19), an Object Status (15), no Serialization Flags at
+ * all (07-14). Its stream is walked by its adapter instead.
  */
 
 import {
   type BucketKey,
   type CountingSink,
   type Direction,
+  type DraftAdapter,
   type FetchHeaderInfo,
   type Mono,
   NEED,
   type Need,
+  newCursor,
   type ObjectCursor,
+  type ObjectHeaderFields,
   type ObjectHeaderInfo,
   type ObjectSample,
-  type SupportedDraft,
   type TrackKeyResolver,
   type VarintReader,
 } from '../types.js'
@@ -49,19 +56,6 @@ import { type CounterOptions, withStream } from './subgroup-counter.js'
 /** `FETCH_HEADER`'s stream type, identical in draft-19 and draft-20. */
 const FETCH_STREAM_TYPE = 0x05n
 
-/**
- * One walked fetch record.
- *
- * `marker` distinguishes an End-of-Range marker (Section 11.4.4.2) from a real
- * object. A marker declares that a range of Objects does not exist, is unknown,
- * or timed out; it is a gap statement, not an object, and counting it as one
- * would inflate every object rate on the track. Its bytes are still attributed —
- * see {@link FetchCounter}.
- */
-export interface FetchObjectInfo extends ObjectHeaderInfo {
-  readonly marker: boolean
-}
-
 /** Walk a FETCH_HEADER: `[0x05][Request ID]`. */
 export function readFetchHeader(
   v: VarintReader,
@@ -76,15 +70,19 @@ export function readFetchHeader(
   return { requestId: rid.value, headerBytes: rid.next - i, next: rid.next }
 }
 
+/** The first draft whose fetch streams {@link readFetchObject} reads correctly. */
+export const FETCH_HAND_WALK_FROM = 20
+
 /**
  * Walk one record on a fetch stream, draft-20 Section 11.4.4.
  *
- * `relativeObjectId` selects the one place draft-19 and draft-20 disagree on a
- * *value* (never on a byte count): draft-20 resolves an Object ID Delta against
- * the prior object when no Group ID Delta accompanies it, where draft-19
- * always reads it as absolute. With a Group ID Delta present
- * the two agree, so the divergence only reaches objects that stay within a
- * group and omit their group delta.
+ * `marker` marks an End-of-Range marker (Section 11.4.4.2): a statement that a
+ * range of Objects does not exist, is unknown, or timed out. Counting one as an
+ * object would inflate every object rate on the track; its bytes are still
+ * attributed, see {@link FetchCounter}.
+ *
+ * The cursor's Subgroup ID and priority move only on a complete object, and
+ * never on a marker, which has neither.
  */
 export function readFetchObject(
   v: VarintReader,
@@ -92,8 +90,7 @@ export function readFetchObject(
   i: number,
   prev: ObjectCursor,
   slack: number,
-  relativeObjectId: boolean,
-): FetchObjectInfo | Need | Desync {
+): ObjectHeaderInfo | Need | Desync {
   const f = v.read(b, i)
   if (f === NEED) return NEED
   if (f.value > 0xffff_ffffn) return DESYNC
@@ -104,7 +101,6 @@ export function readFetchObject(
   // Section 11.4.4.1: absent an Object ID Delta the id is the prior object's
   // plus one. Stream delta encoding, not a range end.
   let objectId = prev.prevObjectId + 1n
-  let marker = false
 
   if (flags >= 0x80) {
     // End-of-Range marker. Section 11.4.4.2: Group ID Delta, Object ID Delta
@@ -114,7 +110,6 @@ export function readFetchObject(
     // because the *layout* is what it needs and a counting decoder that
     // enforced the enumeration would abandon a stream over a codepoint a later
     // draft adds — the failure mode a withheld adapter exists to avoid.
-    marker = true
     const g = v.read(b, p)
     if (g === NEED) return NEED
     p = g.next
@@ -128,7 +123,14 @@ export function readFetchObject(
     p = len.next
     const payloadLength = Number(len.value)
     if (!Number.isSafeInteger(payloadLength) || payloadLength < 0) return DESYNC
-    return { objectId, groupId, payloadLength, headerBytes: p - i, next: p + payloadLength, marker }
+    return {
+      objectId,
+      groupId,
+      payloadLength,
+      headerBytes: p - i,
+      next: p + payloadLength,
+      marker: true,
+    }
   }
 
   const datagramMode = (flags & 0x40) !== 0
@@ -147,25 +149,42 @@ export function readFetchObject(
     return DESYNC
   }
 
-  // SUBGROUP_ID_ENCODING 0b11 is the only value with a field on the wire, and
-  // DATAGRAM mode has no Subgroup ID field at all.
-  if (!datagramMode && (flags & 0x03) === 0x03) {
-    const sg = v.read(b, p)
-    if (sg === NEED) return NEED
-    p = sg.next
+  // SUBGROUP_ID_ENCODING 0b11 is the only value with a field on the wire;
+  // 0b00 is 0, 0b01 the prior object's and 0b10 the prior's plus one. DATAGRAM
+  // mode has no Subgroup ID at all.
+  const encoding = flags & 0x03
+  let subgroupId = prev.prevSubgroupId
+  if (!datagramMode) {
+    if (encoding === 0x03) {
+      const sg = v.read(b, p)
+      if (sg === NEED) return NEED
+      p = sg.next
+      subgroupId = sg.value
+    } else if (encoding === 0x00) {
+      subgroupId = 0n
+    } else if (prev.first) {
+      // Section 11.4.4: there is no prior object to name.
+      return DESYNC
+    } else if (encoding === 0x02) {
+      subgroupId += 1n
+    }
   }
 
   if (objectIdPresent) {
     const o = v.read(b, p)
     if (o === NEED) return NEED
     p = o.next
-    objectId = relativeObjectId && !groupIdPresent ? prev.prevObjectId + o.value : o.value
+    objectId = groupIdPresent ? o.value : prev.prevObjectId + o.value
   } else if (prev.first) {
     return DESYNC
   }
 
+  // Absent, the priority is the prior object's.
+  let priority = prev.prevPriority
   if (priorityPresent) {
-    if (p + 1 > b.length) return NEED
+    const byte = b[p]
+    if (byte === undefined) return NEED
+    priority = byte
     p += 1
   }
 
@@ -185,49 +204,60 @@ export function readFetchObject(
   const payloadLength = Number(len.value)
   if (!Number.isSafeInteger(payloadLength) || payloadLength < 0) return DESYNC
 
-  return { objectId, groupId, payloadLength, headerBytes: p - i, next: p + payloadLength, marker }
+  if (!datagramMode) prev.prevSubgroupId = subgroupId
+  prev.prevPriority = priority
+  prev.hadSubgroup = !datagramMode
+  return { objectId, groupId, payloadLength, headerBytes: p - i, next: p + payloadLength }
 }
 
-export interface FetchCounterOptions extends CounterOptions {
-  /**
-   * Which draft's Object ID resolution to use. Defaults to 20 — the newer rule,
-   * and the one a draft-19 stream only diverges from on objects that omit their
-   * Group ID Delta.
-   */
-  readonly draft?: SupportedDraft
-}
-
-/** O(1) memory per stream. Payload bytes are skipped, never viewed. */
-export class FetchCounter extends DataStreamCounter {
+/**
+ * O(1) memory per stream. Payload bytes are skipped, never viewed.
+ *
+ * Its {@link ObjectHeaderFields} are the last object's, which is the one being
+ * reported while the sink's `onObject` runs.
+ */
+export class FetchCounter extends DataStreamCounter implements ObjectHeaderFields {
   private header: FetchHeaderInfo | null = null
   private key: BucketKey | null = null
   private capped = false
   private pendingHeaderBytes = 0
-  private readonly relativeObjectId: boolean
   private readonly streamId: number
-  private readonly cursor: ObjectCursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+  private readonly cursor: ObjectCursor = newCursor()
+  private readonly v: VarintReader
+  /** Set for a draft before {@link FETCH_HAND_WALK_FROM}: its adapter walks the stream. */
+  private readonly older: DraftAdapter | null
 
   constructor(
     private readonly dir: Direction,
     private readonly keys: TrackKeyResolver,
     private readonly sink: CountingSink,
-    private readonly v: VarintReader,
-    opts?: FetchCounterOptions,
+    a: DraftAdapter,
+    opts?: CounterOptions,
   ) {
     super(opts?.slackBytes ?? DEFAULT_HEADER_SLACK_BYTES)
-    this.relativeObjectId = (opts?.draft ?? 20) >= 20
     this.streamId = opts?.streamId ?? -1
+    this.v = a.varint
+    this.older = a.draft < FETCH_HAND_WALK_FROM ? a : null
   }
 
   get bucketKey(): BucketKey | null {
     return this.key
   }
 
+  get priority(): number {
+    return this.cursor.prevPriority
+  }
+
+  get subgroupId(): bigint | null {
+    return this.cursor.hadSubgroup ? this.cursor.prevSubgroupId : null
+  }
+
   protected override parse(b: Uint8Array, at: Mono): ParseRun {
     let i = 0
     while (i < b.length) {
       if (this.header === null) {
-        const h = readFetchHeader(this.v, b, i)
+        const h =
+          this.older === null ? readFetchHeader(this.v, b, i) : this.older.readFetchHeader(b, i)
         if (h === NEED) break
         if (h === DESYNC) return { consumed: i, skip: 0, desync: true }
         this.header = h
@@ -241,11 +271,14 @@ export class FetchCounter extends DataStreamCounter {
         continue
       }
 
-      const o = readFetchObject(this.v, b, i, this.cursor, this.slack, this.relativeObjectId)
+      const o =
+        this.older === null
+          ? readFetchObject(this.v, b, i, this.cursor, this.slack)
+          : this.older.readFetchObject(b, i, this.cursor)
       if (o === NEED) break
       if (o === DESYNC) return { consumed: i, skip: 0, desync: true }
 
-      if (o.marker) {
+      if (o.marker === true) {
         // A marker is not an object. Its bytes ride along on the next real one
         // so the track's byte total still balances against the wire.
         this.pendingHeaderBytes += o.headerBytes
@@ -270,19 +303,31 @@ export class FetchCounter extends DataStreamCounter {
     this.sink.onParseFailure(this.key, 'fetch-desync')
   }
 
-  private emit(o: FetchObjectInfo, at: Mono): void {
+  private emit(o: ObjectHeaderInfo, at: Mono): void {
     const headerBytes = o.headerBytes + this.pendingHeaderBytes
     this.pendingHeaderBytes = 0
     const key = this.key
     if (key === null) return
-    const sample: ObjectSample = {
-      key,
-      groupId: o.groupId,
-      objectId: o.objectId,
-      headerBytes,
-      payloadBytes: o.payloadLength,
-      at,
-    }
+    // Only drafts 07-15 put an Object Status on a fetch object.
+    const sample: ObjectSample =
+      o.status === undefined
+        ? {
+            key,
+            groupId: o.groupId,
+            objectId: o.objectId,
+            headerBytes,
+            payloadBytes: o.payloadLength,
+            at,
+          }
+        : {
+            key,
+            groupId: o.groupId,
+            objectId: o.objectId,
+            headerBytes,
+            payloadBytes: o.payloadLength,
+            status: o.status,
+            at,
+          }
     this.sink.onObject(withStream(sample, this.streamId))
   }
 }

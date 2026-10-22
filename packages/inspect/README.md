@@ -76,8 +76,9 @@ problemTitle(found[0], { draft: 22, pendingMs: 5000 })
 | `messageAliases(name, draft?)`           | The same message's names in other drafts                                                |
 | `pairRequests(events, { draft })`        | Each request with its response and round-trip time                                      |
 | `problems(events, { pendingMs, draft })` | Errors, pending requests, blocked request ids, GOAWAY, undecodable bytes, in time order |
-| `rollupDelivery(annotations)`           | Each track's delivery and rollup intervals from a collector trace's `collector.rollup`s |
+| `rollupDelivery(annotations)`            | Each track's delivery and rollup intervals from a collector trace's `collector.rollup`s |
 | `quantileBucket(counts, q)`              | The duration-ladder bucket holding a quantile of a histogram                            |
+| `highestBucket(counts)`                  | The highest duration-ladder bucket with a count                                         |
 | `problemTitle(problem, options)`         | A problem in one line                                                                   |
 | `problemDetail(problem, options)`        | The request an error answers, or a pending request's track; `null` when nothing more    |
 | `problemSeverity(kind)`                  | `error` for an error response or undecodable bytes, `warning` for the rest              |
@@ -125,9 +126,9 @@ sent a GOAWAY, and `trackOf(event)` to name a request's track.
 `collector.rollup` figures per connection and direction: objects, bytes,
 group ID gaps, skipped objects, stalls and the longest by bucket, cadence
 and arrival percentiles by bucket, and the send side's blocked time and
-acknowledged bytes. Rollup times are the collector's own, so each segment is
-placed on the trace's clock by its first rollup. Buckets are the collector's
-duration ladder: bucket `i` holds `[2^i, 2^(i+1))` ms.
+acknowledged bytes. It returns `tracks`, one entry per track, and
+`intervals`, one per track per rollup interval. Durations are buckets on the
+collector's ladder: bucket `i` holds `[2^i, 2^(i+1))` ms.
 
 `errorName` reads `session` as the code a session closed with and
 `stream_reset` as a data stream's reset code. It never borrows a name from

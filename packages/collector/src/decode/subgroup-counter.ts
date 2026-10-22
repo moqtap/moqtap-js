@@ -33,17 +33,25 @@
  * 0-127 in one byte whose leading bit is clear, so reading it as a varint is
  * byte-identical for draft-19 and additionally accepts draft-20's legal
  * non-minimal forms.
-
+ *
+ * The same walk is right for every draft from 14 (see {@link HAND_WALK_FROM});
+ * an older draft's stream is walked by its adapter instead, whose dialect
+ * covers the older type ranges and absolute Object IDs. The adapter's walk is
+ * the slower of the two by a call and a dialect lookup per field, which is why
+ * the newer drafts keep this one.
  */
 
 import {
   type BucketKey,
   type CountingSink,
   type Direction,
+  type DraftAdapter,
   type Mono,
   NEED,
   type Need,
+  newCursor,
   type ObjectCursor,
+  type ObjectHeaderFields,
   type ObjectHeaderInfo,
   type ObjectSample,
   type SubgroupHeaderInfo,
@@ -89,15 +97,21 @@ export function readSubgroupHeader(
   // SUBGROUP_ID_MODE 0b10 is the only mode with a field on the wire; 0b00 means
   // the id is zero and 0b01 means it is the first object's id, and neither
   // costs a byte here.
-  if ((flags & 0x06) >> 1 === 0x02) {
+  const mode = (flags & 0x06) >> 1
+  let subgroupId = 0n
+  if (mode === 0x02) {
     const subgroup = v.read(b, p)
     if (subgroup === NEED) return NEED
+    subgroupId = subgroup.value
     p = subgroup.next
   }
   // DEFAULT_PRIORITY (0x20) SET means the field is absent — the sense is
   // inverted relative to every other flag in the byte.
+  let priority = -1
   if ((flags & 0x20) === 0) {
-    if (p + 1 > b.length) return NEED
+    const byte = b[p]
+    if (byte === undefined) return NEED
+    priority = byte
     p += 1
   }
 
@@ -105,6 +119,9 @@ export function readSubgroupHeader(
     trackAlias: alias.value,
     groupId: group.value,
     propertiesPresent: (flags & 0x01) !== 0,
+    subgroupId,
+    subgroupIsFirstObjectId: mode === 0x01,
+    priority,
     headerBytes: p - i,
     next: p,
   }
@@ -181,6 +198,13 @@ export function readSubgroupObject(
   }
 }
 
+/**
+ * The first draft whose subgroup streams this file's walk reads correctly.
+ * Drafts 07-11 use other type values and 12-13 absolute Object IDs, so their
+ * streams go through the adapter's walk.
+ */
+export const HAND_WALK_FROM = 14
+
 export interface CounterOptions {
   /** Header bytes carried across a chunk boundary before declaring desync. */
   readonly slackBytes?: number
@@ -196,24 +220,33 @@ export interface CounterOptions {
  * into the first object's `headerBytes` so no byte on the stream goes
  * unattributed; a subgroup stream that carries no objects at all therefore
  * reports nothing, which is correct — it has no bucket to report against.
+ *
+ * Its {@link ObjectHeaderFields} are the stream header's: every object on a
+ * subgroup stream shares one priority and one subgroup.
  */
-export class SubgroupCounter extends DataStreamCounter {
+export class SubgroupCounter extends DataStreamCounter implements ObjectHeaderFields {
   private header: SubgroupHeaderInfo | null = null
   private key: BucketKey | null = null
   private capped = false
   private pendingHeaderBytes = 0
-  private readonly cursor: ObjectCursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+  private subgroup = 0n
+  private readonly cursor: ObjectCursor = newCursor()
   private readonly streamId: number
+  private readonly v: VarintReader
+  /** Set for a draft before {@link HAND_WALK_FROM}: its adapter walks the stream. */
+  private readonly older: DraftAdapter | null
 
   constructor(
     private readonly dir: Direction,
     private readonly keys: TrackKeyResolver,
     private readonly sink: CountingSink,
-    private readonly v: VarintReader,
+    a: DraftAdapter,
     opts?: CounterOptions,
   ) {
     super(opts?.slackBytes ?? DEFAULT_HEADER_SLACK_BYTES)
     this.streamId = opts?.streamId ?? -1
+    this.v = a.varint
+    this.older = a.draft < HAND_WALK_FROM ? a : null
   }
 
   /** The bucket this stream's objects are counted into, once resolved. */
@@ -221,14 +254,26 @@ export class SubgroupCounter extends DataStreamCounter {
     return this.key
   }
 
+  get priority(): number {
+    return this.header === null ? -1 : this.header.priority
+  }
+
+  get subgroupId(): bigint | null {
+    return this.header === null ? null : this.subgroup
+  }
+
   protected override parse(b: Uint8Array, at: Mono): ParseRun {
     let i = 0
     while (i < b.length) {
       if (this.header === null) {
-        const h = readSubgroupHeader(this.v, b, i)
+        const h =
+          this.older === null
+            ? readSubgroupHeader(this.v, b, i)
+            : this.older.readSubgroupHeader(b, i)
         if (h === NEED) break
         if (h === DESYNC) return { consumed: i, skip: 0, desync: true }
         this.header = h
+        this.subgroup = h.subgroupId
         this.pendingHeaderBytes = h.headerBytes
         // The bucket key is the raw wire number, tagged with the seam's
         // direction and the control plane's alias epoch. No name is read, here
@@ -242,10 +287,16 @@ export class SubgroupCounter extends DataStreamCounter {
         continue
       }
 
-      const o = readSubgroupObject(this.v, b, i, this.header, this.cursor, this.slack)
+      // Read before the walk: the adapter's moves the cursor itself.
+      const first = this.cursor.first
+      const o =
+        this.older === null
+          ? readSubgroupObject(this.v, b, i, this.header, this.cursor, this.slack)
+          : this.older.readSubgroupObject(b, i, this.header, this.cursor)
       if (o === NEED) break
       if (o === DESYNC) return { consumed: i, skip: 0, desync: true }
 
+      if (first && this.header.subgroupIsFirstObjectId) this.subgroup = o.objectId
       this.emit(o, at)
       this.cursor.first = false
       this.cursor.prevObjectId = o.objectId

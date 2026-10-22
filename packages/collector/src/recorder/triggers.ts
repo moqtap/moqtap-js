@@ -163,11 +163,7 @@ export class TriggerEngine {
 
   /** True when nothing in the config can ever fire (the default). */
   get idle(): boolean {
-    return (
-      this.config.stall === undefined &&
-      this.config.cadence === undefined &&
-      this.config.trackSwitch === undefined
-    )
+    return this.config.stall === undefined && this.config.cadence === undefined
   }
 
   /**
@@ -206,23 +202,6 @@ export class TriggerEngine {
       }
     }
     st.lastAt = s.at
-  }
-
-  /**
-   * A track changed — a rendition switch, or an alias rebound to a new request.
-   *
-   * An explicit input rather than something inferred from object arrivals,
-   * because the inference is wrong. Two tracks starting together is the ordinary
-   * shape of a session (audio and video), not a switch; a switch is visible on
-   * the **control plane**, where the decoder's `TrackKeys` already sees the
-   * bind. Guessing it from the data plane would open a window at the start of
-   * every session.
-   */
-  onTrackChange(k: BucketKey, atMono: Mono): void {
-    if (this.config.trackSwitch === undefined) return
-    const st = this.stateFor(k, atMono)
-    if (st === undefined) return
-    this.fire('trackSwitch', st, atMono, `track ${bucketKeyString(k)} changed`)
   }
 
   /**

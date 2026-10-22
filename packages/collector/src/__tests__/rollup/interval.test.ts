@@ -10,7 +10,12 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { SlidingMedian } from '../../rollup/bucket.js'
+import {
+  MAX_GAP_RANGES,
+  MAX_RESET_CODES,
+  OTHER_RESET_CODE,
+  SlidingMedian,
+} from '../../rollup/bucket.js'
 import { CustomMetrics } from '../../rollup/custom-metrics.js'
 import { RollupEngine, type RollupEngineOptions } from '../../rollup/interval.js'
 import type {
@@ -286,6 +291,75 @@ describe('per-track counting', () => {
     const t = track(sink.lastRollup())
     expect(t.groups).toBe(2)
     expect(t.groupGaps).toBe(2)
+  })
+
+  it('lists the missing groups as ranges, both ends included, as decimal strings', () => {
+    const { engine, sink } = setup()
+    engine.onObject(obj(1, { groupId: 0n }))
+    engine.onObject(obj(2, { groupId: 3n }))
+    engine.onObject(obj(3, { groupId: 5n }))
+    engine.onObject(obj(4, { groupId: 2n ** 62n }))
+    engine.tick(1_000)
+    const t = track(sink.lastRollup())
+    expect(t.gapRanges).toEqual([
+      ['1', '2'],
+      ['4', '4'],
+      ['6', (2n ** 62n - 1n).toString()],
+    ])
+    expect(t.gapRangesDropped).toBeUndefined()
+    expect(JSON.parse(JSON.stringify(t)).gapRanges).toEqual(t.gapRanges)
+  })
+
+  it('lists at most 16 ranges an interval and counts the rest, then starts over', () => {
+    const { engine, sink } = setup()
+    for (let g = 0; g <= 40; g += 2) engine.onObject(obj(g + 1, { groupId: BigInt(g) }))
+    engine.tick(1_000)
+    const first = track(sink.lastRollup())
+    expect(first.groupGaps).toBe(20)
+    expect(first.gapRanges).toHaveLength(MAX_GAP_RANGES)
+    expect(first.gapRanges?.[0]).toEqual(['1', '1'])
+    expect(first.gapRangesDropped).toBe(20 - MAX_GAP_RANGES)
+
+    engine.onObject(obj(1_001, { groupId: 41n }))
+    engine.tick(2_000)
+    const second = track(sink.lastRollup())
+    expect(second.gapRanges).toBeUndefined()
+    expect(second.gapRangesDropped).toBeUndefined()
+  })
+
+  it('leaves the ranges off a track with no gap', () => {
+    const { engine, sink } = setup()
+    engine.onObject(obj(1, { groupId: 0n }))
+    engine.onObject(obj(2, { groupId: 1n }))
+    engine.tick(1_000)
+    expect(track(sink.lastRollup())).not.toHaveProperty('gapRanges')
+  })
+
+  it('counts stream resets by code, and reports a track whose only event was one', () => {
+    const { engine, sink } = setup()
+    engine.onObject(obj(1))
+    engine.tick(1_000)
+    engine.observeReset(K, 3, 1_100)
+    engine.observeReset(K, 3, 1_200)
+    engine.observeReset(K, 0, 1_300)
+    engine.tick(2_000)
+    const t = track(sink.lastRollup())
+    expect(t.objects).toBe(0)
+    expect(t.resets).toEqual({ '3': 2, '0': 1 })
+    expect(t.firstSeen).toBe(1_100)
+    expect(t.lastSeen).toBe(1_300)
+    engine.onObject(obj(2_100))
+    engine.tick(3_000)
+    expect(track(sink.lastRollup())).not.toHaveProperty('resets')
+  })
+
+  it('folds reset codes past 32 into one bucket', () => {
+    const { engine, sink } = setup()
+    for (let code = 0; code < MAX_RESET_CODES + 5; code++) engine.observeReset(K, code, 10 + code)
+    engine.tick(1_000)
+    const resets = track(sink.lastRollup()).resets ?? {}
+    expect(Object.keys(resets)).toHaveLength(MAX_RESET_CODES + 1)
+    expect(resets[OTHER_RESET_CODE]).toBe(5)
   })
 
   it('clamps an absurd group-id discontinuity, which merges by addition downstream', () => {

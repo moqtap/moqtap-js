@@ -27,14 +27,21 @@
  * which is what a browser does.
  */
 
+import { crc32, deflateRawSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { envelope, FORWARD_INTERVAL_MS, type LinkedMessage, linkMessage } from '../../api/link.js'
-import { ProbeRuntime } from '../../api/probe.js'
+import { ProbeRuntime, type ProbeTuning } from '../../api/probe.js'
 import type { LinkEvent, MessageTarget } from '../../api/session.js'
 import { draftSet } from '../../draft/index.js'
 import { ALL_ADAPTERS } from '../../drafts/all.js'
-import { BODY_PREAMBLE_BYTES, readFrames, readPreamble, sha256Hex } from '../../envelope/index.js'
+import {
+  BODY_PREAMBLE_BYTES,
+  type DeflateSegment,
+  readFrames,
+  readPreamble,
+  sha256Hex,
+} from '../../envelope/index.js'
 import {
   type ChunkBackend,
   ChunkStore,
@@ -114,9 +121,20 @@ class VirtualTime {
     await turns()
   }
 
+  /** Spans the clock jumped, as `[from, ms]`. */
+  readonly frozen: [number, number][] = []
+
   /** Move the clock without running anything: a frozen page runs no timers. */
   jump(ms: number): void {
+    this.frozen.push([this.now, ms])
     this.now += ms
+  }
+
+  /** `t` on a clock that stood still while the page was frozen, as its workers do. */
+  running(t: number): number {
+    let out = t
+    for (const [from, ms] of this.frozen) if (from < t) out -= Math.min(ms, t - from)
+    return out
   }
 }
 
@@ -212,6 +230,19 @@ async function deliver(
   for (;;) if ((await reader.read()).done) break
 }
 
+/**
+ * A compressor that finishes within the turn it was asked in. Virtual time
+ * does not wait for the platform's, and a compression the clock outran would
+ * read as a forward held back for seconds.
+ */
+async function deflateNow(bytes: Uint8Array): Promise<DeflateSegment> {
+  return {
+    deflate: new Uint8Array(deflateRawSync(bytes)),
+    crc: crc32(bytes),
+    size: bytes.byteLength,
+  }
+}
+
 /* ── one run ────────────────────────────────────────────────────────────── */
 
 interface RunResult {
@@ -221,9 +252,11 @@ interface RunResult {
   readonly written: Written[]
   readonly storedAfter: number
   readonly ops: string[]
+  /** Virtual time with the frozen spans taken out. */
+  readonly running: (t: number) => number
 }
 
-async function run(seed: number, steps: number): Promise<RunResult> {
+async function run(seed: number, steps: number, tuning: ProbeTuning = {}): Promise<RunResult> {
   const rand = prng(seed)
   const pick = (n: number): number => Math.floor(rand() * n)
   const vt = new VirtualTime()
@@ -343,6 +376,7 @@ async function run(seed: number, steps: number): Promise<RunResult> {
                 vt.clear(h)
               },
             },
+            tuning,
           )
           probe.runtime.start()
         },
@@ -563,7 +597,14 @@ async function run(seed: number, steps: number): Promise<RunResult> {
     await next.end()
     await turns(20)
     await Promise.all(pending)
-    return { arrivals, inSession, written, storedAfter: store.chunks, ops }
+    return {
+      arrivals,
+      inSession,
+      written,
+      storedAfter: store.chunks,
+      ops,
+      running: (t) => vt.running(t),
+    }
   } finally {
     for (const p of probes) for (const port of p.ports) port.close()
     life.restore()
@@ -641,10 +682,12 @@ function check(seed: number, r: RunResult): void {
   for (const w of r.written) {
     const arrived = w.marker.startsWith('trk-') ? raw.includes(w.marker) : notes.has(w.marker)
     if (arrived) continue
+    // Measured on the clock the probe ran by: a page in the back/forward cache
+    // freezes its workers too, so neither forwards nor dies while it is there.
     const cut = Math.min(w.probe?.diedAt ?? Infinity, w.probe?.orphanedAt ?? Infinity)
     expect(
-      w.probe !== undefined && w.at >= cut - FORWARD_INTERVAL_MS,
-      `${why}: ${w.marker}, written at ${w.at}, never arrived`,
+      w.probe !== undefined && r.running(w.at) >= r.running(cut) - FORWARD_INTERVAL_MS,
+      `${why}: ${w.marker}, written at ${w.at}, never arrived (probe gone at ${cut})`,
     ).toBe(true)
   }
 
@@ -671,6 +714,15 @@ describe('the page and its probes, interleaved at random', () => {
 
   it.each(SEEDS)('keeps every property for seed %i', async (seed) => {
     const r = await run(seed, 40)
+    check(seed, r)
+  }, 30_000)
+})
+
+describe('the same, with every forward compressed in the probe', () => {
+  const SEEDS = Array.from({ length: 24 }, (_, i) => 0xc0de + i * 7919)
+
+  it.each(SEEDS)('keeps every property for seed %i', async (seed) => {
+    const r = await run(seed, 40, { compressMinBytes: 1, deflate: deflateNow })
     check(seed, r)
   }, 30_000)
 })

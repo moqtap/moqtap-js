@@ -30,7 +30,9 @@ import {
   MQ1111,
   MQ1112,
   MQ1113,
+  MQ1114,
 } from '../codes.js'
+import { sha256Hex } from '../envelope/sha256.js'
 import {
   type BudgetConfig,
   type CollectorConfig,
@@ -151,6 +153,75 @@ function sessionIdOf(v: unknown, mint: () => string, report: (p: ConfigProblem) 
   return supplied
 }
 
+/* ── context ─────────────────────────────────────────────────────────────── */
+
+/** The most tags a session carries, and the longest key and value, in UTF-16 code units. */
+export const MAX_TAGS = 16
+export const MAX_TAG_KEY = 32
+export const MAX_TAG_VALUE = 128
+
+/**
+ * `tags` added to `held`: `merged` is the session's tags after, `accepted` the
+ * ones this call set. A tag past the 16th or outside its bounds is reported as
+ * MQ1114 and left out, never cut: sessions are found by the exact pair.
+ */
+export function addTags(
+  held: Readonly<Record<string, string>>,
+  tags: unknown,
+  report: (p: ConfigProblem) => void,
+): { merged: Readonly<Record<string, string>>; accepted: Readonly<Record<string, string>> } {
+  const merged = new Map(Object.entries(held))
+  const accepted = new Map<string, string>()
+  if (tags !== undefined) {
+    if (typeof tags !== 'object' || tags === null || Array.isArray(tags)) {
+      report({ key: 'context.tags', code: MQ1104 })
+    } else {
+      for (const [k, v] of Object.entries(tags as Record<string, unknown>)) {
+        const fits = merged.has(k) || merged.size < MAX_TAGS
+        if (!fits || !isTagText(k, MAX_TAG_KEY) || !isTagText(v, MAX_TAG_VALUE)) {
+          report({ key: 'context.tags', code: MQ1114, got: k.slice(0, MAX_TAG_KEY) })
+          continue
+        }
+        merged.set(k, v)
+        accepted.set(k, v)
+      }
+    }
+  }
+  // `fromEntries` defines each key as its own property, `__proto__` included.
+  return {
+    merged: Object.freeze(Object.fromEntries(merged)),
+    accepted: Object.freeze(Object.fromEntries(accepted)),
+  }
+}
+
+/** Non-empty, at most `max` code units, and no unpaired surrogate. */
+function isTagText(v: unknown, max: number): v is string {
+  if (typeof v !== 'string' || v.length === 0 || v.length > max) return false
+  for (let i = 0; i < v.length; i += 1) {
+    const c = v.charCodeAt(i)
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const next = v.charCodeAt(i + 1)
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false
+      i += 1
+    } else if (c >= 0xdc00 && c <= 0xdfff) return false
+  }
+  return true
+}
+
+/**
+ * The actor id as it is sent: as given, or with `privacy.hashActorId` the
+ * first 32 hex digits of `sha256(apiKey + ':' + actorId)`. Keyed by the
+ * project's key, so the same user hashes differently in two projects, and the
+ * same in every session of one.
+ */
+export function sentActorId(
+  actorId: string,
+  config: Pick<ResolvedConfig, 'apiKey' | 'privacy'>,
+): string {
+  if (!config.privacy.hashActorId || actorId === '') return actorId
+  return sha256Hex(`${config.apiKey}:${actorId}`).slice(0, 32)
+}
+
 /* ── scalar readers ──────────────────────────────────────────────────────── */
 
 function posInt(
@@ -238,7 +309,6 @@ function triggersOf(v: unknown, report: (p: ConfigProblem) => void): TriggerConf
   const t = v as Record<string, unknown>
   const out: {
     stall?: { readonly afterMs: number }
-    trackSwitch?: Record<string, never>
     cadence?: { readonly multiple: number; readonly minSamples: number }
   } = {}
 
@@ -255,7 +325,6 @@ function triggersOf(v: unknown, report: (p: ConfigProblem) => void): TriggerConf
       ),
     }
   }
-  if (t.trackSwitch !== undefined) out.trackSwitch = {}
   if (t.cadence !== undefined) {
     const c = (typeof t.cadence === 'object' && t.cadence !== null ? t.cadence : {}) as {
       multiple?: unknown
@@ -277,7 +346,7 @@ function triggersOf(v: unknown, report: (p: ConfigProblem) => void): TriggerConf
     }
   }
   for (const k of Object.keys(t)) {
-    if (k !== 'stall' && k !== 'trackSwitch' && k !== 'cadence') {
+    if (k !== 'stall' && k !== 'cadence') {
       report({ key: `flightRecorder.triggers.${k}`, code: MQ1109 })
     }
   }
@@ -372,6 +441,7 @@ function privacyOf(v: unknown, report: (p: ConfigProblem) => void): PrivacyConfi
   if (p === null) return d
   return Object.freeze({
     maskAuthParams: flag(p.maskAuthParams, d.maskAuthParams, 'privacy.maskAuthParams', report),
+    hashActorId: flag(p.hashActorId, d.hashActorId, 'privacy.hashActorId', report),
   })
 }
 
@@ -481,6 +551,8 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
 
   const ctx = bagOf(c.context, 'context', report) ?? {}
   const d = DEFAULTS.context
+  const privacy = privacyOf(c.privacy, report)
+  const actorId = str(ctx.actorId, d.actorId, 'context.actorId', report)
 
   // Every bag is resolved by its own function and every field is required in
   // `ResolvedConfig`, so a bag left unfilled is a compile error rather than an
@@ -492,10 +564,11 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
     idSource: minted ? 'minted' : 'supplied',
     detail: detailOf(c.detail, report),
     context: Object.freeze({
-      actorId: str(ctx.actorId, d.actorId, 'context.actorId', report),
+      actorId: sentActorId(actorId, { apiKey: c.apiKey, privacy }),
       contentId: str(ctx.contentId, d.contentId, 'context.contentId', report),
       environment: str(ctx.environment, d.environment, 'context.environment', report),
       release: str(ctx.release, d.release, 'context.release', report),
+      tags: addTags(d.tags, ctx.tags, report).merged,
     }),
     metrics: metricsOf(c.metrics, report),
     flightRecorder: flightRecorderOf(c.flightRecorder, report),
@@ -503,6 +576,6 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
     upload: uploadOf(c.upload, report),
     storage: storageOf(c.storage, report),
     limits: limitsOf(c.limits, report),
-    privacy: privacyOf(c.privacy, report),
+    privacy,
   })
 }

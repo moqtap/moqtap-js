@@ -14,7 +14,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resolveConfig } from '../../api/config.js'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
-import { envelope, type ForwardMessage, type LinkedMessage, linkMessage } from '../../api/link.js'
+import {
+  envelope,
+  FORWARD_INTERVAL_MS,
+  type ForwardMessage,
+  type LinkedMessage,
+  linkMessage,
+} from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
 import { draftSet } from '../../draft/index.js'
 import { ALL_ADAPTERS } from '../../drafts/all.js'
@@ -27,7 +33,7 @@ import type {
   EnvelopeRecord,
   HdrRecord,
 } from '../../types.js'
-import { datagramBytes, subgroupBytes, subscribeBytes } from '../decode/vectors.js'
+import { datagramBytes, fetchBytes, subgroupBytes, subscribeBytes } from '../decode/vectors.js'
 import { init } from '../support/init.js'
 import { settle } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
@@ -181,6 +187,8 @@ describe('object headers follow the detail level', () => {
         streamId,
         group: '7',
         object: '0',
+        priority: 128,
+        subgroup: '0',
       },
       expect.objectContaining({ group: '7', object: '1' }),
       expect.objectContaining({ group: '7', object: '2', status: 3 }),
@@ -244,9 +252,84 @@ describe('object headers follow the detail level', () => {
         group: '3',
         object: '5',
         size: 40,
+        priority: 128,
       }),
     ])
     expect(hdr[0]).not.toHaveProperty('streamId')
+    expect(hdr[0]).not.toHaveProperty('subgroup')
+  })
+})
+
+describe('object headers carry the priority and subgroup their header states', () => {
+  async function headersOf(
+    deliver: (peer: Peer) => Promise<void>,
+    level: DetailLevel = 'headers',
+  ): Promise<HdrRecord[]> {
+    const { posts, impl } = recordingFetch()
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    const peer = await connect()
+    if (level !== 'baseline') c.escalate(level)
+    await deliver(peer)
+    await c.end()
+    return of((await framesOf(posts)).records, 'hdr')
+  }
+
+  it('reads an explicit Subgroup ID and the stream’s priority', async () => {
+    const hdr = await headersOf((peer) =>
+      peer.stream(
+        subgroupBytes({
+          alias: 4n,
+          group: 2n,
+          headerType: 0x14,
+          subgroupId: 3n,
+          priority: 17,
+          objects: [
+            { id: 0n, bytes: 8 },
+            { id: 1n, bytes: 8 },
+          ],
+        }),
+      ),
+    )
+    expect(hdr.map((h) => [h.object, h.priority, h.subgroup])).toEqual([
+      ['0', 17, '3'],
+      ['1', 17, '3'],
+    ])
+  })
+
+  it('leaves the priority off when the header does', async () => {
+    const hdr = await headersOf((peer) =>
+      peer.stream(
+        subgroupBytes({ alias: 4n, group: 2n, headerType: 0x30, objects: [{ id: 0n, bytes: 8 }] }),
+      ),
+    )
+    expect(hdr).toHaveLength(1)
+    expect(hdr[0]).not.toHaveProperty('priority')
+    expect(hdr[0]?.subgroup).toBe('0')
+  })
+
+  it('leaves the priority off a datagram that leaves it off', async () => {
+    const hdr = await headersOf((peer) =>
+      peer.datagram(datagramBytes({ alias: 9n, group: 3n, id: 5n, bytes: 4, type: 0x08 })),
+    )
+    expect(hdr).toHaveLength(1)
+    expect(hdr[0]).not.toHaveProperty('priority')
+    expect(hdr[0]).not.toHaveProperty('subgroup')
+  })
+
+  it('reads each fetch object’s own', async () => {
+    const hdr = await headersOf((peer) =>
+      peer.stream(
+        fetchBytes(6n, [
+          { group: 1n, id: 0n, bytes: 2, flags: 0x1f, subgroup: 2n, priority: 40 },
+          { group: 1n, id: 1n, bytes: 2, flags: 0x02, subgroup: 3n },
+        ]),
+      ),
+    )
+    expect(hdr.map((h) => [h.object, h.priority, h.subgroup])).toEqual([
+      ['0', 40, '2'],
+      ['1', 40, '3'],
+    ])
   })
 })
 
@@ -321,9 +404,11 @@ describe('a linked worker writes object headers and forwards them', () => {
     const decoder = new TextDecoder()
     const all: EnvelopeRecord[] = []
     for (const f of forwards) {
-      if (f.frames === undefined) continue
-      for (const frame of readFrames(new Uint8Array(f.frames, 0, f.byteLength))) {
-        if (!frame.raw) all.push(JSON.parse(decoder.decode(frame.payload)) as EnvelopeRecord)
+      for (const part of f.parts ?? []) {
+        if (!('frames' in part)) throw new Error('a small forward arrives uncompressed')
+        for (const frame of readFrames(new Uint8Array(part.frames, 0, part.byteLength))) {
+          if (!frame.raw) all.push(JSON.parse(decoder.decode(frame.payload)) as EnvelopeRecord)
+        }
       }
     }
     const conn = of(all, 'conn-open')[0]
@@ -336,5 +421,38 @@ describe('a linked worker writes object headers and forwards them', () => {
     await settle(5)
     channel.port1.close()
     page.port1.close()
+  })
+})
+
+describe('a linked worker forwards its headers compressed', () => {
+  it('keeps every header the raw buffer size would have shed, in bodies ingest reads', async () => {
+    const { posts, impl } = recordingFetch()
+    // At a 1 KB threshold the droppable gate sits at 6 KB. A hundred headers
+    // are about 15 KB as written and well under 6 KB once compressed.
+    const c = init(base({ upload: { byteThreshold: 1024 } }), { ...quiet, fetchImpl: impl })
+    const channel = new MessageChannel()
+    c.linkWorker(channel.port1)
+    await settle(5)
+    const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 0 })
+    expect(await probe.linked).toBe(true)
+    c.escalate('headers+sizes')
+    await settle(5)
+    const peer = await connect()
+    for (let group = 0; group < 6; group += 1) {
+      const objects = Array.from({ length: 100 }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
+      await peer.stream(subgroupBytes({ alias: 4n, group: BigInt(group), objects }))
+      await settle(10, FORWARD_INTERVAL_MS)
+    }
+    await c.end()
+
+    const { records } = await framesOf(posts)
+    expect(of(records, 'hdr')).toHaveLength(600)
+    const batches = of(records, 'batch')
+    expect(batches.at(-1)?.dropped).toBe(0)
+    expect(batches.map((b) => b.seq)).toEqual(batches.map((_, i) => i))
+    // Each forward of headers is one body, compressed before the page saw it.
+    const gzipped = posts.filter((p) => (readPreamble(p.body) as { gzipped: boolean }).gzipped)
+    expect(gzipped.length).toBeGreaterThanOrEqual(6)
+    channel.port1.close()
   })
 })

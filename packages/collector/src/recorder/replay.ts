@@ -48,6 +48,7 @@ import {
   type FlightRecord,
   type Mono,
   NEED,
+  newCursor,
   type ObjectCursor,
   type ObjectHeaderInfo,
   type PendingRequest,
@@ -314,7 +315,7 @@ function walkSubgroup(
   if (h === NEED || !isSubgroupHeader(h)) return { parsed: false, unkeyed: 0 }
   const key = keys.aliasKey(dir, h.trackAlias)
 
-  const cursor: ObjectCursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+  const cursor: ObjectCursor = newCursor()
   // The stream header's own bytes ride on the first object, so no byte on the
   // stream goes unattributed — the same attribution the counting decoder makes.
   let carriedHeaderBytes = h.headerBytes
@@ -369,7 +370,7 @@ function walkFetch(
   if (h === NEED || !isFetchHeader(h)) return { parsed: false, unkeyed: 0 }
   const key = keys.fetchKey(dir, h.requestId)
 
-  const cursor: ObjectCursor = { first: true, prevObjectId: 0n, prevGroupId: 0n }
+  const cursor: ObjectCursor = newCursor()
   let carriedHeaderBytes = h.headerBytes
   let i = h.next
   let unkeyed = 0
@@ -380,15 +381,11 @@ function walkFetch(
     // one as an object would inflate the dump's object count against the
     // rollup's for the same track — the two must agree. Its bytes still ride
     // along on the next real object, exactly as the counting decoder does it.
-    const flags = a.varint.read(b, i)
-    if (flags === NEED) break
-    const marker = flags.value >= 0x80n
-
     const o = a.readFetchObject(b, i, cursor)
     if (o === NEED || !isObjectHeader(o)) break
     if (o.next > b.length) break
 
-    if (marker) {
+    if (o.marker === true) {
       carriedHeaderBytes += o.headerBytes + o.payloadLength
       cursor.first = false
       cursor.prevObjectId = o.objectId
@@ -671,12 +668,5 @@ export class FlightRecorder {
 }
 
 function enabled(c: TriggerConfig, kind: TriggerKind): boolean {
-  switch (kind) {
-    case 'stall':
-      return c.stall !== undefined
-    case 'cadence':
-      return c.cadence !== undefined
-    default:
-      return c.trackSwitch !== undefined
-  }
+  return kind === 'stall' ? c.stall !== undefined : c.cadence !== undefined
 }

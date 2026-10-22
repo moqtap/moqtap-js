@@ -367,3 +367,103 @@ describe('teardown stops the meter', () => {
     expect(billed).toBe(2)
   })
 })
+
+describe('a raise ingest asked for', () => {
+  it('opens a window at the level asked, billed as remote, that ends at its deadline', () => {
+    const opened: number[] = []
+    const g = fixture({ onWindowOpen: (d) => opened.push(d) })
+    g.ctl.remote('headers', 60_000, 'capture window')
+    expect(g.ctl.level).toBe('headers')
+    expect(opened).toEqual([60_000])
+    expect(g.records[0]).toMatchObject({
+      from: 'baseline',
+      to: 'headers',
+      by: { kind: 'remote', reason: 'capture window' },
+    })
+    g.advance(59_999)
+    g.tick()
+    expect(g.ctl.level).toBe('headers')
+    g.advance(1)
+    g.tick()
+    expect(g.ctl.level).toBe('baseline')
+    expect(g.records[1]?.by).toEqual({ kind: 'window', closed: 'timeout' })
+  })
+
+  it('holds to the later end when asked again, with one record for the raise', () => {
+    const opened: number[] = []
+    const f = fixture({ onWindowOpen: (d) => opened.push(d) })
+    f.ctl.remote('headers', 10_000)
+    f.advance(2_000)
+    f.ctl.remote('headers', 12_000)
+    f.ctl.remote('headers', 11_000)
+    expect(opened).toEqual([10_000, 12_000])
+    f.advance(9_000)
+    f.tick()
+    expect(f.ctl.level).toBe('headers')
+    f.advance(1_000)
+    f.tick()
+    expect(f.ctl.level).toBe('baseline')
+    expect(f.records.map((r) => r.by.kind)).toEqual(['remote', 'window'])
+  })
+
+  it('is not closed by resolve(): the incident the page resolves is not the capture', () => {
+    const f = fixture()
+    f.ctl.remote('headers', 10_000)
+    f.ctl.resolve('stall over')
+    expect(f.ctl.level).toBe('headers')
+  })
+
+  it('gives way to the page’s own escalate(), which no deadline then ends', () => {
+    const f = fixture()
+    f.ctl.remote('headers', 10_000)
+    f.ctl.escalate('headers+sizes', 'mine now')
+    f.advance(20_000)
+    f.tick()
+    expect(f.ctl.level).toBe('headers+sizes')
+    f.ctl.resolve()
+    expect(f.ctl.level).toBe('baseline')
+  })
+
+  it('leaves a level the session already sits at or above alone', () => {
+    const configured = fixture({ configured: 'headers+sizes' })
+    configured.ctl.remote('headers', 10_000)
+    expect(configured.records).toEqual([])
+
+    const manual = fixture()
+    manual.ctl.escalate('headers+sizes')
+    manual.ctl.remote('headers', 10_000)
+    manual.advance(20_000)
+    manual.tick()
+    expect(manual.ctl.level).toBe('headers+sizes')
+    expect(manual.records.map((r) => r.by.kind)).toEqual(['manual'])
+  })
+
+  it('raises a trigger’s window and takes it over to its own end', () => {
+    const f = fixture()
+    f.ctl.onTrigger('stall', 0)
+    f.ctl.remote('headers+sizes', 60_000)
+    f.advance(15_000)
+    f.tick()
+    expect(f.ctl.level).toBe('headers+sizes')
+    f.advance(45_000)
+    f.tick()
+    expect(f.ctl.level).toBe('baseline')
+  })
+
+  it('is refused past the ceiling, like any raise', () => {
+    const f = fixture({ ceilingMinutes: 1 })
+    f.ctl.escalate('headers')
+    f.advance(60_000)
+    f.tick()
+    expect(f.ctl.level).toBe('baseline')
+    f.ctl.remote('headers', 120_000)
+    expect(f.ctl.level).toBe('baseline')
+    expect(f.ctl.refused).toBe(1)
+  })
+
+  it('asks nothing of baseline', () => {
+    const f = fixture()
+    f.ctl.remote('baseline', 10_000)
+    expect(f.records).toEqual([])
+  })
+})

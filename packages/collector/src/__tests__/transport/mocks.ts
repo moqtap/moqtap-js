@@ -211,6 +211,16 @@ export class MockWebTransport {
     this.readyD.reject(reason)
   }
 
+  /** When set, the page's `close()` fails the transport with it rather than closing it. */
+  failOnClose: unknown
+
+  /** The page's own `close()`: the transport closes with what the page passed. */
+  close(info: { closeCode?: number; reason?: string } = {}): void {
+    if (this.failOnClose !== undefined) this.closedD.reject(this.failOnClose)
+    else this.closedD.resolve({ closeCode: info.closeCode ?? 0, reason: info.reason ?? '' })
+  }
+
+  /** The peer closed the session. */
   closeSession(reason = '', closeCode = 0): void {
     this.closedD.resolve({ closeCode, reason })
   }

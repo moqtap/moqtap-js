@@ -307,7 +307,17 @@ const EXPECTED: Readonly<
       },
     ]),
   ),
+  './worker': { names: ['initWorker'], patches: true },
+  ...Object.fromEntries(
+    DRAFT_ENTRIES.map((e) => [`./${e}/worker`, { names: ['initWorker'], patches: true }]),
+  ),
 }
+
+/**
+ * Names a worker entry must not export: they are the page side it leaves out.
+ * An `init` here means the page runtime came back into the worker's bundle.
+ */
+const PAGE_ONLY: readonly string[] = ['init', 'DEFAULTS', 'COLLECTOR_VERSION']
 
 /**
  * Names only `./internal` may export. The runtime's internals carry no
@@ -381,6 +391,32 @@ function surface(
   return JSON.parse(r.stdout) as SurfaceResult
 }
 
+/** A worker entry, run from the build: a probe with no page to link it. */
+function workerSurface(
+  consumer: string,
+  name: string,
+  specifier: string,
+  cjs: boolean,
+): { linkedIsPromise: boolean; linked: boolean } | string {
+  const file = join(consumer, 'probes', `${name}.${cjs ? 'cjs' : 'mjs'}`)
+  const load = cjs
+    ? `require(${JSON.stringify(specifier)})`
+    : `await import(${JSON.stringify(specifier)})`
+  const body = [
+    `const m = ${load}`,
+    'const probe = m.initWorker()',
+    'const linkedIsPromise = typeof probe.linked?.then === "function"',
+    'const linked = await probe.linked',
+    'process.stdout.write(JSON.stringify({ linkedIsPromise, linked }))',
+  ].join('\n')
+  writeFileSync(file, `${PROBE_PREAMBLE}\n${cjs ? `;(async () => {\n${body}\n})()` : body}\n`)
+  const r = spawnSync(NODE, [file], { cwd: consumer, encoding: 'utf8' })
+  if (r.status !== 0) {
+    return `${r.stdout ?? ''}\n${r.stderr ?? ''}`.trim().split('\n').slice(0, 8).join('\n')
+  }
+  return JSON.parse(r.stdout) as { linkedIsPromise: boolean; linked: boolean }
+}
+
 /* ── main ────────────────────────────────────────────────────────────────── */
 
 function main(): void {
@@ -452,9 +488,15 @@ function main(): void {
 
     // And the positive backstop: the built output and the declarations are
     // there in both module formats.
-    for (const base of ['index', 'internal', ...DRAFT_ENTRIES]) {
+    for (const base of ['index', 'internal', 'worker', ...DRAFT_ENTRIES]) {
       for (const ext of ['js', 'cjs', 'd.ts']) {
         check(files.has(`dist/${base}.${ext}`), `dist/${base}.${ext} ships`)
+      }
+    }
+    // A draft's worker entry is typed by `dist/worker.d.ts`, checked above.
+    for (const e of DRAFT_ENTRIES) {
+      for (const ext of ['js', 'cjs']) {
+        check(files.has(`dist/${e}-worker.${ext}`), `dist/${e}-worker.${ext} ships`)
       }
     }
 
@@ -482,6 +524,14 @@ function main(): void {
           `exports the right names: ${label}`,
           missing.length ? `missing: ${missing.join(', ')} — got ${r.names.length} names` : '',
         )
+        if (sub.endsWith('worker')) {
+          const page = PAGE_ONLY.filter((n) => r.names.includes(n))
+          check(
+            page.length === 0 && r.names.length === 1,
+            `exports initWorker alone: ${label}`,
+            `exported: ${r.names.join(', ')}`,
+          )
+        }
         if (sub !== './internal') {
           const leaked = INTERNAL_ONLY.filter((n) => r.names.includes(n))
           check(
@@ -572,6 +622,24 @@ function main(): void {
           JSON.stringify({ linkedIsPromise: r.linkedIsPromise, linked: r.linked }),
         )
         check(r.restored, `discard() restores globalThis.WebTransport: ${label}`)
+      }
+    }
+
+    for (const sub of ['./worker', `./${newest}/worker`]) {
+      const specifier = `${pkg.name}/${sub.slice(2)}`
+      for (const cjs of [false, true]) {
+        const label = `${specifier} (${cjs ? 'CJS require' : 'ESM import'})`
+        const name = `wsurface-${sub.replace(/[^a-z0-9]/gi, '_')}-${cjs ? 'cjs' : 'esm'}`
+        const r = workerSurface(consumer, name, specifier, cjs)
+        if (typeof r === 'string') {
+          check(false, `runs: ${label}`, r)
+          continue
+        }
+        check(
+          r.linkedIsPromise && r.linked === false,
+          `initWorker() returns at once, unlinked with no page: ${label}`,
+          JSON.stringify(r),
+        )
       }
     }
 
@@ -672,6 +740,8 @@ function typecheck(consumer: string): void {
       "import { adapter as a19, PROTOCOL_STRINGS } from '@moqtap/collector/draft19'",
       "import { adapter as a20, DRAFT20_ADAPTER } from '@moqtap/collector/draft20'",
       "import type { DraftAdapter, Need, SupportedDraft } from '@moqtap/collector/draft20'",
+      "import { initWorker as initWorker20 } from '@moqtap/collector/draft20/worker'",
+      "import type { InitWorker } from '@moqtap/collector/worker'",
       '',
       '// Exercise the shapes rather than merely naming them. A declaration that',
       '// degraded to `any` on the way out of the build still resolves, still',
@@ -711,6 +781,8 @@ function typecheck(consumer: string): void {
       'export const linked: Promise<boolean> = probe.linked',
       '// @ts-expect-error a probe ends nothing',
       'probe.end()',
+      'export const workerOnly: InitWorker = initWorker20',
+      'export const workerProbe: WorkerProbe = initWorker20()',
       '',
     ].join('\n'),
   )
@@ -723,8 +795,10 @@ function typecheck(consumer: string): void {
       '// package that an ESM-only consumer never touches.',
       "import collector = require('@moqtap/collector')",
       "import draft20 = require('@moqtap/collector/draft20')",
+      "import worker = require('@moqtap/collector/worker')",
       'export const v: string = collector.COLLECTOR_VERSION',
       'export const d: number = draft20.adapter.draft',
+      'export const w: worker.WorkerProbe = worker.initWorker()',
       '',
     ].join('\n'),
   )

@@ -74,41 +74,74 @@ const DRAFTS: readonly string[] = [...SUPPORTED_DRAFTS]
  * The published entry points, from `package.json`'s `exports` map.
  *
  * **Read the per-draft rows as alternatives, never as a sum.** A page imports
- * one entry: the root, or the draft its relays speak. `./internal` is for tests,
- * harnesses and the browser extension, and is listed so a change to what it
- * pulls in is seen.
+ * one entry: the root, or the draft its relays speak. A dedicated worker imports
+ * one `/worker` entry. `./internal` is for tests, harnesses and the browser
+ * extension, and is listed so a change to what it pulls in is seen.
  */
-const ENTRIES = [
+const ENTRIES: readonly {
+  readonly id: string
+  readonly label: string
+  readonly parts: readonly string[]
+  readonly external: readonly string[]
+  /** Built with sourcemaps, for the subsystem breakdown. */
+  readonly split: boolean
+  /** Import only this name, as a consumer does, rather than the whole namespace. */
+  readonly only?: string
+}[] = [
   {
     id: '.',
     label: "root entry, the collector's own code (codec external)",
-    parts: ['index.ts'] as readonly string[],
-    external: ['@moqtap/codec/*'] as readonly string[],
-    /** Built with sourcemaps, for the subsystem breakdown. */
+    parts: ['index.ts'],
+    external: ['@moqtap/codec/*'],
     split: true,
   },
   {
     id: '. (whole)',
     label: "root entry as downloaded, every draft's decoder",
-    parts: ['index.ts'] as readonly string[],
-    external: [] as readonly string[],
+    parts: ['index.ts'],
+    external: [],
     split: false,
   },
   ...DRAFTS.map((nn) => ({
     id: `./draft${nn}`,
     label: `draft-${nn} entry as downloaded`,
-    parts: ['drafts', `draft${nn}`, 'entry.ts'] as readonly string[],
-    external: [] as readonly string[],
+    parts: ['drafts', `draft${nn}`, 'entry.ts'],
+    external: [],
     split: false,
   })),
   {
-    id: './internal',
-    label: 'internal entry as downloaded: the runtime, with no hook installed',
-    parts: ['internal.ts'] as readonly string[],
-    external: [] as readonly string[],
+    id: './worker',
+    label: "worker entry as downloaded, every draft's decoder",
+    parts: ['worker.ts'],
+    external: [],
     split: false,
   },
-] as const
+  ...DRAFTS.map((nn) => ({
+    id: `./draft${nn}/worker`,
+    label: `draft-${nn} worker entry as downloaded`,
+    parts: ['drafts', `draft${nn}`, 'worker.ts'],
+    external: [],
+    split: false,
+  })),
+  {
+    // What a draft-14 worker shipped before the worker entries existed, for
+    // comparison with `./draft14/worker`: `init` and `initWorker` come from one
+    // object, so importing only `initWorker` still carries the page side.
+    id: './draft14 initWorker',
+    label: 'draft-14 entry with only initWorker imported, as a worker used it',
+    parts: ['drafts', 'draft14', 'entry.ts'],
+    external: [],
+    split: false,
+    only: 'initWorker',
+  },
+  {
+    id: './internal',
+    label: 'internal entry as downloaded: the runtime, with no hook installed',
+    parts: ['internal.ts'],
+    external: [],
+    split: false,
+  },
+]
 
 /**
  * Labels for the per-subsystem table. Anything measured but unlabelled is
@@ -185,6 +218,16 @@ function shimFor(...parts: readonly string[]): string {
   const target = JSON.stringify(join(PKG, 'src', ...parts).replaceAll('\\', '/'))
   return [
     `import * as C from ${target}`,
+    ';(globalThis as unknown as Record<string, unknown>).__keep = C',
+    '',
+  ].join('\n')
+}
+
+/** One named import, kept alive the same way, so the bundler may shake the rest. */
+function namedShimFor(name: string, ...parts: readonly string[]): string {
+  const target = JSON.stringify(join(PKG, 'src', ...parts).replaceAll('\\', '/'))
+  return [
+    `import { ${name} as C } from ${target}`,
     ';(globalThis as unknown as Record<string, unknown>).__keep = C',
     '',
   ].join('\n')
@@ -444,8 +487,13 @@ function measure(): Report {
     const entries: Record<string, EntryMeasure> = {}
     const subsystems: Record<string, Measure & { label: string }> = {}
     for (const e of ENTRIES) {
-      const name = e.id === '.' ? 'entry' : e.id === '. (whole)' ? 'whole' : e.id.replace('./', '')
-      const source = shimFor(...e.parts)
+      const name =
+        e.id === '.'
+          ? 'entry'
+          : e.id === '. (whole)'
+            ? 'whole'
+            : e.id.replace('./', '').replace(/[^a-z0-9]+/gi, '-')
+      const source = e.only === undefined ? shimFor(...e.parts) : namedShimFor(e.only, ...e.parts)
       if (!e.split) {
         entries[e.id] = { label: e.label, ...measureSingle(out, name, source, e.external) }
         continue
