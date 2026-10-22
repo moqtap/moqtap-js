@@ -80,55 +80,55 @@ const numberFrom = (v: string | null): number | undefined => {
 }
 
 export class Uploader {
-  readonly #endpoint: string
-  readonly #apiKey: string
-  readonly #maxAttempts: number
-  readonly #fetch: typeof fetch | undefined
-  readonly #clock: ClockSource
-  readonly #timeoutMs: number
-  readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>
-  readonly #backoff: (attempt: number) => number
-  readonly #sync: ClockSync
-  readonly #clockSamples: number
-  readonly #headers: Readonly<Record<string, string>>
-  readonly #onError: ((err: unknown) => void) | undefined
-  #terminalDrops = 0
-  #retries = 0
+  private readonly _endpoint: string
+  private readonly _apiKey: string
+  private readonly _maxAttempts: number
+  private readonly _fetch: typeof fetch | undefined
+  private readonly _clock: ClockSource
+  private readonly _timeoutMs: number
+  private readonly _sleep: (ms: number, signal?: AbortSignal) => Promise<void>
+  private readonly _backoff: (attempt: number) => number
+  private readonly _sync: ClockSync
+  private readonly _clockSamples: number
+  private readonly _headers: Readonly<Record<string, string>>
+  private readonly _onError: ((err: unknown) => void) | undefined
+  private _terminalDrops = 0
+  private _retries = 0
 
   constructor(o: UploaderOptions) {
-    this.#endpoint = o.endpoint
-    this.#apiKey = o.apiKey
-    this.#maxAttempts = Math.max(1, o.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)
-    this.#timeoutMs = Math.max(0, o.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-    this.#fetch = o.fetchImpl ?? (globalThis as { fetch?: typeof fetch }).fetch
-    this.#clock = o.clock ?? platformClock
+    this._endpoint = o.endpoint
+    this._apiKey = o.apiKey
+    this._maxAttempts = Math.max(1, o.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)
+    this._timeoutMs = Math.max(0, o.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    this._fetch = o.fetchImpl ?? (globalThis as { fetch?: typeof fetch }).fetch
+    this._clock = o.clock ?? platformClock
     // `sleepUntil` takes the signal as a second argument and clears its own
-    // timer; an injected one need not, and `#wait` races it either way.
-    this.#sleep = o.sleep ?? sleepUntil
-    this.#backoff = o.backoffMs ?? defaultBackoff
-    this.#sync = o.clockSync ?? new ClockSync()
-    this.#clockSamples = o.clockSamples ?? DEFAULT_CLOCK_SAMPLES
-    this.#headers = o.headers ?? {}
-    this.#onError = o.onInternalError
+    // timer; an injected one need not, and `_wait` races it either way.
+    this._sleep = o.sleep ?? sleepUntil
+    this._backoff = o.backoffMs ?? defaultBackoff
+    this._sync = o.clockSync ?? new ClockSync()
+    this._clockSamples = o.clockSamples ?? DEFAULT_CLOCK_SAMPLES
+    this._headers = o.headers ?? {}
+    this._onError = o.onInternalError
   }
 
   /** The pinned offset. The beacon path inherits it and never samples. */
   get clockOffsetMs(): number | undefined {
-    return this.#sync.offsetMs
+    return this._sync.offsetMs
   }
 
   /** Round trip of the sample the offset came from — the offset's uncertainty. */
   get clockRttMs(): number | undefined {
-    return this.#sync.bestRttMs
+    return this._sync.bestRttMs
   }
 
   /** Chunks refused with a terminal status and dropped rather than retried. */
   get terminalDrops(): number {
-    return this.#terminalDrops
+    return this._terminalDrops
   }
 
   get retries(): number {
-    return this.#retries
+    return this._retries
   }
 
   /**
@@ -149,7 +149,7 @@ export class Uploader {
    * hidden. The platform caps keepalive bodies, so a larger one goes without it.
    */
   async send(c: Chunk, signal?: AbortSignal, keepalive = false): Promise<UploadOutcome> {
-    const doFetch = this.#fetch
+    const doFetch = this._fetch
     if (doFetch === undefined) {
       // No fetch at all: not transient, but not the chunk's fault either. The
       // caller keeps it, and the persistence is what makes that survivable.
@@ -161,25 +161,25 @@ export class Uploader {
     // the compiler will happily narrow it to `false` for the rest of the loop,
     // which would silently delete the second check.
     const outOfTime = (): boolean => signal?.aborted ?? false
-    for (let attempt = 0; attempt < this.#maxAttempts; attempt += 1) {
+    for (let attempt = 0; attempt < this._maxAttempts; attempt += 1) {
       if (outOfTime()) break
       if (attempt > 0) {
-        this.#retries += 1
-        if (delayMs > 0) await this.#wait(delayMs, signal)
+        this._retries += 1
+        if (delayMs > 0) await this._wait(delayMs, signal)
         if (outOfTime()) break
       }
       c.attempts += 1
-      const t1 = this.#clock.wall()
-      const deadline = deadlineSignal(this.#timeoutMs, signal)
+      const t1 = this._clock.wall()
+      const deadline = deadlineSignal(this._timeoutMs, signal)
       let res: Response
       try {
         // Credentials in the URL and a safelisted type, so the request needs
         // no CORS preflight; see `uploadUrl`. Gzip is declared by the body's
         // own preamble.
-        const url = uploadUrl(this.#endpoint, this.#apiKey, c.idempotencyKey, c.instanceId)
+        const url = uploadUrl(this._endpoint, this._apiKey, c.idempotencyKey, c.instanceId)
         res = await doFetch(url, {
           method: 'POST',
-          headers: { 'content-type': UPLOAD_CONTENT_TYPE, ...this.#headers },
+          headers: { 'content-type': UPLOAD_CONTENT_TYPE, ...this._headers },
           body: c.bytes as unknown as BodyInit,
           ...(keepalive && c.bytes.byteLength <= BEACON_MAX_BYTES ? { keepalive: true } : {}),
           ...(deadline.signal !== undefined ? { signal: deadline.signal } : {}),
@@ -188,19 +188,19 @@ export class Uploader {
         // Network failure, CORS refusal, timeout, abort. Transient by
         // assumption — a timed-out request must not be terminal, or the chunk
         // would be dropped for the endpoint's sins rather than kept.
-        this.#onError?.(err)
-        delayMs = this.#backoff(attempt)
+        this._onError?.(err)
+        delayMs = this._backoff(attempt)
         continue
       } finally {
         // The timer goes when the fetch settles, on every path out of the try:
         // a leaked timer per upload would just move the interference.
         deadline.clear()
       }
-      const t4 = this.#clock.wall()
+      const t4 = this._clock.wall()
       lastStatus = res.status
       if (res.ok) {
-        const serverWallMs = this.#note(res, t1, t4)
-        const directive = this.#directive(res)
+        const serverWallMs = this._note(res, t1, t4)
+        const directive = this._directive(res)
         return {
           ok: true,
           status: res.status,
@@ -210,13 +210,13 @@ export class Uploader {
         }
       }
       if (res.status >= 400 && res.status < 500 && !RETRYABLE_4XX.has(res.status)) {
-        this.#terminalDrops += 1
+        this._terminalDrops += 1
         return { ok: false, status: res.status, terminal: true }
       }
       // 5xx, or one of the retryable 4xx. `Retry-After` is the server telling us
       // what it wants; non-interference means we take the instruction rather than our own
       // backoff, since the server is the one under load.
-      delayMs = this.#retryAfterMs(res) ?? this.#backoff(attempt)
+      delayMs = this._retryAfterMs(res) ?? this._backoff(attempt)
     }
     return lastStatus === undefined
       ? { ok: false, terminal: false }
@@ -230,9 +230,9 @@ export class Uploader {
    * too ({@link sleepUntil} clears its own timer with it), but the race is what
    * makes the bound hold even when a test injects a one-argument fake.
    */
-  async #wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  private async _wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
     if (signal === undefined) {
-      await this.#sleep(ms)
+      await this._sleep(ms)
       return
     }
     if (signal.aborted) return
@@ -245,12 +245,12 @@ export class Uploader {
         resolve()
       }
       signal.addEventListener('abort', finish, { once: true })
-      void this.#sleep(ms, signal).then(finish, finish)
+      void this._sleep(ms, signal).then(finish, finish)
     })
   }
 
   /** Fold this exchange into the clock estimate, and report the server's wall clock. */
-  #note(res: Response, t1: number, t4: number): number | undefined {
+  private _note(res: Response, t1: number, t4: number): number | undefined {
     let t2: number | undefined
     let t3: number | undefined
     try {
@@ -269,25 +269,25 @@ export class Uploader {
         }
       }
     } catch (err) {
-      this.#onError?.(err)
+      this._onError?.(err)
       return undefined
     }
     if (t2 === undefined || t3 === undefined) return undefined
-    if (this.#sync.samples < this.#clockSamples) this.#sync.sample(t1, t2, t3, t4)
+    if (this._sync.samples < this._clockSamples) this._sync.sample(t1, t2, t3, t4)
     return t3
   }
 
   /** Ingest's directive, if it sent one the collector can read. */
-  #directive(res: Response): Directive | undefined {
+  private _directive(res: Response): Directive | undefined {
     try {
       return parseDirective(res.headers.get(DIRECTIVE_HEADER))
     } catch (err) {
-      this.#onError?.(err)
+      this._onError?.(err)
       return undefined
     }
   }
 
-  #retryAfterMs(res: Response): number | undefined {
+  private _retryAfterMs(res: Response): number | undefined {
     try {
       const raw = res.headers.get('retry-after')
       if (raw === null) return undefined
@@ -295,9 +295,9 @@ export class Uploader {
       if (Number.isFinite(seconds)) return Math.max(0, Math.min(MAX_BACKOFF_MS, seconds * 1000))
       const at = Date.parse(raw)
       if (!Number.isFinite(at)) return undefined
-      return Math.max(0, Math.min(MAX_BACKOFF_MS, at - this.#clock.wall()))
+      return Math.max(0, Math.min(MAX_BACKOFF_MS, at - this._clock.wall()))
     } catch (err) {
-      this.#onError?.(err)
+      this._onError?.(err)
       return undefined
     }
   }

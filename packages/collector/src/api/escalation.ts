@@ -1,5 +1,5 @@
 /**
- * The detail dial: the one place `#level` is written. Every change emits an
+ * The detail dial: the one place `_level` is written. Every change emits an
  * {@link EscalationRecord} carrying `by` — manual with the caller's reason, or
  * the trigger kind and the track it fired on.
  *
@@ -133,42 +133,42 @@ function toWireCause(by: EscalationCause): EscalationRecord['by'] {
 }
 
 export class EscalationController {
-  readonly #o: EscalationControllerOptions
-  #level: DetailLevel
+  private readonly _o: EscalationControllerOptions
+  private _level: DetailLevel
   /** The open capture window, or `undefined` when the level is at the configured floor. */
-  #window: OpenWindow | undefined
-  #ceilingHit = false
-  #refused = 0
-  #elevations = 0
+  private _window: OpenWindow | undefined
+  private _ceilingHit = false
+  private _refused = 0
+  private _elevations = 0
 
   constructor(o: EscalationControllerOptions) {
-    this.#o = o
-    this.#level = o.configured
+    this._o = o
+    this._level = o.configured
     o.meter.setLevel(o.configured)
   }
 
   get level(): DetailLevel {
-    return this.#level
+    return this._level
   }
 
   /** True while a capture window is open — i.e. while the dial sits above `configured`. */
   get windowOpen(): boolean {
-    return this.#window !== undefined
+    return this._window !== undefined
   }
 
   /** True once the customer's own ceiling has been reached at least once. */
   get ceilingReached(): boolean {
-    return this.#ceilingHit
+    return this._ceilingHit
   }
 
   /** Elevations refused because the ceiling had been reached. Counted, never silent. */
   get refused(): number {
-    return this.#refused
+    return this._refused
   }
 
   /** Accepted elevations, session-lifetime. Feeds `usage()`. */
   get elevations(): number {
-    return this.#elevations
+    return this._elevations
   }
 
   /**
@@ -176,14 +176,14 @@ export class EscalationController {
    * customer's toggle closing their own window, recorded like any other change.
    */
   escalate(to: DetailLevel, reason?: string): void {
-    this.#apply(to, reason === undefined ? { kind: 'manual' } : { kind: 'manual', reason })
+    this._apply(to, reason === undefined ? { kind: 'manual' } : { kind: 'manual', reason })
     // A manual raise is the customer's own toggle and is not on a timer,
     // and it takes over a window a trigger opened rather than opening a second
     // one: an automatic deadline may not close a window a person deliberately
     // reached into, and the ring may not either.
-    const w = this.#window
+    const w = this._window
     if (w !== undefined) {
-      this.#window = { openedMono: w.openedMono, deadline: undefined, ringEvictedAtOpen: undefined }
+      this._window = { openedMono: w.openedMono, deadline: undefined, ringEvictedAtOpen: undefined }
     }
   }
 
@@ -201,9 +201,9 @@ export class EscalationController {
    * out of an error handler would replace the customer's fault with its own.
    */
   resolve(reason?: string): void {
-    if (this.#window === undefined || this.#window.remote === true) return
-    this.#apply(
-      this.#o.configured,
+    if (this._window === undefined || this._window.remote === true) return
+    this._apply(
+      this._o.configured,
       reason === undefined
         ? { kind: 'window', closed: 'resolve' }
         : { kind: 'window', closed: 'resolve', reason },
@@ -215,8 +215,8 @@ export class EscalationController {
    * magic string, so the record's `closed` field can say which one it was.
    */
   unload(): void {
-    if (this.#window === undefined) return
-    this.#apply(this.#o.configured, { kind: 'window', closed: 'unload' })
+    if (this._window === undefined) return
+    this._apply(this._o.configured, { kind: 'window', closed: 'unload' })
   }
 
   /**
@@ -231,21 +231,21 @@ export class EscalationController {
    * incident, and under the window rule could close a window a person opened.
    */
   onTrigger(kind: TriggerKind, atMono: Mono, key?: BucketKey): void {
-    if (levelIndex(this.#level) >= levelIndex(TRIGGER_CAPTURE_LEVEL)) return
+    if (levelIndex(this._level) >= levelIndex(TRIGGER_CAPTURE_LEVEL)) return
     const cause: EscalationCause =
       key === undefined
         ? { kind: 'trigger', trigger: kind }
         : { kind: 'trigger', trigger: kind, key }
-    const opened = this.#apply(TRIGGER_CAPTURE_LEVEL, cause)
-    const w = this.#window
+    const opened = this._apply(TRIGGER_CAPTURE_LEVEL, cause)
+    const w = this._window
     if (!opened || w === undefined) return
-    const deadline = atMono + this.#o.windowMs
-    this.#window = {
+    const deadline = atMono + this._o.windowMs
+    this._window = {
       openedMono: w.openedMono,
       deadline,
-      ringEvictedAtOpen: this.#o.ring?.evictedBytes(),
+      ringEvictedAtOpen: this._o.ring?.evictedBytes(),
     }
-    this.#o.onWindowOpen?.(deadline)
+    this._o.onWindowOpen?.(deadline)
   }
 
   /**
@@ -258,28 +258,28 @@ export class EscalationController {
    */
   remote(to: DetailLevel, deadlineMono: Mono, reason?: string): void {
     if (levelIndex(to) <= levelIndex(BASELINE)) return
-    const w = this.#window
-    if (w?.remote === true && levelIndex(this.#level) >= levelIndex(to)) {
+    const w = this._window
+    if (w?.remote === true && levelIndex(this._level) >= levelIndex(to)) {
       if (w.deadline !== undefined && deadlineMono > w.deadline) {
-        this.#window = { ...w, deadline: deadlineMono }
-        this.#o.onWindowOpen?.(deadlineMono)
+        this._window = { ...w, deadline: deadlineMono }
+        this._o.onWindowOpen?.(deadlineMono)
       }
       return
     }
-    if (levelIndex(this.#level) >= levelIndex(to)) return
-    const opened = this.#apply(
+    if (levelIndex(this._level) >= levelIndex(to)) return
+    const opened = this._apply(
       to,
       reason === undefined || reason === '' ? { kind: 'remote' } : { kind: 'remote', reason },
     )
-    const now = this.#window
+    const now = this._window
     if (!opened || now === undefined) return
-    this.#window = {
+    this._window = {
       openedMono: now.openedMono,
       deadline: deadlineMono,
       ringEvictedAtOpen: undefined,
       remote: true,
     }
-    this.#o.onWindowOpen?.(deadlineMono)
+    this._o.onWindowOpen?.(deadlineMono)
   }
 
   /**
@@ -292,17 +292,17 @@ export class EscalationController {
    * shape it exists to stop — a session that escalated once and stayed there.
    */
   tick(nowMono: Mono): void {
-    this.#enforceCeiling()
-    const w = this.#window
-    if (w === undefined || !isElevated(this.#level)) return
+    this._enforceCeiling()
+    const w = this._window
+    if (w === undefined || !isElevated(this._level)) return
     // Neither condition is a person, so both are `window` closes, not `manual`;
     // `closed` says which of the two ended it.
-    if (this.#ringFilled(w)) {
-      this.#apply(this.#o.configured, { kind: 'window', closed: 'ring' })
+    if (this._ringFilled(w)) {
+      this._apply(this._o.configured, { kind: 'window', closed: 'ring' })
       return
     }
     if (w.deadline !== undefined && nowMono >= w.deadline) {
-      this.#apply(this.#o.configured, { kind: 'window', closed: 'timeout' })
+      this._apply(this._o.configured, { kind: 'window', closed: 'timeout' })
     }
   }
 
@@ -315,9 +315,9 @@ export class EscalationController {
    * time for as long as the page held a reference to it.
    */
   close(): void {
-    this.#window = undefined
-    if (this.#level !== this.#o.configured) this.#apply(this.#o.configured, { kind: 'manual' })
-    this.#o.meter.closeWindow()
+    this._window = undefined
+    if (this._level !== this._o.configured) this._apply(this._o.configured, { kind: 'manual' })
+    this._o.meter.closeWindow()
   }
 
   /**
@@ -329,8 +329,8 @@ export class EscalationController {
    * the window open has gone. The bound is one turnover of the ring's own
    * `flightRecorder.depth`, so there is no new threshold to name.
    */
-  #ringFilled(w: OpenWindow): boolean {
-    const ring = this.#o.ring
+  private _ringFilled(w: OpenWindow): boolean {
+    const ring = this._o.ring
     if (ring === undefined || w.ringEvictedAtOpen === undefined) return false
     if (!(ring.capacityBytes > 0)) return false
     return ring.evictedBytes() - w.ringEvictedAtOpen >= ring.capacityBytes
@@ -347,60 +347,60 @@ export class EscalationController {
    * `detail: 'headers'` drops to baseline on reaching its ceiling — recorded, so
    * it is visible rather than mysterious.
    */
-  #enforceCeiling(): void {
-    const ceiling = this.#o.ceilingMinutes
+  private _enforceCeiling(): void {
+    const ceiling = this._o.ceilingMinutes
     if (!(ceiling > 0)) return
-    if (this.#o.meter.elevatedMinutes < ceiling) return
-    if (!this.#ceilingHit) {
-      this.#ceilingHit = true
-      this.#window = undefined
-      if (isElevated(this.#level)) this.#apply(BASELINE, { kind: 'ceiling' })
+    if (this._o.meter.elevatedMinutes < ceiling) return
+    if (!this._ceilingHit) {
+      this._ceilingHit = true
+      this._window = undefined
+      if (isElevated(this._level)) this._apply(BASELINE, { kind: 'ceiling' })
     }
   }
 
-  /** The one place `#level` is written. Returns whether anything changed. */
-  #apply(to: DetailLevel, by: EscalationCause): boolean {
+  /** The one place `_level` is written. Returns whether anything changed. */
+  private _apply(to: DetailLevel, by: EscalationCause): boolean {
     if (levelIndex(to) < 0) return false
     // A raise past a reached ceiling is refused and counted, never silent, and
     // not recorded as an escalation, because it did not happen.
-    if (this.#ceilingHit && levelIndex(to) > levelIndex(BASELINE)) {
-      this.#refused += 1
+    if (this._ceilingHit && levelIndex(to) > levelIndex(BASELINE)) {
+      this._refused += 1
       return false
     }
-    if (to === this.#level) return false
+    if (to === this._level) return false
 
-    const from = this.#level
-    this.#level = to
-    this.#o.meter.setLevel(to)
-    if (levelIndex(to) > levelIndex(from)) this.#elevations += 1
+    const from = this._level
+    this._level = to
+    this._o.meter.setLevel(to)
+    if (levelIndex(to) > levelIndex(from)) this._elevations += 1
 
     // The window is the period above the configured floor. Opened here, with no
     // deadline and no ring mark: `onTrigger` adds both to the window it opened,
     // and a manual raise gets neither.
-    if (levelIndex(to) > levelIndex(this.#o.configured)) {
-      this.#window ??= {
-        openedMono: this.#o.clock.now(),
+    if (levelIndex(to) > levelIndex(this._o.configured)) {
+      this._window ??= {
+        openedMono: this._o.clock.now(),
         deadline: undefined,
         ringEvictedAtOpen: undefined,
       }
     } else {
-      this.#window = undefined
+      this._window = undefined
     }
 
     const record: EscalationRecord = {
       t: 'escalation',
-      ts: this.#o.clock.now() - this.#o.anchor.originMono,
+      ts: this._o.clock.now() - this._o.anchor.originMono,
       // The level the raise moved TO, so the record that opens a window is
       // attributed to that window rather than to the level it left.
       lvl: to,
       from,
       to,
       by: toWireCause(by),
-      elevatedMinutesUsed: this.#o.meter.elevatedMinutes,
-      ceilingMinutes: this.#o.ceilingMinutes,
+      elevatedMinutesUsed: this._o.meter.elevatedMinutes,
+      ceilingMinutes: this._o.ceilingMinutes,
     }
-    this.#o.sink.json(record)
-    this.#o.onLevelChange?.(to)
+    this._o.sink.json(record)
+    this._o.onLevelChange?.(to)
     return true
   }
 }

@@ -27,6 +27,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -100,6 +101,12 @@ const CEILING_GZ = {
   thin: 42_000,
   /** `compose({ features: [workers] })`: a page whose transports live in its workers. */
   linked: 18_500,
+  /**
+   * `compose({ features: [workers, escalation, persistence] })` built for
+   * es2019 and es2020, where `#` members cost WeakMap helpers.
+   */
+  es2019: 22_500,
+  es2020: 21_500,
   /** `./worker`: every draft and the flight recorder. */
   worker: 56_000,
   /** `./draftNN/worker`. */
@@ -120,6 +127,23 @@ const src = (...parts: string[]): string =>
   JSON.stringify(join(PKG, 'src', ...parts).replaceAll('\\', '/'))
 
 let out = ''
+
+/**
+ * Shorten `_`-prefixed members as the published build does (`mangleProps` in
+ * `tsup.config.ts`). `bun build` has no such option, so without this every
+ * internal member would be measured at its full source-length name.
+ */
+const MANGLED = new RegExp(
+  /mangleProps = \/(.+)\/$/m.exec(readFileSync(join(PKG, 'tsup.config.ts'), 'utf8'))?.[1] ?? '(?!)',
+)
+const esbuild = createRequire(createRequire(join(PKG, 'package.json')).resolve('tsup'))(
+  'esbuild',
+) as {
+  transformSync(code: string, o: Record<string, unknown>): { code: string }
+  build(o: Record<string, unknown>): Promise<{ outputFiles?: { text: string }[] }>
+}
+const shorten = (code: string): string =>
+  esbuild.transformSync(code, { mangleProps: MANGLED, minifyWhitespace: true }).code
 
 const BUN = process.platform === 'win32' ? 'bun.exe' : 'bun'
 
@@ -147,7 +171,7 @@ function bundle(name: string, source: string): Built {
   const raw = join(out, `${name}.raw.js`)
   runBun(['build', entry, '--target=browser', '--minify', '--outfile', min])
   runBun(['build', entry, '--target=browser', '--outfile', raw])
-  const code = readFileSync(min, 'utf8')
+  const code = shorten(readFileSync(min, 'utf8'))
   return { min: code, gz: gzip(code), readable: readFileSync(raw, 'utf8') }
 }
 
@@ -247,6 +271,48 @@ describe('a page whose transports live in its workers', () => {
   it('stays under its ceiling', () => {
     expect(b.gz).toBeLessThanOrEqual(CEILING_GZ.linked)
   })
+})
+
+/**
+ * A page built for browsers without class private fields, through esbuild
+ * (the bundler tsup itself uses) with the package's own property mangling.
+ * Each `#` member such a target sees is rewritten into a WeakMap helper,
+ * so a `#` member added to internal code shows up here as a step in size.
+ */
+describe('a page built for older browsers', () => {
+  it.each([
+    ['es2019', CEILING_GZ.es2019],
+    ['es2020', CEILING_GZ.es2020],
+  ] as const)(
+    '%s stays under its ceiling',
+    async (target, ceiling) => {
+      expect(MANGLED.source, 'tsup.config.ts must set mangleProps').not.toBe('(?!)')
+      const r = await esbuild.build({
+        stdin: {
+          contents: [
+            `import { compose } from ${src('compose.ts')}`,
+            `import { escalation, persistence, workers } from ${src('features', 'index.ts')}`,
+            ';(globalThis as unknown as Record<string, unknown>).__keep =',
+            '  compose({ features: [workers, escalation, persistence] })',
+            '',
+          ].join('\n'),
+          loader: 'ts',
+          resolveDir: PKG,
+        },
+        bundle: true,
+        minify: true,
+        format: 'esm',
+        target,
+        mangleProps: MANGLED,
+        write: false,
+        logLevel: 'silent',
+      })
+      const gz = gzip(r.outputFiles?.[0]?.text ?? '')
+      sizes.push(`  ${target} composition       ${gz} B`)
+      expect(gz).toBeLessThanOrEqual(ceiling)
+    },
+    120_000,
+  )
 })
 
 describe.each(DRAFTS)('draft %s', (d) => {

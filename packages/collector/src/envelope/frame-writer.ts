@@ -61,27 +61,27 @@ const ENCODER = new TextEncoder()
  * reallocations per batch.
  */
 export class FrameWriter {
-  #buf: Uint8Array
-  #view: DataView
-  #len = 0
-  #frames = 0
-  readonly #initialBytes: number
+  private _buf: Uint8Array
+  private _view: DataView
+  private _len = 0
+  private _frames = 0
+  private readonly _initialBytes: number
 
   constructor(opts?: { initialBytes?: number }) {
     const requested = opts?.initialBytes
-    this.#initialBytes =
+    this._initialBytes =
       requested !== undefined && requested > 0 ? Math.ceil(requested) : DEFAULT_INITIAL_BYTES
-    this.#buf = new Uint8Array(this.#initialBytes)
-    this.#view = new DataView(this.#buf.buffer)
+    this._buf = new Uint8Array(this._initialBytes)
+    this._view = new DataView(this._buf.buffer)
   }
 
   /** Bytes written so far — prefixes included, so it is directly comparable to the 32 KB. */
   get byteLength(): number {
-    return this.#len
+    return this._len
   }
 
   get frameCount(): number {
-    return this.#frames
+    return this._frames
   }
 
   /**
@@ -96,7 +96,7 @@ export class FrameWriter {
    */
   json(record: EnvelopeRecord): void {
     const payload = ENCODER.encode(JSON.stringify(record))
-    this.#frame(payload, false)
+    this._frame(payload, false)
   }
 
   /**
@@ -107,7 +107,7 @@ export class FrameWriter {
    * — which is `RecordSink`'s contract, not something this writer can check.
    */
   raw(bytes: Uint8Array): void {
-    this.#frame(bytes, true)
+    this._frame(bytes, true)
   }
 
   /**
@@ -118,10 +118,10 @@ export class FrameWriter {
    * page copies bytes and never parses or re-encodes them.
    */
   append(frames: Uint8Array, count: number): void {
-    this.#reserve(frames.byteLength)
-    this.#buf.set(frames, this.#len)
-    this.#len += frames.byteLength
-    this.#frames += count
+    this._reserve(frames.byteLength)
+    this._buf.set(frames, this._len)
+    this._len += frames.byteLength
+    this._frames += count
   }
 
   /**
@@ -137,15 +137,15 @@ export class FrameWriter {
       taken.byteOffset,
       taken.buffer.byteLength - taken.byteOffset,
     )
-    if (buf.byteLength <= this.#buf.byteLength || buf.byteLength < this.#len) return
-    buf.set(this.#buf.subarray(0, this.#len))
-    this.#buf = buf
-    this.#view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+    if (buf.byteLength <= this._buf.byteLength || buf.byteLength < this._len) return
+    buf.set(this._buf.subarray(0, this._len))
+    this._buf = buf
+    this._view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
   }
 
   /** The frames so far, as a view the next write may overwrite. Nothing is reset. */
   peek(): Uint8Array {
-    return this.#buf.subarray(0, this.#len)
+    return this._buf.subarray(0, this._len)
   }
 
   /**
@@ -161,39 +161,39 @@ export class FrameWriter {
    * for the slack in IndexedDB or on the wire.
    */
   take(): Uint8Array {
-    const out = this.#buf.subarray(0, this.#len)
-    this.#buf = new Uint8Array(this.#initialBytes)
-    this.#view = new DataView(this.#buf.buffer)
-    this.#len = 0
-    this.#frames = 0
+    const out = this._buf.subarray(0, this._len)
+    this._buf = new Uint8Array(this._initialBytes)
+    this._view = new DataView(this._buf.buffer)
+    this._len = 0
+    this._frames = 0
     return out
   }
 
-  #frame(payload: Uint8Array, raw: boolean): void {
+  private _frame(payload: Uint8Array, raw: boolean): void {
     if (payload.length > MAX_FRAME_BYTES) {
       throw new RangeError(`${MQ2001}: ${payload.length}`)
     }
-    this.#reserve(PREFIX_BYTES + payload.length)
+    this._reserve(PREFIX_BYTES + payload.length)
     // `>>> 0` because JavaScript's bitwise operators coerce to int32: with bit 31
     // set, `payload.length | FRAME_RAW_FLAG` is negative and `setUint32` would be
     // handed a negative number. It writes the same four bytes only by accident,
     // and every reader has to do the same to get the length back out.
     const prefix = raw ? (payload.length | FRAME_RAW_FLAG) >>> 0 : payload.length
-    this.#view.setUint32(this.#len, prefix, false)
-    this.#buf.set(payload, this.#len + PREFIX_BYTES)
-    this.#len += PREFIX_BYTES + payload.length
-    this.#frames++
+    this._view.setUint32(this._len, prefix, false)
+    this._buf.set(payload, this._len + PREFIX_BYTES)
+    this._len += PREFIX_BYTES + payload.length
+    this._frames++
   }
 
-  #reserve(n: number): void {
-    const need = this.#len + n
-    if (need <= this.#buf.length) return
-    let cap = this.#buf.length || DEFAULT_INITIAL_BYTES
+  private _reserve(n: number): void {
+    const need = this._len + n
+    if (need <= this._buf.length) return
+    let cap = this._buf.length || DEFAULT_INITIAL_BYTES
     while (cap < need) cap *= 2
     const next = new Uint8Array(cap)
-    next.set(this.#buf.subarray(0, this.#len))
-    this.#buf = next
-    this.#view = new DataView(next.buffer)
+    next.set(this._buf.subarray(0, this._len))
+    this._buf = next
+    this._view = new DataView(next.buffer)
   }
 }
 

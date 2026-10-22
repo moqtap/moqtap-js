@@ -49,44 +49,44 @@ const platformTimers: TimerSource = {
 }
 
 export class FlushSchedule {
-  readonly #onFlush: (reason: SealReason) => void
-  readonly #onError: ((err: unknown) => void) | undefined
-  readonly #threshold: number
-  readonly #early: readonly number[]
-  readonly #intervalMs: number
-  readonly #timers: TimerSource
+  private readonly _onFlush: (reason: SealReason) => void
+  private readonly _onError: ((err: unknown) => void) | undefined
+  private readonly _threshold: number
+  private readonly _early: readonly number[]
+  private readonly _intervalMs: number
+  private readonly _timers: TimerSource
 
-  #handles: unknown[] = []
-  #intervalHandle: unknown
-  #byteHandle: unknown
+  private _handles: unknown[] = []
+  private _intervalHandle: unknown
+  private _byteHandle: unknown
   /** A shorter interval ingest asked for, until its timer ends it. */
-  #shortMs: number | undefined
-  #shortHandle: unknown
-  #bytes = 0
-  #started = false
-  #stopped = false
-  #readied = false
-  #startedAt: Mono = 0
+  private _shortMs: number | undefined
+  private _shortHandle: unknown
+  private _bytes = 0
+  private _started = false
+  private _stopped = false
+  private _readied = false
+  private _startedAt: Mono = 0
 
   constructor(o: FlushScheduleOptions) {
-    this.#onFlush = o.onFlush
-    this.#onError = o.onInternalError
-    this.#threshold = Math.max(1, o.byteThreshold)
-    this.#early = (o.earlyFlushesMs ?? DEFAULT_UPLOAD.earlyFlushesMs)
+    this._onFlush = o.onFlush
+    this._onError = o.onInternalError
+    this._threshold = Math.max(1, o.byteThreshold)
+    this._early = (o.earlyFlushesMs ?? DEFAULT_UPLOAD.earlyFlushesMs)
       .filter((n) => n > 0)
       .sort((a, b) => a - b)
-    this.#intervalMs = Math.max(1, o.intervalMs ?? DEFAULT_UPLOAD.intervalMs)
-    this.#timers = o.timers ?? platformTimers
+    this._intervalMs = Math.max(1, o.intervalMs ?? DEFAULT_UPLOAD.intervalMs)
+    this._timers = o.timers ?? platformTimers
   }
 
   /** Monotonic time the schedule was armed. Every offset below is relative to it. */
   get startedAt(): Mono {
-    return this.#startedAt
+    return this._startedAt
   }
 
   /** Bytes accumulated since the last seal of any kind. */
   get pendingBytes(): number {
-    return this.#bytes
+    return this._bytes
   }
 
   /**
@@ -95,9 +95,9 @@ export class FlushSchedule {
    * stack.
    */
   start(nowMono: Mono): void {
-    if (this.#started || this.#stopped) return
-    this.#started = true
-    this.#arm(nowMono)
+    if (this._started || this._stopped) return
+    this._started = true
+    this._arm(nowMono)
   }
 
   /**
@@ -106,24 +106,24 @@ export class FlushSchedule {
    * `start()`, which may have run long before the player connected. Once.
    */
   ready(nowMono: Mono): void {
-    if (!this.#started || this.#stopped || this.#readied) return
-    this.#readied = true
-    for (const h of this.#handles) this.#timers.clearTimer(h)
-    this.#handles = []
-    this.#intervalHandle = undefined
-    this.#arm(nowMono)
+    if (!this._started || this._stopped || this._readied) return
+    this._readied = true
+    for (const h of this._handles) this._timers.clearTimer(h)
+    this._handles = []
+    this._intervalHandle = undefined
+    this._arm(nowMono)
   }
 
-  #arm(nowMono: Mono): void {
-    this.#startedAt = nowMono
-    this.#after(0, 'ready')
-    for (const at of this.#early) this.#after(at, 'early')
-    const lastEarly = this.#early.length > 0 ? (this.#early[this.#early.length - 1] as number) : 0
-    this.#intervalHandle = this.#timers.setTimer(() => {
-      this.#fire('interval')
-      this.#rearmInterval()
-    }, lastEarly + this.#intervalMs)
-    this.#handles.push(this.#intervalHandle)
+  private _arm(nowMono: Mono): void {
+    this._startedAt = nowMono
+    this._after(0, 'ready')
+    for (const at of this._early) this._after(at, 'early')
+    const lastEarly = this._early.length > 0 ? (this._early[this._early.length - 1] as number) : 0
+    this._intervalHandle = this._timers.setTimer(() => {
+      this._fire('interval')
+      this._rearmInterval()
+    }, lastEarly + this._intervalMs)
+    this._handles.push(this._intervalHandle)
   }
 
   /**
@@ -135,16 +135,16 @@ export class FlushSchedule {
    * leave the raw frame unreadable.
    */
   noteBytes(n: number): void {
-    if (!this.#started || this.#stopped || !(n > 0)) return
-    this.#bytes += n
-    if (this.#bytes < this.#threshold || this.#byteHandle !== undefined) return
-    this.#byteHandle = this.#timers.setTimer(() => {
-      this.#byteHandle = undefined
-      this.#fire('bytes')
+    if (!this._started || this._stopped || !(n > 0)) return
+    this._bytes += n
+    if (this._bytes < this._threshold || this._byteHandle !== undefined) return
+    this._byteHandle = this._timers.setTimer(() => {
+      this._byteHandle = undefined
+      this._fire('bytes')
       // "every 60 s **or** every 32 KB accumulated, whichever comes first" —
       // a byte seal restarts the interval, or a session at the threshold would
       // seal twice in quick succession every minute.
-      this.#rearmInterval()
+      this._rearmInterval()
     }, 0)
   }
 
@@ -154,62 +154,62 @@ export class FlushSchedule {
    * interval, it starts over on it. Never longer than the configured interval.
    */
   shorten(ms: number, forMs: number): void {
-    if (!this.#started || this.#stopped || !(ms > 0) || !(forMs > 0)) return
-    const next = Math.min(ms, this.#intervalMs)
-    if (this.#shortHandle !== undefined) this.#timers.clearTimer(this.#shortHandle)
-    this.#shortHandle = this.#timers.setTimer(() => {
-      this.#shortHandle = undefined
-      this.#shortMs = undefined
-      this.#rearmInterval()
+    if (!this._started || this._stopped || !(ms > 0) || !(forMs > 0)) return
+    const next = Math.min(ms, this._intervalMs)
+    if (this._shortHandle !== undefined) this._timers.clearTimer(this._shortHandle)
+    this._shortHandle = this._timers.setTimer(() => {
+      this._shortHandle = undefined
+      this._shortMs = undefined
+      this._rearmInterval()
     }, forMs)
-    if (next === this.#shortMs) return
-    this.#shortMs = next
-    this.#rearmInterval()
+    if (next === this._shortMs) return
+    this._shortMs = next
+    this._rearmInterval()
   }
 
   /** Idempotent. After this nothing fires, including timers already queued. */
   stop(): void {
-    this.#stopped = true
-    for (const h of this.#handles) this.#timers.clearTimer(h)
-    this.#handles = []
-    if (this.#shortHandle !== undefined) {
-      this.#timers.clearTimer(this.#shortHandle)
-      this.#shortHandle = undefined
+    this._stopped = true
+    for (const h of this._handles) this._timers.clearTimer(h)
+    this._handles = []
+    if (this._shortHandle !== undefined) {
+      this._timers.clearTimer(this._shortHandle)
+      this._shortHandle = undefined
     }
-    if (this.#byteHandle !== undefined) {
-      this.#timers.clearTimer(this.#byteHandle)
-      this.#byteHandle = undefined
+    if (this._byteHandle !== undefined) {
+      this._timers.clearTimer(this._byteHandle)
+      this._byteHandle = undefined
     }
-    this.#intervalHandle = undefined
+    this._intervalHandle = undefined
   }
 
-  #after(ms: number, reason: SealReason): void {
-    const h = this.#timers.setTimer(() => this.#fire(reason), ms)
-    this.#handles.push(h)
+  private _after(ms: number, reason: SealReason): void {
+    const h = this._timers.setTimer(() => this._fire(reason), ms)
+    this._handles.push(h)
   }
 
-  #rearmInterval(): void {
-    if (this.#stopped) return
-    if (this.#intervalHandle !== undefined) {
-      this.#timers.clearTimer(this.#intervalHandle)
-      this.#handles = this.#handles.filter((h) => h !== this.#intervalHandle)
+  private _rearmInterval(): void {
+    if (this._stopped) return
+    if (this._intervalHandle !== undefined) {
+      this._timers.clearTimer(this._intervalHandle)
+      this._handles = this._handles.filter((h) => h !== this._intervalHandle)
     }
-    this.#intervalHandle = this.#timers.setTimer(() => {
-      this.#fire('interval')
-      this.#rearmInterval()
-    }, this.#shortMs ?? this.#intervalMs)
-    this.#handles.push(this.#intervalHandle)
+    this._intervalHandle = this._timers.setTimer(() => {
+      this._fire('interval')
+      this._rearmInterval()
+    }, this._shortMs ?? this._intervalMs)
+    this._handles.push(this._intervalHandle)
   }
 
-  #fire(reason: SealReason): void {
-    if (this.#stopped) return
+  private _fire(reason: SealReason): void {
+    if (this._stopped) return
     // Every seal empties the buffer, so the byte budget restarts whatever the
     // reason was.
-    this.#bytes = 0
+    this._bytes = 0
     try {
-      this.#onFlush(reason)
+      this._onFlush(reason)
     } catch (err) {
-      this.#onError?.(err)
+      this._onError?.(err)
     }
   }
 }

@@ -217,7 +217,7 @@ interface Connection {
    * so the draft is still unknown and is being looked for in the handshake.
    *
    * Set only for the eight drafts before -15. Cleared the moment SETUP names a
-   * version, or when the pre-draft buffer fills — see `#probeSetup`.
+   * version, or when the pre-draft buffer fills — see `_probeSetup`.
    */
   awaitingSetup: boolean
   /**
@@ -317,90 +317,90 @@ function draftOfOffered(p: string): number | undefined {
 }
 
 export class RealmObserver {
-  readonly #o: RealmOptions
-  readonly #host: RealmHost
-  readonly #origin: Mono
-  readonly #recorder: RealmRecorder | null = null
-  readonly #connections = new Map<string, Connection>()
+  private readonly _o: RealmOptions
+  private readonly _host: RealmHost
+  private readonly _origin: Mono
+  private readonly _recorder: RealmRecorder | null = null
+  private readonly _connections = new Map<string, Connection>()
   /** Closed connections, for `connections()` and the counters on `end`. */
-  readonly #closed: ConnectionState[] = []
+  private readonly _closed: ConnectionState[] = []
 
   /** Drafts the dormant hook read off SETUP frames that crossed before this realm started. */
-  #dormantSetupDrafts: ReadonlyMap<string, SupportedDraft> = new Map()
-  #contentId: string
-  #halted = false
+  private _dormantSetupDrafts: ReadonlyMap<string, SupportedDraft> = new Map()
+  private _contentId: string
+  private _halted = false
   /** This realm is the hook's observer. */
-  #live = false
-  #skipRaw = false
-  #ctrlWindowStart = 0
-  #ctrlInWindow = 0
-  #objectsInWindow = 0
-  #droppedRecords = 0
-  #sampledTypes = new Set<string>()
-  #transportsRefused = 0
+  private _live = false
+  private _skipRaw = false
+  private _ctrlWindowStart = 0
+  private _ctrlInWindow = 0
+  private _objectsInWindow = 0
+  private _droppedRecords = 0
+  private _sampledTypes = new Set<string>()
+  private _transportsRefused = 0
   /** Counters of connections that have closed, so the instance total survives them. */
-  #closedParseFailures = 0
-  #closedBucketsRefused = 0
-  #overrunAt: Mono | undefined
-  #overrunSignal: string | undefined
+  private _closedParseFailures = 0
+  private _closedBucketsRefused = 0
+  private _overrunAt: Mono | undefined
+  private _overrunSignal: string | undefined
   /** A closing connection's last interval is being written; it passes the halt gate. */
-  #closing = false
+  private _closing = false
 
   constructor(o: RealmOptions) {
-    this.#o = o
-    this.#host = o.host
-    this.#origin = o.originMono
-    this.#contentId = o.config.context.contentId
+    this._o = o
+    this._host = o.host
+    this._origin = o.originMono
+    this._contentId = o.config.context.contentId
     const f = o.recorder
     if (f !== undefined) {
-      this.#recorder = f.create(
+      this._recorder = f.create(
         {
           config: o.config.flightRecorder,
-          sink: this.#sink,
-          adapter: (e) => this.#connectionFor(e.key)?.adapter,
-          keys: (e) => this.#connectionFor(e.key)?.keys,
-          conn: (e) => this.#connectionFor(e.key)?.id ?? '',
-          level: () => this.#host.level(),
-          originMono: this.#origin,
-          medianFor: (k) => this.#rollupOwning(k)?.medianFor(k),
-          medianSamplesFor: (k) => this.#rollupOwning(k)?.medianSamplesFor(k) ?? 0,
-          onFire: (e) => this.#onTriggerFired(e),
-          onError: (err) => this.#host.onError(err),
+          sink: this._sink,
+          adapter: (e) => this._connectionFor(e.key)?.adapter,
+          keys: (e) => this._connectionFor(e.key)?.keys,
+          conn: (e) => this._connectionFor(e.key)?.id ?? '',
+          level: () => this._host.level(),
+          originMono: this._origin,
+          medianFor: (k) => this._rollupOwning(k)?.medianFor(k),
+          medianSamplesFor: (k) => this._rollupOwning(k)?.medianSamplesFor(k) ?? 0,
+          onFire: (e) => this._onTriggerFired(e),
+          onError: (err) => this._host.onError(err),
         },
-        f.ring(this.#depthBytes(f)),
+        f.ring(this._depthBytes(f)),
       )
     }
   }
 
   /** The ring's bounds, for the escalation controller's "ring filled" close condition. */
   get ring(): Ring | null {
-    return this.#recorder?.ring ?? null
+    return this._recorder?.ring ?? null
   }
 
   get halted(): boolean {
-    return this.#halted
+    return this._halted
   }
 
   /** Records refused by the droppable gate or the pre-draft buffer cap. */
   get droppedRecords(): number {
-    return this.#droppedRecords
+    return this._droppedRecords
   }
 
   /** Objects seen in the current one-second window: the pacer's pressure signal. */
   get objectRate(): number {
-    return this.#objectsInWindow
+    return this._objectsInWindow
   }
 
   /** Every connection this realm has seen, open ones first. */
   connections(): ConnectionState[] {
     const open: ConnectionState[] = []
-    for (const c of this.#connections.values()) open.push(this.#stateOf(c))
-    return [...open, ...this.#closed]
+    for (const c of this._connections.values()) open.push(this._stateOf(c))
+    return [...open, ...this._closed]
   }
 
   /** Context for connections opened from now on. */
   setContentId(contentId: string): void {
-    this.#contentId = contentId
+    this._contentId = contentId
   }
 
   /**
@@ -413,23 +413,23 @@ export class RealmObserver {
    */
   start(from?: DormantState): void {
     const dormant = drainDormant(from)
-    this.#dormantSetupDrafts = dormant.setupDrafts
-    if (this.#armed() && dormant.entries.length > 0) {
+    this._dormantSetupDrafts = dormant.setupDrafts
+    if (this._armed() && dormant.entries.length > 0) {
       // Dormant bytes mean this realm has already opened a WebTransport, so the
       // ring is wanted now. Otherwise it waits for `onSessionOpen`: a page
       // that only links workers never opens one and must not hold the memory.
-      this.#recorder?.ring.reserve()
-      this.#adoptDormantRing(dormant.entries)
+      this._recorder?.ring.reserve()
+      this._adoptDormantRing(dormant.entries)
     }
-    this.#recorder?.arm(this.#o.config.flightRecorder.triggers)
+    this._recorder?.arm(this._o.config.flightRecorder.triggers)
     // `setObserver` replays every session that was already open, `onSessionOpen`
     // first and then the negotiated protocol — which is the ordinary case on a
     // page that connects at load and calls `init()` after its own bootstrap.
-    this.#o.hook.setObserver(this.#guarded())
-    this.#live = true
+    this._o.hook.setObserver(this._guarded())
+    this._live = true
     // Synchronously after, so the held control plane reaches each decoder
     // before any live byte can.
-    this.#adoptEarly(dormant.early)
+    this._adoptEarly(dormant.early)
     // Attempts that ended before this realm started: opened, readied if they
     // got that far, and closed, at the times they did.
     for (const c of dormant.closed) {
@@ -445,16 +445,16 @@ export class RealmObserver {
    * The host calls this on `metrics.intervalMs` and before every seal.
    */
   tick(now: Mono): void {
-    for (const c of this.#connections.values()) c.rollup.tick(now)
-    this.#recorder?.tick(now)
+    for (const c of this._connections.values()) c.rollup.tick(now)
+    this._recorder?.tick(now)
   }
 
   /** Every open connection with its open rollup interval, which stays open. */
   snapshots(now: Mono): ConnectionSnapshot[] {
     const out: ConnectionSnapshot[] = []
-    for (const c of this.#connections.values()) {
+    for (const c of this._connections.values()) {
       out.push({
-        conn: this.#stateOf(c),
+        conn: this._stateOf(c),
         rollup: c.rollup.snapshot(now),
         counters: {
           parseFailures: c.rollup.parseFailures,
@@ -470,20 +470,20 @@ export class RealmObserver {
    * `end` record.
    */
   counters(): Omit<EndCounters, 'chunksDropped'> {
-    let parseFailures = this.#closedParseFailures
-    let bucketsRefused = this.#closedBucketsRefused + this.#transportsRefused
-    for (const c of this.#connections.values()) {
+    let parseFailures = this._closedParseFailures
+    let bucketsRefused = this._closedBucketsRefused + this._transportsRefused
+    for (const c of this._connections.values()) {
       parseFailures += c.rollup.parseFailures
       bucketsRefused += c.rollup.bucketsRefused
     }
     return {
-      ringEvicted: this.#recorder?.ring.evicted ?? 0,
-      ringEvictedBytes: this.#recorder?.ring.evictedBytes ?? 0,
+      ringEvicted: this._recorder?.ring.evicted ?? 0,
+      ringEvictedBytes: this._recorder?.ring.evictedBytes ?? 0,
       bucketsRefused,
       parseFailures,
-      sampledTypes: [...this.#sampledTypes],
-      ...(this.#overrunAt !== undefined ? { overrunAt: this.#overrunAt - this.#origin } : {}),
-      ...(this.#overrunSignal !== undefined ? { overrunSignal: this.#overrunSignal } : {}),
+      sampledTypes: [...this._sampledTypes],
+      ...(this._overrunAt !== undefined ? { overrunAt: this._overrunAt - this._origin } : {}),
+      ...(this._overrunSignal !== undefined ? { overrunSignal: this._overrunSignal } : {}),
     }
   }
 
@@ -492,18 +492,18 @@ export class RealmObserver {
    * reports the connections that were still open.
    */
   detach(): void {
-    this.#halted = true
+    this._halted = true
     // Once, and only by a realm that started: the hook may already be
     // buffering for the realm's next session.
-    if (this.#live) {
-      this.#live = false
+    if (this._live) {
+      this._live = false
       try {
-        this.#o.hook.setObserver(null)
+        this._o.hook.setObserver(null)
       } catch (err) {
-        this.#host.onError(err)
+        this._host.onError(err)
       }
     }
-    this.#recorder?.disarm()
+    this._recorder?.disarm()
   }
 
   /**
@@ -512,41 +512,41 @@ export class RealmObserver {
    * why the connection's data stops.
    */
   closeAll(cause: ConnCloseCause, now: Mono): void {
-    for (const c of [...this.#connections.values()]) this.#close(c, now, { cause })
+    for (const c of [...this._connections.values()]) this._close(c, now, { cause })
   }
 
   /** Release memory. After this the realm is inert. */
   clear(): void {
-    this.#recorder?.ring.clear()
-    this.#connections.clear()
+    this._recorder?.ring.clear()
+    this._connections.clear()
   }
 
   /* ── TransportObserver — every method runs on the page's data path ────── */
 
   onSessionOpen(s: InterceptedSession): void {
-    if (this.#halted) return
+    if (this._halted) return
     // The ring claims its memory with the realm's first transport and nowhere
-    // else. At the default depth that is 32 MiB, and every `#ring.push` site is
-    // behind `#armed()`, so a realm with no trigger or no transport never
+    // else. At the default depth that is 32 MiB, and every `_ring.push` site is
+    // behind `_armed()`, so a realm with no trigger or no transport never
     // writes to it. A session opens before its first chunk, which keeps the
     // allocation off the data path. Ahead of the cap: a refused transport's
     // bytes are still ringed.
-    if (this.#armed()) this.#recorder?.ring.reserve()
-    if (this.#connections.size >= this.#o.config.limits.maxConcurrentTransports) {
+    if (this._armed()) this._recorder?.ring.reserve()
+    if (this._connections.size >= this._o.config.limits.maxConcurrentTransports) {
       // "Cap concurrent transports at 8: real clients are genuinely
       // bounded there, so the cap only ever fires on something wrong." Counted,
       // never silent (rule 2). Cumulative is deliberately uncapped.
-      this.#transportsRefused += 1
+      this._transportsRefused += 1
       return
     }
-    const config = this.#o.config
+    const config = this._o.config
     const offered = offeredOf(s.options?.protocols ?? [], draftOfOffered)
     const rollup = new RollupEngine({
       intervalMs: config.metrics.intervalMs,
       maxBuckets: config.metrics.maxTracks,
-      clock: this.#o.clock,
-      sink: this.#sink,
-      originMono: this.#origin,
+      clock: this._o.clock,
+      sink: this._sink,
+      originMono: this._origin,
       conn: s.id,
     })
     const c: Connection = {
@@ -554,9 +554,9 @@ export class RealmObserver {
       session: s,
       origin: originOf(s.url),
       options: connOptionsOf(s.options),
-      contentId: this.#contentId,
+      contentId: this._contentId,
       rollup,
-      sink: this.#connectionSink(() => c, rollup),
+      sink: this._connectionSink(() => c, rollup),
       keys: new TrackKeys({ maxBuckets: config.metrics.maxTracks }),
       dispatcher: null,
       adapter: undefined,
@@ -576,46 +576,46 @@ export class RealmObserver {
       skip: new Set(),
       ackedByStream: new Map(),
     }
-    this.#connections.set(s.id, c)
+    this._connections.set(s.id, c)
     // Stamped with the transport's own construction time, which precedes this
     // realm's start for a session replayed from the dormant hook.
-    this.#writeConnOpen(c, s.anchor.originMono - this.#origin)
+    this._writeConnOpen(c, s.anchor.originMono - this._origin)
   }
 
   /** `ready` resolved. Every path below sends the connection record again, with `readyTs`. */
   onSessionProtocol(sessionId: string, protocol: string, at?: Mono): void {
-    const c = this.#connections.get(sessionId)
+    const c = this._connections.get(sessionId)
     if (c === undefined || c.dispatcher !== null) return
-    c.readyTs = (at ?? this.#o.clock.now()) - this.#origin
+    c.readyTs = (at ?? this._o.clock.now()) - this._origin
     c.protocol = protocol === '' ? null : protocol
     if (protocol === LEGACY_PROTOCOL || protocol === '') {
       // Drafts before -15 negotiate `moq-00` over QUIC and nothing over
       // WebTransport, so the version comes from SETUP: read by the dormant hook
-      // if the handshake preceded `init()`, else by `#probeSetup`.
-      const known = this.#dormantSetupDrafts.get(sessionId)
+      // if the handshake preceded `init()`, else by `_probeSetup`.
+      const known = this._dormantSetupDrafts.get(sessionId)
       if (known !== undefined) {
-        this.#attachDraft(c, LEGACY_PROTOCOL, known)
+        this._attachDraft(c, LEGACY_PROTOCOL, known)
         return
       }
       c.awaitingSetup = true
-      this.#writeConnOpen(c)
+      this._writeConnOpen(c)
       return
     }
     c.offerProbed = true
-    this.#attachDraft(c, protocol)
+    this._attachDraft(c, protocol)
   }
 
   onSessionClose(sessionId: string, _reason: string, at: Mono, info?: SessionCloseInfo): void {
-    const c = this.#connections.get(sessionId)
+    const c = this._connections.get(sessionId)
     if (c === undefined) return
     // A pre-15 connection that closes before SETUP named its version carries
     // no `degraded`: nothing showed the version to be one this build can't read.
-    this.#close(c, at, info ?? { cause: 'closed' })
-    this.#host.onConnClosed()
+    this._close(c, at, info ?? { cause: 'closed' })
+    this._host.onConnClosed()
   }
 
   onStreamData(c: StreamChunk): void {
-    if (this.#halted) return
+    if (this._halted) return
     // Control bytes are deliberately NOT ringed: a token would sit in memory
     // for the life of the session.
     //
@@ -624,8 +624,8 @@ export class RealmObserver {
     // framer, so a ringed copy would have no consumer. And a chunk arriving here
     // is not frame-aligned, so masking it here would mean a second
     // frame-aligned parser at the seam.
-    if (this.#armed() && !c.control) {
-      this.#recorder?.ring.push({
+    if (this._armed() && !c.control) {
+      this._recorder?.ring.push({
         sessionId: c.sessionId,
         streamId: c.streamId,
         dir: c.direction,
@@ -634,14 +634,14 @@ export class RealmObserver {
         data: c.data,
       })
     }
-    const conn = this.#connections.get(c.sessionId)
+    const conn = this._connections.get(c.sessionId)
     if (conn === undefined) return
     if (conn.skip.size > 0 && conn.skip.has(halfOf(c.streamId, c.direction))) {
-      this.#skipEarly(conn, c.control, c.data.byteLength)
+      this._skipEarly(conn, c.control, c.data.byteLength)
       return
     }
     // The probe may attach a dispatcher.
-    if (c.control) this.#probeSetup(conn, c)
+    if (c.control) this._probeSetup(conn, c)
     const d = conn.dispatcher
     if (d !== null) {
       d.onStreamData(c)
@@ -649,11 +649,11 @@ export class RealmObserver {
     }
     // The draft has not been identified. Buffer raw, bounded — an unbounded
     // buffer behind a draft that never resolves is a page-killing leak.
-    this.#bufferPending(conn, c)
+    this._bufferPending(conn, c)
   }
 
   onStreamClose(sessionId: string, streamId: number): void {
-    const conn = this.#connections.get(sessionId)
+    const conn = this._connections.get(sessionId)
     if (conn === undefined) return
     // Resolve the track *before* the dispatcher drops the decoder that knows
     // it. The closing `getStats()` probe fires right after this returns and
@@ -682,7 +682,7 @@ export class RealmObserver {
   }
 
   onStreamError(_sessionId: string, _streamId: number, error: unknown): void {
-    this.#host.onError(error)
+    this._host.onError(error)
   }
 
   /**
@@ -691,8 +691,8 @@ export class RealmObserver {
    * before its header named a track is counted on the connection.
    */
   onStreamReset(sessionId: string, streamId: number, d: Direction, code: number, at: Mono): void {
-    if (this.#halted) return
-    const conn = this.#connections.get(sessionId)
+    if (this._halted) return
+    const conn = this._connections.get(sessionId)
     if (conn === undefined) return
     const key = conn.dispatcher?.trackForStream(streamId, d) ?? null
     if (key !== null) conn.rollup.observeReset(key, code, at)
@@ -700,9 +700,9 @@ export class RealmObserver {
   }
 
   onDatagram(c: DatagramChunk): void {
-    if (this.#halted) return
-    if (this.#armed()) {
-      this.#recorder?.ring.push({
+    if (this._halted) return
+    if (this._armed()) {
+      this._recorder?.ring.push({
         sessionId: c.sessionId,
         streamId: DORMANT_DATAGRAM_STREAM_ID,
         dir: c.direction,
@@ -711,7 +711,7 @@ export class RealmObserver {
         data: c.data,
       })
     }
-    const conn = this.#connections.get(c.sessionId)
+    const conn = this._connections.get(c.sessionId)
     if (conn === undefined) return
     if (conn.dispatcher !== null) conn.dispatcher.onDatagram(c)
     else if (conn.pendingDatagrams.length < 512) {
@@ -720,8 +720,8 @@ export class RealmObserver {
   }
 
   onWriterPressure(p: WriterPressure): void {
-    if (this.#halted) return
-    const conn = this.#connections.get(p.sessionId)
+    if (this._halted) return
+    const conn = this._connections.get(p.sessionId)
     if (conn === undefined) return
     conn.rollup.observeWriterReady(p.readyLatencyMs)
     // And again against the track, when the stream has one. `writer.ready` can
@@ -735,8 +735,8 @@ export class RealmObserver {
     // session has no arriving objects, so `writer.ready` latency is this
     // package's fallback for it — a choice the spec does not make and nothing
     // has validated.
-    this.#host.onPressure({
-      objectsPerSec: this.#objectsInWindow,
+    this._host.onPressure({
+      objectsPerSec: this._objectsInWindow,
       writerReadyMs: p.readyLatencyMs,
       at: p.at,
     })
@@ -752,9 +752,9 @@ export class RealmObserver {
    * distinguishable from "nothing was acknowledged" and must not be alerted on.
    */
   onSendStats(sessionId: string, streamId: number, bytesAcknowledged: number, at: Mono): void {
-    if (this.#halted) return
+    if (this._halted) return
     if (!Number.isFinite(bytesAcknowledged) || bytesAcknowledged < 0) return
-    const conn = this.#connections.get(sessionId)
+    const conn = this._connections.get(sessionId)
     if (conn === undefined) return
 
     let acks = conn.ackedByStream.get(streamId)
@@ -791,45 +791,45 @@ export class RealmObserver {
    *
    * A `raw` frame is unreadable without the JSON record that names it and the
    * two must never straddle a body, so `raw` follows the fate of the record
-   * before it: `#skipRaw` is set when a JSON record is dropped and the next
+   * before it: `_skipRaw` is set when a JSON record is dropped and the next
    * `raw` is dropped with it.
    */
-  readonly #sink: RecordSink = {
-    json: (r: EnvelopeRecord): void => this.#writeRecord(r),
+  private readonly _sink: RecordSink = {
+    json: (r: EnvelopeRecord): void => this._writeRecord(r),
     raw: (b: Uint8Array): void => {
-      if (this.#halted || this.#skipRaw) {
-        this.#skipRaw = false
+      if (this._halted || this._skipRaw) {
+        this._skipRaw = false
         return
       }
       try {
-        this.#host.sink.raw(b)
-        this.#host.onBytes(b.byteLength)
+        this._host.sink.raw(b)
+        this._host.onBytes(b.byteLength)
       } catch (err) {
-        this.#host.onError(err)
+        this._host.onError(err)
       }
     },
   }
 
-  #connectionSink(conn: () => Connection, rollup: RollupEngine): ConnectionSink {
+  private _connectionSink(conn: () => Connection, rollup: RollupEngine): ConnectionSink {
     return {
-      json: this.#sink.json,
-      raw: this.#sink.raw,
+      json: this._sink.json,
+      raw: this._sink.raw,
       onObject: (s: ObjectSample): void => {
-        this.#objectsInWindow += 1
+        this._objectsInWindow += 1
         const c = conn()
         const role: Role = s.key.dir === 'tx' ? 'publisher' : 'subscriber'
         if (!c.roles.has(role)) {
           c.roles.add(role)
-          this.#writeConnOpen(c)
+          this._writeConnOpen(c)
         }
         rollup.onObject(s)
-        this.#recorder?.onObject(s)
-        const lvl = this.#host.level()
-        if (lvl !== 'baseline') this.#writeHdr(c, s, lvl)
+        this._recorder?.onObject(s)
+        const lvl = this._host.level()
+        if (lvl !== 'baseline') this._writeHdr(c, s, lvl)
       },
       onControlFrame: (e: ControlFrameEvent): void => {
-        this.#noteControlFrame(e.at)
-        if (this.#halted) return
+        this._noteControlFrame(e.at)
+        if (this._halted) return
         rollup.onControlFrame(e)
       },
       onParseFailure: (k: BucketKey | null, r: ParseFailureReason): void => {
@@ -844,27 +844,27 @@ export class RealmObserver {
     }
   }
 
-  #writeRecord(r: EnvelopeRecord): void {
-    if (this.#halted && !this.#closing) {
-      this.#skipRaw = true
+  private _writeRecord(r: EnvelopeRecord): void {
+    if (this._halted && !this._closing) {
+      this._skipRaw = true
       return
     }
     // "Never sample a non-droppable type. Under pressure, sample only
     // the droppable ones, and record exactly which."
-    if (DROPPABLE.has(r.t) && this.#underPressure()) {
-      this.#droppedRecords += 1
-      this.#sampledTypes.add(r.t)
-      this.#skipRaw = true
+    if (DROPPABLE.has(r.t) && this._underPressure()) {
+      this._droppedRecords += 1
+      this._sampledTypes.add(r.t)
+      this._skipRaw = true
       return
     }
     try {
-      const before = this.#host.sink.pendingBytes
-      this.#host.sink.json(r)
-      this.#host.onBytes(Math.max(0, this.#host.sink.pendingBytes - before))
-      this.#skipRaw = false
+      const before = this._host.sink.pendingBytes
+      this._host.sink.json(r)
+      this._host.onBytes(Math.max(0, this._host.sink.pendingBytes - before))
+      this._skipRaw = false
     } catch (err) {
-      this.#host.onError(err)
-      this.#skipRaw = true
+      this._host.onError(err)
+      this._skipRaw = true
     }
   }
 
@@ -875,11 +875,11 @@ export class RealmObserver {
    * Priority and subgroup are read off the counter that reported `s`, here and
    * not on the sample, so a baseline object never carries them.
    */
-  #writeHdr(c: Connection, s: ObjectSample, lvl: DetailLevel): void {
+  private _writeHdr(c: Connection, s: ObjectSample, lvl: DetailLevel): void {
     const f = c.dispatcher?.fieldsOf(s) ?? null
     const r: HdrRecord = {
       t: 'hdr',
-      ts: s.at - this.#origin,
+      ts: s.at - this._origin,
       lvl,
       conn: c.id,
       key: bucketKeyWire(s.key),
@@ -891,33 +891,33 @@ export class RealmObserver {
       ...(f !== null && f.priority >= 0 ? { priority: f.priority } : {}),
       ...(f !== null && f.subgroupId !== null ? { subgroup: f.subgroupId.toString() } : {}),
     }
-    this.#writeRecord(r)
+    this._writeRecord(r)
   }
 
   /** A non-droppable record, written past the halt gate. */
-  #writeCritical(r: EnvelopeRecord): void {
+  private _writeCritical(r: EnvelopeRecord): void {
     try {
-      this.#host.sink.json(r)
+      this._host.sink.json(r)
     } catch (err) {
-      this.#host.onError(err)
+      this._host.onError(err)
     }
   }
 
   /** The buffer, as its host weighs it, is close to its cap. Droppable types give way. */
-  #underPressure(): boolean {
-    return this.#host.sink.pendingBytes > 6 * this.#o.config.upload.byteThreshold
+  private _underPressure(): boolean {
+    return this._host.sink.pendingBytes > 6 * this._o.config.upload.byteThreshold
   }
 
   /* ── connection records ───────────────────────────────────────────────── */
 
   /** Everything known about `c` so far. Sent again whenever that grows. */
-  #writeConnOpen(c: Connection, ts?: Mono): void {
+  private _writeConnOpen(c: Connection, ts?: Mono): void {
     const record: ConnOpenRecord = {
       t: 'conn-open',
-      ts: ts ?? this.#relNow(),
-      lvl: this.#host.level(),
+      ts: ts ?? this._relNow(),
+      lvl: this._host.level(),
       conn: c.id,
-      realm: this.#o.realm,
+      realm: this._o.realm,
       origin: c.origin,
       relay: c.origin,
       ...(c.options !== undefined ? { options: c.options } : {}),
@@ -929,10 +929,14 @@ export class RealmObserver {
       ...(c.readyTs !== undefined ? { readyTs: c.readyTs } : {}),
       ...(c.offered !== undefined ? { offered: c.offered } : {}),
     }
-    this.#writeCritical(record)
+    this._writeCritical(record)
   }
 
-  #close(c: Connection, at: Mono, info: SessionCloseInfo | { cause: ConnCloseCause }): void {
+  private _close(
+    c: Connection,
+    at: Mono,
+    info: SessionCloseInfo | { cause: ConnCloseCause },
+  ): void {
     if (c.closed) return
     c.closed = true
     c.awaitingSetup = false
@@ -940,19 +944,19 @@ export class RealmObserver {
     // word. Past the halt gate, as the close itself is: the session's end
     // detaches the realm before it closes what is still open, and the interval
     // holds everything since the last tick.
-    this.#closing = true
+    this._closing = true
     try {
       c.rollup.tick(at)
     } catch (err) {
-      this.#host.onError(err)
+      this._host.onError(err)
     } finally {
-      this.#closing = false
+      this._closing = false
     }
     const detail = info as SessionCloseInfo
     const record: ConnCloseRecord = {
       t: 'conn-close',
-      ts: at - this.#origin,
-      lvl: this.#host.level(),
+      ts: at - this._origin,
+      lvl: this._host.level(),
       conn: c.id,
       cause: info.cause,
       ...(detail.by !== undefined ? { by: detail.by } : {}),
@@ -963,19 +967,19 @@ export class RealmObserver {
         bucketsRefused: c.rollup.bucketsRefused,
       },
     }
-    this.#writeCritical(record)
-    this.#closedParseFailures += c.rollup.parseFailures
-    this.#closedBucketsRefused += c.rollup.bucketsRefused
-    this.#connections.delete(c.id)
-    this.#closed.push({ ...this.#stateOf(c), closeCause: info.cause })
+    this._writeCritical(record)
+    this._closedParseFailures += c.rollup.parseFailures
+    this._closedBucketsRefused += c.rollup.bucketsRefused
+    this._connections.delete(c.id)
+    this._closed.push({ ...this._stateOf(c), closeCause: info.cause })
     // Bounded: a page that reconnects all day keeps the newest closed ones.
-    if (this.#closed.length > 64) this.#closed.shift()
+    if (this._closed.length > 64) this._closed.shift()
   }
 
-  #stateOf(c: Connection): ConnectionState {
+  private _stateOf(c: Connection): ConnectionState {
     return {
       id: c.id,
-      realm: this.#o.realm,
+      realm: this._o.realm,
       origin: c.origin,
       draft: c.draft,
       ...(c.contentId !== '' ? { contentId: c.contentId } : {}),
@@ -997,19 +1001,19 @@ export class RealmObserver {
    * degrade.**" Control frames are the non-droppable type with an unbounded
    * arrival rate, so they are the signal.
    */
-  #noteControlFrame(at: Mono): void {
-    if (at - this.#ctrlWindowStart >= 1000) {
-      this.#ctrlWindowStart = at
-      this.#ctrlInWindow = 0
-      this.#objectsInWindow = 0
+  private _noteControlFrame(at: Mono): void {
+    if (at - this._ctrlWindowStart >= 1000) {
+      this._ctrlWindowStart = at
+      this._ctrlInWindow = 0
+      this._objectsInWindow = 0
     }
-    this.#ctrlInWindow += 1
-    const limit = this.#o.config.limits.controlRatePerSec
-    if (this.#halted || this.#ctrlInWindow <= limit) return
-    this.#overrunAt = at
-    this.#overrunSignal = `control-plane rate exceeded ${limit}/s`
+    this._ctrlInWindow += 1
+    const limit = this._o.config.limits.controlRatePerSec
+    if (this._halted || this._ctrlInWindow <= limit) return
+    this._overrunAt = at
+    this._overrunSignal = `control-plane rate exceeded ${limit}/s`
     this.detach()
-    this.#host.onOverrun(at, this.#overrunSignal)
+    this._host.onOverrun(at, this._overrunSignal)
   }
 
   /* ── draft loading ────────────────────────────────────────────────────── */
@@ -1024,7 +1028,7 @@ export class RealmObserver {
    * message on the stream, so a match anywhere else would be a coincidence and
    * not a handshake.
    */
-  #probeSetup(c: Connection, chunk: StreamChunk): void {
+  private _probeSetup(c: Connection, chunk: StreamChunk): void {
     const offer = !c.offerProbed && chunk.direction === 'tx'
     if (!c.awaitingSetup && !offer) return
     const half = `${chunk.streamId}/${chunk.direction}`
@@ -1040,16 +1044,16 @@ export class RealmObserver {
       const draft = f.versions.length === 1 ? draftOfVersion(f.versions[0] as bigint) : undefined
       if (draft !== undefined) {
         c.awaitingSetup = false
-        this.#attachDraft(c, LEGACY_PROTOCOL, draft)
+        this._attachDraft(c, LEGACY_PROTOCOL, draft)
         return
       }
       if (f.server) {
         // The server selected a version this build has no decoder for.
-        this.#giveUp(c, 'unsupported-protocol')
+        this._giveUp(c, 'unsupported-protocol')
         return
       }
     }
-    if (offer && c.offered !== undefined) this.#writeConnOpen(c)
+    if (offer && c.offered !== undefined) this._writeConnOpen(c)
   }
 
   /**
@@ -1059,44 +1063,44 @@ export class RealmObserver {
    * control bytes it already shipped. The pending buffer is released rather
    * than held: nothing will ever parse it.
    */
-  #giveUp(c: Connection, reason: NonNullable<ConnOpenRecord['degraded']>): void {
+  private _giveUp(c: Connection, reason: NonNullable<ConnOpenRecord['degraded']>): void {
     c.awaitingSetup = false
     c.degraded = reason
     c.pending = []
     c.pendingBytes = 0
     c.pendingDatagrams = []
-    this.#writeConnOpen(c)
-    this.#host.onConnReady()
+    this._writeConnOpen(c)
+    this._host.onConnReady()
   }
 
-  #attachDraft(c: Connection, protocol: string, known?: SupportedDraft): void {
-    const result = resolveDraft(this.#o.drafts, protocol, known)
-    if (c.closed || this.#halted) return
+  private _attachDraft(c: Connection, protocol: string, known?: SupportedDraft): void {
+    const result = resolveDraft(this._o.drafts, protocol, known)
+    if (c.closed || this._halted) return
     if (!result.ok) {
-      this.#giveUp(c, degradedReasonOf(result.reason))
+      this._giveUp(c, degradedReasonOf(result.reason))
       return
     }
     c.adapter = result.adapter
     c.draft = result.draft
     c.dispatcher = new StreamDispatcher(result.adapter, c.keys, c.sink, {
-      slackBytes: this.#o.config.limits.maxHeaderSlackBytes,
-      maskAuthParams: this.#o.config.privacy.maskAuthParams,
+      slackBytes: this._o.config.limits.maxHeaderSlackBytes,
+      maskAuthParams: this._o.config.privacy.maskAuthParams,
     })
     const pending = c.pending
     const datagrams = c.pendingDatagrams
     c.pending = []
     c.pendingBytes = 0
     c.pendingDatagrams = []
-    this.#writeConnOpen(c)
-    this.#host.onConnReady()
+    this._writeConnOpen(c)
+    this._host.onConnReady()
     // Replay in arrival order. The chunks were copied on the way in, so nothing
     // here is a view onto a page buffer the player has since rewritten.
     for (const chunk of pending) c.dispatcher.onStreamData(chunk)
     for (const d of datagrams) c.dispatcher.onDatagram(d)
   }
 
-  #bufferPending(c: Connection, chunk: StreamChunk): void {
-    const cap = this.#o.config.limits.dormantRingBytes
+  private _bufferPending(c: Connection, chunk: StreamChunk): void {
+    const cap = this._o.config.limits.dormantRingBytes
     if (c.pendingBytes + chunk.data.byteLength > cap) {
       if (c.awaitingSetup) {
         // The pre-draft buffer filled and SETUP never named a version. Waiting
@@ -1104,13 +1108,13 @@ export class RealmObserver {
         // is where a `moq-00` connection gives up — reported as unsupported,
         // which is what it is: MoQT of some version this build could not
         // identify.
-        this.#giveUp(c, 'unsupported-protocol')
+        this._giveUp(c, 'unsupported-protocol')
         return
       }
       // Counted, not silently truncated: a connection that lost its opening
       // seconds says so rather than looking like a short one.
-      this.#droppedRecords += 1
-      this.#sampledTypes.add('pre-draft-bytes')
+      this._droppedRecords += 1
+      this._sampledTypes.add('pre-draft-bytes')
       return
     }
     c.pendingBytes += chunk.data.byteLength
@@ -1128,17 +1132,17 @@ export class RealmObserver {
    * ships off — pays neither the memory nor the per-chunk copy, and a build
    * without the recorder has no ring at all.
    */
-  #armed(): boolean {
-    if (this.#recorder === null) return false
-    const t = this.#o.config.flightRecorder.triggers
+  private _armed(): boolean {
+    if (this._recorder === null) return false
+    const t = this._o.config.flightRecorder.triggers
     return t.stall !== undefined || t.cadence !== undefined
   }
 
-  #depthBytes(f: FlightRecorderFeature): number {
+  private _depthBytes(f: FlightRecorderFeature): number {
     try {
-      return f.parseDepth(this.#o.config.flightRecorder.depth)
+      return f.parseDepth(this._o.config.flightRecorder.depth)
     } catch (err) {
-      this.#host.onError(err)
+      this._host.onError(err)
       return f.parseDepth('32MB')
     }
   }
@@ -1152,45 +1156,45 @@ export class RealmObserver {
    * have nowhere to go. The skipped halves are installed after the replay,
    * because a cut control stream's held prefix is itself on one of them.
    */
-  #adoptEarly(early: ReadonlyMap<string, EarlyConnection>): void {
+  private _adoptEarly(early: ReadonlyMap<string, EarlyConnection>): void {
     for (const [id, e] of early) {
-      const conn = this.#connections.get(id)
+      const conn = this._connections.get(id)
       if (conn === undefined) continue
       for (const chunk of e.control) {
         try {
           this.onStreamData(chunk)
         } catch (err) {
-          this.#host.onError(err)
+          this._host.onError(err)
         }
       }
       for (const half of e.skip) conn.skip.add(half)
       if (e.dropped > 0) {
-        this.#droppedRecords += e.dropped
-        this.#sampledTypes.add(EARLY_CONTROL)
+        this._droppedRecords += e.dropped
+        this._sampledTypes.add(EARLY_CONTROL)
       }
-      this.#countEarlyData(conn, e.dataChunks, e.dataBytes)
+      this._countEarlyData(conn, e.dataChunks, e.dataBytes)
     }
   }
 
   /** A chunk on a half that began before this realm attached. */
-  #skipEarly(conn: Connection, control: boolean, bytes: number): void {
+  private _skipEarly(conn: Connection, control: boolean, bytes: number): void {
     if (control) {
-      this.#droppedRecords += 1
-      this.#sampledTypes.add(EARLY_CONTROL)
+      this._droppedRecords += 1
+      this._sampledTypes.add(EARLY_CONTROL)
       return
     }
-    this.#countEarlyData(conn, 1, bytes)
+    this._countEarlyData(conn, 1, bytes)
   }
 
   /** Object data this realm saw but could not decode, on the connection's rollup. */
-  #countEarlyData(conn: Connection, chunks: number, bytes: number): void {
+  private _countEarlyData(conn: Connection, chunks: number, bytes: number): void {
     if (chunks === 0) return
     conn.rollup.count('early.dataChunks', chunks)
     conn.rollup.count('early.dataBytes', bytes)
   }
 
-  #adoptDormantRing(entries: readonly RingEntry[]): void {
-    const ring = this.#recorder?.ring
+  private _adoptDormantRing(entries: readonly RingEntry[]): void {
+    const ring = this._recorder?.ring
     if (ring === undefined) return
     for (const e of entries) {
       ring.push({
@@ -1204,32 +1208,32 @@ export class RealmObserver {
     }
   }
 
-  #onTriggerFired(e: TriggerEvent): void {
-    if (this.#halted) return
+  private _onTriggerFired(e: TriggerEvent): void {
+    if (this._halted) return
     // Order is load-bearing: the trigger opens a billable capture window
     // and "the pre-trigger dump is that window's first record". Raise first so
     // the dump is stamped at the window's level, then fire.
-    this.#host.onTrigger(e)
-    this.#recorder?.fire(e)
+    this._host.onTrigger(e)
+    this._recorder?.fire(e)
   }
 
   /** The connection whose decoder minted `k`; the newest one with a draft when there is no key. */
-  #connectionFor(k: BucketKey | undefined): Connection | undefined {
+  private _connectionFor(k: BucketKey | undefined): Connection | undefined {
     let fallback: Connection | undefined
-    for (const c of this.#connections.values()) {
+    for (const c of this._connections.values()) {
       if (k !== undefined && c.rollup.owns(k)) return c
       if (c.adapter !== undefined) fallback = c
     }
     return fallback
   }
 
-  #rollupOwning(k: BucketKey): RollupEngine | undefined {
-    for (const c of this.#connections.values()) if (c.rollup.owns(k)) return c.rollup
+  private _rollupOwning(k: BucketKey): RollupEngine | undefined {
+    for (const c of this._connections.values()) if (c.rollup.owns(k)) return c.rollup
     return undefined
   }
 
-  #relNow(): Mono {
-    return this.#o.clock.now() - this.#origin
+  private _relNow(): Mono {
+    return this._o.clock.now() - this._origin
   }
 
   /**
@@ -1241,13 +1245,13 @@ export class RealmObserver {
    * the cheap one, since it costs a closure per install rather than anything per
    * chunk.
    */
-  #guarded(): TransportObserver {
+  private _guarded(): TransportObserver {
     const wrap = <A extends unknown[]>(f: (...a: A) => void) => {
       return (...a: A): void => {
         try {
           f.apply(this, a)
         } catch (err) {
-          this.#host.onError(err)
+          this._host.onError(err)
         }
       }
     }

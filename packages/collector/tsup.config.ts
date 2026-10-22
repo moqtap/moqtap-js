@@ -138,6 +138,15 @@ export default defineConfig({
     },
   },
   sourcemap: false,
+  // Internal members are TypeScript `private _name` rather than ES `#name`:
+  // a page built for a browser without class private fields gets every `#`
+  // member rewritten into WeakMap helpers. A consumer's minifier keeps
+  // property names whole, so they are shortened here; nothing outside this
+  // package reads a `_`-prefixed property. `PendingCollector`, the object
+  // `init()` returns, keeps `#` so a developer inspecting it sees only the API.
+  esbuildOptions(options) {
+    options.mangleProps = /^_[a-z]/
+  },
   entry: { ...TYPED_ENTRIES, ...DRAFT_ENTRIES },
   external: CODEC_ALLOWED,
 })

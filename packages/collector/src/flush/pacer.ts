@@ -83,17 +83,17 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
  * per-object budget.
  */
 export class ReleasePacer {
-  readonly #min: number
-  readonly #max: number
-  #recent: number | undefined
-  #baseline: number | undefined
-  #ready: number | undefined
-  #samples = 0
-  #sawObjects = false
+  private readonly _min: number
+  private readonly _max: number
+  private _recent: number | undefined
+  private _baseline: number | undefined
+  private _ready: number | undefined
+  private _samples = 0
+  private _sawObjects = false
 
   constructor(o: ReleasePacerOptions) {
-    this.#min = Math.max(0, o.minIntervalMs)
-    this.#max = Math.max(this.#min, o.maxIntervalMs)
+    this._min = Math.max(0, o.minIntervalMs)
+    this._max = Math.max(this._min, o.maxIntervalMs)
   }
 
   /**
@@ -108,22 +108,22 @@ export class ReleasePacer {
    */
   notePressure(p: PressureSample): void {
     if (typeof p.writerReadyMs === 'number' && Number.isFinite(p.writerReadyMs)) {
-      this.#ready =
-        this.#ready === undefined
+      this._ready =
+        this._ready === undefined
           ? p.writerReadyMs
-          : this.#ready + FAST_ALPHA * (p.writerReadyMs - this.#ready)
+          : this._ready + FAST_ALPHA * (p.writerReadyMs - this._ready)
     }
     const rate = p.objectsPerSec
     if (!Number.isFinite(rate) || rate < 0) return
-    this.#samples += 1
-    if (rate > 0) this.#sawObjects = true
-    if (this.#recent === undefined || this.#baseline === undefined) {
-      this.#recent = rate
-      this.#baseline = rate
+    this._samples += 1
+    if (rate > 0) this._sawObjects = true
+    if (this._recent === undefined || this._baseline === undefined) {
+      this._recent = rate
+      this._baseline = rate
       return
     }
-    this.#recent += FAST_ALPHA * (rate - this.#recent)
-    this.#baseline = Math.max(this.#recent, this.#baseline * BASELINE_DECAY)
+    this._recent += FAST_ALPHA * (rate - this._recent)
+    this._baseline = Math.max(this._recent, this._baseline * BASELINE_DECAY)
   }
 
   /**
@@ -135,19 +135,19 @@ export class ReleasePacer {
   get pressure(): number {
     // Warm-up. One sample establishes a baseline and cannot yet show a change
     // from it, so nothing is inferred and release runs at full speed.
-    if (this.#samples < 2) return 0
+    if (this._samples < 2) return 0
 
-    if (!this.#sawObjects) {
+    if (!this._sawObjects) {
       // Publish-only fallback. Absent even a writer sample there is no
       // signal at all, and inventing pressure from silence would throttle every
       // idle session.
-      if (this.#ready === undefined) return 0
-      const p = (this.#ready - READY_GOOD_MS) / (READY_BAD_MS - READY_GOOD_MS)
+      if (this._ready === undefined) return 0
+      const p = (this._ready - READY_GOOD_MS) / (READY_BAD_MS - READY_GOOD_MS)
       return clamp01(p) < DEADBAND ? 0 : clamp01(p)
     }
 
-    const baseline = this.#baseline
-    const recent = this.#recent
+    const baseline = this._baseline
+    const recent = this._recent
     if (baseline === undefined || recent === undefined || baseline <= 0) return 0
     const ratio = recent / baseline
     const p = clamp01((HEALTHY_RATIO - ratio) / (HEALTHY_RATIO - FLOOR_RATIO))
@@ -164,8 +164,8 @@ export class ReleasePacer {
    */
   nextReleaseDelayMs(): number {
     const p = this.pressure
-    if (p <= 0) return this.#min
-    if (this.#min <= 0) return Math.round(this.#max * p)
-    return Math.round(this.#min * (this.#max / this.#min) ** p)
+    if (p <= 0) return this._min
+    if (this._min <= 0) return Math.round(this._max * p)
+    return Math.round(this._min * (this._max / this._min) ** p)
   }
 }

@@ -144,27 +144,27 @@ function normalise(row: StoredRow, size: number): ChunkIndexEntry {
 /** In-memory backend. The fallback when IndexedDB is unavailable or refuses to open. */
 export class MemoryBackend implements ChunkBackend {
   readonly durable = false
-  readonly #chunks = new Map<string, Chunk>()
-  readonly #index = new Map<string, ChunkIndexEntry>()
+  private readonly _chunks = new Map<string, Chunk>()
+  private readonly _index = new Map<string, ChunkIndexEntry>()
 
   loadIndex(): Promise<ChunkIndexEntry[]> {
-    return Promise.resolve([...this.#index.values()])
+    return Promise.resolve([...this._index.values()])
   }
 
   put(entry: ChunkIndexEntry, chunk: Chunk): Promise<void> {
-    this.#index.set(entry.key, entry)
-    this.#chunks.set(entry.key, { ...chunk, bytes: chunk.bytes.slice() })
+    this._index.set(entry.key, entry)
+    this._chunks.set(entry.key, { ...chunk, bytes: chunk.bytes.slice() })
     return Promise.resolve()
   }
 
   get(key: string): Promise<Chunk | undefined> {
-    const c = this.#chunks.get(key)
+    const c = this._chunks.get(key)
     return Promise.resolve(c === undefined ? undefined : { ...c, bytes: c.bytes.slice() })
   }
 
   remove(key: string): Promise<void> {
-    this.#chunks.delete(key)
-    this.#index.delete(key)
+    this._chunks.delete(key)
+    this._index.delete(key)
     return Promise.resolve()
   }
 
@@ -183,10 +183,10 @@ const request = <T>(req: IDBRequest<T>): Promise<T> =>
 /** IndexedDB backend. Two object stores: chunk bodies and a small index. */
 export class IdbBackend implements ChunkBackend {
   readonly durable = true
-  readonly #db: IDBDatabase
+  private readonly _db: IDBDatabase
 
   private constructor(db: IDBDatabase) {
-    this.#db = db
+    this._db = db
   }
 
   static open(dbName: string, factory: IDBFactory): Promise<IdbBackend> {
@@ -212,14 +212,14 @@ export class IdbBackend implements ChunkBackend {
   }
 
   loadIndex(): Promise<ChunkIndexEntry[]> {
-    const tx = this.#db.transaction(INDEX, 'readonly')
+    const tx = this._db.transaction(INDEX, 'readonly')
     return request<ChunkIndexEntry[]>(
       tx.objectStore(INDEX).getAll() as IDBRequest<ChunkIndexEntry[]>,
     )
   }
 
   put(entry: ChunkIndexEntry, chunk: Chunk): Promise<void> {
-    const tx = this.#db.transaction([CHUNKS, INDEX], 'readwrite')
+    const tx = this._db.transaction([CHUNKS, INDEX], 'readwrite')
     const row: StoredChunk = {
       key: entry.key,
       sessionId: chunk.sessionId,
@@ -239,7 +239,7 @@ export class IdbBackend implements ChunkBackend {
   }
 
   async get(key: string): Promise<Chunk | undefined> {
-    const tx = this.#db.transaction(CHUNKS, 'readonly')
+    const tx = this._db.transaction(CHUNKS, 'readonly')
     const row = await request<(Partial<StoredChunk> & { segmentSeq?: number }) | undefined>(
       tx.objectStore(CHUNKS).get(key) as IDBRequest<
         (Partial<StoredChunk> & { segmentSeq?: number }) | undefined
@@ -259,7 +259,7 @@ export class IdbBackend implements ChunkBackend {
   }
 
   remove(key: string): Promise<void> {
-    const tx = this.#db.transaction([CHUNKS, INDEX], 'readwrite')
+    const tx = this._db.transaction([CHUNKS, INDEX], 'readwrite')
     return Promise.all([
       request(tx.objectStore(CHUNKS).delete(key)),
       request(tx.objectStore(INDEX).delete(key)),
@@ -267,7 +267,7 @@ export class IdbBackend implements ChunkBackend {
   }
 
   close(): void {
-    this.#db.close()
+    this._db.close()
   }
 }
 
@@ -292,23 +292,23 @@ interface StoredChunk {
  * to report it would be the worse trade.
  */
 export class ChunkStore {
-  readonly #backend: ChunkBackend
-  readonly #quota: number
-  readonly #onError: ((err: unknown) => void) | undefined
-  readonly #index = new Map<string, ChunkIndexEntry>()
-  #bytes = 0
-  #evictedFifo = 0
-  #refused = 0
-  #writeFailures = 0
+  private readonly _backend: ChunkBackend
+  private readonly _quota: number
+  private readonly _onError: ((err: unknown) => void) | undefined
+  private readonly _index = new Map<string, ChunkIndexEntry>()
+  private _bytes = 0
+  private _evictedFifo = 0
+  private _refused = 0
+  private _writeFailures = 0
 
   private constructor(
     backend: ChunkBackend,
     quotaBytes: number,
     onError: ((err: unknown) => void) | undefined,
   ) {
-    this.#backend = backend
-    this.#quota = Math.max(0, quotaBytes)
-    this.#onError = onError
+    this._backend = backend
+    this._quota = Math.max(0, quotaBytes)
+    this._onError = onError
   }
 
   /**
@@ -340,42 +340,42 @@ export class ChunkStore {
       }
     }
     const store = new ChunkStore(backend ?? new MemoryBackend(), quotaBytes, onError)
-    await store.#load()
+    await store._load()
     return store
   }
 
   /** False when the copies live only in memory — a reload loses them. */
   get durable(): boolean {
-    return this.#backend.durable
+    return this._backend.durable
   }
 
   /** Bytes currently persisted, across every session sharing the origin. */
   get bytes(): number {
-    return this.#bytes
+    return this._bytes
   }
 
   get chunks(): number {
-    return this.#index.size
+    return this._index.size
   }
 
   /** Chunks evicted oldest-first to stay inside the quota. */
   get evictedFifo(): number {
-    return this.#evictedFifo
+    return this._evictedFifo
   }
 
   /** Chunks refused outright because one body exceeded the whole quota. */
   get refused(): number {
-    return this.#refused
+    return this._refused
   }
 
   /** Writes the backend rejected. Durability lost; the chunk may still upload. */
   get writeFailures(): number {
-    return this.#writeFailures
+    return this._writeFailures
   }
 
   /** Whether a copy of this body is held. */
   has(key: string): boolean {
-    return this.#index.has(key)
+    return this._index.has(key)
   }
 
   /**
@@ -388,15 +388,15 @@ export class ChunkStore {
    */
   async put(c: Chunk, dest: ChunkDestination): Promise<boolean> {
     const size = c.bytes.byteLength
-    if (size > this.#quota) {
+    if (size > this._quota) {
       // Evicting the entire store still would not make room. Refuse the chunk
       // rather than empty the backlog for something that cannot fit.
-      this.#refused += 1
+      this._refused += 1
       return false
     }
-    const existing = this.#index.get(c.idempotencyKey)
-    if (existing !== undefined) this.#bytes -= existing.size
-    this.#evictTo(this.#quota - size, c.idempotencyKey)
+    const existing = this._index.get(c.idempotencyKey)
+    if (existing !== undefined) this._bytes -= existing.size
+    this._evictTo(this._quota - size, c.idempotencyKey)
     const entry: ChunkIndexEntry = {
       key: c.idempotencyKey,
       sessionId: c.sessionId,
@@ -408,14 +408,14 @@ export class ChunkStore {
       keyHash: dest.keyHash,
     }
     try {
-      await this.#backend.put(entry, c)
-      this.#index.set(entry.key, entry)
-      this.#bytes += size
+      await this._backend.put(entry, c)
+      this._index.set(entry.key, entry)
+      this._bytes += size
       return true
     } catch (err) {
-      if (existing !== undefined) this.#index.delete(existing.key)
-      this.#writeFailures += 1
-      this.#onError?.(err)
+      if (existing !== undefined) this._index.delete(existing.key)
+      this._writeFailures += 1
+      this._onError?.(err)
       return false
     }
   }
@@ -430,7 +430,7 @@ export class ChunkStore {
    * whole quota, and loading it at once would be one allocation of that size.
    */
   backlog(dest: ChunkDestination): ChunkIndexEntry[] {
-    return [...this.#index.values()]
+    return [...this._index.values()]
       .filter(
         (e) =>
           (e.endpoint === '' || e.endpoint === dest.endpoint) &&
@@ -441,11 +441,11 @@ export class ChunkStore {
 
   /** One chunk by its idempotency key. `undefined` if it was evicted meanwhile. */
   async get(key: string): Promise<Chunk | undefined> {
-    if (!this.#index.has(key)) return undefined
+    if (!this._index.has(key)) return undefined
     try {
-      return await this.#backend.get(key)
+      return await this._backend.get(key)
     } catch (err) {
-      this.#onError?.(err)
+      this._onError?.(err)
       return undefined
     }
   }
@@ -455,22 +455,22 @@ export class ChunkStore {
    * so an upload confirmed by ingest deletes exactly what it sent.
    */
   async delete(key: string): Promise<void> {
-    const e = this.#index.get(key)
+    const e = this._index.get(key)
     try {
-      await this.#backend.remove(key)
+      await this._backend.remove(key)
     } catch (err) {
-      this.#onError?.(err)
+      this._onError?.(err)
       return
     }
     if (e !== undefined) {
-      this.#index.delete(key)
-      this.#bytes -= e.size
+      this._index.delete(key)
+      this._bytes -= e.size
     }
   }
 
   /** Drop one session's stored bodies and nothing else. */
   async clearSession(sessionId: string): Promise<void> {
-    const keys = [...this.#index.values()]
+    const keys = [...this._index.values()]
       .filter((e) => e.sessionId === sessionId)
       .map((e) => e.key)
     for (const k of keys) await this.delete(k)
@@ -478,41 +478,41 @@ export class ChunkStore {
 
   close(): void {
     try {
-      this.#backend.close()
+      this._backend.close()
     } catch (err) {
-      this.#onError?.(err)
+      this._onError?.(err)
     }
   }
 
-  async #load(): Promise<void> {
+  private async _load(): Promise<void> {
     try {
-      const entries = await this.#backend.loadIndex()
+      const entries = await this._backend.loadIndex()
       for (const raw of entries) {
         const e = normalise(raw as StoredRow, raw.size ?? 0)
-        this.#index.set(e.key, e)
-        this.#bytes += e.size
+        this._index.set(e.key, e)
+        this._bytes += e.size
       }
     } catch (err) {
-      this.#onError?.(err)
+      this._onError?.(err)
     }
     // The quota may have been lowered since the last page load, so the backlog
     // is trimmed on open rather than only on write.
-    this.#evictTo(this.#quota)
+    this._evictTo(this._quota)
   }
 
   /** FIFO: oldest `createdWallMs` first, ties broken by sequence. */
-  #evictTo(target: number, keep?: string): void {
-    if (this.#bytes <= target) return
-    const order = [...this.#index.values()].sort(
+  private _evictTo(target: number, keep?: string): void {
+    if (this._bytes <= target) return
+    const order = [...this._index.values()].sort(
       (a, b) => a.createdWallMs - b.createdWallMs || a.seq - b.seq,
     )
     for (const e of order) {
-      if (this.#bytes <= target) return
+      if (this._bytes <= target) return
       if (e.key === keep) continue
-      this.#index.delete(e.key)
-      this.#bytes -= e.size
-      this.#evictedFifo += 1
-      void this.#backend.remove(e.key).catch((err: unknown) => this.#onError?.(err))
+      this._index.delete(e.key)
+      this._bytes -= e.size
+      this._evictedFifo += 1
+      void this._backend.remove(e.key).catch((err: unknown) => this._onError?.(err))
     }
   }
 }

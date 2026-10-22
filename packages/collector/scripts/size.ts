@@ -54,6 +54,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -228,6 +229,23 @@ const SCHEMA = 2
 
 const gz = (s: string): number => gzipSync(Buffer.from(s, 'utf8'), { level: 9 }).byteLength
 const bytes = (s: string): number => Buffer.byteLength(s, 'utf8')
+
+/**
+ * Shorten `_`-prefixed members as the published build does (`mangleProps` in
+ * `tsup.config.ts`). `bun build` has no such option, so without this every
+ * internal member would be measured at its full source-length name.
+ */
+const MANGLED = new RegExp(
+  /mangleProps = \/(.+)\/$/m.exec(readFileSync(join(PKG, 'tsup.config.ts'), 'utf8'))?.[1] ?? '(?!)',
+)
+const esbuild = createRequire(createRequire(join(PKG, 'package.json')).resolve('tsup'))(
+  'esbuild',
+) as {
+  transformSync(code: string, o: Record<string, unknown>): { code: string }
+  build(o: Record<string, unknown>): Promise<{ outputFiles?: { text: string }[] }>
+}
+const shorten = (code: string): string =>
+  esbuild.transformSync(code, { mangleProps: MANGLED, minifyWhitespace: true }).code
 
 function runBun(args: readonly string[]): void {
   const r = spawnSync(BUN, [...args], { encoding: 'utf8', cwd: PKG })
@@ -417,7 +435,7 @@ function measureSingle(out: string, name: string, source: string, external: read
     '--outfile',
     outfile,
   ])
-  const code = readFileSync(outfile, 'utf8')
+  const code = shorten(readFileSync(outfile, 'utf8'))
   return { gz: gz(code), min: bytes(code) }
 }
 
@@ -546,7 +564,8 @@ function measure(): Report {
       package: pkg.name,
       generatedAt: new Date().toISOString(),
       bun: version,
-      method: 'bun build --target=browser --minify, from src/, then gzip -9',
+      method:
+        'bun build --target=browser --minify, from src/, internal members shortened as published, then gzip -9',
       specTargetGz: SPEC_TARGET_GZ,
       entries,
       subsystems,

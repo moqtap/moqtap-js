@@ -69,18 +69,18 @@ interface Held {
 }
 
 export class EarlyBuffer {
-  readonly #conns = new Map<string, Held>()
-  #bytes = 0
-  #released = false
+  private readonly _conns = new Map<string, Held>()
+  private _bytes = 0
+  private _released = false
 
   /** Control bytes held across every connection. */
   get controlBytes(): number {
-    return this.#bytes
+    return this._bytes
   }
 
   onStream(c: StreamChunk): void {
-    if (this.#released) return
-    const h = this.#held(c.sessionId)
+    if (this._released) return
+    const h = this._held(c.sessionId)
     const half = halfOf(c.streamId, c.direction)
     const n = c.data.byteLength
     if (!c.control) {
@@ -92,12 +92,12 @@ export class EarlyBuffer {
     if (
       !h.full &&
       h.controlBytes + n <= EARLY_CONTROL_CONNECTION_BYTES &&
-      this.#bytes + n <= EARLY_CONTROL_REALM_BYTES
+      this._bytes + n <= EARLY_CONTROL_REALM_BYTES
     ) {
       // `StreamChunk.data` is a borrowed view onto the page's own buffer.
       h.control.push({ ...c, data: c.data.slice() })
       h.controlBytes += n
-      this.#bytes += n
+      this._bytes += n
       return
     }
     // Everything after the first refusal is refused too, so the replay is a
@@ -108,15 +108,15 @@ export class EarlyBuffer {
   }
 
   onDatagram(sessionId: string, bytes: number): void {
-    if (this.#released) return
-    const h = this.#held(sessionId)
+    if (this._released) return
+    const h = this._held(sessionId)
     h.dataChunks += 1
     h.dataBytes += bytes
   }
 
   /** A stream that ended needs no skipping: nothing more of it will arrive. */
   onStreamClose(sessionId: string, streamId: number): void {
-    const h = this.#conns.get(sessionId)
+    const h = this._conns.get(sessionId)
     if (h === undefined) return
     h.skip.delete(halfOf(streamId, 'rx'))
     h.skip.delete(halfOf(streamId, 'tx'))
@@ -124,16 +124,16 @@ export class EarlyBuffer {
 
   /** The connection closed before any session saw it. */
   forget(sessionId: string): void {
-    const h = this.#conns.get(sessionId)
+    const h = this._conns.get(sessionId)
     if (h === undefined) return
-    this.#bytes -= h.controlBytes
-    this.#conns.delete(sessionId)
+    this._bytes -= h.controlBytes
+    this._conns.delete(sessionId)
   }
 
   /** Hand everything to the session that attaches, and hold nothing more. */
   take(): Map<string, EarlyConnection> {
     const out = new Map<string, EarlyConnection>()
-    for (const [id, h] of this.#conns) {
+    for (const [id, h] of this._conns) {
       out.set(id, {
         control: h.control,
         dropped: h.dropped,
@@ -148,13 +148,13 @@ export class EarlyBuffer {
 
   /** Drop everything held and hold nothing from now on. */
   release(): void {
-    this.#released = true
-    this.#conns.clear()
-    this.#bytes = 0
+    this._released = true
+    this._conns.clear()
+    this._bytes = 0
   }
 
-  #held(sessionId: string): Held {
-    let h = this.#conns.get(sessionId)
+  private _held(sessionId: string): Held {
+    let h = this._conns.get(sessionId)
     if (h === undefined) {
       h = {
         control: [],
@@ -165,7 +165,7 @@ export class EarlyBuffer {
         dataBytes: 0,
         skip: new Set(),
       }
-      this.#conns.set(sessionId, h)
+      this._conns.set(sessionId, h)
     }
     return h
   }

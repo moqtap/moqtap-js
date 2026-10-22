@@ -59,30 +59,30 @@ function emptyByLevel(): Record<DetailLevel, number> {
  * `elevatedMinutesUsed` on every escalation record.
  */
 export class UsageMeter {
-  readonly #clock: ClockSource
-  readonly #bytes: Record<DetailLevel, number> = emptyByLevel()
+  private readonly _clock: ClockSource
+  private readonly _bytes: Record<DetailLevel, number> = emptyByLevel()
 
-  #level: DetailLevel = BASELINE
-  /** True while a window is accruing. Not `isElevated(#level)`: see {@link closeWindow}. */
-  #open = false
-  #sinceMono: Mono
-  #sinceWall: Wall
+  private _level: DetailLevel = BASELINE
+  /** True while a window is accruing. Not `isElevated(_level)`: see {@link closeWindow}. */
+  private _open = false
+  private _sinceMono: Mono
+  private _sinceWall: Wall
   /** Whole seconds, per the increment, for windows that have closed. */
-  #billableSec = 0
+  private _billableSec = 0
   /** The same windows unrounded. Reporting only — never the billed quantity. */
-  #elevatedMs = 0
-  #windowCount = 0
-  #suspendedMs = 0
+  private _elevatedMs = 0
+  private _windowCount = 0
+  private _suspendedMs = 0
 
   constructor(clock: ClockSource) {
-    this.#clock = clock
-    this.#sinceMono = clock.now()
-    this.#sinceWall = clock.wall()
+    this._clock = clock
+    this._sinceMono = clock.now()
+    this._sinceWall = clock.wall()
   }
 
   /** The level time is currently accruing at. */
   get level(): DetailLevel {
-    return this.#level
+    return this._level
   }
 
   /**
@@ -98,7 +98,7 @@ export class UsageMeter {
    * climbing through a fraction of a second nobody will ever be charged.
    */
   get billableSeconds(): number {
-    return this.#billableSec + (this.#open ? billableSeconds(this.#openMs()) : 0)
+    return this._billableSec + (this._open ? billableSeconds(this._openMs()) : 0)
   }
 
   /**
@@ -109,12 +109,12 @@ export class UsageMeter {
    * is answerable rather than a discrepancy nobody can reconstruct.
    */
   get elevatedMs(): number {
-    return this.#elevatedMs + (this.#open ? this.#openMs() : 0)
+    return this._elevatedMs + (this._open ? this._openMs() : 0)
   }
 
   /** Windows opened so far, the open one included. Diagnosis, not billing. */
   get windows(): number {
-    return this.#windowCount
+    return this._windowCount
   }
 
   /** The billed quantity, in the unit the meter and the ceiling both use. */
@@ -124,12 +124,12 @@ export class UsageMeter {
 
   /** Milliseconds the device is believed to have been suspended while elevated. */
   get suspendedMs(): number {
-    return this.#suspendedMs
+    return this._suspendedMs
   }
 
   /** Bytes sealed at each level, all levels including baseline. */
   bytesAt(level: DetailLevel): number {
-    return this.#bytes[level]
+    return this._bytes[level]
   }
 
   /**
@@ -143,7 +143,7 @@ export class UsageMeter {
   noteBytes(level: DetailLevel, n: number): void {
     if (!(n > 0)) return
     const known = (DETAIL_LEVELS as readonly string[]).includes(level) ? level : BASELINE
-    this.#bytes[known] += n
+    this._bytes[known] += n
   }
 
   /**
@@ -158,20 +158,20 @@ export class UsageMeter {
    * Idempotent for a no-change call, so a caller need not check first.
    */
   setLevel(next: DetailLevel): void {
-    const was = this.#open
+    const was = this._open
     const now = isElevated(next)
-    this.#level = next
+    this._level = next
     if (was === now) return
-    const nowMono = this.#clock.now()
-    const nowWall = this.#clock.wall()
+    const nowMono = this._clock.now()
+    const nowWall = this._clock.wall()
     if (was) {
-      this.#accrue(nowMono, nowWall)
+      this._accrue(nowMono, nowWall)
       return
     }
-    this.#open = true
-    this.#windowCount += 1
-    this.#sinceMono = nowMono
-    this.#sinceWall = nowWall
+    this._open = true
+    this._windowCount += 1
+    this._sinceMono = nowMono
+    this._sinceWall = nowWall
   }
 
   /**
@@ -184,8 +184,8 @@ export class UsageMeter {
    * is written after this and still has to say what the instance ended at.
    */
   closeWindow(): void {
-    if (!this.#open) return
-    this.#accrue(this.#clock.now(), this.#clock.wall())
+    if (!this._open) return
+    this._accrue(this._clock.now(), this._clock.wall())
   }
 
   /**
@@ -199,9 +199,9 @@ export class UsageMeter {
   report(): UsageReport {
     const minutes = this.elevatedMinutes
     let elevatedBytes = 0
-    for (const l of DETAIL_LEVELS) if (isElevated(l)) elevatedBytes += this.#bytes[l]
+    for (const l of DETAIL_LEVELS) if (isElevated(l)) elevatedBytes += this._bytes[l]
     return {
-      bytesByLevel: { ...this.#bytes },
+      bytesByLevel: { ...this._bytes },
       elevatedSeconds: this.billableSeconds,
       elevatedMinutes: minutes,
       bytesPerElevatedMinute: minutes > 0 ? elevatedBytes / minutes : 0,
@@ -210,21 +210,21 @@ export class UsageMeter {
   }
 
   /** Fold the open window into the totals and mark it closed. */
-  #accrue(nowMono: Mono, nowWall: Wall): void {
-    const mono = Math.max(0, nowMono - this.#sinceMono)
-    const wall = Math.max(0, nowWall - this.#sinceWall)
+  private _accrue(nowMono: Mono, nowWall: Wall): void {
+    const mono = Math.max(0, nowMono - this._sinceMono)
+    const wall = Math.max(0, nowWall - this._sinceWall)
     // Recorded once, as the window closes. Accruing it from the getters instead
     // grows `suspendedMs` by one divergence per *read*, and the ceiling check
     // reads on every tick.
-    if (Math.abs(wall - mono) > SUSPEND_TOLERANCE_MS) this.#suspendedMs += Math.abs(wall - mono)
+    if (Math.abs(wall - mono) > SUSPEND_TOLERANCE_MS) this._suspendedMs += Math.abs(wall - mono)
     const ms = Math.min(mono, wall)
-    this.#elevatedMs += ms
-    this.#billableSec += billableSeconds(ms)
-    this.#open = false
+    this._elevatedMs += ms
+    this._billableSec += billableSeconds(ms)
+    this._open = false
   }
 
-  #openMs(): number {
-    return this.#sliceMs(this.#clock.now(), this.#clock.wall())
+  private _openMs(): number {
+    return this._sliceMs(this._clock.now(), this._clock.wall())
   }
 
   /**
@@ -237,9 +237,9 @@ export class UsageMeter {
    * Pure, because the getters above call it once per read and a read must not
    * move any counter.
    */
-  #sliceMs(nowMono: Mono, nowWall: Wall): number {
-    const mono = Math.max(0, nowMono - this.#sinceMono)
-    const wall = Math.max(0, nowWall - this.#sinceWall)
+  private _sliceMs(nowMono: Mono, nowWall: Wall): number {
+    const mono = Math.max(0, nowMono - this._sinceMono)
+    const wall = Math.max(0, nowWall - this._sinceWall)
     return Math.min(mono, wall)
   }
 }

@@ -43,14 +43,14 @@ interface Link {
 }
 
 class Links implements WorkerLinks {
-  readonly #host: LinksHost
-  #owner: LinkOwner
-  readonly #links: Link[] = []
-  #timer: unknown
+  private readonly _host: LinksHost
+  private _owner: LinkOwner
+  private readonly _links: Link[] = []
+  private _timer: unknown
 
   constructor(host: LinksHost, owner: LinkOwner) {
-    this.#host = host
-    this.#owner = owner
+    this._host = host
+    this._owner = owner
   }
 
   /**
@@ -65,13 +65,13 @@ class Links implements WorkerLinks {
    * its behalf.
    */
   link(target: MessageTarget, hello?: LinkEvent): void {
-    if (this.#owner.ended || this.#links.some((l) => l.target === target)) return
+    if (this._owner.ended || this._links.some((l) => l.target === target)) return
     const link: Link = {
-      id: `w${this.#links.length + 1}`,
+      id: `w${this._links.length + 1}`,
       target,
       state: 'waiting',
       port: null,
-      lastHeard: this.#host.clock.now(),
+      lastHeard: this._host.clock.now(),
       ready: false,
       dropped: 0,
       conns: [],
@@ -80,56 +80,56 @@ class Links implements WorkerLinks {
       timeout: undefined,
       onHello: undefined,
     }
-    this.#links.push(link)
-    link.timeout = this.#host.timer(() => {
-      if (link.state !== 'waiting' || this.#owner.ended) return
+    this._links.push(link)
+    link.timeout = this._host.timer(() => {
+      if (link.state !== 'waiting' || this._owner.ended) return
       link.state = 'timeout'
-      this.#owner.writeLink(link.id, 'timeout')
-    }, this.#owner.config.limits.linkTimeoutMs)
-    this.#wrapTerminate(link)
+      this._owner.writeLink(link.id, 'timeout')
+    }, this._owner.config.limits.linkTimeoutMs)
+    this._wrapTerminate(link)
     const onHello = (e: LinkEvent): void => {
       const m = linkMessage(e.data)
       if (m === null || m.t !== 'hello' || typeof m.timeOrigin !== 'number') return
-      this.#answer(link, m.timeOrigin)
+      this._answer(link, m.timeOrigin)
     }
     link.onHello = onHello
     try {
       target.addEventListener('message', onHello)
       target.start?.()
     } catch (err) {
-      this.#host.onError(err)
+      this._host.onError(err)
     }
-    this.#startTimer()
+    this._startTimer()
     if (hello !== undefined) onHello(hello)
   }
 
   open(): boolean {
-    return this.#links.some((l) => l.conns.length > 0)
+    return this._links.some((l) => l.conns.length > 0)
   }
 
   connections(): ConnectionState[] {
     const out: ConnectionState[] = []
-    for (const l of this.#links) for (const s of l.conns) out.push(s.conn)
+    for (const l of this._links) for (const s of l.conns) out.push(s.conn)
     return out
   }
 
   dropped(): number {
     let n = 0
-    for (const l of this.#links) n += l.dropped
+    for (const l of this._links) n += l.dropped
     return n
   }
 
   closeForwarded(cause: 'session-end'): void {
-    for (const l of this.#links) this.#closeForwarded(l, cause)
+    for (const l of this._links) this._closeForwarded(l, cause)
   }
 
   broadcast(m: PageMessage): void {
-    for (const l of this.#links) {
+    for (const l of this._links) {
       if (l.port === null) continue
       try {
         l.port.postMessage(envelope(m))
       } catch (err) {
-        this.#host.onError(err)
+        this._host.onError(err)
       }
     }
   }
@@ -140,11 +140,11 @@ class Links implements WorkerLinks {
    * speaks, and the ids `w1, w2 …` stay unique in the page.
    */
   adopt(owner: LinkOwner): void {
-    this.#owner = owner
-    this.#host.cancel(this.#timer)
-    this.#timer = undefined
-    const now = this.#host.clock.now()
-    for (const link of this.#links) {
+    this._owner = owner
+    this._host.cancel(this._timer)
+    this._timer = undefined
+    const now = this._host.clock.now()
+    for (const link of this._links) {
       link.conns = []
       link.ready = false
       link.lastHeard = now
@@ -160,36 +160,36 @@ class Links implements WorkerLinks {
           }),
         )
       } catch (err) {
-        this.#host.onError(err)
+        this._host.onError(err)
       }
     }
-    if (!owner.armed && this.#links.length > 0) this.#startTimer()
+    if (!owner.armed && this._links.length > 0) this._startTimer()
   }
 
   teardown(): void {
-    this.#host.cancel(this.#timer)
-    this.#timer = undefined
-    for (const l of this.#links) {
-      this.#host.cancel(l.timeout)
+    this._host.cancel(this._timer)
+    this._timer = undefined
+    for (const l of this._links) {
+      this._host.cancel(l.timeout)
       if (l.onHello !== undefined) l.target.removeEventListener?.('message', l.onHello)
       l.port?.close()
     }
   }
 
-  #answer(link: Link, workerTimeOrigin: number): void {
-    const owner = this.#owner
+  private _answer(link: Link, workerTimeOrigin: number): void {
+    const owner = this._owner
     if (owner.ended || link.port !== null) return
     let channel: MessageChannel
     try {
       channel = new MessageChannel()
     } catch (err) {
-      this.#host.onError(err)
+      this._host.onError(err)
       return
     }
     const port = channel.port1
     link.port = port
     link.origin = workerTimeOrigin
-    port.onmessage = (e: MessageEvent) => this.#fromProbe(link, e.data)
+    port.onmessage = (e: MessageEvent) => this._fromProbe(link, e.data)
     const config = owner.config
     const linked: LinkedMessage = {
       t: 'linked',
@@ -209,14 +209,14 @@ class Links implements WorkerLinks {
     try {
       link.target.postMessage(envelope(linked), [channel.port2])
     } catch (err) {
-      this.#host.onError(err)
+      this._host.onError(err)
       return
     }
-    this.#heard(link)
+    this._heard(link)
   }
 
-  #fromProbe(link: Link, data: unknown): void {
-    const owner = this.#owner
+  private _fromProbe(link: Link, data: unknown): void {
+    const owner = this._owner
     if (owner.ended) return
     const m = linkMessage(data) as (ForwardMessage | CallMessage) | null
     if (m === null) return
@@ -227,10 +227,10 @@ class Links implements WorkerLinks {
         if (m.t === 'open') owner.begin()
         return
       }
-      this.#heard(link)
+      this._heard(link)
       switch (m.t) {
         case 'fwd':
-          this.#forwarded(link, m)
+          this._forwarded(link, m)
           return
         case 'annotate':
           owner.annotate(m.name, m.data, m.conn)
@@ -252,7 +252,7 @@ class Links implements WorkerLinks {
           return
       }
     } catch (err) {
-      this.#host.onError(err)
+      this._host.onError(err)
     }
   }
 
@@ -260,15 +260,15 @@ class Links implements WorkerLinks {
    * A probe spoke: it is linked, and alive. A message a terminated worker
    * posted before it died is still taken, but does not bring the link back.
    */
-  #heard(link: Link): void {
-    link.lastHeard = this.#host.clock.now()
+  private _heard(link: Link): void {
+    link.lastHeard = this._host.clock.now()
     if (link.state === 'linked' || link.terminated) return
     link.state = 'linked'
-    this.#owner.writeLink(link.id, 'linked')
+    this._owner.writeLink(link.id, 'linked')
   }
 
-  #forwarded(link: Link, m: ForwardMessage): void {
-    const owner = this.#owner
+  private _forwarded(link: Link, m: ForwardMessage): void {
+    const owner = this._owner
     link.dropped = Math.max(link.dropped, m.dropped)
     // A terminated worker's connections were reported closed when it went.
     if (!link.terminated) {
@@ -296,20 +296,20 @@ class Links implements WorkerLinks {
    * connections are reported closed with what its last forward said about them.
    * If it speaks again, it is linked again and its connections continue.
    */
-  #workerGone(link: Link): void {
-    const owner = this.#owner
+  private _workerGone(link: Link): void {
+    const owner = this._owner
     if (link.state !== 'linked' || owner.ended) return
     link.state = 'gone'
     owner.writeLink(link.id, 'gone')
-    this.#closeForwarded(link, 'worker-gone')
+    this._closeForwarded(link, 'worker-gone')
     link.conns = []
     owner.sealNow()
     owner.noteClosed()
   }
 
   /** Report a link's open connections closed, from its last forward. */
-  #closeForwarded(link: Link, cause: 'worker-gone' | 'session-end'): void {
-    const owner = this.#owner
+  private _closeForwarded(link: Link, cause: 'worker-gone' | 'session-end'): void {
+    const owner = this._owner
     const ts = owner.relNow()
     for (const s of link.conns) {
       if (s.conn.state === 'closed') continue
@@ -330,13 +330,13 @@ class Links implements WorkerLinks {
    * without touching `Worker.prototype`. A call that bypasses the instance —
    * `Worker.prototype.terminate.call(w)` — is caught by the silence check.
    */
-  #wrapTerminate(link: Link): void {
+  private _wrapTerminate(link: Link): void {
     const w = link.target as { terminate?: unknown }
     const original = w.terminate
     if (typeof original !== 'function') return
     const gone = (): void => {
       link.terminated = true
-      this.#workerGone(link)
+      this._workerGone(link)
     }
     try {
       w.terminate = function terminate(this: unknown, ...args: unknown[]): unknown {
@@ -348,24 +348,24 @@ class Links implements WorkerLinks {
         return (original as (...a: unknown[]) => unknown).apply(this, args)
       }
     } catch (err) {
-      this.#host.onError(err)
+      this._host.onError(err)
     }
   }
 
-  #startTimer(): void {
-    if (this.#timer !== undefined) return
+  private _startTimer(): void {
+    if (this._timer !== undefined) return
     const run = (): void => {
-      if (this.#owner.ended) {
-        this.#timer = undefined
+      if (this._owner.ended) {
+        this._timer = undefined
         return
       }
-      const now = this.#host.clock.now()
-      for (const l of this.#links) {
-        if (l.state === 'linked' && now - l.lastHeard > SILENCE_MS) this.#workerGone(l)
+      const now = this._host.clock.now()
+      for (const l of this._links) {
+        if (l.state === 'linked' && now - l.lastHeard > SILENCE_MS) this._workerGone(l)
       }
-      this.#timer = this.#host.timer(run, HEARTBEAT_MS)
+      this._timer = this._host.timer(run, HEARTBEAT_MS)
     }
-    this.#timer = this.#host.timer(run, HEARTBEAT_MS)
+    this._timer = this._host.timer(run, HEARTBEAT_MS)
   }
 }
 

@@ -100,37 +100,37 @@ const PLAIN_CAP_THRESHOLDS = 8
 
 export class ProbeRuntime {
   /** The page's clock base; `undefined` while the page's session has not begun. */
-  #base: Mono | undefined
+  private _base: Mono | undefined
   /** What holds this worker's transports while no session records them; `undefined` is the dormant hook's own. */
-  #dormant: DormantState | undefined
-  readonly #port: MessagePort
-  readonly #hook: TransportHook
-  readonly #build: WorkerBuild
-  readonly #clock: ClockSource
-  readonly #ports: ProbePorts
-  readonly #onError: (err: unknown) => void
-  readonly #buffer: FrameBuffer
+  private _dormant: DormantState | undefined
+  private readonly _port: MessagePort
+  private readonly _hook: TransportHook
+  private readonly _build: WorkerBuild
+  private readonly _clock: ClockSource
+  private readonly _ports: ProbePorts
+  private readonly _onError: (err: unknown) => void
+  private readonly _buffer: FrameBuffer
 
-  readonly #compresses: boolean
-  readonly #compressMin: number
-  readonly #deflate: (bytes: Uint8Array) => Promise<DeflateSegment>
+  private readonly _compresses: boolean
+  private readonly _compressMin: number
+  private readonly _deflate: (bytes: Uint8Array) => Promise<DeflateSegment>
 
-  #ids: { sessionId: string; instanceId: string }
-  #config: RealmConfig
-  #realm: RealmObserver | null = null
-  #level: DetailLevel
-  #ready = false
-  #stopped = false
-  #lastPost: Mono
-  #forwardHandle: unknown
-  #intervalHandle: unknown
+  private _ids: { sessionId: string; instanceId: string }
+  private _config: RealmConfig
+  private _realm: RealmObserver | null = null
+  private _level: DetailLevel
+  private _ready = false
+  private _stopped = false
+  private _lastPost: Mono
+  private _forwardHandle: unknown
+  private _intervalHandle: unknown
   /** Compressed over raw, from the forwards so far. */
-  #ratio: number
+  private _ratio: number
   /** A forward is being compressed; the next waits for it, so forwards arrive in order. */
-  #compressing = false
-  #forwardAgain = false
+  private _compressing = false
+  private _forwardAgain = false
   /** How long the last compression took: the next forward starts that much earlier. */
-  #compressMs = 0
+  private _compressMs = 0
 
   constructor(
     linked: LinkedMessage,
@@ -140,31 +140,31 @@ export class ProbeRuntime {
     ports: ProbePorts = {},
     tuning: ProbeTuning = {},
   ) {
-    this.#base = linked.base
-    this.#ids = { sessionId: linked.sessionId, instanceId: linked.instanceId }
-    this.#config = linked.config
-    this.#port = port
-    this.#hook = hook
-    this.#build = build
-    this.#ports = ports
-    this.#clock = ports.clock ?? platformClock
-    this.#onError = (err: unknown): void => {
+    this._base = linked.base
+    this._ids = { sessionId: linked.sessionId, instanceId: linked.instanceId }
+    this._config = linked.config
+    this._port = port
+    this._hook = hook
+    this._build = build
+    this._ports = ports
+    this._clock = ports.clock ?? platformClock
+    this._onError = (err: unknown): void => {
       try {
         ports.onInternalError?.(err)
       } catch {
         // An error handler that throws is where reporting stops.
       }
     }
-    this.#level = linked.level
-    this.#lastPost = this.#clock.now()
+    this._level = linked.level
+    this._lastPost = this._clock.now()
     const threshold = linked.config.upload.byteThreshold
-    this.#deflate = tuning.deflate ?? deflateSegment
-    this.#compresses = tuning.deflate !== undefined || gzipSupported()
-    this.#compressMin = Math.max(1, tuning.compressMinBytes ?? threshold)
-    this.#ratio = this.#compresses ? START_RATIO : 1
-    this.#buffer = new FrameBuffer({
-      maxPendingBytes: (this.#compresses ? RAW_CAP_THRESHOLDS : PLAIN_CAP_THRESHOLDS) * threshold,
-      onInternalError: this.#onError,
+    this._deflate = tuning.deflate ?? deflateSegment
+    this._compresses = tuning.deflate !== undefined || gzipSupported()
+    this._compressMin = Math.max(1, tuning.compressMinBytes ?? threshold)
+    this._ratio = this._compresses ? START_RATIO : 1
+    this._buffer = new FrameBuffer({
+      maxPendingBytes: (this._compresses ? RAW_CAP_THRESHOLDS : PLAIN_CAP_THRESHOLDS) * threshold,
+      onInternalError: this._onError,
     })
   }
 
@@ -172,18 +172,18 @@ export class ProbeRuntime {
    * Start a realm observing this worker's transports into the buffer the
    * forwards empty, on the page's clock `base`.
    */
-  #record(base: Mono): void {
-    this.#base = base
-    const buffer = this.#buffer
-    const ratio = (): number => Math.max(GATE_MIN_RATIO, this.#ratio)
+  private _record(base: Mono): void {
+    this._base = base
+    const buffer = this._buffer
+    const ratio = (): number => Math.max(GATE_MIN_RATIO, this._ratio)
     const realm = new RealmObserver({
       realm: 'worker',
-      config: this.#config,
-      hook: this.#hook,
-      drafts: this.#build.drafts,
-      recorder: this.#build.recorder,
+      config: this._config,
+      hook: this._hook,
+      drafts: this._build.drafts,
+      recorder: this._build.recorder,
       originMono: base,
-      clock: this.#clock,
+      clock: this._clock,
       host: {
         sink: {
           json: (r) => buffer.json(r),
@@ -192,24 +192,24 @@ export class ProbeRuntime {
             return buffer.pendingBytes * ratio()
           },
         },
-        level: () => this.#level,
-        onTrigger: (e) => this.#trigger(e),
+        level: () => this._level,
+        onTrigger: (e) => this._trigger(e),
         onConnReady: () => {
-          this.#ready = true
+          this._ready = true
         },
-        onConnClosed: () => this.#forward(),
+        onConnClosed: () => this._forward(),
         onOverrun: (at, signal) => {
-          this.#call({ t: 'overrun', at: at - base, signal })
-          this.#forward()
+          this._call({ t: 'overrun', at: at - base, signal })
+          this._forward()
         },
         onPressure: () => {},
         onBytes: () => {},
-        onError: this.#onError,
+        onError: this._onError,
       },
     })
-    this.#realm = realm
-    const from = this.#dormant
-    this.#dormant = undefined
+    this._realm = realm
+    const from = this._dormant
+    this._dormant = undefined
     realm.start(from)
   }
 
@@ -219,48 +219,48 @@ export class ProbeRuntime {
    * clock base. A construction made before the link is already waiting in the
    * dormant hook, so the page hears of it at once.
    */
-  #arm(first: boolean): void {
-    this.#base = undefined
-    const open = (): void => this.#call({ t: 'open' })
+  private _arm(first: boolean): void {
+    this._base = undefined
+    const open = (): void => this._call({ t: 'open' })
     if (first && dormantPending()) open()
-    else this.#dormant = armDormant(this.#hook, open)
+    else this._dormant = armDormant(this._hook, open)
   }
 
   get ids(): { sessionId: string; instanceId: string } {
-    return { ...this.#ids }
+    return { ...this._ids }
   }
 
   start(): void {
-    this.#port.onmessage = (e: MessageEvent) => this.#fromPage(e.data)
-    const base = this.#base
-    if (base === undefined) this.#arm(true)
-    else this.#record(base)
-    const set = this.#ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
+    this._port.onmessage = (e: MessageEvent) => this._fromPage(e.data)
+    const base = this._base
+    if (base === undefined) this._arm(true)
+    else this._record(base)
+    const set = this._ports.setTimer ?? ((fn: () => void, d: number) => setTimeout(fn, d))
     const forward = (): void => {
-      if (this.#stopped) return
-      this.#forward()
+      if (this._stopped) return
+      this._forward()
       // A compressed forward reaches the page when its compression ends, so
       // the next one starts that much early: what a terminated worker loses
       // stays within one interval.
-      const ms = Math.max(FORWARD_INTERVAL_MS / 2, FORWARD_INTERVAL_MS - this.#compressMs)
-      this.#forwardHandle = set(forward, ms)
+      const ms = Math.max(FORWARD_INTERVAL_MS / 2, FORWARD_INTERVAL_MS - this._compressMs)
+      this._forwardHandle = set(forward, ms)
     }
-    this.#forwardHandle = set(forward, FORWARD_INTERVAL_MS)
-    const interval = this.#config.metrics.intervalMs
+    this._forwardHandle = set(forward, FORWARD_INTERVAL_MS)
+    const interval = this._config.metrics.intervalMs
     const tick = (): void => {
-      if (this.#stopped) return
+      if (this._stopped) return
       try {
-        this.#realm?.tick(this.#clock.now())
+        this._realm?.tick(this._clock.now())
       } catch (err) {
-        this.#onError(err)
+        this._onError(err)
       }
-      this.#intervalHandle = set(tick, interval)
+      this._intervalHandle = set(tick, interval)
     }
-    this.#intervalHandle = set(tick, interval)
+    this._intervalHandle = set(tick, interval)
   }
 
   annotate(name: string, data: unknown, connectionId?: string): void {
-    this.#call(
+    this._call(
       connectionId === undefined
         ? { t: 'annotate', name: String(name), data }
         : { t: 'annotate', name: String(name), data, conn: String(connectionId) },
@@ -268,17 +268,17 @@ export class ProbeRuntime {
   }
 
   observe(name: string, value: number, labels?: Record<string, string>): void {
-    this.#call(
+    this._call(
       labels === undefined ? { t: 'observe', name, value } : { t: 'observe', name, value, labels },
     )
   }
 
   escalate(level: DetailLevel, reason?: string): void {
-    this.#call(reason === undefined ? { t: 'escalate', level } : { t: 'escalate', level, reason })
+    this._call(reason === undefined ? { t: 'escalate', level } : { t: 'escalate', level, reason })
   }
 
   resolve(reason?: string): void {
-    this.#call(reason === undefined ? { t: 'resolve' } : { t: 'resolve', reason })
+    this._call(reason === undefined ? { t: 'resolve' } : { t: 'resolve', reason })
   }
 
   /**
@@ -289,40 +289,40 @@ export class ProbeRuntime {
    * arrive compressed. One compression at a time: a forward asked for while
    * one runs follows it, so the page receives the frames in order.
    */
-  #forward(): void {
-    const realm = this.#realm
-    if (this.#stopped || realm === null) return
-    if (this.#compressing) {
-      this.#forwardAgain = true
+  private _forward(): void {
+    const realm = this._realm
+    if (this._stopped || realm === null) return
+    if (this._compressing) {
+      this._forwardAgain = true
       return
     }
-    const now = this.#clock.now()
-    const hasFrames = this.#buffer.frameCount > 0
-    if (!hasFrames && now - this.#lastPost < HEARTBEAT_MS) return
+    const now = this._clock.now()
+    const hasFrames = this._buffer.frameCount > 0
+    if (!hasFrames && now - this._lastPost < HEARTBEAT_MS) return
     const conns = realm.snapshots(now)
-    const dropped = this.#buffer.droppedRecords + realm.droppedRecords
-    const ready = this.#ready
-    this.#lastPost = now
+    const dropped = this._buffer.droppedRecords + realm.droppedRecords
+    const ready = this._ready
+    this._lastPost = now
     if (!hasFrames) {
-      this.#post({ t: 'fwd', n: 0, dropped, ready, conns }, [])
+      this._post({ t: 'fwd', n: 0, dropped, ready, conns }, [])
       return
     }
-    const { frames, count } = this.#buffer.takeFrames()
-    if (!this.#compresses || frames.byteLength < this.#compressMin) {
+    const { frames, count } = this._buffer.takeFrames()
+    if (!this._compresses || frames.byteLength < this._compressMin) {
       const part = framesPart(frames, count)
-      this.#post({ t: 'fwd', parts: [part], n: count, dropped, ready, conns }, [part.frames])
+      this._post({ t: 'fwd', parts: [part], n: count, dropped, ready, conns }, [part.frames])
       return
     }
-    this.#compressing = true
-    void this.#compress(frames, count).then((parts) => {
-      this.#compressMs = Math.max(0, this.#clock.now() - now)
-      this.#compressing = false
-      this.#buffer.recycle(frames)
+    this._compressing = true
+    void this._compress(frames, count).then((parts) => {
+      this._compressMs = Math.max(0, this._clock.now() - now)
+      this._compressing = false
+      this._buffer.recycle(frames)
       const transfer = parts.map((p) => ('deflate' in p ? p.deflate : p.frames))
-      this.#post({ t: 'fwd', parts, n: count, dropped, ready, conns }, transfer)
-      if (this.#forwardAgain) {
-        this.#forwardAgain = false
-        this.#forward()
+      this._post({ t: 'fwd', parts, n: count, dropped, ready, conns }, transfer)
+      if (this._forwardAgain) {
+        this._forwardAgain = false
+        this._forward()
       }
     })
   }
@@ -333,16 +333,16 @@ export class ProbeRuntime {
    * compressed again; one that cannot be split, or cannot be compressed, goes
    * as it is. Never rejects.
    */
-  async #compress(frames: Uint8Array, count: number): Promise<ForwardPart[]> {
+  private async _compress(frames: Uint8Array, count: number): Promise<ForwardPart[]> {
     const parts: ForwardPart[] = []
     let raw = 0
     let packed = 0
     const piece = async (bytes: Uint8Array, n: number): Promise<void> => {
       let segment: DeflateSegment | null = null
       try {
-        segment = await this.#deflate(bytes)
+        segment = await this._deflate(bytes)
       } catch (err) {
-        this.#onError(err)
+        this._onError(err)
       }
       if (segment !== null && segment.deflate.byteLength <= PIECE_MAX_BYTES) {
         raw += bytes.byteLength
@@ -364,65 +364,65 @@ export class ProbeRuntime {
       }
       parts.push(framesPart(bytes.slice(), n))
     }
-    const target = Math.max(1024, Math.floor(PIECE_TARGET_BYTES / this.#ratio))
+    const target = Math.max(1024, Math.floor(PIECE_TARGET_BYTES / this._ratio))
     for (const span of splitFrames(frames, count, target)) await piece(span.bytes, span.count)
     if (raw > 0) {
       // Half the old estimate and half the new, so one odd forward moves it only so far.
-      this.#ratio = Math.min(1, Math.max(1 / 1024, (this.#ratio + packed / raw) / 2))
+      this._ratio = Math.min(1, Math.max(1 / 1024, (this._ratio + packed / raw) / 2))
     }
     return parts
   }
 
-  #post(message: ForwardMessage, transfer: Transferable[]): void {
-    if (this.#stopped) return
+  private _post(message: ForwardMessage, transfer: Transferable[]): void {
+    if (this._stopped) return
     try {
-      this.#port.postMessage(envelope(message), transfer)
+      this._port.postMessage(envelope(message), transfer)
     } catch (err) {
-      this.#onError(err)
+      this._onError(err)
     }
   }
 
-  #trigger(e: TriggerEvent): void {
+  private _trigger(e: TriggerEvent): void {
     // The page owns the capture window and may refuse it, at the ceiling. The
     // dump this trigger produces next is stamped at the level the window
     // opens at; the page's answer corrects the level for everything after.
-    if (levelIndex(this.#level) < levelIndex(TRIGGER_CAPTURE_LEVEL)) {
-      this.#level = TRIGGER_CAPTURE_LEVEL
+    if (levelIndex(this._level) < levelIndex(TRIGGER_CAPTURE_LEVEL)) {
+      this._level = TRIGGER_CAPTURE_LEVEL
     }
-    this.#call({
+    this._call({
       t: 'trigger',
       kind: e.kind,
-      at: e.atMono - (this.#base ?? 0),
+      at: e.atMono - (this._base ?? 0),
       ...(e.key !== undefined ? { key: e.key } : {}),
     })
   }
 
-  #call(m: CallMessage): void {
-    if (this.#stopped) return
+  private _call(m: CallMessage): void {
+    if (this._stopped) return
     try {
-      this.#port.postMessage(envelope(m))
+      this._port.postMessage(envelope(m))
     } catch (err) {
-      this.#onError(err)
+      this._onError(err)
     }
   }
 
-  #fromPage(data: unknown): void {
+  private _fromPage(data: unknown): void {
     const m = linkMessage(data) as PageMessage | null
     if (m === null) return
     try {
-      if (m.t === 'level') this.#level = m.level
-      else if (m.t === 'forward') this.#forward()
-      else if (m.t === 'unlinked') this.#stop()
-      else if (m.t === 'session') this.#follow(m)
+      if (m.t === 'level') this._level = m.level
+      else if (m.t === 'forward') this._forward()
+      else if (m.t === 'unlinked') this._stop()
+      else if (m.t === 'session') this._follow(m)
       else if (m.t === 'context') {
-        this.#config = {
-          ...this.#config,
-          context: { ...this.#config.context, contentId: m.contentId },
+        this._config = {
+          ...this._config,
+          context: { ...this._config.context, contentId: m.contentId },
         }
-        this.#realm?.setContentId(m.contentId)
+        this._realm?.setContentId(m.contentId)
       }
     } catch (err) {
-      this.#onError(err)
+      this._onError(err)
     }
   }
 
@@ -433,35 +433,35 @@ export class ProbeRuntime {
    * of its own, as the page's own transports do. Without, the probe waits for
    * this worker's next `WebTransport`.
    */
-  #follow(m: Extract<PageMessage, { t: 'session' }>): void {
-    if (this.#stopped) return
-    this.#forward()
-    this.#ids = { sessionId: m.sessionId, instanceId: m.instanceId }
-    this.#level = m.level
-    this.#ready = false
-    const realm = this.#realm
+  private _follow(m: Extract<PageMessage, { t: 'session' }>): void {
+    if (this._stopped) return
+    this._forward()
+    this._ids = { sessionId: m.sessionId, instanceId: m.instanceId }
+    this._level = m.level
+    this._ready = false
+    const realm = this._realm
     if (realm === null && m.base === undefined) return
-    this.#realm = null
+    this._realm = null
     realm?.detach()
     realm?.clear()
-    if (m.base === undefined) this.#arm(false)
-    else this.#record(m.base)
+    if (m.base === undefined) this._arm(false)
+    else this._record(m.base)
   }
 
   /** The page's instance ended: stop observing and restore this worker's global. */
-  #stop(): void {
-    if (this.#stopped) return
-    this.#stopped = true
-    this.#realm?.detach()
-    this.#realm?.clear()
-    const clear = this.#ports.clearTimer ?? ((h: unknown) => clearTimeout(h as never))
-    if (this.#forwardHandle !== undefined) clear(this.#forwardHandle)
-    if (this.#intervalHandle !== undefined) clear(this.#intervalHandle)
-    this.#port.close()
+  private _stop(): void {
+    if (this._stopped) return
+    this._stopped = true
+    this._realm?.detach()
+    this._realm?.clear()
+    const clear = this._ports.clearTimer ?? ((h: unknown) => clearTimeout(h as never))
+    if (this._forwardHandle !== undefined) clear(this._forwardHandle)
+    if (this._intervalHandle !== undefined) clear(this._intervalHandle)
+    this._port.close()
     try {
-      this.#hook.uninstall()
+      this._hook.uninstall()
     } catch (err) {
-      this.#onError(err)
+      this._onError(err)
     }
   }
 }

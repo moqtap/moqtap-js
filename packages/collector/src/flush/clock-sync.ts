@@ -28,9 +28,9 @@
  * to line up with theirs. This class *reports* an offset and nothing else.
  */
 export class ClockSync {
-  #offsetMs: number | undefined
-  #bestRttMs: number | undefined
-  #samples = 0
+  private _offsetMs: number | undefined
+  private _bestRttMs: number | undefined
+  private _samples = 0
 
   /**
    * Fold one exchange in. Ignores a sample that cannot be true — a non-finite
@@ -49,25 +49,25 @@ export class ClockSync {
     }
     const rtt = t4 - t1 - (t3 - t2)
     if (!(rtt >= 0)) return
-    this.#samples += 1
-    if (this.#bestRttMs === undefined || rtt < this.#bestRttMs) {
-      this.#bestRttMs = rtt
-      this.#offsetMs = (t2 - t1 + (t3 - t4)) / 2
+    this._samples += 1
+    if (this._bestRttMs === undefined || rtt < this._bestRttMs) {
+      this._bestRttMs = rtt
+      this._offsetMs = (t2 - t1 + (t3 - t4)) / 2
     }
   }
 
   /** Estimated `serverWall − clientWall`. `undefined` until one sample lands. */
   get offsetMs(): number | undefined {
-    return this.#offsetMs
+    return this._offsetMs
   }
 
   /** The round trip of the sample the offset came from — its uncertainty. */
   get bestRttMs(): number | undefined {
-    return this.#bestRttMs
+    return this._bestRttMs
   }
 
   /** How many usable exchanges have been folded in. */
   get samples(): number {
-    return this.#samples
+    return this._samples
   }
 }

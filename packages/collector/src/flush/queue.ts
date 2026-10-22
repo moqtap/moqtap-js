@@ -63,24 +63,24 @@ const platformClock: ClockSource = {
 }
 
 export class FlushQueue extends FrameBuffer {
-  readonly #sessionId: string
-  readonly #instanceId: string
-  readonly #clock: ClockSource
-  readonly #level: () => DetailLevel
+  private readonly _sessionId: string
+  private readonly _instanceId: string
+  private readonly _clock: ClockSource
+  private readonly _level: () => DetailLevel
 
-  #seq = 0
+  private _seq = 0
 
   constructor(opts: FlushQueueOptions) {
     super(opts)
-    this.#sessionId = opts.sessionId
-    this.#instanceId = opts.instanceId
-    this.#clock = opts.clock ?? platformClock
-    this.#level = opts.level ?? (() => 'baseline')
+    this._sessionId = opts.sessionId
+    this._instanceId = opts.instanceId
+    this._clock = opts.clock ?? platformClock
+    this._level = opts.level ?? (() => 'baseline')
   }
 
   /** The number the next seal with frames will take. Bodies so far are `0 … nextSeq - 1`. */
   get nextSeq(): number {
-    return this.#seq
+    return this._seq
   }
 
   /**
@@ -93,20 +93,20 @@ export class FlushQueue extends FrameBuffer {
    */
   seal(o: SealOptions = {}): Chunk | null {
     if (this.frameCount === 0) return null
-    const seq = this.#seq
+    const seq = this._seq
     // Everything that could throw runs before the frames are taken, so a
     // failure leaves them buffered for the next seal rather than gone.
-    const key = idempotencyKey(this.#sessionId, this.#instanceId, seq)
+    const key = idempotencyKey(this._sessionId, this._instanceId, seq)
     const head = new FrameWriter({ initialBytes: 512 })
-    head.json(this.#batch(seq, key, o))
+    head.json(this._batch(seq, key, o))
     const batch = head.take()
     const { frames } = this.takeFrames()
-    this.#seq = seq + 1
+    this._seq = seq + 1
     const bytes = new Uint8Array(BODY_PREAMBLE_BYTES + batch.byteLength + frames.byteLength)
     bytes.set(writePreamble({ version: BODY_VERSION, gzipped: false }), 0)
     bytes.set(batch, BODY_PREAMBLE_BYTES)
     bytes.set(frames, BODY_PREAMBLE_BYTES + batch.byteLength)
-    return this.#chunk(seq, key, bytes)
+    return this._chunk(seq, key, bytes)
   }
 
   /**
@@ -116,44 +116,44 @@ export class FlushQueue extends FrameBuffer {
    * keeps them few. Always takes a number: the segment is never empty.
    */
   sealSegment(segment: DeflateSegment, o: SealOptions = {}): Chunk {
-    const seq = this.#seq
-    const key = idempotencyKey(this.#sessionId, this.#instanceId, seq)
+    const seq = this._seq
+    const key = idempotencyKey(this._sessionId, this._instanceId, seq)
     const head = new FrameWriter({ initialBytes: 512 + this.pendingBytes })
-    head.json(this.#batch(seq, key, o))
+    head.json(this._batch(seq, key, o))
     head.append(this.peek(), this.frameCount)
     const member = joinSegment(head.take(), segment)
     this.takeFrames()
-    this.#seq = seq + 1
+    this._seq = seq + 1
     const bytes = new Uint8Array(BODY_PREAMBLE_BYTES + member.byteLength)
     bytes.set(writePreamble({ version: BODY_VERSION, gzipped: true }), 0)
     bytes.set(member, BODY_PREAMBLE_BYTES)
-    return this.#chunk(seq, key, bytes)
+    return this._chunk(seq, key, bytes)
   }
 
-  #chunk(seq: number, key: string, bytes: Uint8Array): Chunk {
+  private _chunk(seq: number, key: string, bytes: Uint8Array): Chunk {
     return {
-      sessionId: this.#sessionId,
-      instanceId: this.#instanceId,
+      sessionId: this._sessionId,
+      instanceId: this._instanceId,
       seq,
       idempotencyKey: key,
-      createdWallMs: this.#clock.wall(),
+      createdWallMs: this._clock.wall(),
       bytes,
-      level: this.#level(),
+      level: this._level(),
       attempts: 0,
     }
   }
 
-  #batch(seq: number, key: string, o: SealOptions): BatchRecord {
+  private _batch(seq: number, key: string, o: SealOptions): BatchRecord {
     const base = {
       t: 'batch',
-      ts: this.#clock.now(),
-      lvl: this.#level(),
+      ts: this._clock.now(),
+      lvl: this._level(),
       v: 2,
-      sessionId: this.#sessionId,
-      instanceId: this.#instanceId,
+      sessionId: this._sessionId,
+      instanceId: this._instanceId,
       seq,
       idempotencyKey: key,
-      wall: this.#clock.wall(),
+      wall: this._clock.wall(),
       dropped: o.dropped ?? 0,
     } as const
     // Present only when set, so an ordinary body carries no bytes for either.
