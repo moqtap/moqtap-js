@@ -635,7 +635,7 @@ describe('connections', () => {
     await settle()
     const wt = await openTransport()
     wt.closeSession('bye', 7)
-    await settle()
+    await until(async () => of(await allRecords(posts), 'conn-close').length > 0)
 
     // Sealed by the close itself, not by the schedule or the end.
     const close = of(await allRecords(posts), 'conn-close')
