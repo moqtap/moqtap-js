@@ -939,7 +939,7 @@ describe('a linked worker whose control plane outran it', () => {
       at: 1_234,
       signal: 'control-plane rate exceeded 1/s',
     })
-    await settle()
+    await until(async () => of(await allRecords(posts), 'end').length > 0)
 
     const end = of(await allRecords(posts), 'end')[0] as EndRecord
     expect(end.reason).toBe('overrun')
@@ -1405,7 +1405,7 @@ describe('the page going away', () => {
       t += 10_000
       doc.document = { visibilityState: 'hidden' }
       life.fire('visibilitychange')
-      await settle()
+      await until(async () => of(await allRecords(posts), 'life').length > 0)
       const all = await allRecords(posts)
       expect(of(all, 'life').map((l) => l.ev)).toEqual(['hidden'])
       expect(of(all, 'note').map((n) => n.name)).toEqual(['before-hide'])
