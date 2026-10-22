@@ -30,12 +30,10 @@ import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { envelope, type LinkedMessage, linkMessage } from '../../api/link.js'
 import { ProbeRuntime } from '../../api/probe.js'
 import type { LinkEvent, MessageTarget } from '../../api/session.js'
-import { draftSet } from '../../draft/index.js'
-import { ALL_ADAPTERS } from '../../drafts/all.js'
 import { ByteRing } from '../../ring/index.js'
 import { installWebTransportHook } from '../../transport/index.js'
 import type { CollectorConfig } from '../../types.js'
-import { init } from '../support/init.js'
+import { init, workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
@@ -101,7 +99,7 @@ async function linkedWorker(page: {
       const port = transfer?.[0] as MessagePort | undefined
       if (m?.t !== 'linked' || port === undefined) return
       cleanup.push(() => port.close())
-      new ProbeRuntime(m as unknown as LinkedMessage, port, hook, draftSet(ALL_ADAPTERS), {
+      new ProbeRuntime(m as unknown as LinkedMessage, port, hook, workerBuild, {
         setTimer: () => 0,
         clearTimer: () => {},
       }).start()

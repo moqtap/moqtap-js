@@ -277,7 +277,7 @@ describe('ensureDormantHook', () => {
     expect(g.WebTransport).not.toBe(MockWebTransport)
     // And the state that came with the dead hook went with it, rather than
     // carrying a previous session's bytes into the next one.
-    expect(dormantState()?.ring.bytes).toBe(0)
+    expect(dormantState()?.ring?.bytes).toBe(0)
     expect(dormantState()?.sessions.size).toBe(0)
   })
 

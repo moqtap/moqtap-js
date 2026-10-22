@@ -17,10 +17,10 @@
  * caller can put them in their own logs and join later.
  */
 
-import { MQ1004, MQ1113 } from '../codes.js'
-import type { DraftSet } from '../draft/index.js'
-import { ChunkStore } from '../flush/index.js'
-import { connectionIdOf } from '../transport/index.js'
+import { MQ1004, MQ1006, MQ1113 } from '../codes.js'
+import type { ChunkStore } from '../flush/index.js'
+import type { TransportHook } from '../transport/index.js'
+import { type PresenceHandle, publishPresence } from '../transport/presence.js'
 import type {
   CollectorConfig,
   ContextUpdate,
@@ -30,6 +30,7 @@ import type {
   ResolvedConfig,
   UsageReport,
 } from '../types.js'
+import { COLLECTOR_VERSION } from '../version.js'
 import {
   type ConfigProblem,
   isStorableSessionId,
@@ -37,15 +38,8 @@ import {
   resolveConfig,
   sentActorId,
 } from './config.js'
-import { claimDormantHook, type DormantClaim, setPresenceActive } from './dormant.js'
-import { linkMessage } from './link.js'
 import type { ConnectionState } from './realm.js'
-import {
-  CollectorRuntime,
-  type LinkEvent,
-  type MessageTarget,
-  type RuntimePorts,
-} from './session.js'
+import { type Build, CollectorRuntime, type MessageTarget, type RuntimePorts } from './session.js'
 
 /** The origin-scoped IndexedDB database. One per origin. */
 export const DB_NAME = 'moqtap-collector'
@@ -148,18 +142,21 @@ class PendingCollector implements Collector {
   #config: ResolvedConfig
   #identity: Identity
   readonly #onError: (e: unknown) => void
-  readonly #claim: DormantClaim
+  readonly #claim: Claim
+  readonly #build: Build
 
   constructor(
     config: ResolvedConfig,
     identity: Identity,
     onError: (e: unknown) => void,
-    claim: DormantClaim,
+    claim: Claim,
+    build: Build,
   ) {
     this.#config = config
     this.#identity = identity
     this.#onError = onError
     this.#claim = claim
+    this.#build = build
   }
 
   /** The runtime took over from its predecessor on its own: a session began or ended. */
@@ -198,7 +195,7 @@ class PendingCollector implements Collector {
     // attach, so this collector is not running, and a later `init()` must not
     // be reported as one made over a live one.
     this.#claim.release()
-    if (this.#endRequest !== null) this.#claim.hook.uninstall()
+    if (this.#endRequest !== null) this.#claim.hook?.uninstall()
   }
 
   #defer(f: (r: CollectorRuntime) => void): void {
@@ -238,7 +235,7 @@ class PendingCollector implements Collector {
   }
 
   connectionIdOf(transport: WebTransport): string | undefined {
-    return connectionIdOf(transport)
+    return this.#build.observation?.connectionIdOf(transport)
   }
 
   annotate(name: string, data?: unknown, connectionId?: string): void {
@@ -326,27 +323,16 @@ class PendingCollector implements Collector {
   }
 
   linkWorker(target: MessageTarget): void {
-    if (this.#runtime !== null) {
+    const workers = this.#build.features.workers
+    if (this.#runtime !== null || workers === undefined) {
       this.#defer((r) => r.linkWorker(target))
       return
     }
     // A `Worker` dispatches its hello to whoever listens at that moment, and
     // the page may still be opening its store when the worker answers. Listen
     // from the call, and hand what was heard to the runtime once it runs.
-    let hello: LinkEvent | undefined
-    const early = (e: LinkEvent): void => {
-      if (linkMessage(e.data)?.t === 'hello') hello = e
-    }
-    try {
-      target.addEventListener('message', early)
-      target.start?.()
-    } catch (err) {
-      this.#onError(err)
-    }
-    this.#defer((r) => {
-      target.removeEventListener?.('message', early)
-      r.linkWorker(target, hello)
-    })
+    const heard = workers.hold(target, this.#onError)
+    this.#defer((r) => r.linkWorker(target, heard()))
   }
 
   flush(): Promise<void> {
@@ -383,7 +369,7 @@ class PendingCollector implements Collector {
     this.#endRequest = 'discard'
     // Nothing has been sent and nothing can be: the hook is dormant, its ring is
     // memory-only, and tearing it down now restores the page's own global.
-    this.#claim.hook.uninstall()
+    this.#claim.hook?.uninstall()
     return Promise.resolve()
   }
 }
@@ -397,7 +383,7 @@ class PendingCollector implements Collector {
  * inside someone else's player does not get to throw over a mistyped bucket cap.
  */
 export function initWith(
-  drafts: DraftSet,
+  build: Build,
   config: CollectorConfig,
   options: InitOptions = {},
 ): Collector {
@@ -425,7 +411,8 @@ export function initWith(
   // The hook is already installed from module-eval time. Claiming it is what
   // makes a second `init()` after an `end()` work — `end()` uninstalls, and the
   // claim re-installs rather than binding to a global that is no longer patched.
-  const claim = claimDormantHook()
+  const observation = build.observation
+  const claim: Claim = observation === null ? claimWithoutHook() : observation.claim()
   if (claim.superseded) {
     // `init()` over a collector nobody ended. There is one hook and one
     // observer on it, so the newer collector takes over — the caller's most
@@ -437,7 +424,22 @@ export function initWith(
   // A key has been supplied, so the page-global marker stops saying "installed
   // and dormant". The extension reads this to tell a developer whether the SDK
   // on the page is actually transmitting.
-  setPresenceActive(true)
+  if (observation === null) presenceWithoutHook()
+  else observation.setPresenceActive(true)
+
+  const features = build.features
+  if (features.escalation === undefined && resolved.detail !== 'baseline') {
+    report({ key: 'detail', code: MQ1006, got: 'escalation' })
+  }
+  const triggers = resolved.flightRecorder.triggers
+  if (triggers.stall !== undefined || triggers.cadence !== undefined) {
+    // A trigger dumps the recorder and opens a capture window: both halves.
+    if (features.flightRecorder === undefined) {
+      report({ key: 'flightRecorder.triggers', code: MQ1006, got: 'flightRecorder' })
+    } else if (features.escalation === undefined) {
+      report({ key: 'flightRecorder.triggers', code: MQ1006, got: 'escalation' })
+    }
+  }
 
   const instanceId = options.instanceId ?? mintId()
   const identity: Identity = {
@@ -446,22 +448,23 @@ export function initWith(
     ...withId('actorId', resolved.context.actorId),
     ...withId('contentId', resolved.context.contentId),
   }
-  const pending = new PendingCollector(resolved, identity, onError, claim)
+  const pending = new PendingCollector(resolved, identity, onError, claim, build)
 
   void (async (): Promise<void> => {
     try {
+      const persistence = features.persistence?.persistence
       let store: ChunkStore | null
       if (options.store !== undefined) store = options.store
-      else if (options.persist === false) store = null
+      else if (options.persist === false || persistence === undefined) store = null
       else {
-        store = await ChunkStore.open(DB_NAME, resolved.storage.quotaBytes, {
+        store = await persistence.open(DB_NAME, resolved.storage.quotaBytes, {
           onInternalError: onError,
         })
       }
 
       // Armed: the session begins with the first WebTransport, and nothing
       // before it is recorded or sent.
-      const runtime = new CollectorRuntime(resolved, claim.hook, drafts, {
+      const runtime = new CollectorRuntime(resolved, claim.hook, build, {
         ...options,
         instanceId,
         store,
@@ -486,4 +489,48 @@ function withId<K extends 'actorId' | 'contentId'>(
   value: string | undefined,
 ): Partial<Record<K, string>> {
   return value === undefined || value === '' ? {} : ({ [key]: value } as Record<K, string>)
+}
+
+/** One collector's hold on the page: the hook, when the build observes the page's transports. */
+interface Claim {
+  readonly hook: TransportHook | null
+  /** An earlier collector still held it: `init()` over a running collector. */
+  readonly superseded: boolean
+  release(): void
+}
+
+let hooklessClaims = 0
+let hooklessClaimant = 0
+let hooklessHeld = false
+let hooklessPresence: PresenceHandle | null = null
+
+/**
+ * The claim of a build that observes no transport in the page. There is no
+ * hook to guard, only the question of whether a collector is still running.
+ */
+function claimWithoutHook(): Claim {
+  hooklessClaims += 1
+  const mine = hooklessClaims
+  const superseded = hooklessHeld
+  hooklessClaimant = mine
+  hooklessHeld = true
+  return {
+    hook: null,
+    superseded,
+    release(): void {
+      if (hooklessClaimant !== mine) return
+      hooklessHeld = false
+      hooklessPresence?.setActive(false)
+    },
+  }
+}
+
+/** Announce the collector on the page global, transmitting, for a build with no hook to do it. */
+function presenceWithoutHook(): void {
+  try {
+    hooklessPresence ??= publishPresence(globalThis, COLLECTOR_VERSION, Date.now())
+    hooklessPresence.setActive(true)
+  } catch {
+    // The marker is a courtesy to the extension; a global that refuses it is not a failure.
+  }
 }

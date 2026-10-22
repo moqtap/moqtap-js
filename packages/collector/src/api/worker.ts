@@ -22,13 +22,12 @@
  * never leaves the worker. The page reports that link as `timeout`.
  */
 
-import { type DraftSet, draftSet } from '../draft/index.js'
 import { connectionIdOf } from '../transport/index.js'
-import type { DetailLevel, DraftAdapter } from '../types.js'
+import type { DetailLevel } from '../types.js'
 import { DEFAULT_LIMITS } from './defaults.js'
 import { claimDormantHook, ensureDormantHook, releaseDormantEarly } from './dormant.js'
 import { envelope, type LinkedMessage, linkMessage } from './link.js'
-import { type ProbePorts, ProbeRuntime } from './probe.js'
+import { type ProbePorts, ProbeRuntime, type WorkerBuild } from './probe.js'
 import type { LinkEvent, MessageTarget } from './session.js'
 
 /** A linked worker's view of the collector. Every verb is forwarded to the page. */
@@ -68,12 +67,6 @@ export interface InitWorkerOptions extends ProbePorts {
  */
 export type InitWorker = (port?: MessagePort, options?: InitWorkerOptions) => WorkerProbe
 
-/** `initWorker` bound to the decoders one entry point was built with. */
-export function workerEntryPoint(adapters: readonly DraftAdapter[]): InitWorker {
-  const drafts = draftSet(adapters)
-  return (port, options) => initWorkerWith(drafts, port, options)
-}
-
 /** Calls made before the page answers, replayed once it does. Bounded. */
 const MAX_QUEUED = 1024
 
@@ -92,14 +85,14 @@ function globalTarget(): MessageTarget | null {
  * failure this package exists not to cause.
  */
 export function initWorkerWith(
-  drafts: DraftSet,
+  build: WorkerBuild,
   port?: MessagePort,
   options: InitWorkerOptions = {},
 ): WorkerProbe {
   // Dormant install in this realm too: the worker's global is patched the moment
   // it imports the package, so bytes crossing before the page answers are
   // buffered rather than lost.
-  ensureDormantHook()
+  ensureDormantHook(build.recorder?.ring)
 
   let probe: ProbeRuntime | null = null
   let queued: ((p: ProbeRuntime) => void)[] = []
@@ -145,13 +138,7 @@ export function initWorkerWith(
       if (m === null || m.t !== 'linked' || channel === undefined || settled) return
       try {
         const claim = claimDormantHook()
-        probe = new ProbeRuntime(
-          m as unknown as LinkedMessage,
-          channel,
-          claim.hook,
-          drafts,
-          options,
-        )
+        probe = new ProbeRuntime(m as unknown as LinkedMessage, channel, claim.hook, build, options)
         probe.start()
         const replay = queued
         queued = []

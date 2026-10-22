@@ -1,41 +1,28 @@
 /**
- * The bundle-budget guard.
+ * The bundle guard: every published entry carries what it names and nothing
+ * else.
  *
- * The budget is why this package is split per draft at all: `@moqtap/codec`'s
- * root entry is 39.6 KB gz because it statically imports every draft
- * (`packages/codec/src/index.ts`), against 5.3 KB for one draft. The `external`
- * allowlist in `tsup.config.ts` and its source scan make that regression
- * *refusable* at build time; this file makes the resulting size *observed*.
+ * A multi-draft collector is only cheap if a page downloads the drafts and
+ * features it imports and no others. So each entry is built the way a page
+ * builds it — `import { init } from '<entry>'`, the codec inlined — and checked
+ * three ways: the features it carries are in the bundle, the features it does
+ * not carry are not, and the whole is under its tier's ceiling.
  *
- * ── Four things this test does differently from the obvious version, each
+ * ── Three things this test does differently from the obvious version, each
  *    because the obvious version silently measures nothing.
  *
- *  1. **It builds from `src/`, not from `dist/`.** `.github/workflows/` runs
- *     `bun run test` BEFORE `bun run build`, so any guard that reads `dist/`
- *     skips on every CI run it was written for.
+ *  1. **It builds from `src/`, not from `dist/`.** CI runs `bun run test`
+ *     BEFORE `bun run build`, so any guard that reads `dist/` skips on every
+ *     run it was written for.
  *
- *  2. **It bundles through a namespace-import shim, never `src/index.ts`
- *     directly.** `bun build` (1.3.13) drops the modules behind a pure
- *     `export … from` barrel and still emits the `export {}` clause naming
- *     them: `bun build src/index.ts` reports "Bundled 8 modules" and 8.7 KB gz
- *     for a bundle whose `init` is not defined anywhere in it. The real graph
- *     is 56 modules. A size guard written the obvious way would have reported
- *     a comfortable pass forever. TRUNCATION_MARKERS is the belt to that
- *     braces — if the bundler truncates again the markers vanish and this test
- *     fails rather than under-reporting.
+ *  2. **Presence is asserted as well as absence.** `bun build` (1.3.13) drops
+ *     the modules behind a pure `export … from` barrel when that barrel is the
+ *     entry, and still emits the names, so a truncated graph is small and
+ *     contains nothing. Every build here must contain the markers of what it
+ *     carries, which a truncated one cannot.
  *
- *  3. **The target is not a cap.** The "~10 KB gz static" stays a *target*:
- *     shipping a worse collector to hit an arbitrary number is the wrong trade.
- *     The entry ceiling is a chosen backstop with headroom, and the distance to
- *     the target rides in the failure message so nobody has to go looking for it.
- *
- *  4. **Both halves of the budget are measured.** The budget is "~10 KB gz
- *     static **+ 4–9 KB per draft**", and the static build above has
- *     `@moqtap/codec/*` external, so it says nothing about the second half. The
- *     `per draft` block below builds each draft with the codec's decoder
- *     **inlined**, and a single-draft entry whole. It is also the only place the
- *     tree-shaking claim is genuinely tested: with the codec external, "no
- *     `encodeMessage` in the graph" is true by construction.
+ *  3. **Absence is grepped in the unminified build** where the check is a
+ *     name, since a minifier renames locals; string markers survive either way.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -50,109 +37,89 @@ import { SUPPORTED_DRAFTS } from '../../draft/protocol.js'
 const PKG = resolve(__dirname, '..', '..', '..')
 
 /**
- * The root entry's ceiling: `bun build --target=browser --minify`,
- * `@moqtap/codec/*` external, `gzip -9`. The reference target is 10240 B.
- *
- * 49 KB is a chosen number, not a measured one. The entry, with every draft's
- * adapter, both halves of the page–worker link, the probe's compressor and
- * the reading of ingest's directives, sits around 47.6 KB and moves a few bytes
- * between builds of identical sources. The headroom is
- * deliberate — it grows as drafts are added — and this guard is a backstop
- * against a step change. Bringing the entry down toward the target is its own
- * work, not something done under a failing test.
+ * One string per optional part, found in a minified bundle exactly when the
+ * part is in it.
  */
-const ENTRY_CEILING_GZ = 49_000
-const SPEC_TARGET_GZ = 10_240
+const MARKERS = {
+  /** `api/observation.ts` and what it reaches: the `WebTransport` hook. */
+  hook: 'incomingUnidirectionalStreams',
+  /** `features/workers.ts` in a page; `api/link.ts` in a worker. */
+  workers: '__moqtap_collector__',
+  persistence: 'indexedDB',
+  /** The `flight` record the recorder's dump writes. */
+  flightRecorder: 't:"flight"',
+  /** The ceiling cause only the escalation controller writes. */
+  escalation: 'kind:"ceiling"',
+  /** Customer metric codes, from `rollup/custom-metrics.ts`. */
+  customMetrics: 'MQ4001',
+} as const
 
-/**
- * Strings that must survive minification, one per subsystem the entry graph
- * reaches. Their absence means the bundler truncated the graph, which is the
- * failure mode that makes a size guard report a passing lie.
- */
-const TRUNCATION_MARKERS = [
-  'indexedDB', // flush/idb.ts
-  'CompressionStream', // envelope/gzip.ts
-  'sendBeacon', // flush/beacon.ts
-  'moqtap-collector', // flush/idb.ts — the database name
-  'performance.now', // transport/webtransport-hook.ts
-  '__moqtap_collector__', // api/link.ts — the page–worker link
-  'visibilitychange', // api/session.ts — the hidden-page seal
-  'moqtap:', // flush/locks.ts — the instance lock the start-up sweep reads
-  '1116352408', // envelope/sha256.ts — the first round constant, 0x428a2f98
-  't:"hdr"', // api/realm.ts — object headers while detail is raised
-] as const
+type Part = keyof typeof MARKERS
 
-/**
- * Strings from the page side only. A worker entry that contains one has
- * pulled in code a worker never runs.
- */
-const PAGE_ONLY_MARKERS = [
-  'indexedDB', // flush/idb.ts
+const PAGE_FEATURES: readonly Part[] = [
+  'workers',
+  'persistence',
+  'flightRecorder',
+  'escalation',
+  'customMetrics',
+]
+
+/** Strings from the page runtime. A worker entry that holds one carries code a worker never runs. */
+const PAGE_ONLY = [
   'sendBeacon', // flush/beacon.ts
   'retry-after', // flush/uploader.ts
-  'moqtap:', // flush/locks.ts
-  '1116352408', // envelope/sha256.ts
-  'pagehide', // api/session.ts, the page runtime and its flush schedule
+  '1116352408', // envelope/sha256.ts — the first round constant, 0x428a2f98
+  'pagehide', // api/session.ts
+  'indexedDB', // flush/idb.ts
 ] as const
 
-/** Strings every worker entry must reach, so a truncated graph cannot pass. */
-const WORKER_MARKERS = [
+/** Strings every worker entry reaches. */
+const WORKER_ALWAYS = [
   '__moqtap_collector__', // api/link.ts
   'CompressionStream', // envelope/gzip.ts, the probe's compressor
-  'performance.now', // transport/webtransport-hook.ts
-  't:"hdr"', // api/realm.ts
+  'incomingUnidirectionalStreams', // the hook
 ] as const
 
 /**
- * Symbols that must never appear in the graph. The collector decodes and never
- * encodes; an encoder here means someone reached for a codec round-trip helper
- * and pulled its whole write path in with it.
+ * The collector decodes and never encodes; an encoder here means someone
+ * reached for a codec round-trip helper and pulled its write path in with it.
  */
 const FORBIDDEN_CODEC_IMPORTS = ['encodeMessage', 'encodeSubgroupStream', 'encodeDatagram']
 
 /**
- * The per-draft band: "4–9 KB per negotiated draft".
- *
- * Measured with the collector adapter plus the codec's decoder inlined: draft-20
- * 6714 B gz, draft-19 6149 B gz. The codec's half of that is 5161 B gz for
- * draft-20 measured alone, against the published "draft-20, decode only —
- * 5.3 KB": the same number, reached independently. The band is used directly as
- * the ceiling rather than inventing a tighter one, because both drafts are
- * inside it and the budget is the thing worth defending.
+ * Ceilings, gzipped, per tier. Chosen backstops a little above the measured
+ * sizes, so crossing one means a step change rather than drift. A draft entry
+ * is checked for every draft against its tier's one ceiling.
+ */
+const CEILING_GZ = {
+  /** `.`: every draft, every feature. */
+  root: 69_500,
+  /** `./draftNN`: one draft, every feature. */
+  draft: 51_000,
+  /** `./draftNN/thin`: one draft, no optional feature. */
+  thin: 42_000,
+  /** `compose({ features: [workers] })`: a page whose transports live in its workers. */
+  linked: 18_500,
+  /** `./worker`: every draft and the flight recorder. */
+  worker: 56_000,
+  /** `./draftNN/worker`. */
+  draftWorker: 34_500,
+  /** `./draftNN/thin/worker`. */
+  thinWorker: 30_500,
+} as const
+
+/**
+ * What each draft adds: the collector's adapter plus the codec decoder it
+ * imports, "4–9 KB per negotiated draft".
  */
 const DRAFT_CEILING_GZ = 9 * 1024
 
-/**
- * Drafts that must never be reachable.
- *
- * The whole 7.5x saving is that the root entry — which statically imports every
- * draft (`packages/codec/src/index.ts`) — cannot be reached from here.
- * The static build cannot show this, because there the codec is external and
- * every draft is equally absent; the per-draft build can, because there the
- * codec is inlined and a leak would arrive with it.
- */
-const FOREIGN_DRAFTS: readonly string[] = SUPPORTED_DRAFTS.filter((d) => d !== 20).map(
-  (d) => `draft${d < 10 ? `0${d}` : d}`,
-)
-
-interface Built {
-  readonly all: string
-  readonly entryGz: number
-}
+const nn = (d: number): string => (d < 10 ? `0${d}` : `${d}`)
+const DRAFTS = SUPPORTED_DRAFTS.map(nn)
+const src = (...parts: string[]): string =>
+  JSON.stringify(join(PKG, 'src', ...parts).replaceAll('\\', '/'))
 
 let out = ''
-let built: Built
-
-function shimSource(): string {
-  const target = JSON.stringify(join(PKG, 'src', 'index.js').replaceAll('\\', '/'))
-  return [
-    // A namespace import, so nothing is tree-shaken and — critically — so the
-    // barrel bug in note 2 above cannot silently empty the graph.
-    `import * as C from ${target}`,
-    ';(globalThis as unknown as Record<string, unknown>).__keep = C',
-    '',
-  ].join('\n')
-}
 
 const BUN = process.platform === 'win32' ? 'bun.exe' : 'bun'
 
@@ -165,271 +132,184 @@ function runBun(args: readonly string[]): void {
 
 const gzip = (s: string): number => gzipSync(Buffer.from(s, 'utf8'), { level: 9 }).byteLength
 
-/**
- * One namespace-import shim over an arbitrary source file of this package.
- *
- * The namespace import and the global assignment are load-bearing for the
- * reason in note 2: a bare entry lets the bundler drop a re-export barrel's
- * modules while keeping their names in the `export {}` clause.
- */
-function shimFor(...parts: string[]): string {
-  const target = JSON.stringify(join(PKG, 'src', ...parts).replaceAll('\\', '/'))
+interface Built {
+  readonly min: string
+  readonly gz: number
+  /** The same graph unminified, for name greps. */
+  readonly readable: string
+}
+
+/** Bundle `source` as a page would, everything inlined, minified and not. */
+function bundle(name: string, source: string): Built {
+  const entry = join(out, `${name}.ts`)
+  writeFileSync(entry, source)
+  const min = join(out, `${name}.min.js`)
+  const raw = join(out, `${name}.raw.js`)
+  runBun(['build', entry, '--target=browser', '--minify', '--outfile', min])
+  runBun(['build', entry, '--target=browser', '--outfile', raw])
+  const code = readFileSync(min, 'utf8')
+  return { min: code, gz: gzip(code), readable: readFileSync(raw, 'utf8') }
+}
+
+/** A page that imports one name from one entry and keeps it. */
+function consumer(name: string, from: string): string {
   return [
-    `import * as C from ${target}`,
+    `import { ${name} as C } from ${from}`,
     ';(globalThis as unknown as Record<string, unknown>).__keep = C',
     '',
   ].join('\n')
 }
 
-interface OneFile {
-  readonly minifiedBytes: number
-  readonly gzippedBytes: number
-  /** The same graph unminified, for symbol greps — a minifier renames locals. */
-  readonly readable: string
+/** The draft directories a readable bundle reaches. */
+function draftsIn(readable: string): string[] {
+  const found = new Set<string>()
+  for (const m of readable.matchAll(/drafts[\\/]draft(\d\d)[\\/]/g)) found.add(m[1] as string)
+  return [...found].sort()
 }
 
-/** Build one single-file bundle, minified and not, and measure it. */
-function buildOne(name: string, source: string, external: readonly string[]): OneFile {
-  const entry = join(out, `${name}.ts`)
-  writeFileSync(entry, source)
-  const externals = external.flatMap((e) => ['--external', e])
-  const min = join(out, `${name}.min.js`)
-  const raw = join(out, `${name}.raw.js`)
-  runBun(['build', entry, '--target=browser', '--minify', ...externals, '--outfile', min])
-  runBun(['build', entry, '--target=browser', ...externals, '--outfile', raw])
-  const minified = readFileSync(min, 'utf8')
-  return {
-    minifiedBytes: Buffer.byteLength(minified, 'utf8'),
-    gzippedBytes: gzip(minified),
-    readable: readFileSync(raw, 'utf8'),
+function expectParts(b: Built, label: string, carries: readonly Part[]): void {
+  for (const part of PAGE_FEATURES) {
+    const marker = MARKERS[part]
+    if (carries.includes(part)) {
+      expect(b.min, `${label} must carry ${part} ("${marker}" is missing)`).toContain(marker)
+    } else {
+      expect(b.min, `${label} must not carry ${part} ("${marker}" reached it)`).not.toContain(
+        marker,
+      )
+    }
   }
-}
-
-/** One minified single-file bundle, everything inlined. */
-function buildMin(name: string, source: string): { code: string; gzippedBytes: number } {
-  const entry = join(out, `${name}.ts`)
-  writeFileSync(entry, source)
-  const file = join(out, `${name}.min.js`)
-  runBun(['build', entry, '--target=browser', '--minify', '--outfile', file])
-  const code = readFileSync(file, 'utf8')
-  return { code, gzippedBytes: gzip(code) }
-}
-
-function build(): Built {
-  const shim = join(out, 'shim.ts')
-  writeFileSync(shim, shimSource())
-  const file = join(out, 'shim.js')
-  runBun([
-    'build',
-    shim,
-    '--target=browser',
-    '--minify',
-    `--outfile=${file}`,
-    '--external',
-    '@moqtap/codec/*',
-  ])
-  const all = readFileSync(file, 'utf8')
-  return { all, entryGz: gzip(all) }
 }
 
 beforeAll(() => {
   out = mkdtempSync(join(tmpdir(), 'moqtap-collector-size-'))
-  built = build()
 }, 120_000)
 
 afterAll(() => {
   if (out) rmSync(out, { recursive: true, force: true })
 })
 
-describe('the bundle is actually the whole bundle', () => {
-  it.each(TRUNCATION_MARKERS)('reaches the subsystem that owns %s', (marker) => {
-    expect(
-      built.all.includes(marker),
-      `"${marker}" is missing from the built bundle. Either the entry graph no ` +
-        'longer reaches that subsystem, or the bundler truncated a re-export barrel ' +
-        'again (see note 2 in this file). Do NOT relax this assertion to make a size ' +
-        'ceiling pass — the size number is meaningless without it.',
-    ).toBe(true)
+const sizes: string[] = []
+afterAll(() => {
+  if (sizes.length > 0) console.log(`\n[size] gzipped, as a page imports it\n${sizes.join('\n')}\n`)
+})
+
+describe('the root entry: every draft, every feature', () => {
+  let b: Built
+  beforeAll(() => {
+    b = bundle('root', consumer('init', src('index.ts')))
+    sizes.push(`  .                        ${b.gz} B`)
+  }, 120_000)
+
+  it('carries every feature and the hook', () => {
+    expectParts(b, '.', PAGE_FEATURES)
+    expect(b.min).toContain(MARKERS.hook)
   })
 
-  it('loads nothing at runtime', () => {
+  it('carries every draft', () => {
+    expect(draftsIn(b.readable)).toEqual([...DRAFTS].sort())
+  })
+
+  it('imports no encoder and loads nothing at runtime', () => {
+    for (const sym of FORBIDDEN_CODEC_IMPORTS) expect(b.readable).not.toContain(sym)
     // Every decoder is a static import, so a bundle needs no chunk loading:
     // IIFE worker builds and CSPs without chunk loading work unchanged.
-    expect(built.all).not.toMatch(/\bimport\(/)
+    expect(b.min).not.toMatch(/\bimport\(/)
+  })
+
+  it('stays under its ceiling', () => {
+    expect(b.gz).toBeLessThanOrEqual(CEILING_GZ.root)
   })
 })
 
-describe('the codec is only ever reached per draft', () => {
-  it('names no codec specifier but the per-draft entries', () => {
-    const specifiers = [...built.all.matchAll(/["']@moqtap\/codec[^"']*["']/g)].map((m) =>
-      m[0].slice(1, -1),
-    )
-    expect(specifiers.length).toBeGreaterThan(0)
-    // One per draft, every draft, and nothing else — no root entry, no
-    // `/session`, and no specifier built from a variable.
-    expect([...new Set(specifiers)].sort()).toEqual(
-      SUPPORTED_DRAFTS.map((d) => `@moqtap/codec/draft${d < 10 ? `0${d}` : d}`).sort(),
-    )
-  })
-
-  it('imports no encoder from any of them', () => {
-    for (const sym of FORBIDDEN_CODEC_IMPORTS) {
-      expect(built.all, `${sym} must not be in the collector's graph`).not.toContain(sym)
-    }
-  })
-})
-
-describe('gzipped size', () => {
-  it('keeps the always-loaded entry under its ceiling', () => {
-    expect(
-      built.entryGz,
-      `Entry is ${built.entryGz} B gz, ceiling ${ENTRY_CEILING_GZ} B. The ceiling ` +
-        'is a backstop with headroom rather than the measured number, so crossing ' +
-        `it means a step change, not drift. The reference target is ` +
-        `${SPEC_TARGET_GZ} B and the entry is ` +
-        `~${(built.entryGz / SPEC_TARGET_GZ).toFixed(1)}x it — see the subsystem ` +
-        'breakdown below for where the bytes are.',
-    ).toBeLessThanOrEqual(ENTRY_CEILING_GZ)
-  })
-
-  it('reports the numbers even when it passes', () => {
-    console.log(
-      `[size] entry ${built.entryGz} B gz | ` +
-        `${(built.entryGz / SPEC_TARGET_GZ).toFixed(1)}x the ${SPEC_TARGET_GZ} B target`,
-    )
-    expect(built.entryGz).toBeGreaterThan(0)
-  })
-})
-
-describe('the other half of the budget: per draft', () => {
-  // What each draft adds to the static half: the collector's own draft adapter
-  // plus the codec decoder it imports, bundled together.
-  //
-  // Every draft, not a sample. The older drafts are a different shape —
-  // draft-07's decoder has no Authorization Token structure and no factored
-  // stream types at all — so each one is checked against the budget.
-  const drafts = SUPPORTED_DRAFTS
-
-  it.each(drafts)('draft-%i stays inside the 4–9 KB band', (n) => {
-    const nn = n < 10 ? `0${n}` : `${n}`
-    const m = buildOne(`draft${nn}`, shimFor('drafts', `draft${nn}`, 'index.ts'), [])
-    console.log(
-      `[size] draft-${nn} (collector adapter + codec decoder): ` +
-        `${m.gzippedBytes} B gz, ${m.minifiedBytes} B min | band 4096–${DRAFT_CEILING_GZ} B`,
-    )
-    expect(
-      m.gzippedBytes,
-      `draft-${n} is over the per-draft budget. Unlike the static ` +
-        'ceiling, this one is the spec figure rather than a measured regression ' +
-        'guard, so exceeding it is a real overrun of a real budget.',
-    ).toBeLessThanOrEqual(DRAFT_CEILING_GZ)
-  })
-
-  it('carries no encoder and no other draft', () => {
-    // The only place either claim is actually testable. Greps run against the
-    // unminified build: minification renames every local, so a minified bundle
-    // reports "no encodeMessage" whether one is there or not.
-    const m = buildOne('draft20-shake', shimFor('drafts', 'draft20', 'index.ts'), [])
-    for (const sym of FORBIDDEN_CODEC_IMPORTS) {
-      expect(m.readable, `${sym} survived into draft-20`).not.toContain(sym)
-    }
-    for (const other of FOREIGN_DRAFTS) {
-      expect(m.readable, `${other} reached draft-20`).not.toContain(other)
-    }
-    // The codec root's every-draft registry. Anywhere in here it would mean
-    // the codec root was reached: 39.6 KB rather than 5.3.
-    expect(m.readable).not.toContain('DRAFT_VERSIONS')
-    // And the decoders that are supposed to be there, so the greps above are
-    // not passing on an empty bundle.
-    expect(m.readable).toContain('decodeMessage')
-    expect(m.readable).toContain('decodeDatagram')
-  })
-
-  it('keeps a single-draft entry to the static half plus one draft', () => {
-    const m = buildOne('entry20', shimFor('drafts', 'draft20', 'entry.ts'), [])
-    console.log(`[size] @moqtap/collector/draft20, whole: ${m.gzippedBytes} B gz`)
-    for (const other of FOREIGN_DRAFTS) {
-      expect(m.readable, `${other} reached the draft-20 entry`).not.toContain(other)
-    }
-    expect(m.gzippedBytes).toBeLessThanOrEqual(ENTRY_CEILING_GZ + DRAFT_CEILING_GZ)
-  })
-})
-
-describe('the worker entries carry no page code', () => {
-  // The draft entries cannot stay out of a worker's bundle: `init` and
-  // `initWorker` come from one object, so importing either keeps both. Each
-  // `/worker` entry is built whole, codec inlined, and must miss every one.
-  const workers: readonly (readonly [string, readonly string[]])[] = [
-    ['worker', ['worker.ts']],
-    ...SUPPORTED_DRAFTS.map((d) => {
-      const nn = d < 10 ? `0${d}` : `${d}`
-      return [`draft${nn}/worker`, ['drafts', `draft${nn}`, 'worker.ts']] as const
-    }),
-  ]
-
-  it('names markers the page entry does reach', () => {
-    for (const marker of PAGE_ONLY_MARKERS) {
-      expect(built.all, `"${marker}" is not in the page entry, so it guards nothing`).toContain(
-        marker,
-      )
-    }
-  })
-
-  it.each(workers)('%s', (id, parts) => {
-    const m = buildMin(`w-${id.replace(/\W+/g, '-')}`, shimFor(...parts))
-    for (const marker of WORKER_MARKERS) {
-      expect(m.code, `"${marker}" is missing: the ${id} graph was truncated`).toContain(marker)
-    }
-    for (const marker of PAGE_ONLY_MARKERS) {
-      expect(
-        m.code,
-        `"${marker}" reached ${id}. Find the import that pulls page code into the worker ` +
-          'side (api/worker.ts, api/probe.ts, api/realm.ts and what they import).',
-      ).not.toContain(marker)
-    }
-  })
-
-  it('is smaller than a draft entry imported for initWorker alone', () => {
-    const entry = buildMin(
-      'd14-init-worker',
+describe('a page whose transports live in its workers', () => {
+  let b: Built
+  beforeAll(() => {
+    b = bundle(
+      'linked',
       [
-        `import { initWorker as C } from ${JSON.stringify(join(PKG, 'src', 'drafts', 'draft14', 'entry.ts').replaceAll('\\', '/'))}`,
+        `import { compose } from ${src('compose.ts')}`,
+        `import { workers } from ${src('features', 'index.ts')}`,
+        ';(globalThis as unknown as Record<string, unknown>).__keep = compose({ features: [workers] })',
+        '',
+      ].join('\n'),
+    )
+    sizes.push(`  compose({ workers })      ${b.gz} B`)
+  }, 120_000)
+
+  it('carries the links and no hook, decoder or codec', () => {
+    expectParts(b, 'compose({ workers })', ['workers'])
+    expect(b.min).not.toContain(MARKERS.hook)
+    expect(draftsIn(b.readable)).toEqual([])
+    expect(b.readable).not.toContain('decodeMessage')
+    expect(b.min).toContain('pagehide')
+  })
+
+  it('stays under its ceiling', () => {
+    expect(b.gz).toBeLessThanOrEqual(CEILING_GZ.linked)
+  })
+})
+
+describe.each(DRAFTS)('draft %s', (d) => {
+  const at = (...f: string[]): string => src('drafts', `draft${d}`, ...f)
+  const tiers = [
+    ['', 'init', 'entry.ts', CEILING_GZ.draft, PAGE_FEATURES],
+    ['/thin', 'init', 'thin.ts', CEILING_GZ.thin, []],
+    ['/worker', 'initWorker', 'worker.ts', CEILING_GZ.draftWorker, ['flightRecorder']],
+    ['/thin/worker', 'initWorker', 'thin-worker.ts', CEILING_GZ.thinWorker, []],
+  ] as const
+
+  it.each(tiers)(
+    `./draft${d}%s carries its draft and its features, no others`,
+    (path, name, file, ceiling, carries) => {
+      const label = `./draft${d}${path}`
+      const b = bundle(`d${d}${path.replaceAll('/', '-')}`, consumer(name, at(file)))
+      sizes.push(`  ${label.padEnd(24)} ${b.gz} B`)
+      expect(draftsIn(b.readable), `${label} reached another draft`).toEqual([d])
+      for (const sym of FORBIDDEN_CODEC_IMPORTS) expect(b.readable).not.toContain(sym)
+      expect(b.min).toContain(MARKERS.hook)
+      if (name === 'init') {
+        expectParts(b, label, carries)
+      } else {
+        for (const marker of WORKER_ALWAYS) {
+          expect(b.min, `"${marker}" is missing from ${label}`).toContain(marker)
+        }
+        for (const marker of PAGE_ONLY) {
+          expect(b.min, `"${marker}" is page code and reached ${label}`).not.toContain(marker)
+        }
+        // A worker never escalates: the page owns the capture window.
+        expect(b.min).not.toContain(MARKERS.escalation)
+        const recorder = (carries as readonly Part[]).includes('flightRecorder')
+        expect(b.min.includes(MARKERS.flightRecorder), `${label}: flight recorder`).toBe(recorder)
+      }
+      expect(b.gz, `${label} is ${b.gz} B gz, ceiling ${ceiling} B`).toBeLessThanOrEqual(ceiling)
+    },
+    120_000,
+  )
+
+  it(`adds no more than ${DRAFT_CEILING_GZ} B gz: the adapter and the codec's decoder`, () => {
+    const b = bundle(
+      `adapter${d}`,
+      [
+        `import * as C from ${at('index.ts')}`,
         ';(globalThis as unknown as Record<string, unknown>).__keep = C',
         '',
       ].join('\n'),
     )
-    const worker = buildMin('d14-worker', shimFor('drafts', 'draft14', 'worker.ts'))
-    console.log(
-      `[size] draft-14 in a worker: ${entry.gzippedBytes} B gz through ./draft14, ` +
-        `${worker.gzippedBytes} B gz through ./draft14/worker`,
-    )
-    expect(worker.gzippedBytes).toBeLessThan(entry.gzippedBytes)
+    expect(b.readable).toContain('decodeMessage')
+    // The codec root's every-draft registry: reaching it costs every draft.
+    expect(b.readable).not.toContain('DRAFT_VERSIONS')
+    expect(b.gz).toBeLessThanOrEqual(DRAFT_CEILING_GZ)
   })
 })
 
-describe('where the static bytes are', () => {
-  it('breaks the entry down by subsystem, so the gap to the target is actionable', () => {
-    // Reported, never asserted. Each subsystem is bundled alone against the same
-    // externals, so they each carry their share of `types.ts` and of each other:
-    // the column is a ranking, not an accounting, and does not sum to the entry.
-    const parts: readonly [string, string[]][] = [
-      ['whole entry', ['index.ts']],
-      ['transport', ['transport', 'index.ts']],
-      ['flush', ['flush', 'index.ts']],
-      ['decode', ['decode', 'index.ts']],
-      ['rollup', ['rollup', 'index.ts']],
-      ['recorder', ['recorder', 'index.ts']],
-      ['envelope', ['envelope', 'index.ts']],
-      ['ring', ['ring', 'index.ts']],
-      ['draft', ['draft', 'index.ts']],
-    ]
-    const rows = parts.map(([label, path], i) => {
-      const m = buildOne(`part${i}`, shimFor(...path), ['@moqtap/codec/*'])
-      return `  ${label.padEnd(12)} ${String(m.gzippedBytes).padStart(6)} B gz  ${String(
-        m.minifiedBytes,
-      ).padStart(7)} B min`
-    })
-    console.log(`\n[size] static bundle by subsystem, each measured alone\n${rows.join('\n')}\n`)
-    expect(rows).toHaveLength(parts.length)
+describe('the worker entry: every draft and the flight recorder', () => {
+  it('carries no page code and stays under its ceiling', () => {
+    const b = bundle('worker', consumer('initWorker', src('worker.ts')))
+    sizes.push(`  ./worker                 ${b.gz} B`)
+    for (const marker of WORKER_ALWAYS) expect(b.min).toContain(marker)
+    for (const marker of PAGE_ONLY) expect(b.min).not.toContain(marker)
+    expect(b.min).toContain(MARKERS.flightRecorder)
+    expect(draftsIn(b.readable)).toEqual([...DRAFTS].sort())
+    expect(b.gz).toBeLessThanOrEqual(CEILING_GZ.worker)
   }, 120_000)
 })

@@ -34,7 +34,7 @@
  */
 
 import { draftOfSetupFrame } from '../draft/setup-probe.js'
-import { ByteRing, type RingEntry } from '../ring/index.js'
+import type { RingEntry } from '../ring/index.js'
 import { installWebTransportHook, type TransportHook } from '../transport/index.js'
 import { type PresenceHandle, publishPresence } from '../transport/presence.js'
 import type {
@@ -49,6 +49,7 @@ import type {
 import { COLLECTOR_VERSION } from '../version.js'
 import { DEFAULT_LIMITS } from './defaults.js'
 import { EarlyBuffer, type EarlyConnection } from './early.js'
+import type { Ring, RingFactory } from './features.js'
 
 /**
  * The stream id a datagram's ring entry carries.
@@ -82,7 +83,8 @@ const MAX_CLOSED_EARLY = 8
 /** What the dormant hook accumulated before a key arrived. */
 export interface DormantState {
   readonly hook: TransportHook
-  readonly ring: ByteRing
+  /** Object data for the flight recorder to replay; `null` in a build without it. */
+  readonly ring: Ring | null
   /** Sessions the hook opened before `init()`. Replayed to the live observer. */
   readonly sessions: Map<string, InterceptedSession>
   readonly protocols: Map<string, string>
@@ -117,6 +119,8 @@ export interface DormantState {
 
 let state: DormantState | null = null
 let installFailed = false
+/** Makes the dormant ring: the flight recorder's, from the first build that carries it to install. */
+let ringFactory: RingFactory | undefined
 
 /** Read the draft off the first chunk of each control-stream direction. */
 function probeSetup(s: DormantState, c: StreamChunk): void {
@@ -176,7 +180,7 @@ function dormantObserver(s: DormantState): TransportObserver {
       // page's own buffer and the page may write through it on its next frame,
       // so retaining the view rather than a copy would silently rewrite bytes
       // already in the ring.
-      s.ring.push({
+      s.ring?.push({
         sessionId: c.sessionId,
         streamId: c.streamId,
         dir: c.direction,
@@ -191,7 +195,7 @@ function dormantObserver(s: DormantState): TransportObserver {
     onStreamError(): void {},
     onDatagram(c: DatagramChunk): void {
       s.early.onDatagram(c.sessionId, c.data.byteLength)
-      s.ring.push({
+      s.ring?.push({
         sessionId: c.sessionId,
         streamId: DORMANT_DATAGRAM_STREAM_ID,
         dir: c.direction,
@@ -206,7 +210,7 @@ function dormantObserver(s: DormantState): TransportObserver {
 /**
  * Install the hook, dormant, and return it. Idempotent.
  *
- * Called at module-eval time from `src/index.ts` and again from `init()`, which
+ * Called at module-eval time by `compose()` and again from `init()`, which
  * is what makes an `init()` after an `end()` work: `end()` uninstalls,
  * and a second `init()` re-installs rather than binding to a global that is no
  * longer patched.
@@ -226,7 +230,8 @@ function dormantObserver(s: DormantState): TransportObserver {
  */
 let presence: PresenceHandle | null = null
 
-export function ensureDormantHook(): TransportHook {
+export function ensureDormantHook(ring?: RingFactory): TransportHook {
+  useDormantRing(ring)
   const live = state
   if (live !== null) {
     if (!live.patched || live.hook.installed) return live.hook
@@ -267,6 +272,14 @@ export function ensureDormantHook(): TransportHook {
 }
 
 /**
+ * Ring object data from here on, for the flight recorder. The first build that
+ * carries the recorder sets it; a buffer already made keeps its own.
+ */
+export function useDormantRing(ring: RingFactory | undefined): void {
+  ringFactory ??= ring
+}
+
+/**
  * Flip the page-global marker between dormant and transmitting.
  *
  * Called by `init()` once a key is resolved, and by teardown. Safe before
@@ -285,7 +298,7 @@ export function clearPresence(): void {
 function freshState(hook: TransportHook, onOpen?: (s: DormantState) => void): DormantState {
   return {
     hook,
-    ring: new ByteRing({ maxBytes: DEFAULT_LIMITS.dormantRingBytes }),
+    ring: ringFactory === undefined ? null : ringFactory(DEFAULT_LIMITS.dormantRingBytes),
     sessions: new Map(),
     protocols: new Map(),
     readyAt: new Map(),
@@ -354,8 +367,8 @@ export function drainDormant(from: DormantState | null = state): {
       closed: [],
     }
   }
-  const entries = s.ring.snapshot()
-  s.ring.clear()
+  const entries = s.ring?.snapshot() ?? []
+  s.ring?.clear()
   const sessions = new Map(s.sessions)
   // Handed over: whatever drains them observes them from here.
   s.sessions.clear()
@@ -391,7 +404,7 @@ export function teardownDormant(): void {
   clearPresence()
   if (s === null) return
   try {
-    s.ring.clear()
+    s.ring?.clear()
     s.early.release()
     s.hook.uninstall()
   } catch {

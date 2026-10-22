@@ -274,42 +274,38 @@ const DRAFT_ENTRIES: readonly string[] = [...SUPPORTED_DRAFTS]
 
 /**
  * A handful of names per entry, chosen so that resolving to the *wrong* file
- * fails rather than passes. An export map that points `./draft19` at the main
- * entry would resolve, import, and be caught only by `DRAFT19_ADAPTER`.
+ * fails rather than passes. An export map that points `./draft19/decoder` at
+ * another draft's would resolve, import, and be caught only by `draft19`.
  */
+const PAGE_NAMES: readonly string[] = ['init', 'DEFAULTS', 'COLLECTOR_VERSION', 'NEED']
 const EXPECTED: Readonly<
   Record<string, { readonly names: readonly string[]; readonly patches: boolean }>
 > = {
-  '.': {
-    names: ['init', 'initWorker', 'DEFAULTS', 'COLLECTOR_VERSION', 'NEED'],
-    // The dormant install, and the reason every entry is in the `sideEffects` allowlist.
-    patches: true,
+  // Every prebuilt collector installs the hook at module-eval, which is the
+  // reason each is in the `sideEffects` allowlist.
+  '.': { names: PAGE_NAMES, patches: true },
+  './worker': { names: ['initWorker'], patches: true },
+  // The building blocks install nothing.
+  './compose': { names: ['compose', 'composeWorker', 'NEED'], patches: false },
+  './features': {
+    names: ['workers', 'escalation', 'flightRecorder', 'customMetrics', 'persistence'],
+    patches: false,
   },
   './internal': {
     names: ['resolveConfig', 'ensureDormantHook', 'CollectorRuntime', 'PRESENCE_KEY', 'DB_NAME'],
-    // The one entry that is not in the allowlist, because it installs nothing.
     patches: false,
   },
   ...Object.fromEntries(
-    DRAFT_ENTRIES.map((e) => [
-      `./${e}`,
-      {
-        names: [
-          'init',
-          'initWorker',
-          'adapter',
-          `${e.toUpperCase()}_ADAPTER`,
-          'draft',
-          'PROTOCOL_STRINGS',
-          'NEED',
-        ],
-        patches: true,
-      },
+    DRAFT_ENTRIES.flatMap((e) => [
+      [`./${e}`, { names: PAGE_NAMES, patches: true }],
+      [`./${e}/thin`, { names: PAGE_NAMES, patches: true }],
+      [`./${e}/worker`, { names: ['initWorker'], patches: true }],
+      [`./${e}/thin/worker`, { names: ['initWorker'], patches: true }],
+      [
+        `./${e}/decoder`,
+        { names: [e, 'adapter', `${e.toUpperCase()}_ADAPTER`, 'draft'], patches: false },
+      ],
     ]),
-  ),
-  './worker': { names: ['initWorker'], patches: true },
-  ...Object.fromEntries(
-    DRAFT_ENTRIES.map((e) => [`./${e}/worker`, { names: ['initWorker'], patches: true }]),
   ),
 }
 
@@ -341,10 +337,11 @@ const INTERNAL_ONLY: readonly string[] = [
  * worker probe with no page to link it, and `discard()` restoring the global.
  * `fetch` is stubbed so the probe never reaches a network.
  */
-const SURFACE_BODY = (load: string): string =>
+const SURFACE_BODY = (load: string, loadWorker: string): string =>
   [
     'globalThis.fetch = async () => new Response(null, { status: 202 })',
     `const m = ${load}`,
+    `const w = ${loadWorker}`,
     "const c = m.init({ apiKey: 'pk_smoke', endpoint: 'https://ingest.invalid/v1/ingest', sessionId: 'smoke-1' })",
     'const first = c.ids()',
     "const second = c.newSession({ contentId: 'next' })",
@@ -352,7 +349,7 @@ const SURFACE_BODY = (load: string): string =>
     '  "end", "newSession", "discard", "annotate", "defineMetric", "observe", "escalate",',
     '  "resolve", "usage"].filter((k) => typeof c[k] !== "function")',
     'const removed = ["stop", "abort"].filter((k) => k in c)',
-    'const probe = m.initWorker()',
+    'const probe = w.initWorker()',
     'const linkedIsPromise = typeof probe.linked?.then === "function"',
     'const linked = await probe.linked',
     'await c.discard()',
@@ -375,14 +372,14 @@ function surface(
   consumer: string,
   name: string,
   specifier: string,
+  workerSpecifier: string,
   cjs: boolean,
 ): SurfaceResult | string {
   const file = join(consumer, 'probes', `${name}.${cjs ? 'cjs' : 'mjs'}`)
-  const load = cjs
-    ? `require(${JSON.stringify(specifier)})`
-    : `await import(${JSON.stringify(specifier)})`
+  const loader = (s: string): string =>
+    cjs ? `require(${JSON.stringify(s)})` : `await import(${JSON.stringify(s)})`
   // CommonJS has no top-level await; the body runs inside an async function there.
-  const body = SURFACE_BODY(load)
+  const body = SURFACE_BODY(loader(specifier), loader(workerSpecifier))
   writeFileSync(file, `${PROBE_PREAMBLE}\n${cjs ? `;(async () => {\n${body}\n})()` : body}\n`)
   const r = spawnSync(NODE, [file], { cwd: consumer, encoding: 'utf8' })
   if (r.status !== 0) {
@@ -488,15 +485,19 @@ function main(): void {
 
     // And the positive backstop: the built output and the declarations are
     // there in both module formats.
-    for (const base of ['index', 'internal', 'worker', ...DRAFT_ENTRIES]) {
+    const typed = ['index', 'internal', 'worker', 'compose', 'features']
+    for (const base of [...typed, ...DRAFT_ENTRIES.map((e) => `${e}-decoder`)]) {
       for (const ext of ['js', 'cjs', 'd.ts']) {
         check(files.has(`dist/${base}.${ext}`), `dist/${base}.${ext} ships`)
       }
     }
-    // A draft's worker entry is typed by `dist/worker.d.ts`, checked above.
+    // A draft's page entries are typed by `dist/index.d.ts` and its worker
+    // entries by `dist/worker.d.ts`, both checked above.
     for (const e of DRAFT_ENTRIES) {
-      for (const ext of ['js', 'cjs']) {
-        check(files.has(`dist/${e}-worker.${ext}`), `dist/${e}-worker.${ext} ships`)
+      for (const base of [e, `${e}-thin`, `${e}-worker`, `${e}-thin-worker`]) {
+        for (const ext of ['js', 'cjs']) {
+          check(files.has(`dist/${base}.${ext}`), `dist/${base}.${ext} ships`)
+        }
       }
     }
 
@@ -562,7 +563,7 @@ function main(): void {
 
     /* 3 ── the documented side-effect boundary ───────────────────────────── */
 
-    section('side-effect boundary — every entry but internal installs the hook')
+    section('side-effect boundary — every prebuilt collector installs the hook, nothing else does')
     for (const [sub, expected] of Object.entries(EXPECTED)) {
       const specifier = sub === '.' ? pkg.name : `${pkg.name}/${sub.slice(2)}`
       for (const fmt of ['ESM import', 'CJS require']) {
@@ -590,12 +591,18 @@ function main(): void {
 
     section('the integrator’s surface, run from the build')
     const newest = DRAFT_ENTRIES.at(-1) as string
-    for (const sub of ['.', `./${newest}`]) {
+    const pairs: readonly (readonly [string, string])[] = [
+      ['.', './worker'],
+      [`./${newest}`, `./${newest}/worker`],
+      [`./${newest}/thin`, `./${newest}/thin/worker`],
+    ]
+    for (const [sub, workerSub] of pairs) {
       const specifier = sub === '.' ? pkg.name : `${pkg.name}/${sub.slice(2)}`
+      const workerSpecifier = `${pkg.name}/${workerSub.slice(2)}`
       for (const cjs of [false, true]) {
         const label = `${specifier} (${cjs ? 'CJS require' : 'ESM import'})`
         const name = `surface-${sub.replace(/[^a-z0-9]/gi, '_') || 'root'}-${cjs ? 'cjs' : 'esm'}`
-        const r = surface(consumer, name, specifier, cjs)
+        const r = surface(consumer, name, specifier, workerSpecifier, cjs)
         if (typeof r === 'string') {
           check(false, `runs: ${label}`, r)
           continue
@@ -732,16 +739,21 @@ function typecheck(consumer: string): void {
   writeFileSync(
     join(consumer, 'types', 'esm.ts'),
     [
-      "import { init, initWorker, COLLECTOR_VERSION, NEED } from '@moqtap/collector'",
+      "import { init, COLLECTOR_VERSION, NEED } from '@moqtap/collector'",
       "import type { Collector, CollectorConfig, ResolvedConfig } from '@moqtap/collector'",
       "import type { ConnectionInfo, Identity, WorkerProbe } from '@moqtap/collector'",
       "import { resolveConfig } from '@moqtap/collector/internal'",
       "import type { InitOptions } from '@moqtap/collector/internal'",
-      "import { adapter as a19, PROTOCOL_STRINGS } from '@moqtap/collector/draft19'",
-      "import { adapter as a20, DRAFT20_ADAPTER } from '@moqtap/collector/draft20'",
+      "import { adapter as a19 } from '@moqtap/collector/draft19/decoder'",
+      "import { DRAFT20_ADAPTER, draft20 } from '@moqtap/collector/draft20/decoder'",
       "import type { DraftAdapter, Need, SupportedDraft } from '@moqtap/collector/draft20'",
+      "import { init as thin20 } from '@moqtap/collector/draft20/thin'",
+      "import { initWorker } from '@moqtap/collector/worker'",
       "import { initWorker as initWorker20 } from '@moqtap/collector/draft20/worker'",
       "import type { InitWorker } from '@moqtap/collector/worker'",
+      "import { compose, composeWorker } from '@moqtap/collector/compose'",
+      "import type { Draft, Feature, Init } from '@moqtap/collector/compose'",
+      "import { flightRecorder, persistence, workers } from '@moqtap/collector/features'",
       '',
       '// Exercise the shapes rather than merely naming them. A declaration that',
       '// degraded to `any` on the way out of the build still resolves, still',
@@ -752,15 +764,20 @@ function typecheck(consumer: string): void {
       '  void resolved',
       '  return init(config, options)',
       '}',
-      'export const drafts: readonly SupportedDraft[] = [a19.draft, a20.draft]',
+      'export const drafts: readonly SupportedDraft[] = [a19.draft, draft20.adapter.draft]',
       'export const adapters: readonly DraftAdapter[] = [a19, DRAFT20_ADAPTER]',
+      'const decoder: Draft = draft20',
+      'const features: readonly Feature[] = [workers, persistence]',
+      'export const linkedPage: Init = compose({ features })',
+      'export const composed: Init = compose({ drafts: [decoder], features })',
+      'export const composedWorker: InitWorker = composeWorker({ drafts: [decoder], features: [flightRecorder] })',
+      'export const thin: Init = thin20',
       'export const version: string = COLLECTOR_VERSION',
       '// `NEED` is a `unique symbol`, and `Need` is `typeof NEED`. Round-tripping',
       '// it through both names is the check that the symbol survived declaration',
       '// emit as one identity rather than being widened to `symbol` — see types.ts',
       '// notes that a widened one makes every `=== NEED` across the boundary false.',
       'export const need: Need = NEED',
-      'export const proto: string = PROTOCOL_STRINGS[20]',
       '',
       '// The session verbs, and the two they replaced. `@ts-expect-error` fails the',
       '// compile if a removed name ever comes back.',
@@ -794,7 +811,7 @@ function typecheck(consumer: string): void {
       '// export map with the `require` condition — the half of a dual-format',
       '// package that an ESM-only consumer never touches.',
       "import collector = require('@moqtap/collector')",
-      "import draft20 = require('@moqtap/collector/draft20')",
+      "import draft20 = require('@moqtap/collector/draft20/decoder')",
       "import worker = require('@moqtap/collector/worker')",
       'export const v: string = collector.COLLECTOR_VERSION',
       'export const d: number = draft20.adapter.draft',

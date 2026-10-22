@@ -5,6 +5,33 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-22
+
+### Added
+
+- `@moqtap/collector/draftNN/thin` and `@moqtap/collector/draftNN/thin/worker`:
+  one draft and no optional feature.
+- `@moqtap/collector/compose`: `compose()` and `composeWorker()` build a
+  collector from the drafts in `@moqtap/collector/draftNN/decoder` and the
+  features in `@moqtap/collector/features`: `workers`, `escalation`,
+  `flightRecorder`, `customMetrics` and `persistence`.
+- A page built with no draft leaves its own `WebTransport` unwrapped and records
+  what its linked workers send.
+- `MQ1006`: a call or an option needs a feature the build does not include.
+
+### Changed
+
+- A bundle holds only the drafts and features its entry imports.
+  `@moqtap/collector/draft14` is 46.9 KB gzipped as a page imports it, a
+  worker-only page 17 KB.
+- `@moqtap/collector` and `@moqtap/collector/draftNN` export `init` and no
+  longer `initWorker`; import that from `@moqtap/collector/worker` or
+  `@moqtap/collector/draftNN/worker`.
+- `adapter`, `DRAFTNN_ADAPTER` and `draft` are exported from
+  `@moqtap/collector/draftNN/decoder`. `PROTOCOL_STRINGS` is no longer
+  exported.
+- Requires `@moqtap/codec` 0.13.4.
+
 ## [0.8.0] - 2026-10-22
 
 ### Changed

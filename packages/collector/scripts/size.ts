@@ -27,16 +27,16 @@
  *
  * Two details, either of which silently under-reports if it is got wrong:
  *
- *  1. **Everything is bundled through a namespace-import shim.** `bun build`
- *     (1.3.13) drops the modules behind a pure `export … from` barrel while
- *     still emitting the `export {}` clause naming them — `bun build
- *     src/index.ts` reports 8 modules and 8.7 KB gz for a bundle whose `init`
- *     is not defined anywhere in it. A namespace import plus a global
- *     assignment keeps the graph whole.
+ *  1. **Every entry is bundled through a shim that imports what a page
+ *     imports** — `init`, or `initWorker` — and keeps it alive with a global
+ *     assignment. `bun build` (1.3.13) drops the modules behind a pure
+ *     `export … from` barrel when the barrel itself is the entry, while still
+ *     emitting the `export {}` clause naming them: `bun build src/index.ts`
+ *     reports a bundle whose `init` is not defined anywhere in it.
  *  2. **The root entry is measured twice:** with `@moqtap/codec/*` external,
  *     which is the collector's own code and what the subsystem breakdown
- *     charges, and whole, which is what a page downloads. The draft entries
- *     and the internal entry are measured whole.
+ *     charges, and whole, which is what a page downloads. Every other entry
+ *     is measured whole.
  *
  * ── Usage
  *
@@ -71,12 +71,13 @@ const DRAFTS: readonly string[] = [...SUPPORTED_DRAFTS]
   .map((d) => String(d).padStart(2, '0'))
 
 /**
- * The published entry points, from `package.json`'s `exports` map.
+ * The published entry points, from `package.json`'s `exports` map, each
+ * measured as a page imports it.
  *
  * **Read the per-draft rows as alternatives, never as a sum.** A page imports
- * one entry: the root, or the draft its relays speak. A dedicated worker imports
- * one `/worker` entry. `./internal` is for tests, harnesses and the browser
- * extension, and is listed so a change to what it pulls in is seen.
+ * one entry: the root, a draft its relays speak, or a composition. A dedicated
+ * worker imports one worker entry. `./internal` is for tests, harnesses and
+ * the browser extension, and is listed so a change to what it pulls in is seen.
  */
 const ENTRIES: readonly {
   readonly id: string
@@ -85,8 +86,10 @@ const ENTRIES: readonly {
   readonly external: readonly string[]
   /** Built with sourcemaps, for the subsystem breakdown. */
   readonly split: boolean
-  /** Import only this name, as a consumer does, rather than the whole namespace. */
+  /** The name a page imports; the whole namespace when absent. */
   readonly only?: string
+  /** A page's own module, for a composition rather than an entry. */
+  readonly source?: string
 }[] = [
   {
     id: '.',
@@ -94,46 +97,73 @@ const ENTRIES: readonly {
     parts: ['index.ts'],
     external: ['@moqtap/codec/*'],
     split: true,
+    only: 'init',
   },
   {
     id: '. (whole)',
-    label: "root entry as downloaded, every draft's decoder",
+    label: "root entry as downloaded: every draft's decoder, every feature",
     parts: ['index.ts'],
     external: [],
     split: false,
+    only: 'init',
   },
-  ...DRAFTS.map((nn) => ({
-    id: `./draft${nn}`,
-    label: `draft-${nn} entry as downloaded`,
-    parts: ['drafts', `draft${nn}`, 'entry.ts'],
+  {
+    id: 'compose({ workers })',
+    label: 'a page whose transports live in its workers: links, no draft',
+    parts: [],
     external: [],
     split: false,
-  })),
+    source: [
+      `import { compose } from ${JSON.stringify(join(PKG, 'src', 'compose.ts').replaceAll('\\', '/'))}`,
+      `import { workers } from ${JSON.stringify(join(PKG, 'src', 'features', 'index.ts').replaceAll('\\', '/'))}`,
+      ';(globalThis as unknown as Record<string, unknown>).__keep = compose({ features: [workers] })',
+      '',
+    ].join('\n'),
+  },
+  ...DRAFTS.flatMap((nn) => [
+    {
+      id: `./draft${nn}`,
+      label: `draft-${nn}, every feature`,
+      parts: ['drafts', `draft${nn}`, 'entry.ts'],
+      external: [],
+      split: false,
+      only: 'init',
+    },
+    {
+      id: `./draft${nn}/thin`,
+      label: `draft-${nn}, no optional feature`,
+      parts: ['drafts', `draft${nn}`, 'thin.ts'],
+      external: [],
+      split: false,
+      only: 'init',
+    },
+  ]),
   {
     id: './worker',
-    label: "worker entry as downloaded, every draft's decoder",
+    label: "worker entry: every draft's decoder and the flight recorder",
     parts: ['worker.ts'],
-    external: [],
-    split: false,
-  },
-  ...DRAFTS.map((nn) => ({
-    id: `./draft${nn}/worker`,
-    label: `draft-${nn} worker entry as downloaded`,
-    parts: ['drafts', `draft${nn}`, 'worker.ts'],
-    external: [],
-    split: false,
-  })),
-  {
-    // What a draft-14 worker shipped before the worker entries existed, for
-    // comparison with `./draft14/worker`: `init` and `initWorker` come from one
-    // object, so importing only `initWorker` still carries the page side.
-    id: './draft14 initWorker',
-    label: 'draft-14 entry with only initWorker imported, as a worker used it',
-    parts: ['drafts', 'draft14', 'entry.ts'],
     external: [],
     split: false,
     only: 'initWorker',
   },
+  ...DRAFTS.flatMap((nn) => [
+    {
+      id: `./draft${nn}/worker`,
+      label: `draft-${nn} worker, with the flight recorder`,
+      parts: ['drafts', `draft${nn}`, 'worker.ts'],
+      external: [],
+      split: false,
+      only: 'initWorker',
+    },
+    {
+      id: `./draft${nn}/thin/worker`,
+      label: `draft-${nn} worker, no flight recorder`,
+      parts: ['drafts', `draft${nn}`, 'thin-worker.ts'],
+      external: [],
+      split: false,
+      only: 'initWorker',
+    },
+  ]),
   {
     id: './internal',
     label: 'internal entry as downloaded: the runtime, with no hook installed',
@@ -493,7 +523,8 @@ function measure(): Report {
           : e.id === '. (whole)'
             ? 'whole'
             : e.id.replace('./', '').replace(/[^a-z0-9]+/gi, '-')
-      const source = e.only === undefined ? shimFor(...e.parts) : namedShimFor(e.only, ...e.parts)
+      const source =
+        e.source ?? (e.only === undefined ? shimFor(...e.parts) : namedShimFor(e.only, ...e.parts))
       if (!e.split) {
         entries[e.id] = { label: e.label, ...measureSingle(out, name, source, e.external) }
         continue

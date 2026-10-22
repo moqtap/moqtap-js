@@ -1,18 +1,15 @@
 /**
- * `@moqtap/collector/draft18/worker`: `initWorker()` alone, with draft-18's
- * decoder and no other, for a dedicated Worker that opens its own WebTransport.
- * The page side is not here.
+ * `@moqtap/collector/draft18/worker`: `initWorker()` with draft-18's
+ * decoder and the flight recorder, for a dedicated Worker that opens its own
+ * WebTransport. The page side is not here.
  *
- * Importing this patches the worker's `globalThis.WebTransport`, as every
- * entry but `internal` does.
+ * Importing this patches the worker's `globalThis.WebTransport`, dormant.
  */
 
-import { ensureDormantHook } from '../../api/dormant.js'
-import { workerEntryPoint } from '../../api/worker.js'
-import { adapter } from './index.js'
+import { composeWorker } from '../../api/compose.js'
+import { flightRecorder } from '../../features/flight-recorder.js'
+import { draft18 } from './decoder.js'
 
-ensureDormantHook()
-
-export const initWorker = workerEntryPoint([adapter])
+export const initWorker = composeWorker({ drafts: [draft18], features: [flightRecorder] })
 export type { InitWorker, WorkerProbe } from '../../api/worker.js'
 export type { DetailLevel } from '../../types.js'

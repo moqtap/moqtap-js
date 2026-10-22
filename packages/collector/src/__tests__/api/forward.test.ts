@@ -18,13 +18,12 @@ import {
   linkMessage,
 } from '../../api/link.js'
 import { ProbeRuntime, type ProbeTuning } from '../../api/probe.js'
-import { draftSet } from '../../draft/index.js'
-import { ALL_ADAPTERS } from '../../drafts/all.js'
 import type { DeflateSegment } from '../../envelope/index.js'
 import { crc32, readFrames } from '../../envelope/index.js'
 import { installWebTransportHook } from '../../transport/index.js'
 import type { EnvelopeRecord } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
+import { workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
@@ -77,7 +76,7 @@ async function harness(tuning: ProbeTuning): Promise<Harness> {
     linked,
     port,
     hook,
-    draftSet(ALL_ADAPTERS),
+    workerBuild,
     { setTimer: () => 0, clearTimer: () => {}, onInternalError: (e) => errors.push(e) },
     tuning,
   )

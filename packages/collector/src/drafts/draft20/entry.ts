@@ -1,17 +1,13 @@
 /**
- * `@moqtap/collector/draft20`: the collector with draft-20's decoder and no
- * other. A session on another draft is reported as `draft-mismatch`.
+ * `@moqtap/collector/draft20`: the collector with draft-20's decoder and
+ * every feature. A session on another draft is reported as `draft-mismatch`.
  *
- * Importing this patches `globalThis.WebTransport`, as the root entry does.
+ * Importing this patches `globalThis.WebTransport`, dormant.
  */
 
-import { ensureDormantHook } from '../../api/dormant.js'
-import { entryPoint } from '../../api/entry.js'
-import { adapter } from './index.js'
+import { compose } from '../../api/compose.js'
+import { ALL_FEATURES } from '../../features/all.js'
+import { draft20 } from './decoder.js'
 
-ensureDormantHook()
-
-export const { init, initWorker } = entryPoint([adapter])
-export { PROTOCOL_STRINGS } from '../../draft/protocol.js'
+export const init = compose({ drafts: [draft20], features: ALL_FEATURES })
 export * from '../../public.js'
-export { adapter, DRAFT20_ADAPTER, draft } from './index.js'

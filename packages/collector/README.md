@@ -214,25 +214,68 @@ without `pagehide` should `await vitals.flush()` first.
 longer want the data to leave the device — a consent withdrawal, an opt-out, a
 test fixture. It deletes every stored upload as well.
 
-## Drafts
+## Entry points
 
-Drafts 07 through 22. The root entry carries a decoder for every one of them;
-if your relays speak one draft, import that draft's entry instead. It is the
-same API with one decoder, about 18 KB gzipped smaller:
+Drafts 07 through 22. Your bundle holds the drafts and features you import and
+nothing else. Pick the entry that matches your player:
+
+| Import                              | Drafts | Features | Gzipped |
+| ----------------------------------- | ------ | -------- | ------- |
+| `@moqtap/collector`                 | all    | all      | 65.5 KB |
+| `@moqtap/collector/draftNN`         | one    | all      | 46–48.5 KB |
+| `@moqtap/collector/draftNN/thin`    | one    | none     | 38–40.5 KB |
+| `compose({ features: [workers] })`  | none   | `workers` | 17 KB   |
 
 ```typescript
 import { init } from '@moqtap/collector/draft14'
 ```
 
-`@moqtap/collector/draft07` through `@moqtap/collector/draft22` each export
-`init` and `initWorker`. A session that negotiates any other draft is reported
-as `draft-mismatch` and not decoded. The collector loads no code at runtime, so
-it works in single-file bundles, IIFE worker builds and pages whose CSP blocks
-runtime chunk loading.
+Every entry has the same API. A session that negotiates a draft the entry does
+not carry is reported as `draft-mismatch` and not decoded. A call that needs a
+feature the entry does not carry is ignored and reported once, as `MQ1006`
+with the feature's name, through `onInternalError`.
+
+The features:
+
+- `workers`: `linkWorker()`. See [Workers](#workers).
+- `escalation`: `escalate()`, and a `detail` above `baseline`.
+- `flightRecorder`: the `stall` and `cadence` triggers. In the page it needs
+  `escalation` as well.
+- `customMetrics`: `defineMetric()` and `observe()`.
+- `persistence`: stores each upload in IndexedDB until ingest accepts it, so
+  one the page could not send is sent on the next page load.
+
+### Compose your own
+
+`compose()` builds a collector from the drafts and features you name. Call it
+at module level, before your player constructs its first `WebTransport`:
+
+```typescript
+// collector.ts
+import { compose } from '@moqtap/collector/compose'
+import { draft14 } from '@moqtap/collector/draft14/decoder'
+import { persistence, workers } from '@moqtap/collector/features'
+
+export const init = compose({ drafts: [draft14], features: [workers, persistence] })
+```
+
+If every `WebTransport` your player opens lives in a worker, the page needs no
+draft. It then leaves the page's `WebTransport` alone and records what its
+linked workers send:
+
+```typescript
+export const init = compose({ features: [workers, persistence] })
+```
+
+`composeWorker({ drafts, features })` does the same for a worker. Of the
+features, a worker uses `flightRecorder`; everything else it reports goes to
+the page.
+
+The collector loads no code at runtime, so it works in single-file bundles,
+IIFE worker builds and pages whose CSP blocks runtime chunk loading.
 
 > **If your own code imports `@moqtap/codec`, import its draft entries.** The
-> `@moqtap/codec` root and `@moqtap/codec/session` pull in every draft, which
-> undoes a single-draft collector entry.
+> `@moqtap/codec` root and `@moqtap/codec/session` pull in every draft.
 
 ## Workers
 
@@ -244,7 +287,7 @@ nor a `connect-src` entry; everything it records is uploaded by the page.
 
 ```typescript
 // main.ts -- the page
-import { init } from '@moqtap/collector'
+import { init } from '@moqtap/collector/draft14'
 
 const vitals = init({ apiKey: 'mqt_pk_...' })
 
@@ -256,7 +299,7 @@ vitals.linkWorker(worker)
 
 ```typescript
 // transport.worker.ts -- the worker
-import { initWorker } from '@moqtap/collector/worker' // or '@moqtap/collector/draftNN/worker'
+import { initWorker } from '@moqtap/collector/draft14/worker'
 
 // With no argument the link runs over the worker's own global, which is what
 // a plain `new Worker()` gives you; pass a port for an explicit MessageChannel.
@@ -299,12 +342,18 @@ its own release.
 
 ### Worker entry points
 
-`@moqtap/collector/worker` and `@moqtap/collector/draft07/worker` through
-`@moqtap/collector/draft22/worker` export `initWorker` alone, without the
-page's uploader, storage and session. A draft-14 worker is 30.8 KB gzipped
-through `@moqtap/collector/draft14/worker`, against 47.5 KB through
-`@moqtap/collector/draft14`. Like every entry, importing one wraps the
-worker's `WebTransport`.
+The worker entries export `initWorker` alone, without the page's uploader,
+storage and session:
+
+| Import                                  | Drafts | Flight recorder | Gzipped |
+| --------------------------------------- | ------ | --------------- | ------- |
+| `@moqtap/collector/worker`              | all    | yes             | 49.3 KB |
+| `@moqtap/collector/draftNN/worker`      | one    | yes             | 30–32.5 KB |
+| `@moqtap/collector/draftNN/thin/worker` | one    | no              | 26.5–29 KB |
+
+When every connection lives in the worker, pair one of these with a page that
+imports no draft, as in [Compose your own](#compose-your-own). Like every
+prebuilt entry, importing one wraps the worker's `WebTransport`.
 
 ## Troubleshooting
 

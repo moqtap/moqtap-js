@@ -36,6 +36,7 @@ import type { ClockSource, DetailLevel, Mono } from '../types.js'
 import { levelIndex } from './defaults.js'
 import { armDormant, type DormantState, dormantPending } from './dormant.js'
 import { TRIGGER_CAPTURE_LEVEL } from './escalation.js'
+import type { FlightRecorderFeature } from './features.js'
 import {
   type CallMessage,
   envelope,
@@ -49,6 +50,12 @@ import {
   type PageMessage,
 } from './link.js'
 import { type RealmConfig, RealmObserver } from './realm.js'
+
+/** What a worker's build carries: its drafts, and the flight recorder when it has one. */
+export interface WorkerBuild {
+  readonly drafts: DraftSet
+  readonly recorder?: FlightRecorderFeature | undefined
+}
 
 export interface ProbePorts {
   readonly clock?: ClockSource
@@ -98,7 +105,7 @@ export class ProbeRuntime {
   #dormant: DormantState | undefined
   readonly #port: MessagePort
   readonly #hook: TransportHook
-  readonly #drafts: DraftSet
+  readonly #build: WorkerBuild
   readonly #clock: ClockSource
   readonly #ports: ProbePorts
   readonly #onError: (err: unknown) => void
@@ -129,7 +136,7 @@ export class ProbeRuntime {
     linked: LinkedMessage,
     port: MessagePort,
     hook: TransportHook,
-    drafts: DraftSet,
+    build: WorkerBuild,
     ports: ProbePorts = {},
     tuning: ProbeTuning = {},
   ) {
@@ -138,7 +145,7 @@ export class ProbeRuntime {
     this.#config = linked.config
     this.#port = port
     this.#hook = hook
-    this.#drafts = drafts
+    this.#build = build
     this.#ports = ports
     this.#clock = ports.clock ?? platformClock
     this.#onError = (err: unknown): void => {
@@ -173,7 +180,8 @@ export class ProbeRuntime {
       realm: 'worker',
       config: this.#config,
       hook: this.#hook,
-      drafts: this.#drafts,
+      drafts: this.#build.drafts,
+      recorder: this.#build.recorder,
       originMono: base,
       clock: this.#clock,
       host: {

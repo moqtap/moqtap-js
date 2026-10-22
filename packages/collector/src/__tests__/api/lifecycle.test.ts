@@ -33,8 +33,6 @@ import {
   linkMessage,
 } from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
-import { draftSet } from '../../draft/index.js'
-import { ALL_ADAPTERS } from '../../drafts/all.js'
 import { BODY_PREAMBLE_BYTES, readFrames, readPreamble, sha256Hex } from '../../envelope/index.js'
 import { type Chunk, ChunkStore, type LockManagerLike, MemoryBackend } from '../../flush/index.js'
 import type {
@@ -47,7 +45,7 @@ import type {
   LinkRecord,
 } from '../../types.js'
 import { chunks, concatBytes, encodeControl, subscribeBytes } from '../decode/vectors.js'
-import { attempt, init } from '../support/init.js'
+import { attempt, init, workerBuild } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
@@ -856,7 +854,7 @@ describe('worker links', () => {
     // The worker half, in this realm: it claims the hook the page installed,
     // which makes the transports below the worker's. Its clock started three
     // seconds after the page's, so its own readings are three seconds behind.
-    const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 4_000 })
+    const probe = initWorkerWith(workerBuild, channel.port2, { timeOrigin: 4_000 })
     expect(await probe.linked).toBe(true)
     expect(probe.ids()).toEqual({ sessionId: c.ids().sessionId, instanceId: c.ids().instanceId })
     // The worker's connection begins the session; its calls count from then.
@@ -1739,8 +1737,9 @@ describe('newSession() — the next playback in the same page', () => {
     c.newSession()
     c.annotate('second')
     await c.flush()
-    await settle()
-    expect(new Set(s.backlog(dest).map((e) => e.sessionId)).size).toBe(2)
+    const sessions = (): number => new Set(s.backlog(dest).map((e) => e.sessionId)).size
+    await until(() => sessions() === 2)
+    expect(sessions()).toBe(2)
     await c.discard()
     expect(s.backlog(dest)).toEqual([])
   })
@@ -1751,7 +1750,7 @@ describe('newSession() — the next playback in the same page', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl, timeOrigin: 1_000 })
     c.linkWorker(channel.port1)
     await settle(5)
-    const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 1_000 })
+    const probe = initWorkerWith(workerBuild, channel.port2, { timeOrigin: 1_000 })
     expect(await probe.linked).toBe(true)
     const wt = await openTransport()
     const conn = probe.connectionIdOf(wt as unknown as WebTransport)
@@ -1898,7 +1897,7 @@ describe('nothing before the session attaches is lost', () => {
     const channel = new MessageChannel()
     const hellos: unknown[] = []
     channel.port1.onmessage = (e) => hellos.push(e.data)
-    const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 0 })
+    const probe = initWorkerWith(workerBuild, channel.port2, { timeOrigin: 0 })
 
     const wt = await openTransport()
     await deliverControl(wt, [subscribeBytes(1n, 'video'), subscribeBytes(2n, 'audio')])
@@ -1942,7 +1941,7 @@ describe('nothing before the session attaches is lost', () => {
 
   it('releases what a worker held when no page ever links it', async () => {
     let timeout: (() => void) | undefined
-    const probe = initWorkerWith(draftSet(ALL_ADAPTERS), undefined, {
+    const probe = initWorkerWith(workerBuild, undefined, {
       target: { postMessage: () => {}, addEventListener: () => {} },
       setTimer: (fn) => {
         timeout = fn

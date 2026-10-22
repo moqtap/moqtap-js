@@ -19,8 +19,6 @@ import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { envelope } from '../../api/link.js'
 import type { LinkEvent } from '../../api/session.js'
 import { initWorkerWith } from '../../api/worker.js'
-import { draftSet } from '../../draft/index.js'
-import { ALL_ADAPTERS } from '../../drafts/all.js'
 import {
   BODY_PREAMBLE_BYTES,
   FrameWriter,
@@ -36,7 +34,7 @@ import type {
   EnvelopeRecord,
   LinkRecord,
 } from '../../types.js'
-import { attempt, init } from '../support/init.js'
+import { attempt, init, workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
@@ -262,7 +260,7 @@ describe('a worker’s records uploaded through the page, then an unload', () =>
       attempt()
       const channel = new MessageChannel()
       page.linkWorker(channel.port1)
-      const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2)
+      const probe = initWorkerWith(workerBuild, channel.port2)
       expect(await probe.linked).toBe(true)
       for (let i = 0; i < 5; i += 1) {
         probe.annotate('tick', { i })

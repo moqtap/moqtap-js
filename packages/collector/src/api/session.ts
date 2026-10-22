@@ -19,6 +19,7 @@
  *    `final`, whose `seq` the record names.
  */
 
+import { MQ1006 } from '../codes.js'
 import type { DraftSet } from '../draft/index.js'
 import { sha256Hex } from '../envelope/index.js'
 import {
@@ -35,17 +36,14 @@ import {
   deadlineSignal,
   FlushQueue,
   FlushSchedule,
-  heldInstances,
-  holdInstanceLock,
   type LockManagerLike,
-  platformLocks,
   ReleasePacer,
   sendTail,
   Uploader,
 } from '../flush/index.js'
 import type { TriggerEvent } from '../recorder/index.js'
-import { CustomMetrics, RollupEngine } from '../rollup/index.js'
-import { connectionIdOf, type TransportHook } from '../transport/index.js'
+import type { CustomMetrics } from '../rollup/index.js'
+import type { TransportHook } from '../transport/index.js'
 import type {
   ClockAnchor,
   ClockSource,
@@ -68,21 +66,19 @@ import type {
 import { COLLECTOR_VERSION } from '../version.js'
 import { addTags, type ConfigProblem, mintId, sentActorId } from './config.js'
 import { levelIndex } from './defaults.js'
-import { armDormant, type DormantState, dormantPending } from './dormant.js'
-import { EscalationController } from './escalation.js'
+import type { DormantState } from './dormant.js'
 import {
-  type CallMessage,
-  type DeflatePart,
-  envelope,
-  type ForwardMessage,
-  HEARTBEAT_MS,
-  type LinkedMessage,
-  linkMessage,
-  type PageMessage,
-  SILENCE_MS,
-} from './link.js'
+  baselineEscalation,
+  type Escalation,
+  type FeatureSet,
+  type LinkOwner,
+  type Observation,
+  type Persistence,
+  type WorkerLinks,
+} from './features.js'
+import type { DeflatePart, PageMessage } from './link.js'
 import { UsageMeter } from './meter.js'
-import { type ConnectionSnapshot, type ConnectionState, RealmObserver } from './realm.js'
+import type { ConnectionState, RealmObserver } from './realm.js'
 
 /** Re-exported for the public API; defined in `../version.js` so the dormant
  * path can read it without pulling this module in. */
@@ -142,6 +138,8 @@ export interface RuntimePorts {
   readonly onSession?: ((r: CollectorRuntime) => void) | undefined
   /** The customer's metric definitions, which carry from one session to the next. */
   readonly custom?: CustomMetrics | undefined
+  /** Features already reported missing in this page, which are not reported again. */
+  readonly reported?: Set<string> | undefined
   /** `CollectorConfig.onInternalError`, which `ResolvedConfig` deliberately omits. */
   readonly onInternalError?: (err: unknown) => void
 }
@@ -175,31 +173,22 @@ const SWEEP_AGE_INTERVALS = 3
 
 const platformClock: ClockSource = { now: () => performance.now(), wall: () => Date.now() }
 
-/** One `linkWorker()` call. */
-interface Link {
-  readonly id: string
-  readonly target: MessageTarget
-  /**
-   * The runtime this link reports into. Every handler the link installed reads
-   * it at the time of the call, so the link follows the page into a new
-   * session without touching the customer's worker.
-   */
-  owner: CollectorRuntime
-  state: 'waiting' | 'linked' | 'timeout' | 'gone'
-  port: MessagePort | null
-  lastHeard: Mono
-  ready: boolean
-  /** Records the probe reported dropped, cumulative. */
-  dropped: number
-  /** Its open connections as of the last forward. */
-  conns: readonly ConnectionSnapshot[]
-  /** The worker's `performance.timeOrigin`, from its hello. */
-  origin: number
-  /** `terminate()` was called on it: gone for good, whatever arrives after. */
-  terminated: boolean
-  timeout: unknown
-  onHello: ((e: LinkEvent) => void) | undefined
+/** What this build of the collector carries. The same for every session in the page. */
+export interface Build {
+  readonly drafts: DraftSet
+  /** `null` when the build imports no draft: the page observes no transport of its own. */
+  readonly observation: Observation | null
+  readonly features: FeatureSet
 }
+
+/** A realm's counters, for a page that observes no transport of its own. */
+const NO_COUNTERS: Omit<EndCounters, 'chunksDropped'> = Object.freeze({
+  ringEvicted: 0,
+  ringEvictedBytes: 0,
+  bucketsRefused: 0,
+  parseFailures: 0,
+  sampledTypes: [],
+})
 
 export class CollectorRuntime {
   readonly config: ResolvedConfig
@@ -214,22 +203,26 @@ export class CollectorRuntime {
   readonly #clock: ClockSource
   readonly #ports: RuntimePorts
   readonly #onError: (err: unknown) => void
-  readonly #hook: TransportHook
-  readonly #drafts: DraftSet
+  /** `null` in a build without a draft: nothing in the page is observed. */
+  readonly #hook: TransportHook | null
+  readonly #build: Build
+  readonly #persistence: Persistence | undefined
   readonly #dest: ChunkDestination
   readonly #locks: LockManagerLike | undefined
 
-  readonly #realm: RealmObserver
-  readonly #custom: CustomMetrics
+  readonly #realm: RealmObserver | null
+  readonly #custom: CustomMetrics | null
   /** Customer metrics belong to no connection, so they have an engine of their own. */
-  readonly #customRollup: RollupEngine
+  readonly #customRollup: { tick(now: Mono): void } | null
   readonly #queue: FlushQueue
   readonly #schedule: FlushSchedule
   readonly #pacer: ReleasePacer
   readonly #uploader: Uploader
   readonly #meter: UsageMeter
-  readonly #escalation: EscalationController
+  readonly #escalation: Escalation
   readonly #store: ChunkStore | null
+  /** Features already reported missing in this page. */
+  readonly #reported: Set<string>
   /**
    * Every record the page writes goes through here, so the instance's setup
    * record is always the first frame of its first body. A page that never
@@ -255,8 +248,8 @@ export class CollectorRuntime {
   #lastSealMono: Mono
   #forwardRefused = 0
 
-  #links: Link[] = []
-  #linkTimer: unknown
+  /** The page's workers, shared with every session in the page; `null` until one is linked. */
+  #links: WorkerLinks | null = null
   /**
    * Instance locks of earlier sessions in this page, held while their bodies
    * are still in this outbox, so no other page load sweeps them meanwhile.
@@ -289,14 +282,16 @@ export class CollectorRuntime {
 
   constructor(
     config: ResolvedConfig,
-    hook: TransportHook,
-    drafts: DraftSet,
+    hook: TransportHook | null,
+    build: Build,
     ports: RuntimePorts = {},
   ) {
     this.config = config
     this.#ports = ports
     this.#hook = hook
-    this.#drafts = drafts
+    this.#build = build
+    this.#persistence = build.features.persistence?.persistence
+    this.#reported = ports.reported ?? new Set()
     this.#context = {
       actorId: config.context.actorId,
       contentId: config.context.contentId,
@@ -316,7 +311,8 @@ export class CollectorRuntime {
     this.instanceId = ports.instanceId ?? mintId()
     this.#lastSealMono = this.#clock.now()
     this.#dest = { endpoint: config.endpoint, keyHash: sha256Hex(config.apiKey) }
-    this.#locks = ports.locks === null ? undefined : (ports.locks ?? platformLocks())
+    this.#locks =
+      ports.locks === null ? undefined : (ports.locks ?? this.#persistence?.platformLocks())
 
     // Every record is stamped session-relative: the queue's batch frame here,
     // and every other record by whoever writes it, against the same anchor.
@@ -352,58 +348,70 @@ export class CollectorRuntime {
       },
     }
 
-    this.#realm = new RealmObserver({
-      realm: 'page',
-      config,
-      hook,
-      drafts,
-      originMono: this.anchor.originMono,
-      clock: this.#clock,
-      host: {
-        sink: this.#sink,
-        level: () => this.#escalation.level,
-        onTrigger: (e: TriggerEvent) => this.#escalation.onTrigger(e.kind, e.atMono, e.key),
-        onConnReady: () => this.#schedule.ready(this.#clock.now()),
-        onConnClosed: () => {
-          this.#sealNow(false)
-          this.#noteClosed()
-        },
-        onOverrun: () => this.#overrun(),
-        onPressure: (p) => this.#pacer.notePressure(p),
-        onBytes: (n) => this.#schedule.noteBytes(n),
-        onError: this.#onError,
-      },
-    })
+    const observation = build.observation
+    this.#realm =
+      observation === null || hook === null
+        ? null
+        : observation.realm({
+            realm: 'page',
+            config,
+            hook,
+            drafts: build.drafts,
+            originMono: this.anchor.originMono,
+            clock: this.#clock,
+            recorder: build.features.flightRecorder,
+            host: {
+              sink: this.#sink,
+              level: () => this.#escalation.level,
+              onTrigger: (e: TriggerEvent) => this.#escalation.onTrigger(e.kind, e.atMono, e.key),
+              onConnReady: () => this.#schedule.ready(this.#clock.now()),
+              onConnClosed: () => {
+                this.#sealNow(false)
+                this.#noteClosed()
+              },
+              onOverrun: () => this.#overrun(),
+              onPressure: (p) => this.#pacer.notePressure(p),
+              onBytes: (n) => this.#schedule.noteBytes(n),
+              onError: this.#onError,
+            },
+          })
 
-    this.#custom =
-      ports.custom ?? new CustomMetrics({ onError: (m) => this.#onError(new Error(m)) })
-    this.#customRollup = new RollupEngine({
-      intervalMs: config.metrics.intervalMs,
-      maxBuckets: 1,
-      clock: this.#clock,
-      sink: this.#sink,
-      originMono: this.anchor.originMono,
-      custom: this.#custom,
-    })
+    const metrics = build.features.customMetrics
+    this.#custom = ports.custom ?? metrics?.create((m) => this.#onError(new Error(m))) ?? null
+    this.#customRollup =
+      metrics === undefined || this.#custom === null
+        ? null
+        : metrics.rollup({
+            intervalMs: config.metrics.intervalMs,
+            clock: this.#clock,
+            sink: this.#sink,
+            originMono: this.anchor.originMono,
+            custom: this.#custom,
+          })
 
-    this.#escalation = new EscalationController({
-      configured: config.detail,
-      ceilingMinutes: config.budget.elevatedMinutes,
-      windowMs: config.flightRecorder.windowMs,
-      meter: this.#meter,
-      clock: this.#clock,
-      anchor: this.anchor,
-      sink: this.#sink,
-      // The "ring filling" close condition. The ring is only written to while
-      // the recorder is armed, so on a session with no triggers configured — the
-      // default — this never advances and never closes anything.
-      ring: {
-        capacityBytes: this.#realm.ring.maxBytes,
-        evictedBytes: () => this.#realm.ring.evictedBytes,
-      },
-      onWindowOpen: (deadline) => this.#scheduleWindowClose(deadline),
-      onLevelChange: (level) => this.#broadcast({ t: 'level', level }),
-    })
+    const escalation = build.features.escalation
+    const ring = this.#realm?.ring ?? null
+    this.#escalation =
+      escalation === undefined
+        ? baselineEscalation(() => this.#missing('escalation'))
+        : escalation.create({
+            configured: config.detail,
+            ceilingMinutes: config.budget.elevatedMinutes,
+            windowMs: config.flightRecorder.windowMs,
+            meter: this.#meter,
+            clock: this.#clock,
+            anchor: this.anchor,
+            sink: this.#sink,
+            // The "ring filling" close condition. The ring is only written to
+            // while the recorder is armed, so on a session with no triggers
+            // configured — the default — this never advances and never closes
+            // anything.
+            ...(ring !== null
+              ? { ring: { capacityBytes: ring.maxBytes, evictedBytes: () => ring.evictedBytes } }
+              : {}),
+            onWindowOpen: (deadline) => this.#scheduleWindowClose(deadline),
+            onLevelChange: (level) => this.#broadcast({ t: 'level', level }),
+          })
 
     this.#uploader = new Uploader({
       endpoint: config.endpoint,
@@ -446,8 +454,9 @@ export class CollectorRuntime {
   }
 
   #begin(): void {
-    this.#releaseLock = holdInstanceLock(this.#locks, this.instanceId, this.#onError)
-    this.#realm.start(this.#dormant)
+    this.#releaseLock =
+      this.#persistence?.hold(this.#locks, this.instanceId, this.#onError) ?? (() => {})
+    this.#realm?.start(this.#dormant)
     this.#dormant = undefined
     this.#schedule.start(this.#clock.now())
     this.#startInterval()
@@ -463,7 +472,9 @@ export class CollectorRuntime {
    */
   #arm(first: boolean): void {
     this.#installLifecycle()
-    if (!this.#hook.installed) return
+    const observation = this.#build.observation
+    if (this.#hook === null || observation === null || !this.#hook.installed) return
+    const hook = this.#hook
     const begin = (from?: DormantState): void => {
       if (from !== undefined) this.#dormant = from
       try {
@@ -475,9 +486,9 @@ export class CollectorRuntime {
     const s = this.#dormant
     if (s !== undefined) {
       s.onOpen = begin
-      if (dormantPending(s)) begin()
-    } else if (first && dormantPending()) begin()
-    else this.#dormant = armDormant(this.#hook, begin)
+      if (observation.pending(s)) begin()
+    } else if (first && observation.pending()) begin()
+    else this.#dormant = observation.arm(hook, begin)
   }
 
   /** Begin the session this runtime was waiting for, in a runtime that records it. */
@@ -502,8 +513,8 @@ export class CollectorRuntime {
   /** A connection is open or being attempted, in the page or a linked worker. */
   #open(): boolean {
     return (
-      this.#links.some((l) => l.conns.length > 0) ||
-      this.#realm.connections().some((c) => c.state !== 'closed')
+      this.#links?.open() === true ||
+      this.#realm?.connections().some((c) => c.state !== 'closed') === true
     )
   }
 
@@ -541,15 +552,12 @@ export class CollectorRuntime {
 
   /** The connection id of a `WebTransport` this page created. */
   connectionIdOf(transport: unknown): string | undefined {
-    return connectionIdOf(transport)
+    return this.#build.observation?.connectionIdOf(transport)
   }
 
   /** Every connection seen in this page and its linked workers, open ones first. */
   connections(): ConnectionState[] {
-    const page = this.#realm.connections()
-    const workers: ConnectionState[] = []
-    for (const l of this.#links) for (const s of l.conns) workers.push(s.conn)
-    const all = [...page, ...workers]
+    const all = [...(this.#realm?.connections() ?? []), ...(this.#links?.connections() ?? [])]
     return [...all.filter((c) => c.state !== 'closed'), ...all.filter((c) => c.state === 'closed')]
   }
 
@@ -579,7 +587,7 @@ export class CollectorRuntime {
   }
 
   annotate(name: string, data: unknown, connectionId?: string): void {
-    if (this.#ended || this.#realm.halted) return
+    if (this.#ended || this.#realm?.halted === true) return
     this.#sink.json({
       t: 'note',
       ts: this.#relNow(),
@@ -605,7 +613,7 @@ export class CollectorRuntime {
     }
     if (typeof ctx.contentId === 'string') {
       c.contentId = ctx.contentId
-      this.#realm.setContentId(ctx.contentId)
+      this.#realm?.setContentId(ctx.contentId)
       this.#broadcast({ t: 'context', contentId: ctx.contentId })
       if (ctx.contentId !== '') record.contentId = ctx.contentId
     }
@@ -633,12 +641,14 @@ export class CollectorRuntime {
   }
 
   defineMetric(name: string, d: Parameters<CustomMetrics['defineMetric']>[1]): void {
-    this.#custom.defineMetric(name, d)
+    if (this.#custom === null) this.#missing('customMetrics')
+    else this.#custom.defineMetric(name, d)
   }
 
   observe(name: string, value: number, labels?: Record<string, string>): void {
     if (this.#armed) return
-    if (labels === undefined) this.#custom.observe(name, value)
+    if (this.#custom === null) this.#missing('customMetrics')
+    else if (labels === undefined) this.#custom.observe(name, value)
     else this.#custom.observe(name, value, labels)
   }
 
@@ -687,7 +697,7 @@ export class CollectorRuntime {
     if (this.#discarded) return
     this.#discarded = true
     this.#ended = true
-    this.#realm.detach()
+    this.#realm?.detach()
     const unsent = this.#outbox
     this.#outbox = []
     this.#teardown()
@@ -740,13 +750,14 @@ export class CollectorRuntime {
     instanceId: string,
     ports: Pick<RuntimePorts, 'armed' | 'anchor' | 'startTs'>,
   ): CollectorRuntime {
-    const runtime = new CollectorRuntime(next, this.#hook, this.#drafts, {
+    const runtime = new CollectorRuntime(next, this.#hook, this.#build, {
       ...this.#ports,
       instanceId,
       armed: false,
       anchor: undefined,
       startTs: undefined,
-      custom: this.#custom,
+      custom: this.#custom ?? undefined,
+      reported: this.#reported,
       ...ports,
     })
     // The session's tags so far, `setContext()`'s included, go on with it.
@@ -754,13 +765,11 @@ export class CollectorRuntime {
     runtime.#dormant = this.#dormant
     this.#dormant = undefined
     const outbox = this.#outbox
-    // Every link, gone ones included: a worker silent past the limit is linked
-    // again when it speaks, and the ids `w1, w2 …` stay unique in the page.
     const links = this.#links
     const locks = new Map(this.#inheritedLocks)
     if (!this.#armed) locks.set(this.instanceId, this.#releaseLock)
     this.#outbox = []
-    this.#links = []
+    this.#links = null
     this.#inheritedLocks.clear()
     this.#releaseLock = () => {}
     this.#teardown({ keepHook: true })
@@ -773,7 +782,7 @@ export class CollectorRuntime {
   #adopt(
     from: CollectorRuntime,
     outbox: readonly Chunk[],
-    links: readonly Link[],
+    links: WorkerLinks | null,
     locks: ReadonlyMap<string, () => void>,
   ): void {
     for (const c of outbox) {
@@ -787,29 +796,10 @@ export class CollectorRuntime {
       this.#begin()
       if (from.#armed) void this.#sweep()
     }
-    const now = this.#clock.now()
-    for (const link of links) {
-      link.owner = this
-      link.conns = []
-      link.ready = false
-      link.lastHeard = now
-      this.#links.push(link)
-      if (link.state === 'linked' || link.state === 'timeout') this.#writeLink(link, link.state)
-      try {
-        link.port?.postMessage(
-          envelope<PageMessage>({
-            t: 'session',
-            sessionId: this.config.sessionId,
-            instanceId: this.instanceId,
-            level: this.#escalation.level,
-            base: this.#armed ? undefined : this.#baseFor(link),
-          }),
-        )
-      } catch (err) {
-        this.#onError(err)
-      }
+    if (links !== null) {
+      this.#links = links
+      links.adopt(this.#owner)
     }
-    if (!this.#armed && this.#links.length > 0) this.#startLinkTimer()
     this.#releaseInherited()
     if (this.#outbox.length > 0) void this.#drain()
     // A session a worker began may see that worker's connection close before
@@ -818,11 +808,6 @@ export class CollectorRuntime {
     // Last: a connection already waiting begins the next session at once, and
     // this one hands over what it now holds.
     if (this.#armed) this.#arm(false)
-  }
-
-  /** What a probe subtracts from its own clock to land on this session's. */
-  #baseFor(link: Link): Mono {
-    return (this.#ports.timeOrigin ?? performance.timeOrigin) + this.anchor.originMono - link.origin
   }
 
   /** Let go of an earlier session's lock once none of its bodies is left to send. */
@@ -837,169 +822,72 @@ export class CollectorRuntime {
   /* ── worker links ─────────────────────────────────────────────────────── */
 
   /**
-   * Answer `target`'s hello, and report the link either way.
-   *
-   * Not automatic, and that is a security decision rather than an omission:
-   * the page cannot enumerate its workers, and a `message` listener on the
-   * page's own global would also hear cross-origin `postMessage` from any frame
-   * or opener. So the customer names the target, and only it is answered.
-   *
-   * `hello` is one the target sent before this runtime was running, heard on
-   * its behalf.
+   * Answer `target`'s hello, and report the link either way. `hello` is one
+   * the target sent before this runtime was running, heard on its behalf.
    */
   linkWorker(target: MessageTarget, hello?: LinkEvent): void {
-    if (this.#ended || this.#links.some((l) => l.target === target)) return
-    const link: Link = {
-      id: `w${this.#links.length + 1}`,
-      target,
-      owner: this,
-      state: 'waiting',
-      port: null,
-      lastHeard: this.#clock.now(),
-      ready: false,
-      dropped: 0,
-      conns: [],
-      origin: 0,
-      terminated: false,
-      timeout: undefined,
-      onHello: undefined,
-    }
-    this.#links.push(link)
-    link.timeout = this.#timer(() => {
-      const owner = link.owner
-      if (link.state !== 'waiting' || owner.#ended) return
-      link.state = 'timeout'
-      owner.#writeLink(link, 'timeout')
-    }, this.config.limits.linkTimeoutMs)
-    this.#wrapTerminate(link)
-    const onHello = (e: LinkEvent): void => {
-      const m = linkMessage(e.data)
-      if (m === null || m.t !== 'hello' || typeof m.timeOrigin !== 'number') return
-      link.owner.#answer(link, m.timeOrigin)
-    }
-    link.onHello = onHello
-    try {
-      target.addEventListener('message', onHello)
-      target.start?.()
-    } catch (err) {
-      this.#onError(err)
-    }
-    this.#startLinkTimer()
-    if (hello !== undefined) onHello(hello)
-  }
-
-  #answer(link: Link, workerTimeOrigin: number): void {
-    if (this.#ended || link.port !== null) return
-    let channel: MessageChannel
-    try {
-      channel = new MessageChannel()
-    } catch (err) {
-      this.#onError(err)
-      return
-    }
-    const port = channel.port1
-    link.port = port
-    link.origin = workerTimeOrigin
-    port.onmessage = (e: MessageEvent) => link.owner.#fromProbe(link, e.data)
-    const linked: LinkedMessage = {
-      t: 'linked',
-      sessionId: this.config.sessionId,
-      instanceId: this.instanceId,
-      base: this.#armed ? undefined : this.#baseFor(link),
-      level: this.#escalation.level,
-      config: {
-        metrics: this.config.metrics,
-        flightRecorder: this.config.flightRecorder,
-        limits: this.config.limits,
-        privacy: this.config.privacy,
-        upload: this.config.upload,
-        context: { ...this.config.context, ...this.#context },
-      },
-    }
-    try {
-      link.target.postMessage(envelope(linked), [channel.port2])
-    } catch (err) {
-      this.#onError(err)
-      return
-    }
-    this.#heard(link)
-  }
-
-  #fromProbe(link: Link, data: unknown): void {
     if (this.#ended) return
-    const m = linkMessage(data) as (ForwardMessage | CallMessage) | null
-    if (m === null) return
-    try {
-      // Before the session begins, all a probe says that matters is that its
-      // worker attempted a connection.
-      if (this.#armed) {
-        if (m.t === 'open') this.#beginNow()
-        return
-      }
-      this.#heard(link)
-      switch (m.t) {
-        case 'fwd':
-          this.#forwarded(link, m)
-          return
-        case 'annotate':
-          this.annotate(m.name, m.data, m.conn)
-          return
-        case 'observe':
-          this.observe(m.name, m.value, m.labels)
-          return
-        case 'escalate':
-          this.escalate(m.level, m.reason)
-          return
-        case 'resolve':
-          this.resolve(m.reason)
-          return
-        case 'trigger':
-          this.#escalation.onTrigger(m.kind, m.at + this.anchor.originMono, m.key)
-          return
-        case 'overrun':
-          this.#overrun({ overrunAt: m.at, overrunSignal: m.signal })
-          return
-      }
-    } catch (err) {
-      this.#onError(err)
+    const workers = this.#build.features.workers
+    if (workers === undefined) {
+      this.#missing('workers')
+      return
     }
+    this.#links ??= workers.create(
+      {
+        clock: this.#clock,
+        onError: this.#onError,
+        timer: (fn, ms) => this.#timer(fn, ms),
+        cancel: (h) => this.#cancel(h),
+      },
+      this.#owner,
+    )
+    this.#links.link(target, hello)
   }
 
-  /**
-   * A probe spoke: it is linked, and alive. A message a terminated worker
-   * posted before it died is still taken, but does not bring the link back.
-   */
-  #heard(link: Link): void {
-    link.lastHeard = this.#clock.now()
-    if (link.state === 'linked' || link.terminated) return
-    link.state = 'linked'
-    this.#writeLink(link, 'linked')
-  }
-
-  #forwarded(link: Link, m: ForwardMessage): void {
-    link.dropped = Math.max(link.dropped, m.dropped)
-    // A terminated worker's connections were reported closed when it went.
-    if (!link.terminated) {
-      const before = link.conns.length
-      link.conns = m.conns
-      if (m.conns.length < before) this.#noteClosed()
+  /** What the links read from, and write into, this session. */
+  readonly #owner: LinkOwner = ((): LinkOwner => {
+    const self = this
+    return {
+      get ended() {
+        return self.#ended
+      },
+      get armed() {
+        return self.#armed
+      },
+      get config() {
+        return self.config
+      },
+      get instanceId() {
+        return self.instanceId
+      },
+      get level() {
+        return self.#escalation.level
+      },
+      context: () => ({ ...self.config.context, ...self.#context }),
+      base: (origin) =>
+        (self.#ports.timeOrigin ?? performance.timeOrigin) + self.anchor.originMono - origin,
+      begin: () => self.#beginNow(),
+      writeLink: (id, ev) => self.#writeLink(id, ev),
+      append: (frames, n) => {
+        if (self.#queue.append(frames, n)) self.#schedule.noteBytes(frames.byteLength)
+        else self.#forwardRefused += n
+      },
+      sealSegment: (part) => self.#sealSegment(part),
+      ensureSetup: () => self.#ensureSetup(),
+      connReady: () => self.#schedule.ready(self.#clock.now()),
+      noteClosed: () => self.#noteClosed(),
+      sealNow: () => self.#sealNow(false),
+      annotate: (name, data, conn) => self.annotate(name, data, conn),
+      observe: (name, value, labels) => self.observe(name, value, labels),
+      escalate: (level, reason) => self.escalate(level, reason),
+      resolve: (reason) => self.resolve(reason),
+      trigger: (kind, at, key) =>
+        self.#escalation.onTrigger(kind, at + self.anchor.originMono, key),
+      overrun: (at, signal) => self.#overrun({ overrunAt: at, overrunSignal: signal }),
+      json: (r) => self.#sink.json(r),
+      relNow: () => self.#relNow(),
     }
-    if (m.ready && !link.ready) {
-      link.ready = true
-      this.#schedule.ready(this.#clock.now())
-    }
-    if (m.parts === undefined || m.n === 0) return
-    this.#ensureSetup()
-    for (const part of m.parts) {
-      if ('deflate' in part) {
-        this.#sealSegment(part)
-        continue
-      }
-      const frames = new Uint8Array(part.frames, 0, part.byteLength)
-      if (this.#queue.append(frames, part.n)) this.#schedule.noteBytes(frames.byteLength)
-      else this.#forwardRefused += part.n
-    }
-  }
+  })()
 
   /**
    * Frames a probe compressed: the end of a body of their own, sealed now
@@ -1028,97 +916,25 @@ export class CollectorRuntime {
     void this.#drain()
   }
 
-  /**
-   * The worker is gone: terminated, or silent past {@link SILENCE_MS}. Its open
-   * connections are reported closed with what its last forward said about them.
-   * If it speaks again, it is linked again and its connections continue.
-   */
-  #workerGone(link: Link): void {
-    if (link.state !== 'linked' || this.#ended) return
-    link.state = 'gone'
-    this.#writeLink(link, 'gone')
-    this.#closeForwarded(link, 'worker-gone')
-    link.conns = []
-    this.#sealNow(false)
-    this.#noteClosed()
-  }
-
-  /** Report a link's open connections closed, from its last forward. */
-  #closeForwarded(link: Link, cause: 'worker-gone' | 'session-end'): void {
-    const ts = this.#relNow()
-    for (const s of link.conns) {
-      if (s.conn.state === 'closed') continue
-      if (s.rollup !== null) this.#sink.json(s.rollup)
-      this.#sink.json({
-        t: 'conn-close',
-        ts,
-        lvl: this.#escalation.level,
-        conn: s.conn.id,
-        cause,
-        counters: s.counters,
-      })
-    }
-  }
-
-  /**
-   * Notice `terminate()` on this one `Worker` object the moment it is called,
-   * without touching `Worker.prototype`. A call that bypasses the instance —
-   * `Worker.prototype.terminate.call(w)` — is caught by the silence check.
-   */
-  #wrapTerminate(link: Link): void {
-    const w = link.target as { terminate?: unknown }
-    const original = w.terminate
-    if (typeof original !== 'function') return
-    const gone = (): void => {
-      link.terminated = true
-      link.owner.#workerGone(link)
-    }
-    try {
-      w.terminate = function terminate(this: unknown, ...args: unknown[]): unknown {
-        try {
-          gone()
-        } catch {
-          // Reporting never stands between the page and its own call.
-        }
-        return (original as (...a: unknown[]) => unknown).apply(this, args)
-      }
-    } catch (err) {
-      this.#onError(err)
-    }
-  }
-
-  #startLinkTimer(): void {
-    if (this.#linkTimer !== undefined) return
-    const run = (): void => {
-      if (this.#ended) return
-      const now = this.#clock.now()
-      for (const l of this.#links) {
-        if (l.state === 'linked' && now - l.lastHeard > SILENCE_MS) this.#workerGone(l)
-      }
-      this.#linkTimer = this.#timer(run, HEARTBEAT_MS)
-    }
-    this.#linkTimer = this.#timer(run, HEARTBEAT_MS)
-  }
-
   #broadcast(m: PageMessage): void {
-    for (const l of this.#links) {
-      if (l.port === null) continue
-      try {
-        l.port.postMessage(envelope(m))
-      } catch (err) {
-        this.#onError(err)
-      }
-    }
+    this.#links?.broadcast(m)
   }
 
-  #writeLink(link: Link, ev: LinkRecord['ev']): void {
+  #writeLink(link: string, ev: LinkRecord['ev']): void {
     this.#sink.json({
       t: 'link',
       ts: this.#relNow(),
       lvl: this.#escalation.level,
-      link: link.id,
+      link,
       ev,
     })
+  }
+
+  /** A call that needs a feature this build does not carry. Reported once per feature. */
+  #missing(feature: string): void {
+    if (this.#reported.has(feature)) return
+    this.#reported.add(feature)
+    this.#onError(new Error(`${MQ1006}: ${feature}`))
   }
 
   /* ── records ──────────────────────────────────────────────────────────── */
@@ -1166,13 +982,13 @@ export class CollectorRuntime {
   #finish(reason: EndRecord['reason']): void {
     this.#ended = true
     const now = this.#clock.now()
-    this.#realm.detach()
+    this.#realm?.detach()
     this.#schedule.stop()
     this.#escalation.close()
     this.#seal()
-    this.#realm.closeAll('session-end', now)
-    for (const l of this.#links) this.#closeForwarded(l, 'session-end')
-    this.#customRollup.tick(now)
+    this.#realm?.closeAll('session-end', now)
+    this.#links?.closeForwarded('session-end')
+    this.#customRollup?.tick(now)
     // Probes follow the page into its next session rather than stop.
     if (reason !== 'new-session' && reason !== 'idle') this.#broadcast({ t: 'unlinked' })
     const record: EndRecord = {
@@ -1183,7 +999,7 @@ export class CollectorRuntime {
       // The `end` record rides in the next body, so that body's number is the last.
       finalSeq: this.#queue.nextSeq,
       counters: {
-        ...this.#realm.counters(),
+        ...(this.#realm?.counters() ?? NO_COUNTERS),
         ...this.#probeOverrun,
         chunksDropped: this.#dropped(),
       },
@@ -1193,9 +1009,12 @@ export class CollectorRuntime {
 
   /** Records dropped on the device so far, in this page and its probes. */
   #dropped(): number {
-    let n = this.#queue.droppedRecords + this.#realm.droppedRecords + this.#forwardRefused
-    for (const l of this.#links) n += l.dropped
-    return n
+    return (
+      this.#queue.droppedRecords +
+      (this.#realm?.droppedRecords ?? 0) +
+      this.#forwardRefused +
+      (this.#links?.dropped() ?? 0)
+    )
   }
 
   /**
@@ -1234,10 +1053,10 @@ export class CollectorRuntime {
 
   #tick(): void {
     const now = this.#clock.now()
-    this.#realm.tick(now)
-    this.#customRollup.tick(now)
+    this.#realm?.tick(now)
+    this.#customRollup?.tick(now)
     this.#escalation.tick(now)
-    this.#pacer.notePressure({ objectsPerSec: this.#realm.objectRate, at: now })
+    this.#pacer.notePressure({ objectsPerSec: this.#realm?.objectRate ?? 0, at: now })
   }
 
   /**
@@ -1482,7 +1301,10 @@ export class CollectorRuntime {
     const store = this.#store
     if (store === null) return
     try {
-      const held = await heldInstances(this.#locks, this.#onError)
+      const held =
+        this.#persistence === undefined
+          ? null
+          : await this.#persistence.held(this.#locks, this.#onError)
       const cutoff = this.#clock.wall() - SWEEP_AGE_INTERVALS * this.config.upload.intervalMs
       const left = store.backlog(this.#dest).filter((e) => {
         if (e.instanceId === this.instanceId) return false
@@ -1670,7 +1492,7 @@ export class CollectorRuntime {
    */
   #teardown(opts: { keepHook?: boolean } = {}): void {
     this.#ended = true
-    this.#realm.detach()
+    this.#realm?.detach()
     this.#schedule.stop()
     this.#life.abort()
     this.#wake?.()
@@ -1678,20 +1500,14 @@ export class CollectorRuntime {
       this.#intervalHandle,
       this.#windowHandle,
       this.#retryHandle,
-      this.#linkTimer,
       this.#idleHandle,
     ]) {
       this.#cancel(h)
     }
-    for (const l of this.#links) {
-      this.#cancel(l.timeout)
-      if (l.onHello !== undefined) l.target.removeEventListener?.('message', l.onHello)
-      l.port?.close()
-    }
+    this.#links?.teardown()
     this.#intervalHandle = undefined
     this.#windowHandle = undefined
     this.#retryHandle = undefined
-    this.#linkTimer = undefined
     this.#idleHandle = undefined
     const g = globalThis as {
       removeEventListener?: (t: string, f: (e: unknown) => void, capture?: boolean) => void
@@ -1701,10 +1517,10 @@ export class CollectorRuntime {
     this.#releaseLock()
     for (const release of this.#inheritedLocks.values()) release()
     this.#inheritedLocks.clear()
-    this.#realm.clear()
+    this.#realm?.clear()
     if (opts.keepHook === true) return
     try {
-      this.#hook.uninstall()
+      this.#hook?.uninstall()
     } catch (err) {
       this.#onError(err)
     }

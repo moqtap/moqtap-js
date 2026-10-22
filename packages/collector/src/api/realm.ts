@@ -2,7 +2,8 @@
  * What one realm observes: the page, or a worker linked to it.
  *
  * A realm owns the transport hook's observer, one counting decoder and one
- * rollup per connection, the flight-recorder ring and the triggers. It turns
+ * rollup per connection, and, in a build that carries it, the flight
+ * recorder with its ring and triggers. It turns
  * what it sees into records and writes them into its host's sink. It seals,
  * stores and uploads nothing: in the page the host is the runtime that does
  * those, and in a worker the host is the probe that forwards the frames to the
@@ -35,8 +36,8 @@ import {
   readSetupFrame,
   resolveDraft,
 } from '../draft/index.js'
-import { FlightRecorder, TriggerEngine, type TriggerEvent } from '../recorder/index.js'
-import { ByteRing, parseByteDepth, type RingEntry } from '../ring/index.js'
+import type { TriggerEvent } from '../recorder/index.js'
+import type { RingEntry } from '../ring/index.js'
 import { RollupEngine } from '../rollup/index.js'
 import type { TransportHook } from '../transport/index.js'
 import {
@@ -77,6 +78,7 @@ import {
 import { levelIndex } from './defaults.js'
 import { DORMANT_DATAGRAM_STREAM_ID, type DormantState, drainDormant } from './dormant.js'
 import { type EarlyConnection, halfOf } from './early.js'
+import type { FlightRecorderFeature, RealmRecorder, Ring } from './features.js'
 
 /**
  * The droppable set, and the whole of it.
@@ -156,6 +158,8 @@ export interface RealmOptions {
   /** The session anchor's monotonic origin. Every `ts` this realm writes is relative to it. */
   readonly originMono: Mono
   readonly clock: ClockSource
+  /** The flight recorder, when the build carries it. Without it the realm rings nothing. */
+  readonly recorder?: FlightRecorderFeature | undefined
 }
 
 /** A connection as the page's API and the probe's snapshots report it. */
@@ -316,9 +320,7 @@ export class RealmObserver {
   readonly #o: RealmOptions
   readonly #host: RealmHost
   readonly #origin: Mono
-  readonly #ring: ByteRing
-  readonly #recorder: FlightRecorder
-  readonly #triggers: TriggerEngine
+  readonly #recorder: RealmRecorder | null = null
   readonly #connections = new Map<string, Connection>()
   /** Closed connections, for `connections()` and the counters on `end`. */
   readonly #closed: ConnectionState[] = []
@@ -349,29 +351,30 @@ export class RealmObserver {
     this.#host = o.host
     this.#origin = o.originMono
     this.#contentId = o.config.context.contentId
-    this.#ring = new ByteRing({ maxBytes: this.#depthBytes() })
-    this.#recorder = new FlightRecorder({
-      ring: this.#ring,
-      sink: this.#sink,
-      adapter: (e) => this.#connectionFor(e.key)?.adapter,
-      keys: (e) => this.#connectionFor(e.key)?.keys,
-      conn: (e) => this.#connectionFor(e.key)?.id ?? '',
-      level: () => this.#host.level(),
-      originMono: this.#origin,
-    })
-    this.#triggers = new TriggerEngine({
-      config: o.config.flightRecorder.triggers,
-      medians: {
-        medianFor: (k) => this.#rollupOwning(k)?.medianFor(k),
-        medianSamplesFor: (k) => this.#rollupOwning(k)?.medianSamplesFor(k) ?? 0,
-      },
-      onFire: (e) => this.#onTriggerFired(e),
-    })
+    const f = o.recorder
+    if (f !== undefined) {
+      this.#recorder = f.create(
+        {
+          config: o.config.flightRecorder,
+          sink: this.#sink,
+          adapter: (e) => this.#connectionFor(e.key)?.adapter,
+          keys: (e) => this.#connectionFor(e.key)?.keys,
+          conn: (e) => this.#connectionFor(e.key)?.id ?? '',
+          level: () => this.#host.level(),
+          originMono: this.#origin,
+          medianFor: (k) => this.#rollupOwning(k)?.medianFor(k),
+          medianSamplesFor: (k) => this.#rollupOwning(k)?.medianSamplesFor(k) ?? 0,
+          onFire: (e) => this.#onTriggerFired(e),
+          onError: (err) => this.#host.onError(err),
+        },
+        f.ring(this.#depthBytes(f)),
+      )
+    }
   }
 
   /** The ring's bounds, for the escalation controller's "ring filled" close condition. */
-  get ring(): ByteRing {
-    return this.#ring
+  get ring(): Ring | null {
+    return this.#recorder?.ring ?? null
   }
 
   get halted(): boolean {
@@ -415,10 +418,10 @@ export class RealmObserver {
       // Dormant bytes mean this realm has already opened a WebTransport, so the
       // ring is wanted now. Otherwise it waits for `onSessionOpen`: a page
       // that only links workers never opens one and must not hold the memory.
-      this.#ring.reserve()
+      this.#recorder?.ring.reserve()
       this.#adoptDormantRing(dormant.entries)
     }
-    this.#recorder.arm(this.#o.config.flightRecorder.triggers)
+    this.#recorder?.arm(this.#o.config.flightRecorder.triggers)
     // `setObserver` replays every session that was already open, `onSessionOpen`
     // first and then the negotiated protocol — which is the ordinary case on a
     // page that connects at load and calls `init()` after its own bootstrap.
@@ -443,7 +446,7 @@ export class RealmObserver {
    */
   tick(now: Mono): void {
     for (const c of this.#connections.values()) c.rollup.tick(now)
-    this.#triggers.tick(now)
+    this.#recorder?.tick(now)
   }
 
   /** Every open connection with its open rollup interval, which stays open. */
@@ -474,8 +477,8 @@ export class RealmObserver {
       bucketsRefused += c.rollup.bucketsRefused
     }
     return {
-      ringEvicted: this.#ring.evicted,
-      ringEvictedBytes: this.#ring.evictedBytes,
+      ringEvicted: this.#recorder?.ring.evicted ?? 0,
+      ringEvictedBytes: this.#recorder?.ring.evictedBytes ?? 0,
       bucketsRefused,
       parseFailures,
       sampledTypes: [...this.#sampledTypes],
@@ -500,8 +503,7 @@ export class RealmObserver {
         this.#host.onError(err)
       }
     }
-    this.#recorder.disarm()
-    this.#triggers.reset()
+    this.#recorder?.disarm()
   }
 
   /**
@@ -515,7 +517,7 @@ export class RealmObserver {
 
   /** Release memory. After this the realm is inert. */
   clear(): void {
-    this.#ring.clear()
+    this.#recorder?.ring.clear()
     this.#connections.clear()
   }
 
@@ -529,7 +531,7 @@ export class RealmObserver {
     // writes to it. A session opens before its first chunk, which keeps the
     // allocation off the data path. Ahead of the cap: a refused transport's
     // bytes are still ringed.
-    if (this.#armed()) this.#ring.reserve()
+    if (this.#armed()) this.#recorder?.ring.reserve()
     if (this.#connections.size >= this.#o.config.limits.maxConcurrentTransports) {
       // "Cap concurrent transports at 8: real clients are genuinely
       // bounded there, so the cap only ever fires on something wrong." Counted,
@@ -623,7 +625,7 @@ export class RealmObserver {
     // is not frame-aligned, so masking it here would mean a second
     // frame-aligned parser at the seam.
     if (this.#armed() && !c.control) {
-      this.#ring.push({
+      this.#recorder?.ring.push({
         sessionId: c.sessionId,
         streamId: c.streamId,
         dir: c.direction,
@@ -700,7 +702,7 @@ export class RealmObserver {
   onDatagram(c: DatagramChunk): void {
     if (this.#halted) return
     if (this.#armed()) {
-      this.#ring.push({
+      this.#recorder?.ring.push({
         sessionId: c.sessionId,
         streamId: DORMANT_DATAGRAM_STREAM_ID,
         dir: c.direction,
@@ -821,7 +823,7 @@ export class RealmObserver {
           this.#writeConnOpen(c)
         }
         rollup.onObject(s)
-        this.#triggers.onObject(s)
+        this.#recorder?.onObject(s)
         const lvl = this.#host.level()
         if (lvl !== 'baseline') this.#writeHdr(c, s, lvl)
       },
@@ -1123,19 +1125,21 @@ export class RealmObserver {
    * Armed is "ring overwriting in memory ... nothing parsed, nothing
    * produced, nothing sent". Disarmed it is not a cheaper ring, it is no ring:
    * a session with no triggers configured — the default, since automated mode
-   * ships off — pays neither the memory nor the per-chunk copy.
+   * ships off — pays neither the memory nor the per-chunk copy, and a build
+   * without the recorder has no ring at all.
    */
   #armed(): boolean {
+    if (this.#recorder === null) return false
     const t = this.#o.config.flightRecorder.triggers
     return t.stall !== undefined || t.cadence !== undefined
   }
 
-  #depthBytes(): number {
+  #depthBytes(f: FlightRecorderFeature): number {
     try {
-      return parseByteDepth(this.#o.config.flightRecorder.depth)
+      return f.parseDepth(this.#o.config.flightRecorder.depth)
     } catch (err) {
       this.#host.onError(err)
-      return parseByteDepth('32MB')
+      return f.parseDepth('32MB')
     }
   }
 
@@ -1186,8 +1190,10 @@ export class RealmObserver {
   }
 
   #adoptDormantRing(entries: readonly RingEntry[]): void {
+    const ring = this.#recorder?.ring
+    if (ring === undefined) return
     for (const e of entries) {
-      this.#ring.push({
+      ring.push({
         sessionId: e.sessionId,
         streamId: e.streamId,
         dir: e.dir,
@@ -1204,7 +1210,7 @@ export class RealmObserver {
     // and "the pre-trigger dump is that window's first record". Raise first so
     // the dump is stamped at the window's level, then fire.
     this.#host.onTrigger(e)
-    this.#recorder.fire(e)
+    this.#recorder?.fire(e)
   }
 
   /** The connection whose decoder minted `k`; the newest one with a draft when there is no key. */

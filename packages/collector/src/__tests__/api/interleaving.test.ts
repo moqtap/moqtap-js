@@ -33,8 +33,6 @@ import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { envelope, FORWARD_INTERVAL_MS, type LinkedMessage, linkMessage } from '../../api/link.js'
 import { ProbeRuntime, type ProbeTuning } from '../../api/probe.js'
 import type { LinkEvent, MessageTarget } from '../../api/session.js'
-import { draftSet } from '../../draft/index.js'
-import { ALL_ADAPTERS } from '../../drafts/all.js'
 import {
   BODY_PREAMBLE_BYTES,
   type DeflateSegment,
@@ -51,14 +49,14 @@ import {
 import { installWebTransportHook } from '../../transport/index.js'
 import type { BatchRecord, ClockSource, EndRecord, EnvelopeRecord } from '../../types.js'
 import { subscribeBytes } from '../decode/vectors.js'
-import { attempt, init } from '../support/init.js'
+import { attempt, init, workerBuild } from '../support/init.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
 const SESSION = 'sess-interleave'
 const ENDPOINT = 'https://ingest.test/v1/ingest'
 const WALL_ORIGIN = 1_700_000_000_000
-const drafts = draftSet(ALL_ADAPTERS)
+const drafts = workerBuild
 
 /* ── the harness ────────────────────────────────────────────────────────── */
 

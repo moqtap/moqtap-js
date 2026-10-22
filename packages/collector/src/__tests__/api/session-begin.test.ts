@@ -11,8 +11,6 @@ import { envelope, type LinkedMessage, linkMessage } from '../../api/link.js'
 import { ProbeRuntime } from '../../api/probe.js'
 import { IDLE_END_MS, type LinkEvent } from '../../api/session.js'
 import { initWorkerWith } from '../../api/worker.js'
-import { draftSet } from '../../draft/index.js'
-import { ALL_ADAPTERS } from '../../drafts/all.js'
 import { sha256Hex } from '../../envelope/index.js'
 import {
   type Chunk,
@@ -26,7 +24,7 @@ import {
 } from '../../flush/index.js'
 import { installWebTransportHook } from '../../transport/index.js'
 import type { CollectorConfig, EnvelopeRecord } from '../../types.js'
-import { attempt, init } from '../support/init.js'
+import { attempt, init, workerBuild } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
 import { allRecords, of, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
@@ -343,7 +341,7 @@ describe('the first WebTransport begins the session', () => {
     await settle(5)
     // The worker half, in this realm: it claims the hook the page installed,
     // which makes the transports below the worker's.
-    const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 0 })
+    const probe = initWorkerWith(workerBuild, channel.port2, { timeOrigin: 0 })
     expect(await probe.linked).toBe(true)
     expect(probe.ids()).toEqual({ sessionId: c.ids().sessionId, instanceId: c.ids().instanceId })
     await settle(5)
@@ -382,7 +380,7 @@ describe('the first WebTransport begins the session', () => {
         const port = transfer?.[0] as MessagePort | undefined
         if (linkMessage(m)?.t !== 'linked' || port === undefined) return
         ports.push(port)
-        new ProbeRuntime(m as unknown as LinkedMessage, port, hook, draftSet(ALL_ADAPTERS)).start()
+        new ProbeRuntime(m as unknown as LinkedMessage, port, hook, workerBuild).start()
       },
       addEventListener: (_t, f) => {
         listener = f

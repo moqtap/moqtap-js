@@ -31,6 +31,8 @@ export const MQ1002 = 'MQ1002'
 export const MQ1003 = 'MQ1003'
 /** `init()` was called while an earlier collector was still running. */
 export const MQ1004 = 'MQ1004'
+/** A call or an option needs a feature this build does not include. */
+export const MQ1006 = 'MQ1006'
 /** A number option was not a finite number at or above its minimum. */
 export const MQ1101 = 'MQ1101'
 /** A boolean option was not a boolean. */

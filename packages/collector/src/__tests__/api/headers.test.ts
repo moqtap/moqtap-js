@@ -22,8 +22,6 @@ import {
   linkMessage,
 } from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
-import { draftSet } from '../../draft/index.js'
-import { ALL_ADAPTERS } from '../../drafts/all.js'
 import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/index.js'
 import type {
   BatchRecord,
@@ -34,7 +32,7 @@ import type {
   HdrRecord,
 } from '../../types.js'
 import { datagramBytes, fetchBytes, subgroupBytes, subscribeBytes } from '../decode/vectors.js'
-import { init } from '../support/init.js'
+import { init, workerBuild } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
@@ -374,7 +372,7 @@ describe('a linked worker writes object headers and forwards them', () => {
   it('follows the level the page sends, on the worker’s own connection', async () => {
     // The worker's realm alone; the test plays the page.
     const channel = new MessageChannel()
-    const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 0 })
+    const probe = initWorkerWith(workerBuild, channel.port2, { timeOrigin: 0 })
     const page = new MessageChannel()
     const forwards: ForwardMessage[] = []
     page.port1.onmessage = (e) => {
@@ -433,7 +431,7 @@ describe('a linked worker forwards its headers compressed', () => {
     const channel = new MessageChannel()
     c.linkWorker(channel.port1)
     await settle(5)
-    const probe = initWorkerWith(draftSet(ALL_ADAPTERS), channel.port2, { timeOrigin: 0 })
+    const probe = initWorkerWith(workerBuild, channel.port2, { timeOrigin: 0 })
     expect(await probe.linked).toBe(true)
     // The worker's connection begins the session, and detail can be raised in it.
     const peer = await connect()

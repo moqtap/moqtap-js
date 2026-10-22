@@ -24,8 +24,13 @@ import {
   releaseDormantEarly,
   resetDormantForTest,
   teardownDormant,
+  useDormantRing,
 } from '../../api/dormant.js'
+import { flightRecorder } from '../../features/flight-recorder.js'
 import { bytes, connect, MockWebTransport, SETUP_PREFIX } from '../transport/mocks.js'
+
+// The ring is the flight recorder's: a build that carries it rings object data.
+useDormantRing(flightRecorder.ring)
 
 /**
  * A unidirectional stream that is NOT the control plane.
@@ -136,7 +141,7 @@ describe('the bounded ring', () => {
 
     const state = dormantState()
     expect(state).not.toBeNull()
-    expect((state as NonNullable<typeof state>).ring.bytes).toBeGreaterThan(0)
+    expect((state as NonNullable<typeof state>).ring?.bytes).toBeGreaterThan(0)
   })
 
   it('keeps the control plane out of the ring', async () => {
@@ -149,7 +154,7 @@ describe('the bounded ring', () => {
     await readOneUniStream(wt, [SETUP_PREFIX, bytes(0xde, 0xad, 0xbe, 0xef)])
     await settle()
 
-    expect(dormantState()?.ring.bytes).toBe(0)
+    expect(dormantState()?.ring?.bytes).toBe(0)
     expect(drainDormant().entries).toEqual([])
   })
 
@@ -174,7 +179,7 @@ describe('the bounded ring', () => {
 
     const first = drainDormant()
     expect(first.entries.length).toBeGreaterThan(0)
-    expect(dormantState()?.ring.bytes).toBe(0)
+    expect(dormantState()?.ring?.bytes).toBe(0)
     expect(drainDormant().entries.length).toBe(0)
   })
 

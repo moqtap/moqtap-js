@@ -40,7 +40,13 @@ There is no default and there cannot be one: without a key there is nothing to a
 
 ### `MQ1004` — init() called while an earlier collector was still running
 
-`init()` was called again without `stop()` or `abort()` on the collector it returned last time. There is one hook on `globalThis.WebTransport` and one observer attached to it, so the newer collector takes over — your most recent intent — and the older one stops seeing traffic from that moment, reporting only what it had already buffered. Calling `init()` twice is supported when the first collector was stopped: a single-page application that switches channel may `stop()` and re-`init()` freely, and it need not await the `stop()` promise first. This code says only that nobody stopped the previous one, which is worth knowing because the older collector's session will look truncated for no reason visible in its own data.
+`init()` was called again without `end()` or `discard()` on the collector it returned last time. There is one hook on `globalThis.WebTransport` and one observer attached to it, so the newer collector takes over — your most recent intent — and the older one stops seeing traffic from that moment, reporting only what it had already buffered. Calling `init()` twice is supported when the first collector was ended: a single-page application that switches channel may `end()` and re-`init()` freely, and it need not await the `end()` promise first. This code says only that nobody ended the previous one, which is worth knowing because the older collector's session will look truncated for no reason visible in its own data.
+
+### `MQ1006` — A call or an option needs a feature this build does not include
+
+A build carries only the features its entry imports. `linkWorker()` needs `workers`; `escalate()` and a `detail` above baseline need `escalation`; `flightRecorder.triggers` needs `flightRecorder` and, in the page, `escalation`; `defineMetric()` and `observe()` need `customMetrics`. The call is ignored and reported once per feature. Import an entry that includes the feature, or add it with `compose()`.
+
+*Value carried:* the feature: workers, escalation, flightRecorder or customMetrics.
 
 ### `MQ1101` — expected a finite number at or above the minimum
 
@@ -236,7 +242,7 @@ The last segment of a session is delivered on `pagehide`, when the page is going
 
 ### `MQ5002` — drain deadline expired
 
-`stop()` is awaited by a page tearing down, so the drain is bounded. Expiry is not data loss: the chunk stays queued and persisted, and the next session on the same origin sends it. The deadline gives up on the attempt, never on the data.
+`end()` is awaited by a page tearing down, so the drain is bounded. Expiry is not data loss: the chunk stays queued and persisted, and the next session on the same origin sends it. The deadline gives up on the attempt, never on the data.
 
 *Value carried:* the deadline in milliseconds.
 

@@ -85,30 +85,42 @@ function assertNoCodecRootImport(): void {
 
 assertNoCodecRootImport()
 
+/**
+ * Entries with declarations of their own. Every prebuilt collector — the root,
+ * `worker` and each draft's four — installs the dormant hook at module-eval
+ * time, which is why package.json marks each as having side effects;
+ * `compose`, `features`, `internal` and the decoders install nothing.
+ */
 const TYPED_ENTRIES: Record<string, string> = {
-  // Every entry but `internal` installs the dormant hook at module-eval
-  // time, which is why package.json marks each as having side effects.
   index: 'src/index.ts',
-  // Installs nothing: the parts a test, a harness or the extension builds on.
+  // `initWorker` without the page side, for a dedicated worker.
+  worker: 'src/worker.ts',
+  compose: 'src/compose.ts',
+  features: 'src/features/index.ts',
+  // The parts a test, a harness or the extension builds on.
   internal: 'src/internal.ts',
   // `draft20`, not `d20` — every other package in this workspace uses the
   // zero-padded form and `d20` would be the only one of its kind.
-  //
-  // One entry per draft: the same API with that draft's decoder and no other's.
-  ...Object.fromEntries(DRAFTS.map((d) => [`draft${d}`, `src/drafts/draft${d}/entry.ts`])),
-  // `initWorker` without the page side, for a dedicated worker.
-  worker: 'src/worker.ts',
+  ...Object.fromEntries(
+    DRAFTS.map((d) => [`draft${d}-decoder`, `src/drafts/draft${d}/decoder.ts`]),
+  ),
 }
 
 /**
- * One per draft, flat (`draft14-worker` for `./draft14/worker`): dist/ holds no
- * subdirectories, which `scripts/smoke.ts` holds it to. Their declarations are
- * `worker`'s, which package.json points them at: the decoder a worker entry
- * carries is not in its types, and a declaration build per entry runs the
- * build out of memory.
+ * Each draft's prebuilt collectors, flat (`draft14-thin-worker` for
+ * `./draft14/thin/worker`): dist/ holds no subdirectories, which
+ * `scripts/smoke.ts` holds it to. A page entry's declarations are `index`'s
+ * and a worker entry's are `worker`'s, which package.json points them at: the
+ * decoder an entry carries is not in its types, and a declaration build per
+ * entry runs the build out of memory.
  */
-const DRAFT_WORKER_ENTRIES: Record<string, string> = Object.fromEntries(
-  DRAFTS.map((d) => [`draft${d}-worker`, `src/drafts/draft${d}/worker.ts`]),
+const DRAFT_ENTRIES: Record<string, string> = Object.fromEntries(
+  DRAFTS.flatMap((d) => [
+    [`draft${d}`, `src/drafts/draft${d}/entry.ts`],
+    [`draft${d}-thin`, `src/drafts/draft${d}/thin.ts`],
+    [`draft${d}-worker`, `src/drafts/draft${d}/worker.ts`],
+    [`draft${d}-thin-worker`, `src/drafts/draft${d}/thin-worker.ts`],
+  ]),
 )
 
 export default defineConfig({
@@ -126,6 +138,6 @@ export default defineConfig({
     },
   },
   sourcemap: false,
-  entry: { ...TYPED_ENTRIES, ...DRAFT_WORKER_ENTRIES },
+  entry: { ...TYPED_ENTRIES, ...DRAFT_ENTRIES },
   external: CODEC_ALLOWED,
 })
