@@ -69,7 +69,7 @@ import { StreamRegistry } from './stream-registry.js'
  * ── 4. Stream ids are per session, session ids are `crypto.randomUUID()`
  *
  * The session id feeds `sha256(sessionId + ':' + segmentSeq)` and ingest dedupes
- * exactly, so a collision is a silently discarded and under-billed session.
+ * exactly, so a collision is a silently discarded and undercounted session.
  *
  * ── 5. Every interceptor is installed unconditionally
  *
@@ -1548,7 +1548,7 @@ function defaultClock(): ClockSource {
  *
  * `crypto.randomUUID()` (see `HookOptions.sessionId` in `types.ts`), because the
  * id feeds `sha256(sessionId + ':' + segmentSeq)` and ingest dedupes exactly: a
- * collision is a silently discarded and under-billed session. A timestamp-plus-
+ * collision is a silently discarded and undercounted session. A timestamp-plus-
  * counter id collides across two tabs opened in the same millisecond.
  *
  * `randomUUID` is unavailable on insecure origins in some browsers, so there

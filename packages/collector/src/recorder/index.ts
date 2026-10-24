@@ -13,8 +13,8 @@
  *    never one row per object, which is the shape the O(1) budget exists to avoid.
  *
  * Nothing in this module runs while merely armed. The ring overwrites itself and
- * no byte of it is parsed, which is what makes the "we do not bill for
- * readiness" a property of the implementation rather than a claim about it.
+ * no byte of it is parsed, which is what makes "readiness costs nothing" a property of the
+ * implementation rather than a claim about it.
  *
  * The only thing that crosses from the ring to the wire is derived records
  * payload bytes are skipped by arithmetic and never viewed, copied or

@@ -5,6 +5,18 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-10-24
+
+### Added
+
+- While the workspace has used its recording minutes for the month, detail
+  is held at `baseline`: `escalate()`, flight-recorder triggers and capture
+  windows are refused, and a raised level drops to `baseline` at the next
+  rollup interval. The hold ends when the UTC month ends, or within 10
+  minutes of a move to a plan with more minutes.
+- `EscalationRecord.by` has a new kind, `hold`, and `Directive` has a new
+  field, `hold`.
+
 ## [0.9.1] - 2026-10-22
 
 ### Changed
@@ -269,7 +281,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`@moqtap/codec` is an ordinary dependency, not a peer.** `npm install
-  @moqtap/collector` is the whole install; nothing else has to be named.
+@moqtap/collector` is the whole install; nothing else has to be named.
   Nobody using this package imports the codec themselves, so requiring them
   to resolve a peer range was asking for a decision they have no basis to
   make. The range is `>=0.11.0`, the first version carrying the token
@@ -278,7 +290,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The `license` field reads `FSL-1.1-MIT`.** It was `SEE LICENSE IN
-  LICENSE`, which npm renders verbatim instead of naming the licence.
+LICENSE`, which npm renders verbatim instead of naming the licence.
 
 ## [0.1.0] - 2026-09-17
 

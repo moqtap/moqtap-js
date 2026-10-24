@@ -467,3 +467,72 @@ describe('a raise ingest asked for', () => {
     expect(f.records).toEqual([])
   })
 })
+
+describe('a hold ingest asked for', () => {
+  it('refuses every raise until its end, and records none of them', () => {
+    const f = fixture()
+    f.ctl.hold(60_000)
+    f.ctl.escalate('headers', 'mine')
+    f.ctl.onTrigger('stall', 0)
+    f.ctl.remote('headers', 30_000)
+    f.tick()
+    expect(f.ctl.level).toBe('baseline')
+    expect(f.ctl.refused).toBe(3)
+    expect(f.records).toEqual([])
+  })
+
+  it('ends an open window at the next interval, and the meter with it', () => {
+    const f = fixture()
+    f.ctl.escalate('headers+sizes')
+    f.ctl.hold(600_000)
+    expect(f.ctl.level).toBe('headers+sizes')
+    f.advance(5_000)
+    f.tick()
+    expect(f.ctl.level).toBe('baseline')
+    expect(f.ctl.windowOpen).toBe(false)
+    expect(f.records[1]).toMatchObject({
+      from: 'headers+sizes',
+      to: 'baseline',
+      by: { kind: 'hold' },
+    })
+    const billed = f.meter.billableSeconds
+    f.advance(60_000)
+    expect(f.meter.billableSeconds).toBe(billed)
+  })
+
+  it('holds a statically elevated session at baseline, and returns it once the hold ends', () => {
+    const f = fixture({ configured: 'headers' })
+    f.ctl.hold(10_000)
+    f.tick()
+    expect(f.ctl.level).toBe('baseline')
+    f.advance(9_999)
+    f.tick()
+    expect(f.ctl.level).toBe('baseline')
+    f.advance(1)
+    f.tick()
+    expect(f.ctl.level).toBe('headers')
+    expect(f.records.map((r) => [r.to, r.by.kind])).toEqual([
+      ['baseline', 'hold'],
+      ['headers', 'hold'],
+    ])
+  })
+
+  it('lets a raise through once its end has passed', () => {
+    const f = fixture()
+    f.ctl.hold(10_000)
+    f.advance(10_000)
+    f.ctl.escalate('headers')
+    expect(f.ctl.level).toBe('headers')
+    f.tick()
+    expect(f.ctl.level).toBe('headers')
+  })
+
+  it('takes the latest answer, so ingest can end it early', () => {
+    const f = fixture()
+    f.ctl.hold(600_000)
+    f.ctl.hold(5_000)
+    f.advance(5_000)
+    f.ctl.onTrigger('stall', 5_000)
+    expect(f.ctl.level).toBe('headers')
+  })
+})

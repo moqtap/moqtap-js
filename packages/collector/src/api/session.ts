@@ -33,6 +33,7 @@ import {
   DIRECTIVE_FLUSH_MAX_MS,
   DIRECTIVE_FLUSH_MAX_SPAN_MS,
   DIRECTIVE_FLUSH_MIN_MS,
+  DIRECTIVE_HOLD_MAX_SPAN_MS,
   deadlineSignal,
   FlushQueue,
   FlushSchedule,
@@ -1064,8 +1065,8 @@ export class CollectorRuntime {
    *
    * `_tick` already drives `EscalationController.tick`, but it runs on
    * `metrics.intervalMs` — 10 s by default and a customer setting — so on its
-   * own it would close a 15 s window at 20 s and bill five seconds nobody
-   * captured. One timer per opened window, cleared on the next one.
+   * own it would close a 15 s window at 20 s and count five seconds nobody
+   * captured toward recording minutes. One timer per opened window, cleared on the next one.
    */
   private _scheduleWindowClose(deadlineMono: Mono): void {
     this._cancel(this._windowHandle)
@@ -1220,9 +1221,11 @@ export class CollectorRuntime {
 
   /**
    * Do what ingest asked, within bounds: a shorter seal interval while someone
-   * watches the session, and raised detail while a capture window covers it.
-   * Its times are the server's clock, so they are read against the server's
-   * time in the same answer.
+   * watches the session, raised detail while a capture window covers it, and
+   * detail held at baseline once the workspace's recording minutes are used up.
+   * The hold is read first, so a raise in the same answer is refused. Its times
+   * are the server's clock, so they are read against the server's time in the
+   * same answer.
    */
   private _obey(outcome: UploadOutcome): void {
     const d = outcome.directive
@@ -1234,6 +1237,11 @@ export class CollectorRuntime {
         const span = d.until === undefined ? DIRECTIVE_FLUSH_MAX_SPAN_MS : d.until - serverNow
         const forMs = Math.min(DIRECTIVE_FLUSH_MAX_SPAN_MS, span)
         if (forMs > 0) this._schedule.shorten(ms, forMs)
+      }
+      const h = d.hold
+      if (h !== undefined) {
+        const forMs = Math.min(DIRECTIVE_HOLD_MAX_SPAN_MS, h.until - serverNow)
+        if (forMs > 0) this._escalation.hold(this._clock.now() + forMs)
       }
       const e = d.elevate
       if (e !== undefined) {

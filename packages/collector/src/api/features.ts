@@ -123,6 +123,7 @@ export interface Escalation {
   resolve(reason?: string): void
   onTrigger(kind: TriggerKind, atMono: Mono, key?: BucketKey): void
   remote(to: DetailLevel, deadlineMono: Mono, reason?: string): void
+  hold(untilMono: Mono): void
   tick(now: Mono): void
   close(): void
   unload(): void
@@ -276,6 +277,7 @@ export function baselineEscalation(missing: () => void): Escalation {
     resolve() {},
     onTrigger() {},
     remote() {},
+    hold() {},
     tick() {},
     close() {},
     unload() {},

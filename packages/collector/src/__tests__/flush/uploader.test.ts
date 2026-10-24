@@ -324,13 +324,16 @@ describe('parseDirective', () => {
           until: 10,
           extra: 1,
           elevate: { level: 'headers+sizes', until: 20, reason: 'window', x: 1 },
+          hold: { until: 30, x: 1 },
         }),
       ),
     ).toEqual({
       flushMs: 2_000,
       until: 10,
       elevate: { level: 'headers+sizes', until: 20, reason: 'window' },
+      hold: { until: 30 },
     })
+    expect(parseDirective('{"hold":{"until":30}}')).toEqual({ hold: { until: 30 } })
     expect(parseDirective('{"elevate":{"level":"headers","until":5}}')).toEqual({
       elevate: { level: 'headers', until: 5, reason: '' },
     })
@@ -349,6 +352,10 @@ describe('parseDirective', () => {
       '{"until":5}',
       '{"elevate":{"level":"verbose","until":5}}',
       '{"elevate":{"level":"headers"}}',
+      '{"hold":{}}',
+      '{"hold":30}',
+      '{"hold":{"until":"30"}}',
+      '{"hold":{"untilMs":30}}',
       `{"flushMs":2000,"pad":"${'x'.repeat(2_048)}"}`,
     ]) {
       expect(parseDirective(raw)).toBeUndefined()

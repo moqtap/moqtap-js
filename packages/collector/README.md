@@ -64,19 +64,19 @@ runtime chunk loading.
 
 `apiKey` is the only required key. The rest is grouped by what you are deciding:
 
-| Key              | What it controls                                                  |
-| ---------------- | ----------------------------------------------------------------- |
-| `endpoint`       | Where uploads go. Defaults to the hosted ingest.                   |
+| Key              | What it controls                                                      |
+| ---------------- | --------------------------------------------------------------------- |
+| `endpoint`       | Where uploads go. Defaults to the hosted ingest.                      |
 | `sessionId`      | Your own id for the first session, up to 128 UTF-8 bytes; else minted |
-| `context`        | `actorId`, `contentId`, `environment`, `release`, `tags`           |
-| `detail`         | `baseline`, `headers`, `headers+sizes` or `headers+data`           |
-| `metrics`        | How often the rollup closes, how many tracks it follows            |
-| `flightRecorder` | Memory depth, triggers, how long a triggered window stays open     |
-| `budget`         | Elevated minutes                                                   |
-| `upload`         | When to upload, how hard to retry, when to give up                 |
-| `storage`        | Space for uploads waiting to be sent                               |
-| `privacy`        | Auth-token masking, on by default; actor-id hashing, off           |
-| `limits`         | Safety valves a healthy integration never touches                  |
+| `context`        | `actorId`, `contentId`, `environment`, `release`, `tags`              |
+| `detail`         | `baseline`, `headers`, `headers+sizes` or `headers+data`              |
+| `metrics`        | How often the rollup closes, how many tracks it follows               |
+| `flightRecorder` | Memory depth, triggers, how long a triggered window stays open        |
+| `budget`         | Elevated minutes                                                      |
+| `upload`         | When to upload, how hard to retry, when to give up                    |
+| `storage`        | Space for uploads waiting to be sent                                  |
+| `privacy`        | Auth-token masking, on by default; actor-id hashing, off              |
+| `limits`         | Safety valves a healthy integration never touches                     |
 
 ```typescript
 init({
@@ -109,8 +109,9 @@ Every threshold is a config key with a recorded default. Read the defaults from
 
 `detail` sets the level for the whole session. `escalate()` raises it for a
 window that `resolve()` closes, and a flight-recorder trigger raises it to
-`headers` for the window it opens. Time above `baseline` is elevated usage,
-bounded by `budget.elevatedMinutes`.
+`headers` for the window it opens. Time above `baseline` counts toward the
+workspace's recording minutes for the month; `budget.elevatedMinutes` limits
+how many one session uses.
 
 | Level           | Uploads                                                                                                                        |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -122,15 +123,25 @@ bounded by `budget.elevatedMinutes`.
 If uploads fall behind, `hdr` records are dropped first, and the session's
 `end` record says so.
 
-Insight can change two things while a session runs, within these bounds:
+Insight can change three things while a session runs, within these bounds:
 
-| What               | When                                                           | Bounds                                                                         |
-| ------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| a shorter interval | someone has the session open in the dashboard                  | 1 to 10 s, for at most 10 minutes at a time                                    |
-| raised detail      | a capture window covers the session's release, user or content | up to `headers+sizes`, for at most 30 minutes, within `budget.elevatedMinutes` |
+| What                      | When                                                           | Bounds                                                                             |
+| ------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| a shorter interval        | someone has the session open in the dashboard                  | 1 to 10 s, for at most 10 minutes at a time                                        |
+| raised detail             | a capture window covers the session's release, user or content | up to `headers+sizes`, for at most 30 minutes, within `budget.elevatedMinutes`     |
+| detail held at `baseline` | the workspace has used its recording minutes for the month     | `baseline` only, for at most 10 minutes from each upload, repeated on every upload |
 
-Raised detail is recorded as a `remote` escalation and billed like any other.
-`resolve()` does not close it; `escalate()` takes it over.
+Raised detail is recorded as a `remote` escalation and counts toward recording
+minutes. `resolve()` does not close it; `escalate()` takes it over.
+
+When the workspace has used its recording minutes for the month, detail stays
+at `baseline` until the UTC month ends or the workspace moves to a plan with
+more minutes. `escalate()`, flight-recorder triggers and capture windows are
+refused, and a raised level drops to `baseline` at the next rollup interval
+(`metrics.intervalMs`). A refused `escalate()` is not applied later; call it
+again once the hold ends. After a move to a plan with more minutes, a held
+session returns to its configured level within 10 minutes. Each change is
+recorded as an escalation with `by.kind: 'hold'`.
 
 ## Sessions, instances and connections
 
@@ -147,8 +158,9 @@ Raised detail is recorded as a `remote` escalation and billed like any other.
   began or joined.
 
 A page that never constructs a `WebTransport` has no session: it records,
-stores and uploads nothing, and is not billed. Every session counts toward
-usage, including one whose only connection failed to open.
+stores and uploads nothing, and does not count toward the month's sessions.
+Every session that begins does, including one whose only connection failed to
+open.
 
 Before a session begins, `ids()` already answers with the ids it will be
 uploaded under, and context passed to `init()` or `setContext()` is sent with
@@ -196,7 +208,11 @@ vitals.resolve() // safe with nothing open, and safe to call twice
 
 // Connections opened from now on carry this content id. The user and tags
 // apply from now on too; tags add to the session's.
-vitals.setContext({ contentId: 'live/room-43', actorId: 'user-81', tags: { cdn: 'edge-2' } })
+vitals.setContext({
+  contentId: 'live/room-43',
+  actorId: 'user-81',
+  tags: { cdn: 'edge-2' },
+})
 // Or one session per playback: ends this one and returns the new ids. With no
 // connection open, the new session begins with the next WebTransport.
 vitals.newSession({ contentId: 'vod/episode-2' })
@@ -219,12 +235,12 @@ test fixture. It deletes every stored upload as well.
 Drafts 07 through 22. Your bundle holds the drafts and features you import and
 nothing else. Pick the entry that matches your player:
 
-| Import                              | Drafts | Features | Gzipped |
-| ----------------------------------- | ------ | -------- | ------- |
-| `@moqtap/collector`                 | all    | all      | 65.5 KB |
-| `@moqtap/collector/draftNN`         | one    | all      | 46–48.5 KB |
-| `@moqtap/collector/draftNN/thin`    | one    | none     | 38–40.5 KB |
-| `compose({ features: [workers] })`  | none   | `workers` | 17 KB   |
+| Import                             | Drafts | Features  | Gzipped    |
+| ---------------------------------- | ------ | --------- | ---------- |
+| `@moqtap/collector`                | all    | all       | 65.5 KB    |
+| `@moqtap/collector/draftNN`        | one    | all       | 46–48.5 KB |
+| `@moqtap/collector/draftNN/thin`   | one    | none      | 38–40.5 KB |
+| `compose({ features: [workers] })` | none   | `workers` | 17 KB      |
 
 ```typescript
 import { init } from '@moqtap/collector/draft14'
@@ -256,7 +272,10 @@ import { compose } from '@moqtap/collector/compose'
 import { draft14 } from '@moqtap/collector/draft14/decoder'
 import { persistence, workers } from '@moqtap/collector/features'
 
-export const init = compose({ drafts: [draft14], features: [workers, persistence] })
+export const init = compose({
+  drafts: [draft14],
+  features: [workers, persistence],
+})
 ```
 
 If every `WebTransport` your player opens lives in a worker, the page needs no
@@ -345,9 +364,9 @@ its own release.
 The worker entries export `initWorker` alone, without the page's uploader,
 storage and session:
 
-| Import                                  | Drafts | Flight recorder | Gzipped |
-| --------------------------------------- | ------ | --------------- | ------- |
-| `@moqtap/collector/worker`              | all    | yes             | 49.3 KB |
+| Import                                  | Drafts | Flight recorder | Gzipped    |
+| --------------------------------------- | ------ | --------------- | ---------- |
+| `@moqtap/collector/worker`              | all    | yes             | 49.3 KB    |
 | `@moqtap/collector/draftNN/worker`      | one    | yes             | 30–32.5 KB |
 | `@moqtap/collector/draftNN/thin/worker` | one    | no              | 26.5–29 KB |
 

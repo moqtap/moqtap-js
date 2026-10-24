@@ -85,6 +85,7 @@ export {
   DIRECTIVE_FLUSH_MAX_SPAN_MS,
   DIRECTIVE_FLUSH_MIN_MS,
   DIRECTIVE_HEADER,
+  DIRECTIVE_HOLD_MAX_SPAN_MS,
   parseDirective,
 } from './directive.js'
 export { FrameBuffer, type FrameBufferOptions } from './frame-buffer.js'

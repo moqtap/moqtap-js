@@ -1,7 +1,8 @@
 /**
  * What ingest asks of the page on an upload's answer, and how far the page
- * goes: a shorter seal interval while someone watches the session, and raised
- * detail while a capture window covers it, each within its bounds, each only
+ * goes: a shorter seal interval while someone watches the session, raised
+ * detail while a capture window covers it, and detail held at baseline once the
+ * workspace's recording minutes are used up, each within its bounds, each only
  * for the instance the answered body came from.
  */
 
@@ -12,6 +13,7 @@ import {
   DIRECTIVE_FLUSH_MAX_SPAN_MS,
   DIRECTIVE_FLUSH_MIN_MS,
   DIRECTIVE_HEADER,
+  DIRECTIVE_HOLD_MAX_SPAN_MS,
   RECV_HEADER,
   SEND_HEADER,
 } from '../../flush/index.js'
@@ -209,5 +211,78 @@ describe('elevate: a capture window covers the session', () => {
     c.annotate('second session')
     await c.end()
     expect(of(await allRecords(posts), 'escalation')).toEqual([])
+  })
+})
+
+describe('hold: the recording minutes for the month are used up', () => {
+  const HOLD = { hold: { until: SERVER_NOW + 3_600_000 } }
+
+  it('refuses escalate() and a capture window in the same answer', async () => {
+    const { posts, impl } = answering(() => ({
+      ...HOLD,
+      elevate: { level: 'headers', until: SERVER_NOW + 60_000, reason: 'capture' },
+    }))
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    attempt()
+    c.annotate('x')
+    await c.flush()
+    c.escalate('headers', 'mine')
+    await c.end()
+    expect(of(await allRecords(posts), 'escalation')).toEqual([])
+  })
+
+  it('ends a window already open at the next interval', async () => {
+    const { posts, impl } = answering(() => HOLD)
+    const t = timers((ms) => (ms === 1_234 ? 10 : ms))
+    const c = init(base({ metrics: { intervalMs: 1_234 } }), {
+      ...quiet,
+      fetchImpl: impl,
+      ...t.ports,
+    })
+    await settle()
+    attempt()
+    c.escalate('headers', 'mine')
+    await c.flush()
+    // One beat after the answer that carried the hold.
+    const beats = t.asked.filter((ms) => ms === 1_234).length
+    await until(() => t.asked.filter((ms) => ms === 1_234).length > beats)
+    await c.end()
+    const all = of(await allRecords(posts), 'escalation')
+    expect(all.map((r) => [r.to, r.by.kind])).toEqual([
+      ['headers', 'manual'],
+      ['baseline', 'hold'],
+    ])
+  })
+
+  it('lapses within its bound once ingest stops sending it', async () => {
+    // A plan raised mid-month: the first answer holds, the rest do not.
+    const { posts, impl } = answering(() => (posts.length <= 1 ? HOLD : null))
+    let t = 1_000
+    const c = init(base(), { ...quiet, fetchImpl: impl, clock: { now: () => t, wall: () => t } })
+    await settle()
+    attempt()
+    c.annotate('x')
+    await c.flush()
+    c.escalate('headers', 'held')
+    t += DIRECTIVE_HOLD_MAX_SPAN_MS
+    c.escalate('headers', 'lapsed')
+    await c.end()
+    expect(of(await allRecords(posts), 'escalation').map((r) => r.by)).toEqual([
+      { kind: 'manual', reason: 'lapsed' },
+      { kind: 'manual' },
+    ])
+  })
+
+  it('is ignored with an end already past', async () => {
+    const { posts, impl } = answering(() => ({ hold: { until: SERVER_NOW - 1 } }))
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    attempt()
+    c.annotate('x')
+    await c.flush()
+    c.escalate('headers')
+    await c.end()
+    expect(of(await allRecords(posts), 'escalation')[0]).toMatchObject({ to: 'headers' })
   })
 })

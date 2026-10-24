@@ -643,8 +643,8 @@ export type BucketKind = 'alias' | 'fetch'
  * session") and permits sequential rebinding once the prior subscription has
  * closed. Two tracks summed into one interval row under one raw alias are
  * unrecoverable at ingest, and the same mixing poisons the per-track median
- * that opens the billable capture windows — so the failure reaches the
- * invoice. Fifteen lines of epoch counter close it.
+ * that opens the capture windows — so the failure reaches the recording
+ * minutes counted. Fifteen lines of epoch counter close it.
  *
  * The separate {@link RollupTrackWire.shared} flag covers the other case track
  * state has to answer: two concurrent subscriptions to the same track MAY share
@@ -1585,8 +1585,8 @@ export interface EndRecord extends RecordBase {
 /**
  * What raised or lowered detail, when, and by which trigger.
  *
- * `by` records the source because the metering axis is elevated duration, so
- * what opened the window is part of the bill.
+ * `by` records the source because elevated duration counts toward recording
+ * minutes, so what opened the window is part of the record.
  */
 export type WindowClose = 'resolve' | 'timeout' | 'ring' | 'unload'
 
@@ -1602,6 +1602,13 @@ export interface EscalationRecord extends RecordBase {
         readonly key?: RollupTrackWire['key']
       }
     | { readonly kind: 'ceiling' }
+    | {
+        /**
+         * Ingest held detail at `baseline`, or the hold ended and the session
+         * returned to its configured level; `to` says which.
+         */
+        readonly kind: 'hold'
+      }
     | {
         /** Ingest asked for it: someone opened a capture window covering this session. */
         readonly kind: 'remote'
@@ -1698,6 +1705,11 @@ export interface UploadOutcome {
  *  - `elevate`: raise detail to `level` until `until`, as `escalate()` would,
  *    for a capture window someone opened. At most `headers+sizes`, for at most
  *    30 minutes, and within `budget.elevatedMinutes`.
+ *  - `hold`: keep detail at `baseline` until `until`, for at most 10 minutes
+ *    from the response. Ingest sends it on every upload while the workspace's
+ *    recording minutes for the month are used up. Every raise is refused while
+ *    it lasts, and a raised level drops to `baseline` at the next rollup interval
+ *    (`metrics.intervalMs`).
  */
 export interface Directive {
   readonly flushMs?: number
@@ -1707,12 +1719,13 @@ export interface Directive {
     readonly until: number
     readonly reason: string
   }
+  readonly hold?: { readonly until: number }
 }
 
 /**
  * `usage()` — the collector's own volume, by level.
  *
- * A budgeting aid and explicitly **not** the invoice: the billable meter is
+ * A budgeting aid and explicitly **not** the count of record: what counts is
  * what actually arrives at ingest, and a client self-report is not a
  * trust boundary. `isEstimate: true` is a literal so it cannot be unset.
  */

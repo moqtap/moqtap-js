@@ -1,11 +1,11 @@
 /**
- * The collector meters itself, and its number is not the invoice: the billable
- * meter is what actually arrives at ingest. So {@link UsageReport.isEstimate} is
+ * The collector meters itself, and its number is not the count of record: what
+ * counts is what actually arrives at ingest. So {@link UsageReport.isEstimate} is
  * a literal `true` in the shared types and cannot be unset.
  *
  * Elevated time is counted in whole seconds, rounded down, with a one-second
  * minimum, and both halves are **per window** — which is what cannot be applied
- * to a session total afterwards: two 200 ms windows are two billable seconds,
+ * to a session total afterwards: two 200 ms windows are two counted seconds,
  * not one, and ten 4.9 s windows are 40 s rather than the 49 a summed float
  * would report. So the quantity accrues one {@link billableSeconds} call per
  * window, as the window closes, and the raw millisecond total is kept beside it
@@ -30,7 +30,7 @@ import { BASELINE, isElevated } from './defaults.js'
  * **Provenance: guess, pending field data**. It matches the rollup
  * module's own `SUSPEND_TOLERANCE_MS` so the two subsystems agree about what
  * "suspended" means; disagreeing would put a `suspended` flag on a rollup record
- * whose interval the meter had billed in full.
+ * whose interval the meter had counted in full.
  */
 export const SUSPEND_TOLERANCE_MS = 1_000
 
@@ -38,9 +38,9 @@ export const SUSPEND_TOLERANCE_MS = 1_000
  * The increment, applied to **one** window's measured length.
  *
  * Whole seconds, rounded down, with a one-second minimum. The caller decides
- * whether a window opened at all — "a window that never opened bills nothing" —
- * and this decides what an opened one costs, so a window that opened and closed
- * inside the same millisecond still bills the second it did the work of
+ * whether a window opened at all — "a window that never opened counts nothing" —
+ * and this decides what an opened one counts, so a window that opened and closed
+ * inside the same millisecond still counts the second it did the work of
  * opening.
  */
 export function billableSeconds(windowMs: number): number {
@@ -69,7 +69,7 @@ export class UsageMeter {
   private _sinceWall: Wall
   /** Whole seconds, per the increment, for windows that have closed. */
   private _billableSec = 0
-  /** The same windows unrounded. Reporting only — never the billed quantity. */
+  /** The same windows unrounded. Reporting only — never the counted quantity. */
   private _elevatedMs = 0
   private _windowCount = 0
   private _suspendedMs = 0
@@ -86,16 +86,16 @@ export class UsageMeter {
   }
 
   /**
-   * Billable seconds so far, **including the open window**.
+   * Counted seconds so far, **including the open window**.
    *
    * A getter rather than a field because the ceiling check in `escalation.ts`
    * has to see the *current* window's time — a ceiling that only noticed on
    * transition would let a single unbroken elevated window run forever, which
    * is precisely the runaway the spend ceiling exists to prevent.
    *
-   * The open window is billed by the same rule as a closed one, so a window
+   * The open window is counted by the same rule as a closed one, so a window
    * open for 200 ms already reads as its one-second minimum rather than
-   * climbing through a fraction of a second nobody will ever be charged.
+   * climbing through a fraction of a second that is never counted.
    */
   get billableSeconds(): number {
     return this._billableSec + (this._open ? billableSeconds(this._openMs()) : 0)
@@ -104,20 +104,20 @@ export class UsageMeter {
   /**
    * Measured elevated milliseconds, including the open window.
    *
-   * **Not the billed quantity** — {@link UsageMeter.billableSeconds} is. This is
-   * what the clocks actually saw, kept so that "elevated for 4.9 s, billed 4 s"
+   * **Not the counted quantity** — {@link UsageMeter.billableSeconds} is. This is
+   * what the clocks actually saw, kept so that "elevated for 4.9 s, counted 4 s"
    * is answerable rather than a discrepancy nobody can reconstruct.
    */
   get elevatedMs(): number {
     return this._elevatedMs + (this._open ? this._openMs() : 0)
   }
 
-  /** Windows opened so far, the open one included. Diagnosis, not billing. */
+  /** Windows opened so far, the open one included. Diagnosis, not the count. */
   get windows(): number {
     return this._windowCount
   }
 
-  /** The billed quantity, in the unit the meter and the ceiling both use. */
+  /** The counted quantity, in the unit the meter and the ceiling both use. */
   get elevatedMinutes(): number {
     return this.billableSeconds / 60
   }
@@ -151,9 +151,9 @@ export class UsageMeter {
    *
    * A window opens on the step **into** elevation and closes on the step out of
    * it; a move between two elevated levels leaves it open. `headers` →
-   * `headers+sizes` → `baseline` inside one second is one window billing one
-   * second, not two windows billing two — otherwise a caller changing their mind
-   * would multiply the invoice by the per-window minimum, once per change.
+   * `headers+sizes` → `baseline` inside one second is one window counting one
+   * second, not two windows counting two — otherwise a caller changing their mind
+   * would multiply the count by the per-window minimum, once per change.
    *
    * Idempotent for a no-change call, so a caller need not check first.
    */
@@ -232,7 +232,7 @@ export class UsageMeter {
    *
    * The monotonic clock is authoritative for duration but stops or slows
    * on a suspended device on some platforms while the wall clock does not, so
-   * the smaller value is what is billed. Both are floored at zero: a wall clock
+   * the smaller value is what is counted. Both are floored at zero: a wall clock
    * corrected backwards mid-window must not produce negative elevated minutes.
    * Pure, because the getters above call it once per read and a read must not
    * move any counter.

@@ -32,6 +32,12 @@
  * asked for, and `resolve()` leaves it alone: the page's incident being over
  * says nothing about the capture someone else is running. Unload, the ceiling
  * and a manual `escalate()` end it as they end any window.
+ *
+ * A **hold** is ingest keeping the session at `baseline` until a time it names,
+ * once the workspace's recording minutes for the month are used up. Like the
+ * ceiling it is baseline literally: it ends any open window, remote ones
+ * included, and every raise is refused while it lasts. Unlike the ceiling it
+ * ends, and the session returns to its configured level.
  */
 
 import type {
@@ -65,6 +71,7 @@ export type EscalationCause =
   | { readonly kind: 'manual'; readonly reason?: string }
   | { readonly kind: 'trigger'; readonly trigger: TriggerKind; readonly key?: BucketKey }
   | { readonly kind: 'ceiling' }
+  | { readonly kind: 'hold' }
   | { readonly kind: 'remote'; readonly reason?: string }
   | { readonly kind: 'window'; readonly closed: WindowClose; readonly reason?: string }
 
@@ -138,6 +145,8 @@ export class EscalationController {
   /** The open capture window, or `undefined` when the level is at the configured floor. */
   private _window: OpenWindow | undefined
   private _ceilingHit = false
+  /** The end of ingest's hold on the page's clock, or `undefined` when none is in force. */
+  private _holdUntil: Mono | undefined
   private _refused = 0
   private _elevations = 0
 
@@ -161,7 +170,7 @@ export class EscalationController {
     return this._ceilingHit
   }
 
-  /** Elevations refused because the ceiling had been reached. Counted, never silent. */
+  /** Elevations refused at the ceiling or under a hold. Counted, never silent. */
   get refused(): number {
     return this._refused
   }
@@ -283,16 +292,27 @@ export class EscalationController {
   }
 
   /**
+   * Ingest asked for detail kept at `baseline` until `untilMono`.
+   *
+   * Asked again, as it is on every upload, the latest answer stands. A raised
+   * level is lowered by `tick`, so a window open now ends at the next interval.
+   */
+  hold(untilMono: Mono): void {
+    this._holdUntil = untilMono
+  }
+
+  /**
    * Time passed.
    *
-   * Three jobs that must run on a timer rather than on a transition: the
-   * post-event timeout, the ring the window was opened to explain filling, and
-   * the ceiling, which has to be able to fire *during* an unbroken elevated
-   * window. A ceiling checked only on a level change would never fire on the one
+   * Four jobs that must run on a timer rather than on a transition: the
+   * post-event timeout, the ring the window was opened to explain filling, the
+   * ceiling, which has to be able to fire *during* an unbroken elevated window,
+   * and ingest's hold, which lowers a level raised before it arrived. A ceiling checked only on a level change would never fire on the one
    * shape it exists to stop — a session that escalated once and stayed there.
    */
   tick(nowMono: Mono): void {
     this._enforceCeiling()
+    this._enforceHold(nowMono)
     const w = this._window
     if (w === undefined || !isElevated(this._level)) return
     // Neither condition is a person, so both are `window` closes, not `manual`;
@@ -358,12 +378,30 @@ export class EscalationController {
     }
   }
 
+  /**
+   * Down to baseline while the hold lasts; back to the configured level once
+   * it ends, unless the ceiling has since been reached.
+   */
+  private _enforceHold(nowMono: Mono): void {
+    const until = this._holdUntil
+    if (until === undefined) return
+    if (nowMono < until) {
+      if (isElevated(this._level)) this._apply(BASELINE, { kind: 'hold' })
+      return
+    }
+    this._holdUntil = undefined
+    if (!this._ceilingHit && this._window === undefined) {
+      this._apply(this._o.configured, { kind: 'hold' })
+    }
+  }
+
   /** The one place `_level` is written. Returns whether anything changed. */
   private _apply(to: DetailLevel, by: EscalationCause): boolean {
     if (levelIndex(to) < 0) return false
-    // A raise past a reached ceiling is refused and counted, never silent, and
-    // not recorded as an escalation, because it did not happen.
-    if (this._ceilingHit && levelIndex(to) > levelIndex(BASELINE)) {
+    // A raise past a reached ceiling or under a hold is refused and counted,
+    // never silent, and not recorded as an escalation, because it did not happen.
+    const held = this._holdUntil !== undefined && this._o.clock.now() < this._holdUntil
+    if ((this._ceilingHit || held) && levelIndex(to) > levelIndex(BASELINE)) {
       this._refused += 1
       return false
     }

@@ -100,7 +100,7 @@ export interface Collector {
   defineMetric(name: string, d: MetricDefinition): void
   /** Record a custom metric sample. */
   observe(name: string, value: number, labels?: Record<string, string>): void
-  /** Raise the detail level for the page and every linked worker, opening one billable capture window. */
+  /** Raise the detail level for the page and every linked worker, opening one capture window that counts toward recording minutes. */
   escalate(level: DetailLevel, reason?: string): void
   /**
    * Close the capture window. Safe when none is open, and safe to call twice.
@@ -112,7 +112,7 @@ export interface Collector {
    * directions.
    */
   resolve(reason?: string): void
-  /** The collector's own upload volume, for budgeting. Never the invoice. */
+  /** The collector's own upload volume, for budgeting. Never the count of record. */
   usage(): UsageReport
 }
 

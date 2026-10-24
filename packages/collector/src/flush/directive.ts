@@ -21,6 +21,14 @@ export const DIRECTIVE_FLUSH_MAX_SPAN_MS = 10 * 60_000
 export const DIRECTIVE_ELEVATE_MAX_SPAN_MS = 30 * 60_000
 
 /**
+ * The longest a `hold` lasts from the response that sent it. Ingest repeats
+ * it on every upload while the month's recording minutes are used up, so a
+ * hold ends within this span once they are not, as after a move to a plan
+ * with more minutes.
+ */
+export const DIRECTIVE_HOLD_MAX_SPAN_MS = 10 * 60_000
+
+/**
  * The highest level an `elevate` raises to. `headers+data` uploads the same
  * records, and is a level only the page may choose.
  */
@@ -45,7 +53,12 @@ export function parseDirective(raw: string | null): Directive | undefined {
   }
   if (v === null || typeof v !== 'object' || Array.isArray(v)) return undefined
   const o = v as Record<string, unknown>
-  const out: { flushMs?: number; until?: number; elevate?: NonNullable<Directive['elevate']> } = {}
+  const out: {
+    flushMs?: number
+    until?: number
+    elevate?: NonNullable<Directive['elevate']>
+    hold?: NonNullable<Directive['hold']>
+  } = {}
   if (finite(o.flushMs)) {
     out.flushMs = o.flushMs
     if (finite(o.until)) out.until = o.until
@@ -68,5 +81,12 @@ export function parseDirective(raw: string | null): Directive | undefined {
       }
     }
   }
-  return out.flushMs === undefined && out.elevate === undefined ? undefined : out
+  const h = o.hold
+  if (h !== null && typeof h === 'object' && !Array.isArray(h)) {
+    const { until } = h as Record<string, unknown>
+    if (finite(until)) out.hold = { until }
+  }
+  return out.flushMs === undefined && out.elevate === undefined && out.hold === undefined
+    ? undefined
+    : out
 }

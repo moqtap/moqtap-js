@@ -55,7 +55,7 @@ export function levelIndex(l: DetailLevel | string | undefined): number {
   return (DETAIL_LEVELS as readonly string[]).indexOf(l)
 }
 
-/** `true` when `l` ships more than {@link BASELINE} — i.e. when it is billable. */
+/** `true` when `l` ships more than {@link BASELINE} — so it counts toward recording minutes. */
 export function isElevated(l: DetailLevel): boolean {
   return levelIndex(l) > 0
 }
@@ -235,7 +235,7 @@ export const DEFAULT_PROVENANCE: { readonly [K in keyof ResolvedConfig]: string 
     idSource:
       'Not a setting: says whether sessionId was supplied or minted, so ingest knows whether another instance may still join the session.',
     detail:
-      'Baseline is always on and always the same. Elevation is billable, so the default can only be baseline.',
+      'Baseline is always on and always the same. Elevation uses recording minutes, so the default can only be baseline.',
     context:
       'Every field absent. actorId is treated as personal data — the one field with real privacy weight, where no default can be right — and sent as given unless privacy.hashActorId is on. contentId, environment, release and tags are absent for the ordinary reason that only the customer knows them; their cardinality is bounded nowhere, and ingest alarms on growth rate instead.',
     metrics: 'See METRICS_PROVENANCE — one line per key.',
