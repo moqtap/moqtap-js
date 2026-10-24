@@ -453,7 +453,7 @@ describe('discard() — drop, transmit nothing, tear down', () => {
     await c.flush()
     c.annotate('marker', { a: 1 })
     await c.flush()
-    await settle()
+    await until(() => s.chunks === 2)
     expect(s.chunks).toBe(2)
     await c.discard()
     expect(s.chunks).toBe(0)
@@ -515,7 +515,7 @@ describe('an upload that fails is retried in the same page', () => {
       expect(posts).toEqual([])
       up = true
       life.fire('online')
-      await settle()
+      await until(() => posts.length === 2)
       // The begin's body and the flush's.
       expect(posts).toHaveLength(2)
       await c.end()
