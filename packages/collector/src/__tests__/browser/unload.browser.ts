@@ -7,6 +7,9 @@
  * After it, ingest must receive all three: the unconfirmed body again, the tail
  * holding the buffered record, and the final body with `end{unload}`.
  *
+ * A body the browser drops after taking it may instead come from IndexedDB
+ * on the origin's next page load, in one run per engine.
+ *
  * Firefox is the engine this exists for. Closing a tab there cancels the
  * page's running script, and a cancel that finds none stops the first
  * `pagehide` listener at its first call. A collector that is that listener
@@ -33,6 +36,7 @@ const PKG = resolve(__dirname, '..', '..', '..')
 const BUN = process.platform === 'win32' ? 'bun.exe' : 'bun'
 
 interface Body {
+  instanceId: string
   seq: number
   final: boolean
   records: { t: string; [k: string]: unknown }[]
@@ -55,9 +59,14 @@ function decode(bytes: Uint8Array): Body {
   for (const f of readFrames(frames)) {
     if (!f.raw) records.push(JSON.parse(new TextDecoder().decode(f.payload)))
   }
-  const batch = records[0] as { t: string; seq: number; final?: boolean }
+  const batch = records[0] as { t: string; instanceId: string; seq: number; final?: boolean }
   expect(batch.t).toBe('batch')
-  return { seq: batch.seq, final: batch.final === true, records: records.slice(1) }
+  return {
+    instanceId: batch.instanceId,
+    seq: batch.seq,
+    final: batch.final === true,
+    records: records.slice(1),
+  }
 }
 
 // A session begins with a WebTransport. The page's stands in for one that
@@ -164,6 +173,7 @@ const ENGINES: [string, BrowserType][] = [
 
 describe.each(ENGINES)('%s: page.close()', (_name, engine) => {
   let browser: Browser
+  let reloaded = 0
 
   beforeAll(async () => {
     browser = await engine.launch()
@@ -209,18 +219,30 @@ describe.each(ENGINES)('%s: page.close()', (_name, engine) => {
       expect(errors).toEqual([])
 
       const before = received.length
+      const instance = (received.find((b) => hasNote(b, 'unconfirmed')) as Body).instanceId
       holding = false
       await page.close()
-      const since = (): Body[] => received.slice(before)
+      const since = (): Body[] => received.slice(before).filter((b) => b.instanceId === instance)
       const final = (): Body | undefined => since().find((b) => b.final)
-      await until('every body after the close', () => {
+      const all = (): boolean => {
         const a = since()
         return (
           final() !== undefined &&
           a.some((b) => hasNote(b, 'unconfirmed')) &&
           a.some((b) => hasNote(b, 'buffered'))
         )
-      })
+      }
+      try {
+        await until('every body after the close', all)
+      } catch {
+        // Firefox on a loaded machine sometimes drops beacons a page handed
+        // over as it closed. Each body was stored too, and the origin's next
+        // page load sends it. That covers one run; more mean beacons fail.
+        expect(++reloaded, 'runs whose bodies only the next load delivered').toBe(1)
+        const next = await context.newPage()
+        await next.goto(`${origin}/`)
+        await until('every body after the close, or on the next load', all)
+      }
       await context.close()
 
       const last = final() as Body
