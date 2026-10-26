@@ -490,6 +490,6 @@ function title(text: string): SVGTitleElement {
 
 function flightLabel(flight: Flight, objects: number): string {
   const trigger = flight.trigger.length > 0 ? `${flight.trigger} · ` : ''
-  const cut = flight.truncated ? ' · start overwritten' : ''
+  const cut = flight.truncated ? ' · cut short' : ''
   return `${trigger}${offset(flight.from)}–${offset(flight.to)} · ${count(objects)} objects${cut}`
 }

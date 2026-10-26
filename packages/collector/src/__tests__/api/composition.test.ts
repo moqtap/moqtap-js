@@ -6,12 +6,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildOf } from '../../api/compose.js'
+import { buildOf, workerBuildOf } from '../../api/compose.js'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { type InitOptions, initWith } from '../../api/init.js'
 import { initWorkerWith } from '../../api/worker.js'
 import { MQ1006 } from '../../codes.js'
 import { draft20 } from '../../drafts/draft20/decoder.js'
+import { escalation } from '../../features/escalation.js'
 import { workers } from '../../features/workers.js'
 import type { CollectorConfig } from '../../types.js'
 import { attempt, workerBuild } from '../support/init.js'
@@ -90,6 +91,80 @@ describe('a thin build', () => {
     )
     expect(missing(errors, 'escalation')).toBe(1)
     expect(missing(errors, 'flightRecorder')).toBe(1)
+  })
+})
+
+describe('triggers in a page with no recorder of its own', () => {
+  it('does not ask for the recorder when linked workers run the triggers', () => {
+    const errors: string[] = []
+    const page = buildOf({ features: [workers, escalation] })
+    initWith(
+      page,
+      config(errors, { flightRecorder: { triggers: { stall: { afterMs: 500 } } } }),
+      quiet,
+    )
+    expect(missing(errors, 'flightRecorder')).toBe(0)
+    expect(missing(errors, 'escalation')).toBe(0)
+  })
+
+  it('asks for the recorder once a worker without one links', async () => {
+    const errors: string[] = []
+    const page = buildOf({ features: [workers, escalation] })
+    const channel = new MessageChannel()
+    const c = initWith(
+      page,
+      config(errors, { flightRecorder: { triggers: { stall: { afterMs: 500 } } } }),
+      quiet,
+    )
+    c.linkWorker(channel.port1)
+    await settle(5)
+    const probe = initWorkerWith(workerBuildOf({ drafts: [draft20] }), channel.port2, {
+      timeOrigin: 0,
+    })
+    expect(await probe.linked).toBe(true)
+    await settle(5)
+    expect(missing(errors, 'flightRecorder')).toBe(1)
+    await c.end()
+    channel.port1.close()
+    channel.port2.close()
+  })
+
+  it('does not ask for the recorder when the linked worker has one', async () => {
+    const errors: string[] = []
+    const page = buildOf({ features: [workers, escalation] })
+    const channel = new MessageChannel()
+    const c = initWith(
+      page,
+      config(errors, { flightRecorder: { triggers: { stall: { afterMs: 500 } } } }),
+      quiet,
+    )
+    c.linkWorker(channel.port1)
+    await settle(5)
+    const probe = initWorkerWith(workerBuild, channel.port2, { timeOrigin: 0 })
+    expect(await probe.linked).toBe(true)
+    await settle(5)
+    expect(missing(errors, 'flightRecorder')).toBe(0)
+    await c.end()
+    channel.port1.close()
+    channel.port2.close()
+  })
+
+  it('asks for the recorder once a WebTransport opens in a page that has none', async () => {
+    const errors: string[] = []
+    const page = buildOf({ drafts: [draft20], features: [workers, escalation] })
+    const { impl } = recordingFetch()
+    const c = initWith(
+      page,
+      config(errors, { flightRecorder: { triggers: { stall: { afterMs: 500 } } } }),
+      { ...quiet, fetchImpl: impl },
+    )
+    expect(missing(errors, 'flightRecorder')).toBe(0)
+    const wt = attempt()
+    await wt.open('moqt-20')
+    await until(() => c.connections().length > 0, 2_000)
+    await settle(5)
+    expect(missing(errors, 'flightRecorder')).toBe(1)
+    await c.end()
   })
 })
 

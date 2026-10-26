@@ -391,6 +391,119 @@ describe('delivery from the collector', () => {
     ])
   })
 
+  describe('a flight dump sent in slices', () => {
+    // Audio every 20 ms from 5 s to 8 s; video every 33 ms until it stalls
+    // just before 6 s and resumes at 7.5 s. The slice edge, at 6.5 s, falls
+    // inside the stall.
+    const objects: { key: string; at: number }[] = []
+    for (let t = 5000; t < 8000; t += 20) objects.push({ key: 'rx:alias:8:0', at: t })
+    for (let t = 5000; t < 6000; t += 33) objects.push({ key: 'rx:alias:9:0', at: t })
+    for (let t = 7500; t < 8000; t += 33) objects.push({ key: 'rx:alias:9:0', at: t })
+    objects.sort((a, b) => a.at - b.at)
+    const lastVideoBefore = Math.max(
+      ...objects.filter((o) => o.key.includes(':9:') && o.at < 7000).map((o) => o.at),
+    )
+
+    // As the trace carries a collector record: its `t` and `ts` are the
+    // event's label and time, and are not repeated in its data.
+    const slice = (
+      part: number,
+      parts: number,
+      from: number,
+      to: number,
+      dump: { id?: number; end?: number | null; shift?: number } = {},
+    ) => {
+      const shift = dump.shift ?? 0
+      const inside = objects
+        .filter((o) => o.at >= from && o.at < to)
+        .map((o) => ({ ...o, at: o.at + shift }))
+      return annotation(
+        8.5 * SECOND + shift * 1000,
+        'collector.flight',
+        {
+          conn: 'c1',
+          trigger: 'stall',
+          windowStart: from + shift,
+          windowEnd: to + shift,
+          truncated: false,
+          part,
+          parts,
+          dump: dump.id ?? 0,
+          ...(dump.end === null ? {} : { dumpEnd: dump.end ?? 8000 + shift }),
+          cols: {
+            key: inside.map((o) => o.key),
+            at: inside.map((o) => o.at),
+            group: inside.map(() => 1),
+            object: inside.map((_, i) => i),
+            bytes: inside.map(() => 100),
+            deliveryMs: inside.map(() => 1),
+          },
+        },
+        'c1',
+      )
+    }
+
+    it('is one dump, laid end to end, with the stall across the slice edge found', () => {
+      const analysis = analyse([slice(0, 2, 5000, 6500), slice(1, 2, 6500, 8000)])
+      expect(analysis.delivery.flights).toHaveLength(1)
+      const [flight] = analysis.delivery.flights
+      expect(flight).toMatchObject({
+        connection: 'c1',
+        trigger: 'stall',
+        from: 5.5 * SECOND,
+        to: 8.5 * SECOND,
+        truncated: false,
+      })
+      expect(flight!.objects).toHaveLength(objects.length)
+      expect(flight!.stalls).toEqual([
+        {
+          lane: 'c1|rx:alias:9',
+          from: (lastVideoBefore + 500) * 1000,
+          to: 8 * SECOND,
+        },
+      ])
+    })
+
+    it('keeps two dumps on one connection apart, with the same trigger and slice count', () => {
+      const analysis = analyse([
+        slice(0, 2, 5000, 6500),
+        slice(1, 2, 6500, 8000),
+        slice(0, 2, 5000, 6500, { id: 1, shift: 20_000 }),
+        slice(1, 2, 6500, 8000, { id: 1, shift: 20_000 }),
+      ])
+      const flights = analysis.delivery.flights
+      expect(flights.map((f) => [f.from, f.to, f.truncated, f.objects.length])).toEqual([
+        [5.5 * SECOND, 8.5 * SECOND, false, objects.length],
+        [25.5 * SECOND, 28.5 * SECOND, false, objects.length],
+      ])
+    })
+
+    it('places a dump whose last slice never arrived by the end every slice carries', () => {
+      const analysis = analyse([slice(0, 3, 5000, 6000), slice(1, 3, 6000, 7000)])
+      expect(analysis.delivery.flights).toHaveLength(1)
+      const [flight] = analysis.delivery.flights
+      expect(flight).toMatchObject({ from: 5.5 * SECOND, to: 8.5 * SECOND, truncated: true })
+      const placed = objects.filter((o) => o.at < 7000).map((o) => (o.at + 500) * 1000)
+      expect(flight!.objects.map((o) => o.at)).toEqual(placed)
+    })
+
+    it('leaves out a dump it cannot place: no end, no rollup, and its last slice missing', () => {
+      const analysis = analyse([
+        slice(0, 3, 5000, 6000, { end: null }),
+        slice(1, 3, 6000, 7000, { end: null }),
+      ])
+      expect(analysis.delivery.flights).toEqual([])
+    })
+
+    it('says a slice is missing, and finds no stall across it', () => {
+      const analysis = analyse([slice(0, 3, 5000, 5900), slice(2, 3, 7000, 8000)])
+      expect(analysis.delivery.flights).toHaveLength(1)
+      const [flight] = analysis.delivery.flights
+      expect(flight).toMatchObject({ from: 5.5 * SECOND, to: 8.5 * SECOND, truncated: true })
+      expect(flight!.stalls).toEqual([])
+    })
+  })
+
   it('draws a band where detail was raised, from the escalation that opened it to the one that closed it', () => {
     const analysis = analyse([
       annotation(3 * SECOND, 'collector.escalation', {

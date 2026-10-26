@@ -41,15 +41,30 @@ interface Decoded {
   expected: Record<string, unknown>
 }
 
+const vectorDirs = new Map<Draft, ReturnType<typeof loadVectorDir>>()
+
+/**
+ * One draft's message vectors, read and parsed once for the whole file: every
+ * test asks for a different message across all drafts, and re-reading each
+ * draft's directory per test keeps a synchronous test busy for seconds on a
+ * machine running the rest of the suite.
+ */
+function messageVectors(draft: Draft): ReturnType<typeof loadVectorDir> {
+  let dir = vectorDirs.get(draft)
+  if (dir === undefined) {
+    dir = loadVectorDir(`transport/draft${draft}/codec/messages`)
+    vectorDirs.set(draft, dir)
+  }
+  return dir
+}
+
 /**
  * Decode every non-error vector in one message file, for one draft, with that
  * draft's codec. Drafts that do not define the message are skipped by their
  * vector directory simply not having the file.
  */
 function decodeVectors(draft: Draft, file: string): Decoded[] {
-  const entries = loadVectorDir(`transport/draft${draft}/codec/messages`).filter(
-    (e) => e.file === file,
-  )
+  const entries = messageVectors(draft).filter((e) => e.file === file)
   const out: Decoded[] = []
   for (const entry of entries) {
     for (const vector of entry.data.vectors) {

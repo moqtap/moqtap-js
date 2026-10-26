@@ -25,11 +25,13 @@ import { describe, expect, it } from 'vitest'
 import {
   BODY_PREAMBLE_BYTES,
   type BodyPreamble,
+  deflateSegment,
   FrameWriter,
   idempotencyKey,
   readFrames,
   readPreamble,
 } from '../../envelope/index.js'
+import { openSegment } from '../../envelope/open-segment.js'
 import type { Chunk as FlushChunk, FlushScheduleOptions, TimerSource } from '../../flush/index.js'
 import { compress, FlushQueue, FlushSchedule } from '../../flush/index.js'
 import type {
@@ -254,6 +256,99 @@ describe('compress', () => {
   })
 })
 
+describe("FlushQueue.sealSegment with the open stream's own front", () => {
+  it('seals the gzipped front as one body and keeps the frames after it for the next', async () => {
+    const q = queue()
+    q.json(note('a'))
+    q.json(ctrl(2))
+    q.raw(new Uint8Array([7, 8]))
+    const front = { bytes: q.pendingBytes, count: q.frameCount }
+    const segment = await deflateSegment(q.peek().slice())
+    const takes = q.takes
+    // Written while the front was being compressed.
+    q.json(note('b'))
+
+    const packed = q.sealSegment(segment, {}, front)
+    expect(q.takes).not.toBe(takes)
+    const body = await decodeBody(packed.bytes)
+    expect(body.preamble.gzipped).toBe(true)
+    expect(body.records.map((r) => r.t)).toEqual(['batch', 'note', 'ctrl'])
+    expect(body.frames.at(-1)?.raw).toBe(true)
+    expect(await batchOf(packed)).toMatchObject({ seq: 0 })
+
+    const rest = q.seal() as FlushChunk
+    expect((await decodeBody(rest.bytes)).records.map(nameOf)).toEqual([undefined, 'b'])
+    expect(await batchOf(rest)).toMatchObject({ seq: 1 })
+  })
+
+  it('refuses a pack that does not describe the front', async () => {
+    const q = queue()
+    q.json(note('a'))
+    const segment = await deflateSegment(q.peek().slice())
+    expect(() => q.sealSegment(segment, {}, { bytes: q.pendingBytes + 1, count: 1 })).toThrow()
+    expect(() => q.sealSegment(segment, {}, { bytes: q.pendingBytes, count: 2 })).toThrow()
+    expect(q.frameCount).toBe(1)
+    expect(q.nextSeq).toBe(0)
+  })
+})
+
+describe('FlushQueue.sealSegment with the rest stored behind the front', () => {
+  it('seals the gzipped front and every frame after it as one body', async () => {
+    const q = queue()
+    q.json(note('a'))
+    q.json(ctrl(2))
+    q.raw(new Uint8Array([7, 8]))
+    const front = { bytes: q.pendingBytes, count: q.frameCount }
+    const segment = openSegment(await deflateSegment(q.peek().slice()))
+    q.json(note('b'))
+    q.json(note('c'))
+
+    const body = q.sealSegment(segment, { final: true }, front, true)
+    expect(q.frameCount).toBe(0)
+    expect(q.pendingBytes).toBe(0)
+    const decoded = await decodeBody(body.bytes)
+    expect(decoded.preamble.gzipped).toBe(true)
+    expect(decoded.records.map(nameOf)).toEqual([undefined, 'a', undefined, 'b', 'c'])
+    expect(await batchOf(body)).toMatchObject({ seq: 0, final: true })
+    expect(q.seal()).toBeNull()
+  })
+
+  it('refuses a front longer than the stream, taking nothing', async () => {
+    const q = queue()
+    q.json(note('a'))
+    const segment = openSegment(await deflateSegment(q.peek().slice()))
+    expect(() =>
+      q.sealSegment(segment, {}, { bytes: q.pendingBytes + 1, count: 1 }, true),
+    ).toThrow()
+    expect(q.frameCount).toBe(1)
+    expect(q.nextSeq).toBe(0)
+  })
+})
+
+describe('FlushQueue.sealFront', () => {
+  it('seals about the bytes asked for, cut in front of a record, and keeps the rest', async () => {
+    const q = queue()
+    for (let i = 0; i < 20; i += 1) {
+      q.json(note(`n${i}`, 'x'.repeat(100)))
+      q.raw(new Uint8Array(50))
+    }
+    const total = q.frameCount
+    const first = q.sealFront(1_000) as FlushChunk
+    const rest = q.frameCount
+    expect(rest).toBeGreaterThan(0)
+    expect(rest).toBeLessThan(total)
+    const decoded = await decodeBody(first.bytes)
+    expect(decoded.frames.length - 1).toBe(total - rest)
+    expect(decoded.frames.at(-1)?.raw).toBe(true)
+    expect(first.bytes.byteLength).toBeLessThan(1_000 + 600)
+
+    const last = q.sealFront(1e9, { final: true }) as FlushChunk
+    expect(await batchOf(last)).toMatchObject({ seq: 1, final: true })
+    expect(q.frameCount).toBe(0)
+    expect(q.sealFront(1_000)).toBeNull()
+  })
+})
+
 describe('FlushQueue.append and takeFrames', () => {
   it('appends frames another queue wrote, verbatim, counted as frames', async () => {
     const worker = queue()
@@ -447,6 +542,24 @@ describe('FlushSchedule', () => {
     expect(fired).toEqual(['bytes'])
     timers.advance(1_000)
     expect(fired).toEqual(['bytes', 'interval'])
+  })
+
+  it('drops a byte seal still queued when the caller seals on its own account first', () => {
+    const timers = new FakeTimers()
+    const { schedule, fired } = scheduleWith(timers, { earlyFlushesMs: [] })
+    schedule.start(0)
+    timers.advance(0)
+    fired.length = 0
+
+    schedule.due()
+    schedule.sealed()
+    timers.advance(1)
+    expect(fired).toEqual([])
+
+    // Asked again, it seals again.
+    schedule.due()
+    timers.advance(1)
+    expect(fired).toEqual(['bytes'])
   })
 
   it('never seals inside noteBytes, because a ctrl record and its raw frame are written as a pair', () => {

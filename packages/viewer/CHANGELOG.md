@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0]
+
+- A flight dump sent in slices is shown as one dump, with stalls found across
+  slice edges; a missing slice marks the dump and no stall is drawn across it.
+- A sliced dump whose last slice is missing is still placed by its end.
+- A dump cut short for any reason is labelled "cut short".
+
 ## [0.3.0]
 
 - Requests are paired with their responses: each row shows its request id

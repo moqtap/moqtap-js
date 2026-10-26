@@ -5,6 +5,48 @@ All notable changes to `@moqtap/collector` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-26
+
+### Added
+
+- A flight dump too large for one upload is sent in slices. Each slice is a
+  `flight` record with `part`, `parts`, `dump` and `dumpEnd`; group them by
+  `conn` and `dump`.
+- `TrackLiveness` type.
+- With `persistence`, a hold on detail is kept across page loads, in a second
+  IndexedDB database, `moqtap-collector:holds`. A new session in the same page
+  starts held, with or without `persistence`.
+
+### Changed
+
+- **Breaking:** a page and its workers must use the same release; a worker
+  from another release is reported as `timeout` and not linked.
+- `stall` fires only on a track still subscribed or fetching on an open
+  connection, after the cadence warm-up (`cadence.minSamples`, or 20), and only
+  when the track's median is shorter than `afterMs`.
+- While detail is raised, `upload.byteThreshold` counts gzipped bytes; an
+  upload holds at most 64 times the threshold uncompressed.
+- `truncated` on a flight record also means the oldest objects were left out
+  to fit the dump's budget; `windowStart` is then the first object kept.
+- A capture window still open when a session ends is recorded as closed by
+  `unload`, and a level held at `baseline` stays there.
+- With workers linked, `MQ1006` for `flightRecorder.triggers` is reported when
+  a WebTransport opens in a page without a flight recorder, or when a worker
+  without one links.
+- Compression runs 32 KB at a time, with a task between pieces.
+
+### Fixed
+
+- A trigger refused by a hold or the ceiling no longer leaves a worker
+  recording at `headers`.
+- `stall` and `cadence` no longer fire on a track that has ended or whose
+  connection has closed.
+- A flight dump no longer pushes stored or queued uploads out.
+- Flight dumps after a reconnect hold only the triggering connection's objects.
+- A worker that goes silent and resumes no longer has its interval counted twice.
+- A burst of worker forwards larger than the page's buffer is no longer dropped.
+- Everything sent at `pagehide` fits the beacon.
+
 ## [0.10.0] - 2026-10-24
 
 ### Added

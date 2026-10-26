@@ -15,24 +15,28 @@ export interface FrameBufferOptions {
    * Hard cap on the unsealed frame stream. Without it the buffer is unbounded
    * between takes, and a session whose seals are failing grows until the tab
    * dies, taking the page with it. Over the cap it drops and says so.
-   * Default: eight times the 32 KB threshold.
+   * Default: eight times the 32 KB threshold. A function is read at every
+   * write, for a buffer whose cap follows the detail level.
    */
-  readonly maxPendingBytes?: number
+  readonly maxPendingBytes?: number | (() => number)
   readonly onInternalError?: (err: unknown) => void
 }
 
 const DEFAULT_MAX_PENDING = 8 * 32 * 1024
 
 export class FrameBuffer implements RecordSink {
-  private readonly _maxPending: number
+  private readonly _maxPending: () => number
   private readonly _onError: ((err: unknown) => void) | undefined
 
   private _writer = new FrameWriter()
   private _droppedRecords = 0
   private _skipRaw = false
+  private _takes = 0
 
   constructor(opts: FrameBufferOptions = {}) {
-    this._maxPending = Math.max(1024, opts.maxPendingBytes ?? DEFAULT_MAX_PENDING)
+    const cap = opts.maxPendingBytes ?? DEFAULT_MAX_PENDING
+    this._maxPending =
+      typeof cap === 'number' ? () => Math.max(1024, cap) : () => Math.max(1024, cap())
     this._onError = opts.onInternalError
   }
 
@@ -45,13 +49,21 @@ export class FrameBuffer implements RecordSink {
     return this._writer.frameCount
   }
 
+  /**
+   * How many times frames have left the front of the buffer. A copy of the
+   * frames is still the buffer's front while this is unchanged.
+   */
+  get takes(): number {
+    return this._takes
+  }
+
   /** Records refused because the buffer was already at its cap. */
   get droppedRecords(): number {
     return this._droppedRecords
   }
 
   json(r: EnvelopeRecord): void {
-    if (this._writer.byteLength >= this._maxPending) {
+    if (this._writer.byteLength >= this._maxPending()) {
       this._droppedRecords += 1
       // A `ctrl` record is meaningless without the raw frame that follows it,
       // and the raw frame is unreadable without the record. Dropping one means
@@ -91,7 +103,7 @@ export class FrameBuffer implements RecordSink {
    */
   append(frames: Uint8Array, count: number): boolean {
     if (count === 0) return true
-    if (this._writer.byteLength + frames.byteLength > this._maxPending) return false
+    if (this._writer.byteLength + frames.byteLength > this._maxPending()) return false
     this._writer.append(frames, count)
     return true
   }
@@ -107,7 +119,14 @@ export class FrameBuffer implements RecordSink {
    */
   takeFrames(): { readonly frames: Uint8Array; readonly count: number } {
     const count = this._writer.frameCount
+    this._takes += 1
     return { frames: this._writer.take(), count }
+  }
+
+  /** Remove the first `count` frames, `bytes` long, which the caller has sealed. */
+  protected drop(bytes: number, count: number): void {
+    this._writer.drop(bytes, count)
+    this._takes += 1
   }
 
   /** The buffer behind frames {@link takeFrames} returned, which nothing reads any more. */

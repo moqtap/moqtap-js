@@ -16,6 +16,19 @@
  * would open a window on every session start — the one moment every session has
  * in common.
  *
+ * ── Why a stall needs a steady track, and a live one.
+ *
+ * A gap means "stalled" only on a track that was flowing faster than the gap.
+ * A catalog that published once, a finished FETCH, the rendition an ABR switch
+ * just left and every track of a closed connection all go quiet for good, and
+ * each of them would otherwise open a capture window, which counts toward
+ * recording minutes, on the next tick. So the stall trigger waits for the same
+ * warm-up as the cadence trigger, and for a median shorter than `afterMs`; and
+ * a track whose subscription, fetch or connection has ended is forgotten (see
+ * {@link TriggerEngineOptions.liveness}). A track no observed request stands
+ * behind may have ended unseen, so its silence opens nothing either; only a
+ * late object can show it was a gap.
+ *
  * This engine decides *that* a window should open, never what it costs or how
  * long it stays open; that is the api module's escalation ledger. Firing is
  * rate-limited here rather than there, because the cost of a fire is a re-parse
@@ -28,6 +41,7 @@ import {
   bucketKeyString,
   type Mono,
   type ObjectSample,
+  type TrackLiveness,
   type TriggerConfig,
   type TriggerKind,
 } from '../types.js'
@@ -89,9 +103,30 @@ export const DEFAULT_TRIGGER_COOLDOWN_MS = 30_000
  */
 export const DEFAULT_MAX_TRACKED = 1024
 
+/**
+ * Inter-arrival samples a track needs before the stall trigger may fire on it,
+ * when no `cadence.minSamples` is configured. The same figure as the cadence
+ * trigger's default warm-up, for the same reason: one sample is not a cadence.
+ */
+export const DEFAULT_STALL_MIN_SAMPLES = 20
+
 export interface TriggerEngineOptions {
   readonly config: TriggerConfig
   readonly medians: MedianSource
+  /**
+   * Whether a track is still an open subscription or fetch on an open
+   * connection. A track it reports `ended` is forgotten on the next tick, and
+   * one it reports `unbound` is kept but never judged by its silence, so only a
+   * track somebody is known to be waiting on can be stalled. Absent, every
+   * track counts as `open`.
+   */
+  readonly liveness?: (k: BucketKey) => TrackLiveness
+  /**
+   * Whether a window opened against this track now would have a dump behind
+   * it. When it says no, the fire is dropped before it counts, latches or
+   * starts a cooldown. Absent, every fire can.
+   */
+  readonly canFire?: (k: BucketKey) => boolean
   readonly onFire: (e: TriggerEvent) => void
   /** See {@link DEFAULT_TRIGGER_COOLDOWN_MS}. `0` disables rate limiting. */
   readonly cooldownMs?: number
@@ -116,6 +151,8 @@ interface Verdict {
 export class TriggerEngine {
   private readonly config: TriggerConfig
   private readonly medians: MedianSource
+  private readonly liveness: ((k: BucketKey) => TrackLiveness) | undefined
+  private readonly canFire: ((k: BucketKey) => boolean) | undefined
   private readonly onFire: (e: TriggerEvent) => void
   private readonly cooldownMs: number
   private readonly maxTracked: number
@@ -129,6 +166,8 @@ export class TriggerEngine {
   constructor(o: TriggerEngineOptions) {
     this.config = o.config
     this.medians = o.medians
+    this.liveness = o.liveness
+    this.canFire = o.canFire
     this.onFire = o.onFire
     this.cooldownMs = o.cooldownMs ?? DEFAULT_TRIGGER_COOLDOWN_MS
     this.maxTracked =
@@ -212,11 +251,20 @@ export class TriggerEngine {
    * ring had already overwritten the moments the dump exists to capture — or
    * never, if it did not recover. The caller ticks this from the same timer that
    * drives the rollup interval; the engine owns no timer.
+   *
+   * Ended tracks are dropped here rather than skipped: their silence is
+   * permanent, and holding them would only bring forward the cap eviction of a
+   * live one.
    */
   tick(nowMono: Mono): void {
     if (this.config.stall === undefined && this.config.cadence === undefined) return
-    for (const st of this.tracks.values()) {
-      if (st.latched) continue
+    for (const [id, st] of this.tracks) {
+      const live = this.liveness?.(st.key) ?? 'open'
+      if (live === 'ended') {
+        this.tracks.delete(id)
+        continue
+      }
+      if (live === 'unbound' || st.latched) continue
       const gap = nowMono - st.lastAt
       if (!(gap > 0)) continue
       const v = this.verdict(st.key, gap)
@@ -251,13 +299,25 @@ export class TriggerEngine {
     }
 
     const stall = this.config.stall
-    if (stall !== undefined && gap >= stall.afterMs) {
+    if (stall !== undefined && gap >= stall.afterMs && this.steady(k, stall.afterMs)) {
       if (best === undefined || stall.afterMs < best.threshold) {
         best = { kind: 'stall', threshold: stall.afterMs }
       }
     }
 
     return best
+  }
+
+  /**
+   * The track has an established median, and it is shorter than `afterMs`: a
+   * gap of `afterMs` is then an interruption of the track's own rhythm rather
+   * than the rhythm itself.
+   */
+  private steady(k: BucketKey, afterMs: number): boolean {
+    const m = this.medians.medianFor(k)
+    if (m === undefined || !(m > 0) || m >= afterMs) return false
+    const need = this.config.cadence?.minSamples ?? DEFAULT_STALL_MIN_SAMPLES
+    return this.medians.medianSamplesFor(k) >= need
   }
 
   private fire(kind: TriggerKind, st: TrackState, at: Mono, detail: string): void {
@@ -271,6 +331,9 @@ export class TriggerEngine {
         return
       }
     }
+    // Unlatched, so the episode can still open a window once a dump can be
+    // taken, if the gap is still open then.
+    if (this.canFire !== undefined && !this.canFire(st.key)) return
     st.latched = true
     st.lastFireAt = at
     this.lastFireAt = at

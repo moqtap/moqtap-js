@@ -7,7 +7,13 @@
  * in workerd stops at the first member, and a wrong CRC fails the whole body.
  */
 
-import { gunzipSync, inflateRawSync, crc32 as nodeCrc32 } from 'node:zlib'
+import {
+  constants,
+  deflateRawSync,
+  gunzipSync,
+  inflateRawSync,
+  crc32 as nodeCrc32,
+} from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { BODY_PREAMBLE_BYTES, readPreamble } from '../../envelope/body.js'
 import {
@@ -16,9 +22,11 @@ import {
   deflateSegment,
   FrameWriter,
   joinSegment,
+  joinSegments,
   readFrames,
   splitFrames,
 } from '../../envelope/index.js'
+import { openSegment } from '../../envelope/open-segment.js'
 import { FlushQueue } from '../../flush/index.js'
 import { compress } from '../../flush/queue.js'
 
@@ -99,6 +107,94 @@ describe('a segment joined behind a stored prefix', () => {
     expectOneMember(z, plain)
     expect(same(gunzipSync(z), plain)).toBe(true)
     expect(same(await platformGunzip(z), plain)).toBe(true)
+  })
+})
+
+describe('segments opened and joined end to end', () => {
+  /** Object-header-like records: what the packer gzips, in dynamic blocks. */
+  const records = (n: number, seed: number): Uint8Array =>
+    new TextEncoder().encode(
+      Array.from(
+        { length: n },
+        (_, i) =>
+          `{"t":"hdr","ts":${seed * 1000 + i * 3.7},"g":${i >> 5},"o":${i & 31},"n":${(i * 7919) % 1500}}`,
+      ).join(''),
+    )
+
+  /** The same input through zlib, in each kind of block it writes. */
+  const zlib = (input: Uint8Array, level: number, strategy?: number) => ({
+    deflate: new Uint8Array(
+      deflateRawSync(input, { level, ...(strategy === undefined ? {} : { strategy }) }),
+    ),
+    crc: nodeCrc32(input),
+    size: input.byteLength,
+  })
+
+  const inputs: [string, Uint8Array][] = [
+    ['empty', new Uint8Array(0)],
+    ['one byte', bytes(1, 3)],
+    ['mixed', bytes(5_000, 5)],
+    [
+      'incompressible',
+      concat(
+        crypto.getRandomValues(new Uint8Array(65_536)),
+        crypto.getRandomValues(new Uint8Array(4_464)),
+      ),
+    ],
+    ['records', records(4_000, 7)],
+  ]
+
+  it.each(inputs)('stays one gzip member, %s, from every kind of block', async (_, input) => {
+    const parts = [
+      await deflateSegment(input),
+      zlib(input, 0),
+      zlib(input, 9),
+      zlib(input, 6, constants.Z_FIXED),
+      zlib(input, 1, constants.Z_HUFFMAN_ONLY),
+    ]
+    for (const part of parts) {
+      const opened = openSegment(part)
+      expect(opened.open).toBe(true)
+      const prefix = bytes(40, 1)
+      const suffix = bytes(300, 2)
+      const z = joinSegment(prefix, opened, suffix)
+      const plain = concat(concat(prefix, input), suffix)
+      expectOneMember(z, plain)
+      expect(same(await platformGunzip(z), plain)).toBe(true)
+    }
+  })
+
+  it('joins many into one member, with nothing compressed again', async () => {
+    const pieces = [
+      records(3_000, 1),
+      bytes(9_000, 2),
+      records(10, 3),
+      new Uint8Array(0),
+      records(800, 4),
+    ]
+    const opened = await Promise.all(pieces.map(async (p) => openSegment(await deflateSegment(p))))
+    const joined = joinSegments(opened)
+    expect(joined.deflate.byteLength).toBe(opened.reduce((n, o) => n + o.deflate.byteLength, 0))
+    const prefix = bytes(20, 9)
+    const z = joinSegment(prefix, joined)
+    const plain = pieces.reduce(concat, prefix)
+    expectOneMember(z, plain)
+    expect(same(await platformGunzip(z), plain)).toBe(true)
+  })
+
+  it('refuses what is not one deflate stream ending where it does', async () => {
+    const good = await deflateSegment(records(500, 1))
+    const longer = { ...good, deflate: concat(good.deflate, new Uint8Array([0])) }
+    const shorter = { ...good, deflate: good.deflate.subarray(0, good.deflate.byteLength - 1) }
+    const reserved = { ...good, deflate: new Uint8Array([0x07, 0, 0]) }
+    for (const bad of [longer, shorter, reserved])
+      expect(() => openSegment(bad)).toThrow(RangeError)
+  })
+
+  it('refuses a closed segment anywhere but last', async () => {
+    const closed = await deflateSegment(bytes(10, 1))
+    expect(() => joinSegments([closed])).toThrow(RangeError)
+    expect(() => joinSegment(bytes(4, 1), closed, bytes(4, 2))).toThrow(RangeError)
   })
 })
 

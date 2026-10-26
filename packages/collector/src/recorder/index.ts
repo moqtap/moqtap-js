@@ -27,14 +27,18 @@ export type { FlightRecorderOptions, ReplayOptions, ReplayResult, ReplayWindow }
 export {
   DATAGRAM_STREAM_ID,
   DEFAULT_MAX_OBJECTS,
+  DEFAULT_SLICE_BYTES,
+  DUMP_MAX_SLICES,
   FlightRecorder,
   ReplayKeys,
   replayRing,
   replayWindow,
+  sliceDump,
 } from './replay.js'
 export type { MedianSource, TriggerEngineOptions, TriggerEvent } from './triggers.js'
 export {
   DEFAULT_MAX_TRACKED,
+  DEFAULT_STALL_MIN_SAMPLES,
   DEFAULT_TRIGGER_COOLDOWN_MS,
   TriggerEngine,
 } from './triggers.js'

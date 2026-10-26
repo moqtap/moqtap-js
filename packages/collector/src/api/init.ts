@@ -434,7 +434,11 @@ export function initWith(
   const triggers = resolved.flightRecorder.triggers
   if (triggers.stall !== undefined || triggers.cadence !== undefined) {
     // A trigger dumps the recorder and opens a capture window: both halves.
-    if (features.flightRecorder === undefined) {
+    // The recorder runs wherever the WebTransport is, so a page that links
+    // workers may leave it to them. Whether it did is known only once a
+    // transport opens in the page or a worker links, and the session reports
+    // it then.
+    if (features.flightRecorder === undefined && features.workers === undefined) {
       report({ key: 'flightRecorder.triggers', code: MQ1006, got: 'flightRecorder' })
     } else if (features.escalation === undefined) {
       report({ key: 'flightRecorder.triggers', code: MQ1006, got: 'escalation' })

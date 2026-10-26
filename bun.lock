@@ -23,7 +23,7 @@
     },
     "packages/collector": {
       "name": "@moqtap/collector",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@moqtap/codec": ">=0.13.4",
       },
@@ -69,7 +69,7 @@
     },
     "packages/viewer": {
       "name": "@moqtap/viewer",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "devDependencies": {
         "@moqtap/inspect": "workspace:*",
         "@moqtap/test-traces": "^0.1.1",

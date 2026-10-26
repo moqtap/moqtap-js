@@ -58,7 +58,7 @@ import {
   type TriggerConfig,
   type TriggerKind,
 } from '../types.js'
-import { type ColumnarBlock, encodeColumnar, type ObjectTiming, roundMs } from './columnar.js'
+import { encodeColumnar, type ObjectTiming, roundMs } from './columnar.js'
 import type { TriggerEvent } from './triggers.js'
 
 /**
@@ -73,16 +73,40 @@ import type { TriggerEvent } from './triggers.js'
 export const DATAGRAM_STREAM_ID = -1
 
 /**
- * Objects one dump may carry.
+ * Objects one walk of the ring may keep.
  *
  * At the default `'32MB'` depth a 1 KB-object stream holds roughly 32,000
- * objects and a 200-byte datagram stream roughly 160,000, so this covers the
- * ordinary case whole and bounds the pathological one. Past it the objects
- * **nearest the trigger** are kept — the dump exists to show the moments just
- * before it broke, so the head is what to lose — and the record says
- * `truncated`.
+ * objects and a 200-byte datagram stream roughly 160,000. What a dump sends is
+ * bounded tighter by its byte budget ({@link DUMP_MAX_SLICES} slices, about
+ * 19,000 objects at the default slice size), so with the defaults that budget
+ * trims first; this cap bounds the walk's own memory, and binds only where a
+ * host raises the budget. Past either, the objects **nearest the trigger** are
+ * kept — the dump exists to show the moments just before it broke, so the head
+ * is what to lose — and the record says `truncated`.
  */
 export const DEFAULT_MAX_OBJECTS = 50_000
+
+/**
+ * Encoded bytes one slice of a dump may come to, and the most any may.
+ *
+ * A dump is one record per slice, and each slice has to fit a body on its
+ * own: compressed or not, it never meets a buffer, a piece or a body cap it
+ * cannot fit. The realm passes `upload.byteThreshold`, the size every other
+ * body is sealed at.
+ */
+export const DEFAULT_SLICE_BYTES = 32 * 1024
+
+/**
+ * Encoded bytes one dump may come to, across its slices, in slices.
+ *
+ * A dump goes out in one go at the moment the network is worst. Jittered
+ * arrival times compress far worse than evenly spaced ones, a slice about 4×
+ * in the tests, so 24 slices is ~190 KB on the wire for ~19,000 objects. It is
+ * also what keeps a worker's whole dump inside the raw buffer its probe holds:
+ * the droppable gate admits a dump only below 96 thresholds of raw frames, and
+ * the probe's buffer holds 128.
+ */
+export const DUMP_MAX_SLICES = 24
 
 /** The window a dump covers. `fromMono` may be `-Infinity`: the whole ring. */
 export interface ReplayWindow {
@@ -99,8 +123,22 @@ export interface ReplayOptions {
    * epoch**, which a fresh resolver cannot reconstruct from a window that does
    * not contain the binding. Without it the fallback mints epoch-0 keys and
    * ingest must join on `(dir, kind, id)` and time instead.
+   *
+   * These are one connection's keys: they resolve the entries of
+   * {@link sessionId} only. Every other connection in the ring is resolved by a
+   * fresh resolver of its own, since a track alias names a track only within
+   * the connection that bound it. With no `sessionId` they apply to every entry,
+   * which is right only for a ring that holds a single connection.
    */
   readonly keys?: TrackKeyResolver
+  /**
+   * Walk only this connection's entries.
+   *
+   * The ring is shared by every connection in the realm and survives a
+   * reconnect, and a dump record names one connection, so rows from another
+   * would be attributed to the wrong one.
+   */
+  readonly sessionId?: string
   /** Session anchor. Every `Mono` on the wire is relative to it. */
   readonly originMono?: Mono
   /** See {@link DEFAULT_MAX_OBJECTS}. */
@@ -139,7 +177,18 @@ export function replayWindow(
   window: ReplayWindow,
   opts?: ReplayOptions,
 ): ReplayResult {
-  const keys = opts?.keys ?? new ReplayKeys()
+  const only = opts?.sessionId
+  const given = opts?.keys
+  const resolvers = new Map<string, TrackKeyResolver>()
+  const keysFor = (session: string): TrackKeyResolver => {
+    if (given !== undefined && (only === undefined || session === only)) return given
+    let r = resolvers.get(session)
+    if (r === undefined) {
+      r = new ReplayKeys()
+      resolvers.set(session, r)
+    }
+    return r
+  }
   const maxObjects =
     opts?.maxObjects !== undefined && opts.maxObjects > 0 ? opts.maxObjects : DEFAULT_MAX_OBJECTS
 
@@ -152,25 +201,28 @@ export function replayWindow(
   let streamsSkipped = 0
   let objectsUnkeyed = 0
 
-  // Grouped by (streamId, direction): one bidirectional stream is two byte
-  // streams under one id, and splicing them together desynchronises the walk on
-  // the first response — the same reason the dispatcher keys its table that way.
-  const groups = new Map<number, RingEntry[]>()
+  // Grouped by (connection, streamId, direction): one bidirectional stream is
+  // two byte streams under one id, and splicing them together desynchronises
+  // the walk on the first response — the same reason the dispatcher keys its
+  // table that way. Stream ids restart at 0 on every connection, so two
+  // connections' streams under one id are as unrelated as two directions.
+  const groups = new Map<string, RingEntry[]>()
   const datagrams: RingEntry[] = []
   for (const e of entries) {
     if (e.control) continue
+    if (only !== undefined && e.sessionId !== only) continue
     if (e.streamId < 0) {
       datagrams.push(e)
       continue
     }
-    const slot = e.streamId * 2 + (e.dir === 'tx' ? 0 : 1)
+    const slot = `${e.streamId}:${e.dir}:${e.sessionId}`
     const list = groups.get(slot)
     if (list === undefined) groups.set(slot, [e])
     else list.push(e)
   }
 
   for (const [slot, list] of groups) {
-    const walked = walkStream(list, a, keys, window, rows)
+    const walked = walkStream(list, a, keysFor((list[0] as RingEntry).sessionId), window, rows)
     if (!walked.parsed) streamsSkipped++
     objectsUnkeyed += walked.unkeyed
     // Release the stream's bytes before concatenating the next one.
@@ -181,7 +233,7 @@ export function replayWindow(
     const counts = a.decodeDatagram(e.data)
     if (counts === null) continue
     if (e.atMono < window.fromMono || e.atMono > window.toMono) continue
-    const key = keys.aliasKey(e.dir, counts.trackAlias)
+    const key = keysFor(e.sessionId).aliasKey(e.dir, counts.trackAlias)
     if (key === null) {
       objectsUnkeyed++
       continue
@@ -239,6 +291,10 @@ export function replayWindow(
  * `trigger` defaults to `'stall'` only so this stays callable with the three
  * arguments the module contract names; {@link FlightRecorder} always passes the
  * kind that actually fired.
+ *
+ * A non-empty `conn` limits the walk to that connection, as in
+ * {@link FlightRecorder}, unless `sessionId` names one itself: the record
+ * names one connection, and its rows must be that connection's.
  */
 export function replayRing(
   ring: ByteRing,
@@ -251,10 +307,15 @@ export function replayRing(
   },
 ): FlightRecord {
   const origin = opts?.originMono ?? 0
-  const r = replayWindow(ring, a, window, opts)
+  const conn = opts?.conn ?? ''
+  const only = opts?.sessionId ?? (conn !== '' ? conn : undefined)
+  const r = replayWindow(ring, a, window, {
+    ...opts,
+    ...(only !== undefined ? { sessionId: only } : {}),
+  })
   return {
     t: 'flight',
-    conn: opts?.conn ?? '',
+    conn,
     ts: roundMs(window.toMono - origin),
     // The dump is the first record of the capture window the trigger opened, so
     // it carries that window's elevated level and never baseline.
@@ -543,7 +604,11 @@ export interface FlightRecorderOptions {
   readonly adapter: (e: TriggerEvent) => DraftAdapter | undefined
   /** The live `TrackKeys`. See {@link ReplayOptions.keys}. */
   readonly keys?: (e: TriggerEvent) => TrackKeyResolver | undefined
-  /** The connection the triggering track belongs to, for `FlightRecord.conn`. Default `''`. */
+  /**
+   * The connection the triggering track belongs to, for `FlightRecord.conn`.
+   * It is the id the ring's entries carry as `sessionId`, and a non-empty one
+   * limits the walk to that connection. Default `''`: every entry.
+   */
   readonly conn?: (e: TriggerEvent) => string
   /** The level the capture window runs at. Defaults to `'headers'`. */
   readonly level?: () => DetailLevel
@@ -557,10 +622,19 @@ export interface FlightRecorderOptions {
    */
   readonly preRollMs?: number
   readonly maxObjects?: number
+  /** See {@link DEFAULT_SLICE_BYTES}. */
+  readonly sliceBytes?: number
+  /** Encoded bytes a whole dump may come to. Default {@link DUMP_MAX_SLICES} slices. */
+  readonly maxBytes?: number
+  /**
+   * Where a dump's slices go, all at once and in order, so the host can admit
+   * or shed the dump whole. Default: each one into {@link sink}.
+   */
+  readonly dump?: (slices: readonly FlightRecord[]) => void
 }
 
 /**
- * The recorder: armed for free, one record per trigger.
+ * The recorder: armed for free, one dump per trigger.
  *
  * `arm()` takes the {@link TriggerConfig} as well as setting the flag, and
  * {@link fire} refuses a kind the armed config does not enable. That is a second
@@ -615,7 +689,8 @@ export class FlightRecorder {
   }
 
   /**
-   * A trigger fired: re-parse the window it names and emit one record.
+   * A trigger fired: re-parse the window it names and emit the dump, as one
+   * record or, past {@link FlightRecorderOptions.sliceBytes}, as slices of it.
    *
    * The dump is the capture window's **first** record, not a separate event: it
    * covers the moments before the window opened and is included in it. Emitting
@@ -644,27 +719,148 @@ export class FlightRecorder {
     }
 
     const keys = this.o.keys?.(e)
+    const conn = this.o.conn?.(e) ?? ''
     const r = replayWindow(this.o.ring, a, window, {
       ...(keys !== undefined ? { keys } : {}),
+      ...(conn !== '' ? { sessionId: conn } : {}),
       ...(this.o.maxObjects !== undefined ? { maxObjects: this.o.maxObjects } : {}),
     })
 
-    const cols: ColumnarBlock = encodeColumnar(r.rows, origin)
-    const record: FlightRecord = {
+    const sliceBytes = Math.min(
+      DEFAULT_SLICE_BYTES,
+      Math.max(1024, this.o.sliceBytes ?? DEFAULT_SLICE_BYTES),
+    )
+    const template: FlightRecord = {
       t: 'flight',
-      conn: this.o.conn?.(e) ?? '',
+      conn,
       ts: roundMs(e.atMono - origin),
       lvl: this.o.level?.() ?? 'headers',
       trigger: e.kind,
       windowStart: roundMs(r.windowStart - origin),
       windowEnd: roundMs(r.windowEnd - origin),
-      cols,
+      cols: encodeColumnar(r.rows, origin),
       truncated: r.truncated,
     }
-    this.lastRecord = record
+    const slices = sliceDump(
+      template,
+      sliceBytes,
+      Math.max(sliceBytes, this.o.maxBytes ?? DUMP_MAX_SLICES * sliceBytes),
+      this.fired,
+    )
+    this.lastRecord = slices.whole
     this.fired++
-    this.o.sink.json(record)
+    const dump = this.o.dump
+    if (dump !== undefined) dump(slices.parts)
+    else for (const part of slices.parts) this.o.sink.json(part)
   }
+}
+
+/** Bytes a slice's fields other than its columns may take: the record's own, and room for its window. */
+function overheadBytes(r: FlightRecord, id: number): number {
+  const empty = {
+    ...r,
+    cols: { key: [], at: [], group: [], object: [], bytes: [], deliveryMs: [] },
+    dump: id,
+    dumpEnd: r.windowEnd,
+  }
+  // The window and slice fields vary slice to slice; 96 bytes holds the
+  // longest numbers each can be, and the `truncated` this slice may gain.
+  return new TextEncoder().encode(JSON.stringify(empty)).byteLength + 96
+}
+
+/**
+ * A dump as records that each encode to at most `sliceBytes`, and together
+ * to at most `maxBytes`.
+ *
+ * Past `maxBytes` the oldest objects go, as they do past the object cap, and
+ * the dump says `truncated`. The slices split the window between them, each
+ * starting at its first object and ending where the next one starts, so
+ * together they cover exactly the dump's window; `part` and `parts` say which
+ * slice of how many each is, `dump` (`id`) which dump, and `dumpEnd` where the
+ * whole dump's window ends. A dump that fits one slice is one record without
+ * them.
+ */
+export function sliceDump(
+  r: FlightRecord,
+  sliceBytes: number,
+  maxBytes: number,
+  id = 0,
+): { readonly whole: FlightRecord; readonly parts: readonly FlightRecord[] } {
+  const c = r.cols
+  const n = c.at.length
+  const overhead = overheadBytes(r, id)
+  const room = Math.max(1, sliceBytes - overhead)
+  // Each column entry and its comma, as `JSON.stringify` writes them. Keys
+  // are `bucketKeyString` output: ASCII, so characters are bytes.
+  const cost = new Array<number>(n)
+  for (let i = 0; i < n; i++) {
+    cost[i] =
+      JSON.stringify(c.key[i]).length +
+      String(c.at[i]).length +
+      String(c.group[i]).length +
+      String(c.object[i]).length +
+      String(c.bytes[i]).length +
+      String(c.deliveryMs[i]).length +
+      6
+  }
+
+  // From the newest back, while the slices they would fill stay within the budget.
+  let first = n
+  let used = overhead
+  let fill = 0
+  while (first > 0) {
+    const k = cost[first - 1] as number
+    const opens = fill + k > room
+    const next = used + k + (opens ? overhead : 0)
+    if (next > maxBytes) break
+    fill = opens ? k : fill + k
+    used = next
+    first--
+  }
+  const trimmed = first > 0
+  const truncated = r.truncated || trimmed
+  const kept = (i: number, j: number): FlightRecord['cols'] => ({
+    key: c.key.slice(i, j),
+    at: c.at.slice(i, j),
+    group: c.group.slice(i, j),
+    object: c.object.slice(i, j),
+    bytes: c.bytes.slice(i, j),
+    deliveryMs: c.deliveryMs.slice(i, j),
+  })
+  const windowStart = trimmed ? (c.at[first] as number) : r.windowStart
+  const whole: FlightRecord = trimmed ? { ...r, windowStart, cols: kept(first, n), truncated } : r
+
+  const bounds: number[] = [first]
+  fill = 0
+  for (let i = first; i < n; i++) {
+    const k = cost[i] as number
+    if (fill + k > room && fill > 0) {
+      bounds.push(i)
+      fill = 0
+    }
+    fill += k
+  }
+  bounds.push(n)
+  if (bounds.length <= 2) return { whole, parts: [whole] }
+
+  const parts: FlightRecord[] = []
+  const count = bounds.length - 1
+  for (let p = 0; p < count; p++) {
+    const i = bounds[p] as number
+    const j = bounds[p + 1] as number
+    parts.push({
+      ...r,
+      windowStart: p === 0 ? windowStart : (c.at[i] as number),
+      windowEnd: p === count - 1 ? r.windowEnd : (c.at[j] as number),
+      cols: kept(i, j),
+      truncated,
+      part: p,
+      parts: count,
+      dump: id,
+      dumpEnd: r.windowEnd,
+    })
+  }
+  return { whole, parts }
 }
 
 function enabled(c: TriggerConfig, kind: TriggerKind): boolean {

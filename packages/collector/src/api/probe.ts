@@ -9,11 +9,18 @@
  * records and none of its counters. The page appends the frames to its own
  * stream without parsing them.
  *
- * A forward of at least `upload.byteThreshold` is gzipped here first, in
- * pieces small enough to be a body each, so at high object rates the page
- * seals, stores and uploads without compressing anything on its main thread.
- * The droppable gate then weighs this probe's buffer by what it will cost
- * once compressed, not by its raw size.
+ * At baseline a forward of at least `upload.byteThreshold` is gzipped here
+ * first, in pieces small enough to be a body each, so the page seals, stores
+ * and uploads it without compressing anything on its main thread. The
+ * droppable gate then weighs this probe's buffer by what it will cost once
+ * compressed, not by its raw size.
+ *
+ * While detail is raised, the page packs its buffer into bodies by what they
+ * cost gzipped, a body holding twenty or forty times the threshold of object
+ * headers; a piece gzipped here would be a body of its own, at a forward's
+ * worth of headers. So forwards go to the page as frames, to be packed with
+ * the page's own. Only a flight dump's slices, a body each, are gzipped here
+ * still.
  *
  * Every timestamp is written on the page's timeline from the start: the page
  * sends the offset between the two clocks with each session it records the
@@ -32,8 +39,8 @@ import {
 import { FrameBuffer } from '../flush/frame-buffer.js'
 import type { TriggerEvent } from '../recorder/index.js'
 import type { TransportHook } from '../transport/index.js'
-import type { ClockSource, DetailLevel, Mono } from '../types.js'
-import { levelIndex } from './defaults.js'
+import type { ClockSource, DetailLevel, Mono, RollupRecord } from '../types.js'
+import { isElevated, levelIndex } from './defaults.js'
 import { armDormant, type DormantState, dormantPending } from './dormant.js'
 import { TRIGGER_CAPTURE_LEVEL } from './escalation.js'
 import type { FlightRecorderFeature } from './features.js'
@@ -49,7 +56,7 @@ import {
   linkMessage,
   type PageMessage,
 } from './link.js'
-import { type RealmConfig, RealmObserver } from './realm.js'
+import { BODY_OVERHEAD_BYTES, type RealmConfig, RealmObserver } from './realm.js'
 
 /** What a worker's build carries: its drafts, and the flight recorder when it has one. */
 export interface WorkerBuild {
@@ -78,8 +85,7 @@ const platformClock: ClockSource = { now: () => performance.now(), wall: () => D
  * Compressed bytes one piece aims at, and the most it may come to.
  *
  * Each piece becomes a body of its own, which has to fit `sendBeacon`'s 64 KiB
- * at `pagehide` with the page's few frames of its own in front, and ingest's
- * body cap well before that.
+ * at `pagehide` with the page's few frames of its own in front.
  */
 const PIECE_TARGET_BYTES = 32 * 1024
 const PIECE_MAX_BYTES = 48 * 1024
@@ -92,6 +98,15 @@ const START_RATIO = 1 / 4
  * before the cap refuses one that must not be lost.
  */
 const GATE_MIN_RATIO = 1 / 16
+
+/** Forwards a probe keeps count of separately while the page has not taken them in. */
+const MAX_UNHEARD = 64
+
+/** A forward the page had not taken in when it last gave the room, and what it will take of it. */
+interface Unheard {
+  readonly seq: number
+  readonly bytes: number
+}
 
 /** Raw bytes a probe may hold, in `upload.byteThreshold`s, when it compresses. */
 const RAW_CAP_THRESHOLDS = 128
@@ -110,15 +125,21 @@ export class ProbeRuntime {
   private readonly _ports: ProbePorts
   private readonly _onError: (err: unknown) => void
   private readonly _buffer: FrameBuffer
+  /** Rollup intervals closed since the last forward, in order. They travel beside the frames. */
+  private _rollups: RollupRecord[] = []
 
   private readonly _compresses: boolean
   private readonly _compressMin: number
+  /** The most frames one part of a forward carries uncompressed: what the page's buffer takes at baseline. */
+  private readonly _plainMax: number
   private readonly _deflate: (bytes: Uint8Array) => Promise<DeflateSegment>
 
   private _ids: { sessionId: string; instanceId: string }
   private _config: RealmConfig
   private _realm: RealmObserver | null = null
   private _level: DetailLevel
+  /** The page refuses every raise now; a trigger leaves `_level` as it is. */
+  private _capped: boolean
   private _ready = false
   private _stopped = false
   private _lastPost: Mono
@@ -129,8 +150,17 @@ export class ProbeRuntime {
   /** A forward is being compressed; the next waits for it, so forwards arrive in order. */
   private _compressing = false
   private _forwardAgain = false
+  /** And it carries a flight dump's slice. */
+  private _sliceAgain = false
   /** How long the last compression took: the next forward starts that much earlier. */
   private _compressMs = 0
+  /** The outbox room the page last gave this probe's flight dumps. */
+  private _room: number
+  /** The last forward's `seq`. */
+  private _seq = 0
+  private _unheard: Unheard[] = []
+  /** Raw bytes of the forward being compressed. */
+  private _compressingBytes = 0
 
   constructor(
     linked: LinkedMessage,
@@ -156,11 +186,14 @@ export class ProbeRuntime {
       }
     }
     this._level = linked.level
+    this._capped = linked.capped === true
+    this._room = linked.room
     this._lastPost = this._clock.now()
     const threshold = linked.config.upload.byteThreshold
     this._deflate = tuning.deflate ?? deflateSegment
     this._compresses = tuning.deflate !== undefined || gzipSupported()
     this._compressMin = Math.max(1, tuning.compressMinBytes ?? threshold)
+    this._plainMax = PLAIN_CAP_THRESHOLDS * threshold
     this._ratio = this._compresses ? START_RATIO : 1
     this._buffer = new FrameBuffer({
       maxPendingBytes: (this._compresses ? RAW_CAP_THRESHOLDS : PLAIN_CAP_THRESHOLDS) * threshold,
@@ -186,7 +219,13 @@ export class ProbeRuntime {
       clock: this._clock,
       host: {
         sink: {
-          json: (r) => buffer.json(r),
+          // A closed interval goes to the page as a record rather than as
+          // frames: the page may already have written part of it for a
+          // worker it counted gone, and writes only the rest.
+          json: (r) => {
+            if (r.t === 'rollup') this._rollups.push(r)
+            else buffer.json(r)
+          },
           raw: (b) => buffer.raw(b),
           get pendingBytes(): number {
             return buffer.pendingBytes * ratio()
@@ -204,6 +243,8 @@ export class ProbeRuntime {
         },
         onPressure: () => {},
         onBytes: () => {},
+        flush: () => this._forward(true),
+        dumpRoom: () => this._dumpRoom(),
         onError: this._onError,
       },
     })
@@ -224,6 +265,19 @@ export class ProbeRuntime {
     const open = (): void => this._call({ t: 'open' })
     if (first && dormantPending()) open()
     else this._dormant = armDormant(this._hook, open)
+  }
+
+  /**
+   * What a flight dump may take of the page's outbox: the room the page last
+   * gave, less what this probe has sent or holds that the page had not taken
+   * in by then. The page admits a dump's slices as it does every other body,
+   * pushing older ones out past its cap, so the dump has to fit before it is
+   * written.
+   */
+  private _dumpRoom(): number {
+    let owed = this._buffer.pendingBytes + this._compressingBytes
+    for (const u of this._unheard) owed += u.bytes
+    return Math.max(0, this._room - owed)
   }
 
   get ids(): { sessionId: string; instanceId: string } {
@@ -287,42 +341,63 @@ export class ProbeRuntime {
    * The frames' buffers are transferred, not copied: the page's main thread
    * pays for a pointer and an append, or for a pointer and a seal when they
    * arrive compressed. One compression at a time: a forward asked for while
-   * one runs follows it, so the page receives the frames in order.
+   * one runs follows it, so the page receives the frames in order. A
+   * `slice` of a flight dump is compressed at any level.
    */
-  private _forward(): void {
+  private _forward(slice = false): void {
     const realm = this._realm
     if (this._stopped || realm === null) return
     if (this._compressing) {
       this._forwardAgain = true
+      this._sliceAgain ||= slice
       return
     }
     const now = this._clock.now()
     const hasFrames = this._buffer.frameCount > 0
-    if (!hasFrames && now - this._lastPost < HEARTBEAT_MS) return
+    const closed = this._rollups
+    if (!hasFrames && closed.length === 0 && now - this._lastPost < HEARTBEAT_MS) return
     const conns = realm.snapshots(now)
     const dropped = this._buffer.droppedRecords + realm.droppedRecords
     const ready = this._ready
+    const rollups = closed.length > 0 ? { rollups: closed } : {}
+    this._rollups = []
     this._lastPost = now
     if (!hasFrames) {
-      this._post({ t: 'fwd', n: 0, dropped, ready, conns }, [])
+      this._post({ t: 'fwd', n: 0, dropped, ready, ...rollups, conns }, [])
       return
     }
     const { frames, count } = this._buffer.takeFrames()
-    if (!this._compresses || frames.byteLength < this._compressMin) {
-      const part = framesPart(frames, count)
-      this._post({ t: 'fwd', parts: [part], n: count, dropped, ready, conns }, [part.frames])
+    if (
+      !this._compresses ||
+      frames.byteLength < this._compressMin ||
+      (!slice && isElevated(this._level))
+    ) {
+      const parts =
+        frames.byteLength <= this._plainMax
+          ? [framesPart(frames, count)]
+          : splitFrames(frames, count, this._plainMax / 2).map((p) =>
+              framesPart(p.bytes.slice(), p.count),
+            )
+      this._post(
+        { t: 'fwd', parts, n: count, dropped, ready, ...rollups, conns },
+        parts.map((p) => p.frames),
+      )
       return
     }
     this._compressing = true
+    this._compressingBytes = frames.byteLength
     void this._compress(frames, count).then((parts) => {
       this._compressMs = Math.max(0, this._clock.now() - now)
       this._compressing = false
+      this._compressingBytes = 0
       this._buffer.recycle(frames)
       const transfer = parts.map((p) => ('deflate' in p ? p.deflate : p.frames))
-      this._post({ t: 'fwd', parts, n: count, dropped, ready, conns }, transfer)
+      this._post({ t: 'fwd', parts, n: count, dropped, ready, ...rollups, conns }, transfer)
       if (this._forwardAgain) {
+        const again = this._sliceAgain
         this._forwardAgain = false
-        this._forward()
+        this._sliceAgain = false
+        this._forward(again)
       }
     })
   }
@@ -373,20 +448,36 @@ export class ProbeRuntime {
     return parts
   }
 
-  private _post(message: ForwardMessage, transfer: Transferable[]): void {
+  private _post(message: Omit<ForwardMessage, 'seq'>, transfer: Transferable[]): void {
     if (this._stopped) return
+    const seq = ++this._seq
+    // A compressed part is a body of its own; frames join the page's buffer.
+    let bytes = 0
+    for (const p of message.parts ?? []) {
+      bytes += 'deflate' in p ? p.byteLength + BODY_OVERHEAD_BYTES : p.byteLength
+    }
+    if (bytes > 0) {
+      this._unheard.push({ seq, bytes })
+      // A page that stops answering leaves this to grow; two merged under the
+      // later `seq` are owed until both are taken in.
+      if (this._unheard.length > MAX_UNHEARD) {
+        const [a, b] = this._unheard.splice(0, 2) as [Unheard, Unheard]
+        this._unheard.unshift({ seq: b.seq, bytes: a.bytes + b.bytes })
+      }
+    }
     try {
-      this._port.postMessage(envelope(message), transfer)
+      this._port.postMessage(envelope({ ...message, seq }), transfer)
     } catch (err) {
       this._onError(err)
     }
   }
 
   private _trigger(e: TriggerEvent): void {
-    // The page owns the capture window and may refuse it, at the ceiling. The
-    // dump this trigger produces next is stamped at the level the window
-    // opens at; the page's answer corrects the level for everything after.
-    if (levelIndex(this._level) < levelIndex(TRIGGER_CAPTURE_LEVEL)) {
+    // The page owns the capture window. The dump this trigger produces next is
+    // stamped at the level the window opens at, so the probe raises before the
+    // page answers, unless the page has said it refuses every raise. The
+    // page's answer sets the level for everything after, whichever it decided.
+    if (!this._capped && levelIndex(this._level) < levelIndex(TRIGGER_CAPTURE_LEVEL)) {
       this._level = TRIGGER_CAPTURE_LEVEL
     }
     this._call({
@@ -410,8 +501,13 @@ export class ProbeRuntime {
     const m = linkMessage(data) as PageMessage | null
     if (m === null) return
     try {
-      if (m.t === 'level') this._level = m.level
-      else if (m.t === 'forward') this._forward()
+      if (m.t === 'level') {
+        this._level = m.level
+        this._capped = m.capped === true
+      } else if (m.t === 'room') {
+        this._room = m.bytes
+        this._unheard = this._unheard.filter((u) => u.seq > m.upTo)
+      } else if (m.t === 'forward') this._forward()
       else if (m.t === 'unlinked') this._stop()
       else if (m.t === 'session') this._follow(m)
       else if (m.t === 'context') {
@@ -438,6 +534,7 @@ export class ProbeRuntime {
     this._forward()
     this._ids = { sessionId: m.sessionId, instanceId: m.instanceId }
     this._level = m.level
+    this._capped = m.capped === true
     this._ready = false
     const realm = this._realm
     if (realm === null && m.base === undefined) return
@@ -454,6 +551,7 @@ export class ProbeRuntime {
     this._stopped = true
     this._realm?.detach()
     this._realm?.clear()
+    this._rollups = []
     const clear = this._ports.clearTimer ?? ((h: unknown) => clearTimeout(h as never))
     if (this._forwardHandle !== undefined) clear(this._forwardHandle)
     if (this._intervalHandle !== undefined) clear(this._intervalHandle)

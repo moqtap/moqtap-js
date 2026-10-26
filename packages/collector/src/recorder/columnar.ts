@@ -1,10 +1,10 @@
 /**
- * The dump's shape: one record, columns rather than rows.
+ * The dump's shape: one record per body-sized slice, columns rather than rows.
  *
- * A window that held 30,000 objects produces one
- * {@link import('../types.js').FlightRecord}, not 30,000 records, and inside it
- * the per-object timings are six parallel arrays rather than 30,000 objects
- * each repeating its own field names. Two reasons:
+ * A window that held 10,000 objects produces one
+ * {@link import('../types.js').FlightRecord} per body-sized slice, not 10,000
+ * records, and inside each the per-object timings are six parallel arrays
+ * rather than objects each repeating its own field names. Two reasons:
  *
  *  1. Payload is 191× the control plane at `headers` detail and 282× at
  *     `headers+sizes`. A dump is the largest thing this collector sends and it
@@ -15,10 +15,11 @@
  *     kind of number with one distribution — arrival times rising
  *     monotonically, group ids repeating in runs, sizes clustered around a
  *     GOP's shape — so gzip's window sees runs instead of an interleave of six
- *     unrelated value spaces. 22.6× is the number the envelope budget rests on;
- *     a row-major dump does not reach it.
+ *     unrelated value spaces. Even so, arrival times jittered at microsecond
+ *     resolution compress far worse than evenly spaced ones, a slice about 4×
+ *     in the tests; a row-major dump does worse.
  *
- * The column names stay descriptive: they appear once per dump, not once per
+ * The column names stay descriptive: they appear once per slice, not once per
  * object.
  */
 

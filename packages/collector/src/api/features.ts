@@ -12,7 +12,13 @@
  * workers forward.
  */
 
-import type { ChunkStore, ChunkStoreOptions, LockManagerLike } from '../flush/index.js'
+import type {
+  ChunkStore,
+  ChunkStoreOptions,
+  LockManagerLike,
+  Packer,
+  PackerOptions,
+} from '../flush/index.js'
 import type { TriggerEvent } from '../recorder/index.js'
 import type { RingEntry } from '../ring/index.js'
 import type { CustomMetrics } from '../rollup/index.js'
@@ -24,12 +30,14 @@ import type {
   DetailLevel,
   DraftAdapter,
   EnvelopeRecord,
+  FlightRecord,
   LinkRecord,
   Mono,
   ObjectSample,
   RecordSink,
   ResolvedConfig,
   TrackKeyResolver,
+  TrackLiveness,
   TriggerConfig,
   TriggerKind,
 } from '../types.js'
@@ -80,6 +88,10 @@ export type RingFactory = (maxBytes: number) => Ring
 export interface RecorderDeps {
   readonly config: RealmConfig['flightRecorder']
   readonly sink: RecordSink
+  /** A dump's slices, in order: admitted or shed whole. */
+  readonly dump: (slices: readonly FlightRecord[]) => void
+  /** Encoded bytes one slice of a dump may come to. */
+  readonly sliceBytes: number
   readonly adapter: (e: TriggerEvent) => DraftAdapter | undefined
   readonly keys: (e: TriggerEvent) => TrackKeyResolver | undefined
   readonly conn: (e: TriggerEvent) => string
@@ -87,6 +99,10 @@ export interface RecorderDeps {
   readonly originMono: Mono
   readonly medianFor: (k: BucketKey) => number | undefined
   readonly medianSamplesFor: (k: BucketKey) => number
+  /** See {@link import('../recorder/triggers.js').TriggerEngineOptions.liveness}. */
+  readonly liveness: (k: BucketKey) => TrackLiveness
+  /** A window opened against this track now would have a dump behind it. */
+  readonly canFire: (k: BucketKey) => boolean
   readonly onFire: (e: TriggerEvent) => void
   readonly onError: (err: unknown) => void
 }
@@ -113,12 +129,17 @@ export interface EscalationOptions {
   readonly sink: RecordSink
   readonly ring?: { readonly capacityBytes: number; evictedBytes(): number }
   readonly onLevelChange?: (level: DetailLevel) => void
+  readonly onCapChange?: (capped: boolean) => void
   readonly onWindowOpen?: (deadlineMono: Mono) => void
 }
 
 /** The page's detail level, and the capture windows that raise it. */
 export interface Escalation {
   readonly level: DetailLevel
+  /** Every raise is refused now: a hold, or the ceiling. */
+  readonly capped: boolean
+  /** The end of a hold in force, for the next session in the page to keep. */
+  readonly holdUntil: Mono | undefined
   escalate(to: DetailLevel, reason?: string): void
   resolve(reason?: string): void
   onTrigger(kind: TriggerKind, atMono: Mono, key?: BucketKey): void
@@ -147,6 +168,8 @@ export interface LinkOwner {
   readonly config: ResolvedConfig
   readonly instanceId: string
   readonly level: DetailLevel
+  /** The session refuses every raise now, so a probe's trigger may not raise its own level. */
+  readonly capped: boolean
   /** The context connections opened from now on carry. */
   context(): ResolvedConfig['context']
   /** What a probe subtracts from its own clock to land on this session's. */
@@ -169,10 +192,14 @@ export interface LinkOwner {
   resolve(reason?: string): void
   /** A probe's trigger fired, `at` on this session's clock. */
   trigger(kind: TriggerKind, at: Mono, key?: BucketKey): void
+  /** A worker linked whose build carries no flight recorder. */
+  recorderMissing(): void
   /** A probe's control plane outran it, `at` on this session's clock. */
   overrun(at: Mono, signal: string): void
   json(r: EnvelopeRecord): void
   relNow(): Mono
+  /** The outbox room one probe's flight dumps may take now. */
+  room(): number
 }
 
 /** The page's workers. One set serves the page across its sessions. */
@@ -185,6 +212,10 @@ export interface WorkerLinks {
   dropped(): number
   closeForwarded(cause: 'session-end'): void
   broadcast(m: PageMessage): void
+  /** Probes that can still forward a flight dump. */
+  linked(): number
+  /** Tell each probe the outbox room its flight dumps may take now. */
+  tellRoom(): void
   /** The next session took over: every link reports into `owner` from now. */
   adopt(owner: LinkOwner): void
   teardown(): void
@@ -212,6 +243,8 @@ export interface Persistence {
 export interface EscalationFeature {
   readonly feature: 'escalation'
   create(o: EscalationOptions): Escalation
+  /** What weighs the buffer by its compressed size while detail is raised. */
+  packer(o: PackerOptions): Packer
 }
 
 export interface FlightRecorderFeature {
@@ -273,6 +306,8 @@ export interface FeatureSet {
 export function baselineEscalation(missing: () => void): Escalation {
   return {
     level: 'baseline',
+    capped: true,
+    holdUntil: undefined,
     escalate: missing,
     resolve() {},
     onTrigger() {},

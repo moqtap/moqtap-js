@@ -37,7 +37,7 @@
     "MQ1006": {
       "summary": "A call or an option needs a feature this build does not include",
       "value": "the feature: workers, escalation, flightRecorder or customMetrics",
-      "detail": "A build carries only the features its entry imports. `linkWorker()` needs `workers`; `escalate()` and a `detail` above baseline need `escalation`; `flightRecorder.triggers` needs `flightRecorder` and, in the page, `escalation`; `defineMetric()` and `observe()` need `customMetrics`. The call is ignored and reported once per feature. Import an entry that includes the feature, or add it with `compose()`."
+      "detail": "A build carries only the features its entry imports. `linkWorker()` needs `workers`; `escalate()` and a `detail` above baseline need `escalation`; `flightRecorder.triggers` needs `flightRecorder` wherever a `WebTransport` is observed, in the page or in a linked worker, and `escalation` in the page; `defineMetric()` and `observe()` need `customMetrics`. The call is ignored and reported once per feature. Import an entry that includes the feature, or add it with `compose()`."
     },
     "MQ1101": {
       "summary": "expected a finite number at or above the minimum",

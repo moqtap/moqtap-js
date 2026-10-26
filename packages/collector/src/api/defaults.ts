@@ -88,7 +88,8 @@ export const UPLOAD_PROVENANCE: { readonly [K in keyof UploadConfig]: string } =
   /*#__PURE__*/ Object.freeze({
     intervalMs:
       'Paired with byteThreshold, whichever comes first. Sets the "a crash loses at most 60 seconds" claim.',
-    byteThreshold: 'Flush every 32 KB accumulated, or every intervalMs, whichever comes first.',
+    byteThreshold:
+      'Flush every 32 KB accumulated, or every intervalMs, whichever comes first. While detail is raised the 32 KB is counted compressed: the buffer is gzipped in pieces as it fills, and an upload is sealed once its pieces come to 32 KB, holding at most 64 times byteThreshold (2 MB) uncompressed. Each upload is one request whatever its size, and object headers compress many times over, so at raised detail the compressed size is what seals them. What is not yet sealed stays under 32 KB compressed and under a threshold uncompressed, so a page that goes sends it in one 64 KB beacon.',
     earlyFlushesMs:
       'Front-loaded at ready and +45 s. The ready seal carries setup and the handshake, so a session that dies during establishment is not lost; +45 s brings the first rollups in before the steady interval. One early seal rather than several, because a steady session carries little new information per interval.',
     maxAttempts:

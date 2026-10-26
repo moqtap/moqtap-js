@@ -65,7 +65,11 @@ export interface Flight {
   readonly trigger: string
   readonly from: number
   readonly to: number
-  /** The window's start was already overwritten when it was dumped. */
+  /**
+   * The dump does not hold every object its trigger asked for: the ring had
+   * overwritten the start, the collector left the oldest out to keep the dump
+   * within its budget, or a slice of the dump never arrived.
+   */
   readonly truncated: boolean
   readonly objects: readonly { readonly lane: string; readonly at: number }[]
   /** Gaps between arrivals long enough to count as stalls, exactly placed. */
@@ -182,7 +186,7 @@ export function delivery(
     ...rest,
   }))
 
-  const flights: Flight[] = []
+  const dumps = new Map<string, { connection: string; pieces: FlightPiece[] }>()
   const bands: {
     from: number
     to: number | null
@@ -198,8 +202,11 @@ export function delivery(
     const offset = rolled.offsets.get(segment)
 
     if (event.label === 'collector.flight' && data !== null) {
-      const flight = flightDump(data, connection, at, offset === undefined ? undefined : us(offset))
-      if (flight !== null) flights.push(flight)
+      const piece = { data, at, base: offset === undefined ? undefined : us(offset) }
+      const id = dumpId(data, at, connection, dumps.size)
+      const dump = dumps.get(id)
+      if (dump === undefined) dumps.set(id, { connection, pieces: [piece] })
+      else dump.pieces.push(piece)
     } else if (event.label === 'collector.escalation' && data !== null) {
       escalation(data, at)
     } else if (!event.label.startsWith('collector.') && !event.label.startsWith('insight.')) {
@@ -234,6 +241,12 @@ export function delivery(
     }
   }
 
+  const flights: Flight[] = []
+  for (const { connection, pieces } of dumps.values()) {
+    const flight = flightDump(pieces, connection)
+    if (flight !== null) flights.push(flight)
+  }
+
   return {
     lanes,
     cells,
@@ -253,59 +266,126 @@ function causeOf(by: unknown): string | null {
   return null
 }
 
+/** One `collector.flight` record: a whole dump, or one slice of one. */
+interface FlightPiece {
+  readonly data: Rec
+  readonly at: number
+  readonly base: number | undefined
+}
+
+/**
+ * Which dump a record belongs to. The slices of one dump share its
+ * connection, dump number, end, trigger and slice count; the trace keeps no
+ * `ts` in a record's data, so a slice without a dump number falls back on its
+ * event time. A record without a slice count is a dump of its own, `n` apart
+ * from every other.
+ */
+function dumpId(data: Rec, at: number, connection: string, n: number): string {
+  const parts = finite(data.parts)
+  if (parts === null || parts < 2 || finite(data.part) === null) {
+    return JSON.stringify(['whole', connection, n])
+  }
+  return JSON.stringify([
+    'sliced',
+    connection,
+    finite(data.dump) ?? `at:${at}`,
+    finite(data.dumpEnd),
+    String(data.trigger),
+    parts,
+  ])
+}
+
 /**
  * A flight dump's objects, and the stalls between them, on the trace's clock.
  * Without a rollup to set the clock by, the dump's own record time stands in
- * for its window's end, which is when the trigger fired.
+ * for the end of its whole window, which is when the trigger fired: a sliced
+ * dump's `dumpEnd`, or a whole one's `windowEnd`. Only the last slice's own
+ * `windowEnd` is that end, so a sliced dump that says neither and lost its
+ * last slice has nothing to place it by and is left out.
+ *
+ * A dump sent in slices is put back together first, in slice order: a lane's
+ * median and its gaps are the whole dump's, so a stall across the edge of two
+ * slices is found, and the window runs from the first slice's start to the
+ * last one's end. Across a slice that never arrived there is no telling a
+ * stall from the missing objects, so no gap across it counts as one.
  */
-function flightDump(
-  data: Rec,
-  connection: string,
-  at: number,
-  base: number | undefined,
-): Flight | null {
-  const windowStart = finite(data.windowStart)
-  const windowEnd = finite(data.windowEnd)
-  const cols = record(data.cols)
-  if (windowStart === null || windowEnd === null || cols === null) return null
-  const offset = base ?? at - windowEnd * 1000
-  const keys = Array.isArray(cols.key) ? cols.key : []
-  const times = Array.isArray(cols.at) ? cols.at : []
+function flightDump(pieces: readonly FlightPiece[], connection: string): Flight | null {
+  const byPart = new Map<number, FlightPiece>()
+  for (const piece of pieces) {
+    const part = finite(piece.data.part) ?? 0
+    if (!byPart.has(part)) byPart.set(part, piece)
+  }
+  const ordered = [...byPart].sort(([a], [b]) => a - b)
+  const first = ordered[0]
+  const last = ordered.at(-1)
+  if (first === undefined || last === undefined) return null
+  const parts = finite(first[1].data.parts)
+  const sliced = parts !== null && parts >= 2
+  const hasLast = !sliced || last[0] === parts - 1
+  const windowStart = finite(first[1].data.windowStart)
+  const lastEnd = finite(last[1].data.windowEnd)
+  const end =
+    (sliced ? ordered.map(([, p]) => finite(p.data.dumpEnd)).find((e) => e !== null) : null) ??
+    (hasLast ? lastEnd : null)
+  if (windowStart === null || lastEnd === null) return null
+  const base = ordered.find(([, p]) => p.base !== undefined)?.[1].base
+  const offset = base ?? (end === null ? null : last[1].at - end * 1000)
+  if (offset === null) return null
+  const windowEnd = end ?? lastEnd
 
-  const byLane = new Map<string, number[]>()
+  let truncated = sliced && (first[0] !== 0 || !hasLast)
+  const byLane = new Map<string, { t: number; run: number }[]>()
   const objects: { lane: string; at: number }[] = []
-  keys.forEach((key, i) => {
-    const t = finite(times[i])
-    const lane = typeof key === 'string' ? laneOfKeyString(connection, key) : null
-    if (t === null || lane === null) return
-    const placed = offset + t * 1000
-    objects.push({ lane, at: placed })
-    const list = byLane.get(lane) ?? []
-    list.push(t)
-    byLane.set(lane, list)
-  })
+  let run = 0
+  let previous = first[0]
+  for (const [part, { data }] of ordered) {
+    // Slices that follow one another without a hole are one run.
+    if (part > previous + 1) {
+      run += 1
+      truncated = true
+    }
+    previous = part
+    if (data.truncated === true) truncated = true
+    const cols = record(data.cols)
+    if (cols === null) continue
+    const keys = Array.isArray(cols.key) ? cols.key : []
+    const times = Array.isArray(cols.at) ? cols.at : []
+    keys.forEach((key, i) => {
+      const t = finite(times[i])
+      const lane = typeof key === 'string' ? laneOfKeyString(connection, key) : null
+      if (t === null || lane === null) return
+      objects.push({ lane, at: offset + t * 1000 })
+      const list = byLane.get(lane) ?? []
+      list.push({ t, run })
+      byLane.set(lane, list)
+    })
+  }
 
   const stalls: { lane: string; from: number; to: number }[] = []
   for (const [lane, list] of byLane) {
-    list.sort((a, b) => a - b)
-    const gaps = list.slice(1).map((t, i) => t - list[i]!)
+    list.sort((a, b) => a.t - b.t)
+    const gaps: { from: number; to: number }[] = []
+    for (let i = 1; i < list.length; i++) {
+      const a = list[i - 1]!
+      const b = list[i]!
+      if (a.run === b.run) gaps.push({ from: a.t, to: b.t })
+    }
     if (gaps.length === 0) continue
-    const sorted = [...gaps].sort((a, b) => a - b)
+    const sorted = gaps.map((g) => g.to - g.from).sort((a, b) => a - b)
     const median = sorted[Math.floor(sorted.length / 2)]!
     const limit = Math.max(STALL_FLOOR_MS, median * STALL_MULTIPLE)
-    gaps.forEach((gap, i) => {
-      if (gap > limit) {
-        stalls.push({ lane, from: offset + list[i]! * 1000, to: offset + list[i + 1]! * 1000 })
-      }
-    })
+    for (const { from, to } of gaps) {
+      if (to - from > limit)
+        stalls.push({ lane, from: offset + from * 1000, to: offset + to * 1000 })
+    }
   }
 
   return {
     connection,
-    trigger: typeof data.trigger === 'string' ? data.trigger : '',
+    trigger: typeof first[1].data.trigger === 'string' ? first[1].data.trigger : '',
     from: offset + windowStart * 1000,
     to: offset + windowEnd * 1000,
-    truncated: data.truncated === true,
+    truncated,
     objects,
     stalls,
   }

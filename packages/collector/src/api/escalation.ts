@@ -14,7 +14,7 @@
  * | --- | --- |
  * | the application calling `resolve()` | {@link EscalationController.resolve} |
  * | the ring filling | {@link EscalationControllerOptions.ring}, checked in `tick` |
- * | the page reloading or unloading | `session.ts`, on `pagehide`, through `resolve()` |
+ * | the page reloading or unloading, or the session ending | `session.ts`, through {@link EscalationController.unload} and {@link EscalationController.close} |
  * | the post-event timeout elapsing | `flightRecorder.windowMs`, checked in `tick` |
  *
  * There is deliberately no "the fault recovered" close. That is a player-level
@@ -104,6 +104,12 @@ export interface EscalationControllerOptions {
   /** Called after every accepted change, so the session can re-level its writers. */
   readonly onLevelChange?: (level: DetailLevel) => void
   /**
+   * {@link EscalationController.capped} changed. A linked worker raises its own
+   * level on a trigger before the page has answered, so it has to know
+   * beforehand whether the page would refuse the raise.
+   */
+  readonly onCapChange?: (capped: boolean) => void
+  /**
    * A trigger window opened and closes at `deadlineMono` unless something else
    * closes it first.
    *
@@ -149,6 +155,8 @@ export class EscalationController {
   private _holdUntil: Mono | undefined
   private _refused = 0
   private _elevations = 0
+  /** {@link capped} as `onCapChange` last reported it. */
+  private _capReported = false
 
   constructor(o: EscalationControllerOptions) {
     this._o = o
@@ -168,6 +176,19 @@ export class EscalationController {
   /** True once the customer's own ceiling has been reached at least once. */
   get ceilingReached(): boolean {
     return this._ceilingHit
+  }
+
+  /**
+   * True while every raise is refused: a hold is in force, or the ceiling has
+   * been reached.
+   */
+  get capped(): boolean {
+    return this._ceilingHit || this._held()
+  }
+
+  /** The end of the hold in force. `undefined`: none is. */
+  get holdUntil(): Mono | undefined {
+    return this._held() ? this._holdUntil : undefined
   }
 
   /** Elevations refused at the ceiling or under a hold. Counted, never silent. */
@@ -299,6 +320,7 @@ export class EscalationController {
    */
   hold(untilMono: Mono): void {
     this._holdUntil = untilMono
+    this._noteCap()
   }
 
   /**
@@ -313,6 +335,7 @@ export class EscalationController {
   tick(nowMono: Mono): void {
     this._enforceCeiling()
     this._enforceHold(nowMono)
+    this._noteCap()
     const w = this._window
     if (w === undefined || !isElevated(this._level)) return
     // Neither condition is a person, so both are `window` closes, not `manual`;
@@ -327,7 +350,11 @@ export class EscalationController {
   }
 
   /**
-   * Return to the configured level at teardown, and stop the meter.
+   * Close any open window at teardown, and stop the meter.
+   *
+   * The session ending is the instance going away, as an unload is, so the
+   * close is recorded as one: nobody chose it. A level held below the
+   * configured one stays there, since teardown is no reason to raise.
    *
    * The meter is closed explicitly rather than left to the level change: on a
    * session configured statically at `headers` the dial never leaves elevation,
@@ -335,8 +362,10 @@ export class EscalationController {
    * time for as long as the page held a reference to it.
    */
   close(): void {
+    if (this._window !== undefined) {
+      this._apply(this._o.configured, { kind: 'window', closed: 'unload' })
+    }
     this._window = undefined
-    if (this._level !== this._o.configured) this._apply(this._o.configured, { kind: 'manual' })
     this._o.meter.closeWindow()
   }
 
@@ -395,13 +424,23 @@ export class EscalationController {
     }
   }
 
+  private _held(): boolean {
+    return this._holdUntil !== undefined && this._o.clock.now() < this._holdUntil
+  }
+
+  private _noteCap(): void {
+    const capped = this.capped
+    if (capped === this._capReported) return
+    this._capReported = capped
+    this._o.onCapChange?.(capped)
+  }
+
   /** The one place `_level` is written. Returns whether anything changed. */
   private _apply(to: DetailLevel, by: EscalationCause): boolean {
     if (levelIndex(to) < 0) return false
     // A raise past a reached ceiling or under a hold is refused and counted,
     // never silent, and not recorded as an escalation, because it did not happen.
-    const held = this._holdUntil !== undefined && this._o.clock.now() < this._holdUntil
-    if ((this._ceilingHit || held) && levelIndex(to) > levelIndex(BASELINE)) {
+    if (this.capped && levelIndex(to) > levelIndex(BASELINE)) {
       this._refused += 1
       return false
     }

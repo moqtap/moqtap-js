@@ -481,11 +481,11 @@ describe('the session ends when its connections have', () => {
     const all = await allRecords(posts)
     const [, second] = sessionsOf(all)
     expect(
-      of(all, 'escalation').map((e) => [e.from, e.to, e.by.kind]),
-      'opened, then closed with the session',
+      of(all, 'escalation').map((e) => [e.from, e.to, e.by]),
+      'opened, then closed with the session, by nobody',
     ).toEqual([
-      ['baseline', 'headers', 'manual'],
-      ['headers', 'baseline', 'manual'],
+      ['baseline', 'headers', { kind: 'manual', reason: 'stall' }],
+      ['headers', 'baseline', { kind: 'window', closed: 'unload' }],
     ])
     const secondSetup = of(all, 'setup').find((s) => s.identity.sessionId === second)
     expect(secondSetup?.lvl).toBe('baseline')
@@ -534,9 +534,9 @@ describe('what ingest asked of a session', () => {
     const [, second] = sessionsOf(all)
     const secondSetup = of(all, 'setup').find((x) => x.identity.sessionId === second)
     expect(secondSetup?.lvl).toBe('baseline')
-    expect(of(all, 'escalation').map((e) => [e.to, e.by.kind])).toEqual([
-      ['headers', 'remote'],
-      ['baseline', 'manual'],
+    expect(of(all, 'escalation').map((e) => [e.to, e.by])).toEqual([
+      ['headers', expect.objectContaining({ kind: 'remote' })],
+      ['baseline', { kind: 'window', closed: 'unload' }],
     ])
   })
 })

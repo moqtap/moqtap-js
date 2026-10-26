@@ -270,7 +270,7 @@ describe('hold: the recording minutes for the month are used up', () => {
     await c.end()
     expect(of(await allRecords(posts), 'escalation').map((r) => r.by)).toEqual([
       { kind: 'manual', reason: 'lapsed' },
-      { kind: 'manual' },
+      { kind: 'window', closed: 'unload' },
     ])
   })
 

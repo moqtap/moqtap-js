@@ -13,11 +13,15 @@
  * end on a byte boundary and are not final, then the worker's deflate data
  * verbatim, then a trailer whose CRC-32 is combined from the two halves'. No
  * byte is inflated or recompressed on the page.
+ *
+ * A segment opened by `openSegment` ends without a final block, so it can be
+ * followed: by other open segments, which {@link joinSegments} puts end to
+ * end, and by frames stored uncompressed, which then end the member.
  */
 
 import { gzip } from './gzip.js'
 
-/** A deflate stream ending in a final block, with what the gzip trailer needs. */
+/** A deflate stream, ending in a final block unless it is open, with what the gzip trailer needs. */
 export interface DeflateSegment {
   /** Raw deflate data: no gzip header, no trailer. */
   readonly deflate: Uint8Array
@@ -25,6 +29,11 @@ export interface DeflateSegment {
   readonly crc: number
   /** Length of the uncompressed bytes. */
   readonly size: number
+  /**
+   * The data ends with a non-final block on a byte boundary instead, so more
+   * can follow it in the same member.
+   */
+  readonly open?: boolean
 }
 
 /**
@@ -55,21 +64,16 @@ export async function deflateSegment(input: Uint8Array): Promise<DeflateSegment>
 /** Largest payload of one stored deflate block. */
 const STORED_MAX = 0xffff
 
-/**
- * One gzip member: `prefix` stored, then `segment`'s deflate data.
- *
- * `prefix` must be non-empty; a seal always has its batch frame.
- */
-export function joinSegment(prefix: Uint8Array, segment: DeflateSegment): Uint8Array {
-  const blocks = Math.max(1, Math.ceil(prefix.byteLength / STORED_MAX))
-  const out = new Uint8Array(10 + prefix.byteLength + 5 * blocks + segment.deflate.byteLength + 8)
-  // ID1 ID2 CM=deflate FLG=0 MTIME=0 XFL=0 OS=255 (unknown): nothing ingest reads.
-  out.set([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff], 0)
-  let at = 10
+/** Bytes `n` bytes take as stored deflate blocks. */
+const storedLength = (n: number): number => n + 5 * Math.max(1, Math.ceil(n / STORED_MAX))
+
+/** `bytes` as stored deflate blocks at `at` in `out`, the last of them final if `last`; returns the end. */
+function stored(out: Uint8Array, at: number, bytes: Uint8Array, last: boolean): number {
+  const blocks = Math.max(1, Math.ceil(bytes.byteLength / STORED_MAX))
   for (let i = 0; i < blocks; i += 1) {
-    const part = prefix.subarray(i * STORED_MAX, (i + 1) * STORED_MAX)
-    // BFINAL=0 BTYPE=00, then padding to the byte boundary, LEN and its complement.
-    out[at] = 0
+    const part = bytes.subarray(i * STORED_MAX, (i + 1) * STORED_MAX)
+    // BFINAL BTYPE=00, then padding to the byte boundary, LEN and its complement.
+    out[at] = last && i === blocks - 1 ? 1 : 0
     out[at + 1] = part.byteLength & 0xff
     out[at + 2] = part.byteLength >>> 8
     out[at + 3] = ~part.byteLength & 0xff
@@ -77,12 +81,60 @@ export function joinSegment(prefix: Uint8Array, segment: DeflateSegment): Uint8A
     out.set(part, at + 5)
     at += 5 + part.byteLength
   }
+  return at
+}
+
+/**
+ * One gzip member: `prefix` stored, then `segment`'s deflate data. An
+ * {@link DeflateSegment.open | open} segment is followed by `suffix`, stored,
+ * and the final block; a closed one ends the member itself, and takes no
+ * suffix.
+ *
+ * `prefix` must be non-empty; a seal always has its batch frame.
+ */
+export function joinSegment(
+  prefix: Uint8Array,
+  segment: DeflateSegment,
+  suffix: Uint8Array = new Uint8Array(0),
+): Uint8Array {
+  const open = segment.open === true
+  if (!open && suffix.byteLength > 0) throw new RangeError('suffix after a final block')
+  const tail = open ? storedLength(suffix.byteLength) : 0
+  const out = new Uint8Array(
+    10 + storedLength(prefix.byteLength) + segment.deflate.byteLength + tail + 8,
+  )
+  // ID1 ID2 CM=deflate FLG=0 MTIME=0 XFL=0 OS=255 (unknown): nothing ingest reads.
+  out.set([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff], 0)
+  let at = stored(out, 10, prefix, false)
   out.set(segment.deflate, at)
   at += segment.deflate.byteLength
+  if (open) at = stored(out, at, suffix, true)
+  let crc = crc32Combine(crc32(prefix), segment.crc, segment.size)
+  crc = crc32Combine(crc, crc32(suffix), suffix.byteLength)
   const view = new DataView(out.buffer)
-  view.setUint32(at, crc32Combine(crc32(prefix), segment.crc, segment.size), true)
-  view.setUint32(at + 4, (prefix.byteLength + segment.size) >>> 0, true)
+  view.setUint32(at, crc, true)
+  view.setUint32(at + 4, (prefix.byteLength + segment.size + suffix.byteLength) >>> 0, true)
   return out
+}
+
+/** Open segments, one after another, as one open segment. */
+export function joinSegments(parts: readonly DeflateSegment[]): DeflateSegment {
+  let length = 0
+  for (const p of parts) {
+    if (p.open !== true) throw new RangeError('join of a closed segment')
+    length += p.deflate.byteLength
+  }
+  const deflate = new Uint8Array(length)
+  let crc = 0
+  let size = 0
+  let at = 0
+  for (const p of parts) {
+    deflate.set(p.deflate, at)
+    at += p.deflate.byteLength
+    crc = crc32Combine(crc, p.crc, p.size)
+    size += p.size
+  }
+  return { deflate, crc, size, open: true }
 }
 
 /* ── CRC-32 (IEEE 802.3, reflected), as gzip uses it ─────────────────────── */

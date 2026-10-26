@@ -335,4 +335,15 @@ describe('ChunkStore, degradation', () => {
     expect(() => store.close()).not.toThrow()
     expect(errors).toHaveLength(1)
   })
+
+  it('keeps ingest’s hold per destination across a reload', async () => {
+    const backend = new MemoryBackend()
+    const store = await ChunkStore.open('db', 1 << 20, { backend })
+    store.setHold(DEST, 123_456)
+    // Known at once, for a session that follows in the same page.
+    expect(store.holdUntil(DEST)).toBe(123_456)
+    const reloaded = await ChunkStore.open('db', 1 << 20, { backend })
+    expect(reloaded.holdUntil(DEST)).toBe(123_456)
+    expect(reloaded.holdUntil(OTHER)).toBeUndefined()
+  })
 })

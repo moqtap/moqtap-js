@@ -3,7 +3,8 @@ import type { Mono, SealReason } from '../types.js'
 
 /**
  * The sealing schedule, front-loaded then backing off: at `ready`, then +45 s,
- * then every 60 s or every 32 KB accumulated, whichever comes first. The
+ * then every 60 s or every 32 KB accumulated, whichever comes first, where the
+ * caller decides how bytes are counted (compressed, while detail is raised). The
  * `ready` seal carries setup and the handshake, so a session that dies during
  * establishment is not lost, and +45 s lands its first rollups before the
  * steady interval. A steady session carries little new information per
@@ -137,7 +138,15 @@ export class FlushSchedule {
   noteBytes(n: number): void {
     if (!this._started || this._stopped || !(n > 0)) return
     this._bytes += n
-    if (this._bytes < this._threshold || this._byteHandle !== undefined) return
+    if (this._bytes >= this._threshold) this.due()
+  }
+
+  /**
+   * Seal as a crossed threshold does: on a zero-delay timer, restarting the
+   * interval. For a caller that weighs the buffer some other way.
+   */
+  due(): void {
+    if (!this._started || this._stopped || this._byteHandle !== undefined) return
     this._byteHandle = this._timers.setTimer(() => {
       this._byteHandle = undefined
       this._fire('bytes')
@@ -146,6 +155,21 @@ export class FlushSchedule {
       // seal twice in quick succession every minute.
       this._rearmInterval()
     }, 0)
+  }
+
+  /**
+   * The caller sealed on its own account: count from zero and restart the
+   * interval, as after a seal of the schedule's. A byte seal still queued
+   * would seal only what arrived since, as a body of its own, so it is dropped.
+   */
+  sealed(): void {
+    if (!this._started || this._stopped) return
+    if (this._byteHandle !== undefined) {
+      this._timers.clearTimer(this._byteHandle)
+      this._byteHandle = undefined
+    }
+    this._bytes = 0
+    this._rearmInterval()
   }
 
   /**

@@ -33,7 +33,13 @@ import {
   linkMessage,
 } from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
-import { BODY_PREAMBLE_BYTES, readFrames, readPreamble, sha256Hex } from '../../envelope/index.js'
+import {
+  BODY_PREAMBLE_BYTES,
+  FrameWriter,
+  readFrames,
+  readPreamble,
+  sha256Hex,
+} from '../../envelope/index.js'
 import { type Chunk, ChunkStore, type LockManagerLike, MemoryBackend } from '../../flush/index.js'
 import type {
   BatchRecord,
@@ -43,6 +49,7 @@ import type {
   EndRecord,
   EnvelopeRecord,
   LinkRecord,
+  RollupRecord,
 } from '../../types.js'
 import { chunks, concatBytes, encodeControl, subscribeBytes } from '../decode/vectors.js'
 import { attempt, init, workerBuild } from '../support/init.js'
@@ -819,7 +826,7 @@ describe('worker links', () => {
     listener?.({ data: 'hello' })
     expect(sent).toEqual([])
 
-    listener?.({ data: { __moqtap_collector__: 4, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
     expect(sent).toHaveLength(1)
     const linked = sent[0]?.message as Record<string, unknown>
     expect(linked).toMatchObject({ t: 'linked', sessionId: 'sess-fixed', instanceId: 'inst-1' })
@@ -903,13 +910,13 @@ describe('worker links', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(worker)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 4, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
     // Speak for the worker over the port the page handed it: it attempted a
     // connection, which begins the session, and that connection is open in
     // its last forward.
-    port?.postMessage({ __moqtap_collector__: 4, t: 'open' })
+    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
     port?.postMessage({
-      __moqtap_collector__: 4,
+      __moqtap_collector__: 5,
       t: 'fwd',
       n: 0,
       dropped: 0,
@@ -966,10 +973,10 @@ describe('a linked worker whose control plane outran it', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 4, t: 'hello', timeOrigin: 0 } })
-    port?.postMessage({ __moqtap_collector__: 4, t: 'open' })
+    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
     port?.postMessage({
-      __moqtap_collector__: 4,
+      __moqtap_collector__: 5,
       t: 'overrun',
       at: 1_234,
       signal: 'control-plane rate exceeded 1/s',
@@ -984,6 +991,52 @@ describe('a linked worker whose control plane outran it', () => {
     })
     port?.close()
     await c.end()
+  })
+})
+
+describe('a linked worker that forwards more than the page buffers', () => {
+  it('seals what the page holds and takes the rest, dropping nothing', async () => {
+    const { posts, impl } = recordingFetch()
+    let listener: ((e: { data?: unknown }) => void) | undefined
+    let port: MessagePort | undefined
+    const target = {
+      postMessage: (_m: unknown, transfer?: Transferable[]) => {
+        port = transfer?.[0] as MessagePort | undefined
+      },
+      addEventListener: (_t: 'message', f: (e: { data?: unknown }) => void) => {
+        listener = f
+      },
+    }
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    c.linkWorker(target)
+    await settle(5)
+    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
+    await settle(5)
+    // Ten frames parts of ~30 KB in one forward: more than the page's eight
+    // thresholds of buffer before any byte seal has had a turn to run.
+    const parts = Array.from({ length: 10 }, (_, i) => {
+      const w = new FrameWriter()
+      w.json({ t: 'note', ts: i, lvl: 'baseline', name: `big-${i}`, data: 'x'.repeat(30_000) })
+      const frames = w.take().slice()
+      return { frames: frames.buffer, byteLength: frames.byteLength, n: 1 }
+    })
+    port?.postMessage({
+      __moqtap_collector__: 5,
+      t: 'fwd',
+      parts,
+      n: parts.length,
+      dropped: 0,
+      ready: true,
+      conns: [],
+    })
+    await settle(10)
+    await c.end()
+
+    const all = await allRecords(posts)
+    expect(of(all, 'note').map((n) => n.name)).toEqual(parts.map((_, i) => `big-${i}`))
+    expect((of(all, 'end')[0] as EndRecord).counters.chunksDropped).toBe(0)
+    port?.close()
   })
 })
 
@@ -1011,14 +1064,14 @@ describe('a linked worker that falls silent', () => {
     })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 4, t: 'hello', timeOrigin: 0 } })
-    port?.postMessage({ __moqtap_collector__: 4, t: 'open' })
+    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
     await settle(5)
     t += 11_000
     // The heartbeat runs every 10 ms here; let one see the silence.
     await settle(10, 20)
     port?.postMessage({
-      __moqtap_collector__: 4,
+      __moqtap_collector__: 5,
       t: 'fwd',
       n: 0,
       dropped: 0,
@@ -1031,6 +1084,235 @@ describe('a linked worker that falls silent', () => {
     const links = of(await allRecords(posts), 'link').map((l) => l.ev)
     expect(links).toEqual(['linked', 'gone', 'linked'])
     port?.close()
+  })
+  /**
+   * A worker's rollup for `w-conn`: one track, `objects` objects of 10 bytes
+   * each, and as many of every other additive count.
+   */
+  const rollup = (seq: number, objects: number, endMono = 0): RollupRecord =>
+    ({
+      t: 'rollup',
+      v: 1,
+      conn: 'w-conn',
+      ts: endMono,
+      lvl: 'baseline',
+      seq,
+      startMono: 0,
+      endMono,
+      tracks: [
+        {
+          key: { d: 'rx', k: 'alias', v: '1', e: 0 },
+          firstSeen: 0,
+          lastSeen: 0,
+          objects,
+          payloadBytes: objects * 10,
+          headerBytes: 0,
+          groups: objects,
+          groupGaps: objects,
+          outOfOrder: 0,
+          duplicates: 0,
+          statusObjects: 0,
+          parseFailures: 0,
+          gapRanges: Array.from({ length: objects }, (_, i) => [`${2 * i}`, `${2 * i}`]),
+          resets: { '7': objects },
+          hist: { stallMs: { i: [12], c: [objects], n: objects, sum: objects * 300 } },
+        },
+      ],
+      session: { 'ctrl.rx.frames': objects },
+    }) as unknown as RollupRecord
+
+  /** `w-conn` open, its interval `seq` holding `objects` so far. */
+  const open = (seq: number, objects: number | null) => ({
+    conn: {
+      id: 'w-conn',
+      realm: 'worker',
+      origin: 'https://relay.test',
+      draft: 20,
+      state: 'open',
+    },
+    rollup: objects === null ? null : rollup(seq, objects),
+    counters: { parseFailures: 0, bucketsRefused: 0 },
+  })
+
+  /** A page with one linked worker whose messages the test writes, on a clock it moves. */
+  async function silentWorker(): Promise<{
+    posts: Post[]
+    c: ReturnType<typeof init>
+    port: () => MessagePort | undefined
+    advance: (ms: number) => void
+    terminate: () => void
+  }> {
+    const { posts, impl } = recordingFetch()
+    let t = 0
+    let listener: ((e: { data?: unknown }) => void) | undefined
+    let port: MessagePort | undefined
+    const target = {
+      postMessage: (_m: unknown, transfer?: Transferable[]) => {
+        port = transfer?.[0] as MessagePort | undefined
+      },
+      addEventListener: (_t: 'message', f: (e: { data?: unknown }) => void) => {
+        listener = f
+      },
+      terminate: () => {},
+    }
+    const c = init(base(), {
+      ...quiet,
+      fetchImpl: impl,
+      clock: { now: () => t, wall: () => t },
+      setTimer: (fn, ms) => setTimeout(fn, ms === 1_000 ? 10 : ms),
+      clearTimer: (h) => clearTimeout(h as never),
+    })
+    c.linkWorker(target)
+    await settle(5)
+    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
+    return {
+      posts,
+      c,
+      port: () => port,
+      advance: (ms) => {
+        t += ms
+      },
+      terminate: () => target.terminate(),
+    }
+  }
+
+  /** A forward with the intervals the worker `closed` since the last, and its open `conns`. */
+  function forward(
+    port: MessagePort | undefined,
+    closed: readonly RollupRecord[],
+    conns: readonly unknown[],
+  ): void {
+    port?.postMessage({
+      __moqtap_collector__: 5,
+      t: 'fwd',
+      n: 0,
+      dropped: 0,
+      ready: true,
+      ...(closed.length > 0 ? { rollups: closed } : {}),
+      conns,
+    })
+  }
+
+  /** The totals of `w-conn`'s rollups, each count apart. */
+  const totalsOf = (all: readonly EnvelopeRecord[]) => {
+    const sum = { objects: 0, payloadBytes: 0, groups: 0, gaps: 0, resets: 0, stalls: 0, frames: 0 }
+    for (const r of of(all, 'rollup')) {
+      if (r.conn !== 'w-conn') continue
+      sum.frames += r.session['ctrl.rx.frames'] ?? 0
+      for (const tr of r.tracks) {
+        sum.objects += tr.objects
+        sum.payloadBytes += tr.payloadBytes
+        sum.groups += tr.groups
+        sum.gaps += tr.groupGaps
+        sum.gaps += tr.gapRanges?.length ?? 0
+        sum.resets += Object.values(tr.resets ?? {}).reduce((a, b) => a + b, 0)
+        sum.stalls += (tr.hist.stallMs?.c ?? []).reduce((a, b) => a + b, 0)
+      }
+    }
+    return sum
+  }
+
+  /** Every total, for `n` objects' worth of each count. */
+  const counted = (n: number) => ({
+    objects: n,
+    payloadBytes: n * 10,
+    groups: n,
+    gaps: 2 * n,
+    resets: n,
+    stalls: n,
+    frames: n,
+  })
+
+  it('writes the interval it falls silent in at once, in a body of its own', async () => {
+    const w = await silentWorker()
+    forward(w.port(), [], [open(0, 5)])
+    await settle(5)
+    w.advance(11_000)
+    await settle(10, 20)
+
+    // Sealed and sent when it was counted gone, with the session still running.
+    const sent = await allRecords(w.posts)
+    expect(of(sent, 'link').map((l) => l.ev)).toEqual(['linked', 'gone'])
+    expect(totalsOf(sent)).toEqual(counted(5))
+    await w.c.end()
+
+    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(5))
+    w.port()?.close()
+  })
+
+  it('counts the interval it was silent in once when it resumes and closes it', async () => {
+    const w = await silentWorker()
+    // Five objects into interval 0 as of the last forward before the freeze.
+    forward(w.port(), [], [open(0, 5)])
+    await settle(5)
+    w.advance(11_000)
+    await settle(10, 20)
+    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(5))
+    // Resumed: it closes interval 0 with all eight of its objects, and opens 1.
+    forward(w.port(), [rollup(0, 8, 12_000)], [open(1, null)])
+    await settle(10)
+    await w.c.end()
+
+    const all = await allRecords(w.posts)
+    expect(of(all, 'link').map((l) => l.ev)).toEqual(['linked', 'gone', 'linked'])
+    expect(of(all, 'conn-close')[0]).toMatchObject({ conn: 'w-conn', cause: 'worker-gone' })
+    expect(totalsOf(all)).toEqual(counted(8))
+    w.port()?.close()
+  })
+
+  it('counts an interval it fell silent in twice once', async () => {
+    const w = await silentWorker()
+    forward(w.port(), [], [open(0, 5)])
+    await settle(5)
+    w.advance(11_000)
+    await settle(10, 20)
+    // Back for a moment, interval 0 still open, then silent again.
+    forward(w.port(), [], [open(0, 6)])
+    await settle(5)
+    w.advance(11_000)
+    await settle(10, 20)
+    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(6))
+    forward(w.port(), [rollup(0, 9)], [open(1, 1)])
+    await settle(10)
+    await w.c.end()
+
+    const all = await allRecords(w.posts)
+    expect(of(all, 'link').map((l) => l.ev)).toEqual(['linked', 'gone', 'linked', 'gone', 'linked'])
+    expect(totalsOf(all)).toEqual(counted(10))
+    w.port()?.close()
+  })
+
+  it('counts the interval once when it resumes and the session ends before it closes it', async () => {
+    const w = await silentWorker()
+    forward(w.port(), [], [open(0, 5)])
+    await settle(5)
+    w.advance(11_000)
+    await settle(10, 20)
+    forward(w.port(), [], [open(0, 7)])
+    await settle(10)
+    await w.c.end()
+
+    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(7))
+    w.port()?.close()
+  })
+
+  it('writes a terminated worker’s interval at once, and what it posted before dying once', async () => {
+    const w = await silentWorker()
+    forward(w.port(), [], [open(0, 5)])
+    await settle(5)
+    w.terminate()
+    await settle(10)
+    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(5))
+    // Posted before it died: interval 0 closed with seven objects, and two in 1.
+    forward(w.port(), [rollup(0, 7)], [open(1, 2)])
+    await settle(10)
+    await w.c.end()
+
+    const all = await allRecords(w.posts)
+    expect(of(all, 'link').map((l) => l.ev)).toEqual(['linked', 'gone'])
+    expect(totalsOf(all)).toEqual(counted(9))
+    w.port()?.close()
   })
 })
 
@@ -1301,6 +1583,49 @@ describe('the page going away', () => {
     expect(endBody?.[0]).toMatchObject({ seq: 2, final: true })
     expect(tail?.[0]).toMatchObject({ seq: 1 })
     expect(tail?.some((r) => r.t === 'note')).toBe(true)
+  })
+
+  it('beacons a body whose upload is under way after the ones never sent', async () => {
+    const life = captureLifecycle()
+    try {
+      const blobs: Blob[] = []
+      let sent = 0
+      // The session's first body is uploaded; the next one's upload never ends.
+      const hanging = ((_url: string, _init: RequestInit) => {
+        sent += 1
+        return sent === 1
+          ? Promise.resolve(new Response(null, { status: 200 }))
+          : new Promise(() => {})
+      }) as unknown as typeof fetch
+      const c = init(base(), {
+        persist: false,
+        locks: null,
+        fetchImpl: hanging,
+        beacon: (_url, blob) => {
+          blobs.push(blob)
+          return true
+        },
+      })
+      attempt()
+      await c.flush()
+      c.annotate('in-flight')
+      void c.flush()
+      await settle()
+      expect(sent).toBe(2)
+      c.annotate('never-sent')
+      life.fire('pagehide', { persisted: false })
+
+      const seqs: number[] = []
+      for (const b of blobs) {
+        const [batch] = await recordsOf(new Uint8Array(await b.arrayBuffer()))
+        seqs.push((batch as BatchRecord).seq)
+      }
+      // The end's body, the tail, then the one already on its way.
+      expect(seqs).toEqual([3, 2, 1])
+      await c.discard()
+    } finally {
+      life.restore()
+    }
   })
 
   it('carries the ingest credential, the key and the instance in the URL', async () => {
@@ -1918,6 +2243,7 @@ describe('nothing before the session attaches is lost', () => {
       instanceId: 'inst-1',
       base: 0,
       level: 'baseline',
+      room: 8 * 1024 * 1024,
       config: { metrics, flightRecorder, limits, privacy, upload, context },
     }
     channel.port1.postMessage(envelope(linked), [page.port2])

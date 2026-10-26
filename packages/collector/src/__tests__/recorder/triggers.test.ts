@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { type MedianSource, TriggerEngine, type TriggerEvent } from '../../recorder/index.js'
-import type { BucketKey, ObjectSample, TriggerConfig } from '../../types.js'
+import type { BucketKey, ObjectSample, TrackLiveness, TriggerConfig } from '../../types.js'
 
 const VIDEO: BucketKey = Object.freeze({ dir: 'rx', kind: 'alias', id: 1n, epoch: 0 })
 const AUDIO: BucketKey = Object.freeze({ dir: 'rx', kind: 'alias', id: 2n, epoch: 0 })
@@ -47,7 +47,13 @@ interface Harness {
   readonly medians: Medians
 }
 
-function harness(config: TriggerConfig, cooldownMs = 0, maxTracked?: number): Harness {
+function harness(
+  config: TriggerConfig,
+  cooldownMs = 0,
+  maxTracked?: number,
+  liveness?: (k: BucketKey) => TrackLiveness,
+  canFire?: (k: BucketKey) => boolean,
+): Harness {
   const fired: TriggerEvent[] = []
   const medians = new Medians()
   const engine = new TriggerEngine({
@@ -56,8 +62,16 @@ function harness(config: TriggerConfig, cooldownMs = 0, maxTracked?: number): Ha
     onFire: (e) => fired.push(e),
     cooldownMs,
     ...(maxTracked !== undefined ? { maxTracked } : {}),
+    ...(liveness !== undefined ? { liveness } : {}),
+    ...(canFire !== undefined ? { canFire } : {}),
   })
   return { engine, fired, medians }
+}
+
+/** A track flowing at `everyMs` from `from` to `to` inclusive, with a warm median. */
+function flow(h: Harness, k: BucketKey, from: number, to: number, everyMs: number): void {
+  h.medians.set(k, everyMs, 100)
+  for (let at = from; at <= to; at += everyMs) h.engine.onObject(sample(k, at))
 }
 
 describe('automated mode ships off', () => {
@@ -137,6 +151,7 @@ describe('cadence is a multiple of the track own median', () => {
 describe('stall', () => {
   it('fires during the silence, not when the stream recovers', () => {
     const h = harness({ stall: { afterMs: 2_000 } })
+    h.medians.set(VIDEO, 40, 100)
     h.engine.onObject(sample(VIDEO, 1_000))
 
     h.engine.tick(2_500)
@@ -162,9 +177,117 @@ describe('stall', () => {
   })
 })
 
+describe('a stall needs a live track that was flowing', () => {
+  const CATALOG: BucketKey = Object.freeze({ dir: 'rx', kind: 'alias', id: 0n, epoch: 0 })
+  const STALL: TriggerConfig = { stall: { afterMs: 500 }, cadence: { multiple: 2, minSamples: 20 } }
+
+  it('does not fire on a catalog that published once beside healthy video', () => {
+    const h = harness(STALL)
+    h.medians.set(CATALOG, undefined, 0)
+    h.engine.onObject(sample(CATALOG, 100))
+    flow(h, VIDEO, 0, 10_000, 40)
+    h.engine.tick(10_000)
+    expect(h.fired).toEqual([])
+  })
+
+  it('does not fire on a track whose own rhythm is slower than afterMs', () => {
+    const h = harness({ stall: { afterMs: 500 } })
+    h.medians.set(CATALOG, 2_000, 100)
+    h.engine.onObject(sample(CATALOG, 0))
+    h.engine.tick(1_500)
+    expect(h.fired).toEqual([])
+  })
+
+  it('forgets every track of a closed connection', () => {
+    let open = true
+    const h = harness(STALL, 0, undefined, () => (open ? 'open' : 'ended'))
+    flow(h, VIDEO, 0, 5_000, 40)
+    flow(h, AUDIO, 0, 5_000, 20)
+    open = false
+    h.engine.tick(15_000)
+    expect(h.fired).toEqual([])
+    expect(h.engine.trackedCount).toBe(0)
+  })
+
+  it('does not fire on the rendition an ABR switch left', () => {
+    const NEXT: BucketKey = Object.freeze({ dir: 'rx', kind: 'alias', id: 3n, epoch: 0 })
+    const ended = new Set<BucketKey>()
+    const h = harness(STALL, 0, undefined, (k) => (ended.has(k) ? 'ended' : 'open'))
+    flow(h, VIDEO, 0, 5_000, 40)
+    ended.add(VIDEO)
+    flow(h, NEXT, 5_040, 10_000, 40)
+    h.engine.tick(10_000)
+    expect(h.fired).toEqual([])
+    expect(h.engine.trackedCount).toBe(1)
+  })
+
+  it('does not fire on a finished fetch', () => {
+    const FETCH: BucketKey = Object.freeze({ dir: 'rx', kind: 'fetch', id: 4n, epoch: 0 })
+    let done = false
+    const h = harness(STALL, 0, undefined, (k) => (k === FETCH && done ? 'ended' : 'open'))
+    flow(h, FETCH, 0, 400, 10)
+    done = true
+    flow(h, VIDEO, 0, 10_000, 40)
+    h.engine.tick(10_000)
+    expect(h.fired).toEqual([])
+  })
+
+  it('still fires when a live, flowing track stops', () => {
+    const h = harness({ stall: { afterMs: 500 } }, 0, undefined, () => 'open')
+    flow(h, VIDEO, 0, 5_000, 40)
+    h.engine.onObject(sample(CATALOG, 100))
+    h.engine.tick(5_600)
+    expect(h.fired.map((e) => [e.kind, e.key])).toEqual([['stall', VIDEO]])
+  })
+
+  it('does not judge a track no observed request bound by its silence', () => {
+    // Its subscription may have ended where the collector could not see it.
+    const h = harness({ stall: { afterMs: 500 } }, 0, undefined, () => 'unbound')
+    flow(h, VIDEO, 0, 5_000, 40)
+    h.engine.tick(5_600)
+    expect(h.fired).toEqual([])
+    expect(h.engine.trackedCount).toBe(1)
+    // A late object still shows the gap was one.
+    h.engine.onObject(sample(VIDEO, 6_000))
+    expect(h.fired.map((e) => e.kind)).toEqual(['stall'])
+  })
+})
+
+describe('a fire with no dump behind it', () => {
+  it('neither counts, latches nor starts the cooldown', () => {
+    const blocked = new Set<BucketKey>([VIDEO])
+    const h = harness(
+      { stall: { afterMs: 500 } },
+      30_000,
+      undefined,
+      undefined,
+      (k) => !blocked.has(k),
+    )
+    flow(h, VIDEO, 0, 5_000, 40)
+    flow(h, AUDIO, 0, 5_200, 40)
+    h.engine.tick(5_600)
+    expect(h.fired).toEqual([])
+    expect(h.engine.capturesFired).toBe(0)
+    expect(h.engine.capturesSuppressed).toBe(0)
+
+    // Another track's real stall a moment later is not swallowed by a session
+    // cooldown that no window started.
+    h.engine.tick(5_800)
+    expect(h.fired.map((e) => [e.kind, e.key])).toEqual([['stall', AUDIO]])
+    expect(h.engine.capturesFired).toBe(1)
+
+    // And the first track, still unlatched, opens its window once a dump can be had.
+    blocked.clear()
+    h.engine.tick(40_000)
+    expect(h.fired.map((e) => e.key)).toEqual([AUDIO, VIDEO])
+  })
+})
+
 describe('rate limiting', () => {
   it('suppresses a second window inside the cooldown and counts it', () => {
     const h = harness({ stall: { afterMs: 1_000 } }, 30_000)
+    h.medians.set(VIDEO, 40, 100)
+    h.medians.set(AUDIO, 20, 100)
     h.engine.onObject(sample(VIDEO, 0))
     h.engine.tick(2_000)
     expect(h.fired).toHaveLength(1)

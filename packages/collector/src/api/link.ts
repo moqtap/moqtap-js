@@ -11,7 +11,7 @@
  * uploads its records in the page's own stream.
  */
 
-import type { BucketKey, DetailLevel, Mono, TriggerKind } from '../types.js'
+import type { BucketKey, DetailLevel, Mono, RollupRecord, TriggerKind } from '../types.js'
 import type { ConnectionSnapshot, RealmConfig } from './realm.js'
 
 /** Namespaces every link message, so a customer's own traffic is never mistaken for one. */
@@ -22,7 +22,7 @@ export const HANDSHAKE = '__moqtap_collector__'
  * from another release stays unlinked and the page reports the link as
  * `timeout` rather than mixing two record formats in one session.
  */
-export const LINK_VERSION = 4
+export const LINK_VERSION = 5
 
 /**
  * How often a probe hands its records to the page, in ms. Fixed rather than
@@ -57,6 +57,10 @@ export interface LinkedMessage {
    */
   readonly base?: Mono | undefined
   readonly level: DetailLevel
+  /** Present while the page refuses every raise; see {@link PageMessage}'s `level`. */
+  readonly capped?: true
+  /** The outbox room this probe's flight dumps may take; see {@link PageMessage}'s `room`. */
+  readonly room: number
   readonly config: RealmConfig
 }
 
@@ -88,6 +92,8 @@ export type ForwardPart = FramesPart | DeflatePart
 /** Probe → page, every forward interval with records or every heartbeat without. */
 export interface ForwardMessage {
   readonly t: 'fwd'
+  /** Counts this probe's forwards from 1, so the page can say which it has taken in. */
+  readonly seq: number
   /** The frames in the order they were written. Absent on a heartbeat. */
   readonly parts?: readonly ForwardPart[]
   /** How many frames `parts` holds in all. */
@@ -96,6 +102,12 @@ export interface ForwardMessage {
   readonly dropped: number
   /** A connection's draft is known: the page's first upload is worth making. */
   readonly ready: boolean
+  /**
+   * The rollup intervals the probe's connections closed since the last
+   * forward, in order, apart from the frames. The page writes them, less what
+   * it already wrote of one for a worker it counted gone. Absent when none.
+   */
+  readonly rollups?: readonly RollupRecord[]
   readonly conns: readonly ConnectionSnapshot[]
 }
 
@@ -130,7 +142,21 @@ export type ProbeMessage = ForwardMessage | CallMessage
 
 /** Page → probe over the private channel. */
 export type PageMessage =
-  | { readonly t: 'level'; readonly level: DetailLevel }
+  /**
+   * The page's level. `capped` is present while the page refuses every raise,
+   * under a hold or past the ceiling: a probe raises its own level on a trigger
+   * before the page answers, and only while it is absent. Sent again after
+   * every trigger a probe reports, so a probe that raised on a trigger the page
+   * refused returns to the page's level.
+   */
+  | { readonly t: 'level'; readonly level: DetailLevel; readonly capped?: true }
+  /**
+   * Bytes of bodies the page's outbox can take for this probe's flight dumps
+   * without pushing out a body it holds, as of every forward up to `upTo`.
+   * Sent after each forward and whenever the outbox grows; a probe counts
+   * what it forwarded after `upTo` against it.
+   */
+  | { readonly t: 'room'; readonly bytes: number; readonly upTo: number }
   /** Forward now: the page is about to seal. */
   | { readonly t: 'forward' }
   /** This instance has ended. The probe stops observing. */
@@ -146,6 +172,7 @@ export type PageMessage =
       readonly sessionId: string
       readonly instanceId: string
       readonly level: DetailLevel
+      readonly capped?: true
       readonly base?: Mono | undefined
     }
   /** Context for connections opened from now on. */

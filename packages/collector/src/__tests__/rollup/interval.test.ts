@@ -735,6 +735,20 @@ describe('bounds', () => {
     expect(engine.medianFor(K)).toBeUndefined()
   })
 
+  it('still owns a silent track after another track is evicted', () => {
+    // The trigger engine asks which connection owns a stalled track; an
+    // unrelated eviction must not make that track look ownerless.
+    const { engine } = setup({ idleEvictIntervals: 2 })
+    const other = key({ id: 8n })
+    engine.onObject(obj(0, { key: other }))
+    engine.tick(1_000)
+    for (let i = 0; i < 8; i++) engine.onObject(obj(4_000 + i * 100, { objectId: BigInt(i) }))
+    engine.tick(5_000)
+    expect(engine.bucketCount).toBe(1)
+    expect(engine.owns(K)).toBe(true)
+    expect(engine.owns(other)).toBe(false)
+  })
+
   it('opens a fresh bucket after eviction, even for the same key object', () => {
     const { engine, sink } = setup({ idleEvictIntervals: 2 })
     engine.onObject(obj(0))

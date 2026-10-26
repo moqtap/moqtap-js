@@ -56,6 +56,7 @@ import {
   type EndCounters,
   type EnvelopeRecord,
   type ExchangeKind,
+  type FlightRecord,
   type HdrRecord,
   type InterceptedSession,
   type Mono,
@@ -71,6 +72,7 @@ import {
   type SessionCloseInfo,
   type StreamChunk,
   type SupportedDraft,
+  type TrackLiveness,
   type TransportObserver,
   type WebTransportOptionsInfo,
   type WriterPressure,
@@ -112,6 +114,12 @@ const DROPPABLE: ReadonlySet<RecordType> = new Set<RecordType>(['hdr', 'flight',
  */
 const MAX_ACK_STREAMS = 256
 
+/**
+ * What a body adds around the frames it seals: the preamble and the batch
+ * record, whose list of lost bodies runs to 256 sequence numbers.
+ */
+export const BODY_OVERHEAD_BYTES = 4 * 1024
+
 /** From this level an `hdr` record carries the payload size. */
 const SIZES = levelIndex('headers+sizes')
 
@@ -146,6 +154,16 @@ export interface RealmHost {
   onPressure(p: PressureSample): void
   /** A byte was written to the sink: the seal schedule counts them. */
   onBytes(n: number): void
+  /**
+   * Send what the sink holds on now. Between the slices of a flight dump, so
+   * a dump many bodies long never piles up in one buffer.
+   */
+  flush(): void
+  /**
+   * Bytes of bodies the host can still take, sealed at once, without pushing
+   * out any body it already holds. A flight dump never takes more.
+   */
+  dumpRoom(): number
   onError(err: unknown): void
 }
 
@@ -357,6 +375,10 @@ export class RealmObserver {
         {
           config: o.config.flightRecorder,
           sink: this._sink,
+          dump: (slices) => this._writeDump(slices),
+          // A slice is a body's worth, so it fits every buffer and body cap
+          // an ordinary seal does.
+          sliceBytes: o.config.upload.byteThreshold,
           adapter: (e) => this._connectionFor(e.key)?.adapter,
           keys: (e) => this._connectionFor(e.key)?.keys,
           conn: (e) => this._connectionFor(e.key)?.id ?? '',
@@ -364,6 +386,11 @@ export class RealmObserver {
           originMono: this._origin,
           medianFor: (k) => this._rollupOwning(k)?.medianFor(k),
           medianSamplesFor: (k) => this._rollupOwning(k)?.medianSamplesFor(k) ?? 0,
+          liveness: (k) => this._trackLiveness(k),
+          // A window with no dump behind it spends recording minutes on
+          // nothing, so none opens unless the connection the track belongs to
+          // can be re-parsed.
+          canFire: (k) => !this._halted && this._owner(k)?.adapter !== undefined,
           onFire: (e) => this._onTriggerFired(e),
           onError: (err) => this._host.onError(err),
         },
@@ -844,14 +871,14 @@ export class RealmObserver {
     }
   }
 
-  private _writeRecord(r: EnvelopeRecord): void {
+  private _writeRecord(r: EnvelopeRecord, gated = true): void {
     if (this._halted && !this._closing) {
       this._skipRaw = true
       return
     }
     // "Never sample a non-droppable type. Under pressure, sample only
     // the droppable ones, and record exactly which."
-    if (DROPPABLE.has(r.t) && this._underPressure()) {
+    if (gated && DROPPABLE.has(r.t) && this._underPressure()) {
       this._droppedRecords += 1
       this._sampledTypes.add(r.t)
       this._skipRaw = true
@@ -866,6 +893,65 @@ export class RealmObserver {
       this._host.onError(err)
       this._skipRaw = true
     }
+  }
+
+  /**
+   * A flight dump, through the droppable gate once for all its slices: a dump
+   * missing a middle slice would read as a stall that never happened. The host
+   * sends each slice on before the next is written, so the buffer holds about
+   * one at a time.
+   *
+   * Each slice becomes a body of its own, all at once, so a dump the host has
+   * no room for would push out bodies it already holds. The dump gives way
+   * instead: its oldest slices go, as its oldest objects do past its byte
+   * budget, and the slices that remain say `truncated`. A dump of one slice is
+   * one record in the open buffer, no larger than a body's worth, and is
+   * written as any other record is.
+   */
+  private _writeDump(slices: readonly FlightRecord[]): void {
+    if (slices.length === 0) return
+    if (this._halted && !this._closing) {
+      this._skipRaw = true
+      return
+    }
+    const fit = this._underPressure() ? 0 : slices.length === 1 ? 1 : this._dumpFit(slices.length)
+    if (fit === 0) {
+      this._droppedRecords += slices.length
+      this._sampledTypes.add('flight')
+      this._skipRaw = true
+      return
+    }
+    const kept =
+      fit < slices.length
+        ? slices.slice(slices.length - fit).map((s) => ({ ...s, truncated: true }))
+        : slices
+    for (let i = 0; i < kept.length; i++) {
+      if (i > 0) {
+        try {
+          this._host.flush()
+        } catch (err) {
+          this._host.onError(err)
+        }
+      }
+      this._writeRecord(kept[i] as FlightRecord, false)
+    }
+  }
+
+  /**
+   * How many of a dump's `n` slices the host has room for. A slice encodes to
+   * at most a body's worth, never under 1 KB, and its body adds a batch
+   * header around it.
+   */
+  private _dumpFit(n: number): number {
+    let room: number
+    try {
+      room = this._host.dumpRoom()
+    } catch (err) {
+      this._host.onError(err)
+      return 0
+    }
+    const perBody = Math.max(1024, this._o.config.upload.byteThreshold) + BODY_OVERHEAD_BYTES
+    return Math.max(0, Math.min(n, Math.floor(room / perBody)))
   }
 
   /**
@@ -1227,9 +1313,20 @@ export class RealmObserver {
     return fallback
   }
 
-  private _rollupOwning(k: BucketKey): RollupEngine | undefined {
-    for (const c of this._connections.values()) if (c.rollup.owns(k)) return c.rollup
+  /** Whether `k` is an open subscription or fetch on a connection this realm still has open. */
+  private _trackLiveness(k: BucketKey): TrackLiveness {
+    const c = this._owner(k)
+    return c === undefined || c.closed ? 'ended' : c.keys.liveness(k)
+  }
+
+  /** The open connection whose decoder minted `k`, with no fallback. */
+  private _owner(k: BucketKey): Connection | undefined {
+    for (const c of this._connections.values()) if (c.rollup.owns(k)) return c
     return undefined
+  }
+
+  private _rollupOwning(k: BucketKey): RollupEngine | undefined {
+    return this._owner(k)?.rollup
   }
 
   private _relNow(): Mono {

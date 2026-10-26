@@ -9,9 +9,9 @@
  * **Resolved: bit 31 of the length prefix. Set = raw bytes, clear = JSON.** The
  * flag lives in `types.ts` as {@link FRAME_RAW_FLAG} so the writer here and every
  * reader elsewhere cannot drift. Frame lengths are `< 2^31` by construction — a
- * batch seals at ~32 KB and a beacon caps near 64 KB — so bit 31 was free. A
- * length-of-zero sentinel would not have worked: an empty raw frame is legal and
- * must stay distinguishable from an empty JSON one.
+ * body holds at most 64 × `upload.byteThreshold` uncompressed (2 MB at the
+ * default) and a beacon caps near 64 KB — so bit 31 was free. A length-of-zero sentinel would not have worked: an empty raw
+ * frame is legal and must stay distinguishable from an empty JSON one.
  *
  * The prefix is **big-endian**, matching MoQT's own control framing (`varint
  * type` + `uint16 BE length`) so nothing in this codebase has to remember which
@@ -42,9 +42,10 @@ const PREFIX_BYTES = 4
 
 /**
  * Largest payload one frame can carry, since bit 31 is the type tag. Nothing in
- * this package approaches it: a seal happens at ~32 KB and the beacon caps near
- * 64 KB. The guard turns a bug elsewhere into a throw rather than a frame whose
- * length silently reads as `raw`.
+ * this package approaches it: a body holds at most 64 × `upload.byteThreshold`
+ * uncompressed (2 MB at the default) and a beacon caps near 64 KB. The guard
+ * turns a bug elsewhere into a throw rather than a frame whose length silently
+ * reads as `raw`.
  */
 const MAX_FRAME_BYTES = FRAME_LENGTH_MASK
 
@@ -149,6 +150,19 @@ export class FrameWriter {
   }
 
   /**
+   * Remove the first `count` frames, `bytes` long, and keep the rest. The
+   * caller has already copied them: the bytes after them move into their place.
+   */
+  drop(bytes: number, count: number): void {
+    if (!(bytes >= 0 && bytes <= this._len && count >= 0 && count <= this._frames)) {
+      throw new RangeError('drop')
+    }
+    this._buf.copyWithin(0, bytes, this._len)
+    this._len -= bytes
+    this._frames -= count
+  }
+
+  /**
    * The frames, with no preamble, and reset.
    *
    * The returned view owns its buffer outright: the writer allocates a fresh
@@ -250,9 +264,15 @@ export interface FrameSpan {
  * Cuts fall only in front of a JSON frame: a raw frame is unreadable without
  * the record before it, so the two never land in different bodies. A span is
  * longer than `target` only by the frames that cannot be parted from its last
- * cut. The spans are views into `frames`.
+ * cut. The spans are views into `frames`. With `most`, no more than that
+ * many spans are cut, and the frames after the last of them are left out.
  */
-export function splitFrames(frames: Uint8Array, count: number, target: number): FrameSpan[] {
+export function splitFrames(
+  frames: Uint8Array,
+  count: number,
+  target: number,
+  most = Number.POSITIVE_INFINITY,
+): FrameSpan[] {
   if (frames.byteLength <= target) return [{ bytes: frames, count }]
   const view = new DataView(frames.buffer, frames.byteOffset, frames.byteLength)
   const out: FrameSpan[] = []
@@ -263,6 +283,7 @@ export function splitFrames(frames: Uint8Array, count: number, target: number): 
     const prefix = view.getUint32(i, false)
     if ((prefix & FRAME_RAW_FLAG) === 0 && n > 0 && i - start >= target) {
       out.push({ bytes: frames.subarray(start, i), count: n })
+      if (out.length >= most) return out
       start = i
       n = 0
     }

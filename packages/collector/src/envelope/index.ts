@@ -50,5 +50,6 @@ export {
   type DeflateSegment,
   deflateSegment,
   joinSegment,
+  joinSegments,
 } from './segment.js'
 export { sha256, sha256Hex } from './sha256.js'

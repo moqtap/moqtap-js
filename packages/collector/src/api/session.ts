@@ -21,7 +21,7 @@
 
 import { MQ1006 } from '../codes.js'
 import type { DraftSet } from '../draft/index.js'
-import { sha256Hex } from '../envelope/index.js'
+import { gzipSupported, sha256Hex } from '../envelope/index.js'
 import {
   BEACON_MAX_BYTES,
   type Chunk,
@@ -38,6 +38,7 @@ import {
   FlushQueue,
   FlushSchedule,
   type LockManagerLike,
+  type Packer,
   ReleasePacer,
   sendTail,
   Uploader,
@@ -169,6 +170,46 @@ const HIDDEN_SEAL_GAP_MS = 5_000
  */
 const SEGMENT_PREFIX_MAX_BYTES = 8 * 1024
 
+/**
+ * Raw bytes, in `upload.byteThreshold`s, a body weighed compressed may hold
+ * whatever it weighs: 2 MB at the default threshold. A body is its runs
+ * joined, which compresses nothing again, so this bounds memory, the frames
+ * the buffer holds until they seal, and what one body inflates to. Object
+ * headers, which compress about forty times over, reach the threshold gzipped
+ * at around 1.3 MB, so it is the gzipped size that seals them.
+ */
+const PACKED_BODY_THRESHOLDS = 64
+
+/**
+ * Raw bytes of step runs, in `upload.byteThreshold`s, gzipped again as one.
+ * A run gzipped on its own starts with no history: object headers gzip about
+ * 35 times over in a half-threshold step and nearly 50 in eight thresholds.
+ * Eight keeps the longest compression to eight thresholds and a step, 272 KB
+ * at the default, which `gzip` hands the compressor a piece at a time, so no
+ * one task of the page's thread compresses more than a piece of it.
+ */
+const PACK_MERGE_THRESHOLDS = 8
+
+/**
+ * The most bytes a packed seal stores uncompressed behind its runs, as a
+ * fraction of `upload.byteThreshold`. The runs left unsealed weigh under the
+ * threshold and the part not yet gzipped is kept to a step, half of it, so
+ * everything a `pagehide` sends is one body under 64 KB, which the beacon
+ * takes. More than this goes in a body of its own and is compressed as one.
+ */
+const PACK_REST_STORED = 3 / 4
+
+/**
+ * The raw cap of a buffer weighed compressed, in `upload.byteThreshold`s. The
+ * pressure gate sheds droppable records at six thresholds of weight, which at
+ * the least ratio a weight assumes (`PACK_MIN_RATIO`, 1/16) is 96 raw, so the
+ * gate always gives way before the cap refuses a record that must not be lost.
+ */
+const PACKED_CAP_THRESHOLDS = 128
+
+/** The raw cap of a buffer weighed raw, in `upload.byteThreshold`s. */
+const RAW_CAP_THRESHOLDS = 8
+
 /** How old a stored body must be before a page without Web Locks takes it as left behind. */
 const SWEEP_AGE_INTERVALS = 3
 
@@ -217,6 +258,10 @@ export class CollectorRuntime {
   private readonly _customRollup: { tick(now: Mono): void } | null
   private readonly _queue: FlushQueue
   private readonly _schedule: FlushSchedule
+  /** The buffer gzipped as it grows, while detail is raised; `null` in a build that cannot raise it. */
+  private readonly _packer: Packer | null
+  /** Whether the buffer's raw cap is the wide one; see {@link _cap}. */
+  private _wideCap = false
   private readonly _pacer: ReleasePacer
   private readonly _uploader: Uploader
   private readonly _meter: UsageMeter
@@ -235,6 +280,8 @@ export class CollectorRuntime {
 
   /** Sealed bodies awaiting an answer, oldest first; bodies swept from storage go first of all. */
   private _outbox: Chunk[] = []
+  /** The body whose upload is under way, if any. */
+  private _sending: Chunk | null = null
   /** Compression and the stored copy of each body, which a send waits for. */
   private readonly _prepared = new WeakMap<Chunk, Promise<void>>()
   /** Bodies already counted in `usage()`, so a body both beaconed and prepared counts once. */
@@ -330,10 +377,41 @@ export class CollectorRuntime {
       instanceId: this.instanceId,
       clock: relClock,
       level: () => this._escalation.level,
-      maxPendingBytes: 8 * config.upload.byteThreshold,
+      maxPendingBytes: () => this._cap(),
       onInternalError: this._onError,
     })
+    this._schedule = new FlushSchedule({
+      onFlush: () => this._sealNow(true),
+      byteThreshold: config.upload.byteThreshold,
+      earlyFlushesMs: config.upload.earlyFlushesMs,
+      intervalMs: config.upload.intervalMs,
+      ...(ports.setTimer !== undefined && ports.clearTimer !== undefined
+        ? { timers: { setTimer: ports.setTimer, clearTimer: ports.clearTimer } }
+        : {}),
+      onInternalError: this._onError,
+    })
+    this._packer =
+      build.features.escalation?.packer({
+        queue: this._queue,
+        step: config.upload.byteThreshold / 2,
+        merge: PACK_MERGE_THRESHOLDS * config.upload.byteThreshold,
+        target: config.upload.byteThreshold,
+        maxRaw: PACKED_BODY_THRESHOLDS * config.upload.byteThreshold,
+        timers: { setTimer: (fn, ms) => this._timer(fn, ms), clearTimer: (h) => this._cancel(h) },
+        enabled: gzipSupported(),
+        onBody: () => {
+          if (this._ended || !this._packs() || this._sealPacked() === null) return
+          this._schedule.sealed()
+          void this._drain()
+        },
+        onFailed: (err) => {
+          this._onError(err)
+          // Weighed raw from here on, as at baseline.
+          this._schedule.noteBytes(this._queue.pendingBytes)
+        },
+      }) ?? null
     const queue = this._queue
+    const weigh = (): number => this._weigh()
     // Before its session begins a runtime records nothing at all.
     this._sink = {
       json: (r: EnvelopeRecord): void => {
@@ -345,7 +423,7 @@ export class CollectorRuntime {
         if (!this._discarded && !this._armed) queue.raw(b)
       },
       get pendingBytes(): number {
-        return queue.pendingBytes
+        return weigh()
       },
     }
 
@@ -365,14 +443,19 @@ export class CollectorRuntime {
               sink: this._sink,
               level: () => this._escalation.level,
               onTrigger: (e: TriggerEvent) => this._escalation.onTrigger(e.kind, e.atMono, e.key),
-              onConnReady: () => this._schedule.ready(this._clock.now()),
+              onConnReady: () => {
+                if (build.features.flightRecorder === undefined) this._triggersUnrunnable()
+                this._schedule.ready(this._clock.now())
+              },
               onConnClosed: () => {
                 this._sealNow(false)
                 this._noteClosed()
               },
               onOverrun: () => this._overrun(),
               onPressure: (p) => this._pacer.notePressure(p),
-              onBytes: (n) => this._schedule.noteBytes(n),
+              onBytes: (n) => this._buffered(n),
+              flush: () => this._sealNow(false),
+              dumpRoom: () => this._dumpRoom(),
               onError: this._onError,
             },
           })
@@ -411,8 +494,13 @@ export class CollectorRuntime {
               ? { ring: { capacityBytes: ring.maxBytes, evictedBytes: () => ring.evictedBytes } }
               : {}),
             onWindowOpen: (deadline) => this._scheduleWindowClose(deadline),
-            onLevelChange: (level) => this._broadcast({ t: 'level', level }),
+            onLevelChange: () => {
+              this._broadcastLevel()
+              this._levelChanged()
+            },
+            onCapChange: () => this._broadcastLevel(),
           })
+    this._restoreHold()
 
     this._uploader = new Uploader({
       endpoint: config.endpoint,
@@ -431,16 +519,6 @@ export class CollectorRuntime {
       minIntervalMs: 0,
       maxIntervalMs: config.upload.intervalMs,
     })
-    this._schedule = new FlushSchedule({
-      onFlush: () => this._sealNow(true),
-      byteThreshold: config.upload.byteThreshold,
-      earlyFlushesMs: config.upload.earlyFlushesMs,
-      intervalMs: config.upload.intervalMs,
-      ...(ports.setTimer !== undefined && ports.clearTimer !== undefined
-        ? { timers: { setTimer: ports.setTimer, clearTimer: ports.clearTimer } }
-        : {}),
-      onInternalError: this._onError,
-    })
   }
 
   /* ── startup ──────────────────────────────────────────────────────────── */
@@ -457,6 +535,8 @@ export class CollectorRuntime {
   private _begin(): void {
     this._releaseLock =
       this._persistence?.hold(this._locks, this.instanceId, this._onError) ?? (() => {})
+    // A restored hold lowers a configured raise before anything is recorded at it.
+    if (this._escalation.capped) this._escalation.tick(this._clock.now())
     this._realm?.start(this._dormant)
     this._dormant = undefined
     this._schedule.start(this._clock.now())
@@ -765,6 +845,11 @@ export class CollectorRuntime {
     runtime._context.tags = this._context.tags
     runtime._dormant = this._dormant
     this._dormant = undefined
+    // Ingest's hold is the page's, not the session's: the next one is held
+    // from its start, store or none. Both runtimes share the clock.
+    const held = this._escalation.holdUntil
+    const kept = runtime._escalation.holdUntil
+    if (held !== undefined && (kept === undefined || held > kept)) runtime._escalation.hold(held)
     const outbox = this._outbox
     const links = this._links
     const locks = new Map(this._inheritedLocks)
@@ -864,13 +949,24 @@ export class CollectorRuntime {
       get level() {
         return self._escalation.level
       },
+      get capped() {
+        return self._escalation.capped
+      },
       context: () => ({ ...self.config.context, ...self._context }),
       base: (origin) =>
         (self._ports.timeOrigin ?? performance.timeOrigin) + self.anchor.originMono - origin,
       begin: () => self._beginNow(),
       writeLink: (id, ev) => self._writeLink(id, ev),
       append: (frames, n) => {
-        if (self._queue.append(frames, n)) self._schedule.noteBytes(frames.byteLength)
+        // Forwards can arrive faster than the byte seal they schedule runs:
+        // what the buffer cannot take on top of what it holds, it takes once
+        // that is sealed.
+        let taken = self._queue.append(frames, n)
+        if (!taken && self._queue.frameCount > 0) {
+          if (self._seal() !== null) void self._drain()
+          taken = self._queue.append(frames, n)
+        }
+        if (taken) self._buffered(frames.byteLength)
         else self._forwardRefused += n
       },
       sealSegment: (part) => self._sealSegment(part),
@@ -882,11 +978,17 @@ export class CollectorRuntime {
       observe: (name, value, labels) => self.observe(name, value, labels),
       escalate: (level, reason) => self.escalate(level, reason),
       resolve: (reason) => self.resolve(reason),
-      trigger: (kind, at, key) =>
-        self._escalation.onTrigger(kind, at + self.anchor.originMono, key),
+      trigger: (kind, at, key) => {
+        self._escalation.onTrigger(kind, at + self.anchor.originMono, key)
+        // Answered whether the window opened or not: a probe that raised
+        // ahead of a refusal has nothing else to bring it back down.
+        self._broadcastLevel()
+      },
+      recorderMissing: () => self._triggersUnrunnable(),
       overrun: (at, signal) => self._overrun({ overrunAt: at, overrunSignal: signal }),
       json: (r) => self._sink.json(r),
       relNow: () => self._relNow(),
+      room: () => self._probeRoom(),
     }
   })()
 
@@ -921,6 +1023,11 @@ export class CollectorRuntime {
     this._links?.broadcast(m)
   }
 
+  private _broadcastLevel(): void {
+    const e = this._escalation
+    this._broadcast({ t: 'level', level: e.level, ...(e.capped ? { capped: true as const } : {}) })
+  }
+
   private _writeLink(link: string, ev: LinkRecord['ev']): void {
     this._sink.json({
       t: 'link',
@@ -936,6 +1043,20 @@ export class CollectorRuntime {
     if (this._reported.has(feature)) return
     this._reported.add(feature)
     this._onError(new Error(`${MQ1006}: ${feature}`))
+  }
+
+  /**
+   * A `WebTransport` is observed where no flight recorder runs, so the
+   * configured triggers cannot run on it. Reported once, and only from here
+   * when the page links workers: without them, `init()` already reported it.
+   */
+  private _triggersUnrunnable(): void {
+    const t = this.config.flightRecorder.triggers
+    if (t.stall === undefined && t.cadence === undefined) return
+    if (this._build.features.workers === undefined) return
+    if (this._reported.has('flightRecorder.triggers')) return
+    this._reported.add('flightRecorder.triggers')
+    this._onError(new Error(`${MQ1006}: flightRecorder.triggers flightRecorder`))
   }
 
   /* ── records ──────────────────────────────────────────────────────────── */
@@ -987,6 +1108,7 @@ export class CollectorRuntime {
     this._schedule.stop()
     this._escalation.close()
     this._seal()
+    this._packer?.clear()
     this._realm?.closeAll('session-end', now)
     this._links?.closeForwarded('session-end')
     this._customRollup?.tick(now)
@@ -1085,6 +1207,91 @@ export class CollectorRuntime {
   /* ── sealing ──────────────────────────────────────────────────────────── */
 
   /**
+   * Whether the buffer is weighed by what it costs compressed. Only while
+   * detail is raised: headers are what fills a buffer quickly and compress
+   * well, and at baseline the threshold keeps its plain meaning.
+   */
+  private _packs(): boolean {
+    return this._packing() !== null
+  }
+
+  /** The packer, while it weighs the buffer. */
+  private _packing(): Packer | null {
+    const p = this._packer
+    return p !== null && !p.failed && this._escalation.level !== 'baseline' ? p : null
+  }
+
+  /**
+   * The buffer's raw cap. Wide while it is weighed compressed, and after that
+   * until it is back under the narrow cap: the level falls before the record
+   * saying so is written and before the seal it asks for, and neither may be
+   * refused for what was buffered while detail was raised.
+   */
+  private _cap(): number {
+    const t = this.config.upload.byteThreshold
+    if (this._packs()) this._wideCap = true
+    else if (this._wideCap && this._queue.pendingBytes < RAW_CAP_THRESHOLDS * t) {
+      this._wideCap = false
+    }
+    return (this._wideCap ? PACKED_CAP_THRESHOLDS : RAW_CAP_THRESHOLDS) * t
+  }
+
+  /** The buffer's weight against the threshold and the pressure gate. */
+  private _weigh(): number {
+    return this._packing()?.weigh() ?? this._queue.pendingBytes
+  }
+
+  /**
+   * `n` bytes were buffered. Weighed compressed, the packer decides the seal.
+   * Only a part not yet gzipped as large as a plain buffer's cap, which the
+   * packs have not kept up with, seals here.
+   */
+  private _buffered(n: number): void {
+    const p = this._packing()
+    const t = this.config.upload.byteThreshold
+    if (p === null) this._schedule.noteBytes(n)
+    else if (this._queue.pendingBytes - p.packedBytes >= RAW_CAP_THRESHOLDS * t) {
+      this._schedule.due()
+    } else p.note()
+  }
+
+  /**
+   * Back at baseline, what was buffered while raised goes now: whoever raised
+   * detail is waiting for it, and the plain threshold would let it wait out
+   * the interval. The packer's runs are kept, for that seal to join, and for
+   * the unload's, which lowers the level just before it seals for the beacon.
+   */
+  private _levelChanged(): void {
+    if (!this._packs() && this._queue.frameCount > 0) this._schedule.due()
+  }
+
+  /**
+   * The packer's runs in front of the buffer that make a body, sealed as a
+   * compressed body of their own, with the frames after them left buffered,
+   * or stored behind them when they are every run and no more than `restMax`
+   * bytes. `null` when no run describes the front as it stands.
+   */
+  private _sealPacked(restMax = -1, final = false): Chunk | null {
+    if (this._discarded) return null
+    const packed = this._packer?.take(restMax) ?? null
+    if (packed === null) return null
+    let chunk: Chunk
+    try {
+      chunk = this._queue.sealSegment(
+        packed.segment,
+        { final: final && packed.rest, lost: this._lost, dropped: this._dropped() },
+        packed,
+        packed.rest,
+      )
+    } catch (err) {
+      this._onError(err)
+      return null
+    }
+    this._admit(chunk)
+    return chunk
+  }
+
+  /**
    * A seal the schedule or a connection close asked for, then send. `tick`
    * closes the open rollup intervals first; a close has already written its
    * connection's last one.
@@ -1100,21 +1307,48 @@ export class CollectorRuntime {
   }
 
   /**
-   * Seal what is buffered into a numbered, keyed body and put it in the
-   * outbox, synchronously. Compression and the stored copy follow on their own.
+   * Seal what is buffered into numbered, keyed bodies and put them in the
+   * outbox, synchronously, returning the last. The packer's runs go first,
+   * already compressed, with a short rest stored behind them. What is left is
+   * sealed raw, compressed after on its own and stored, in bodies a plain
+   * buffer could hold, so no one compression is longer than that. For the
+   * `beacon`, which may send them before they are compressed, in bodies of
+   * half what it takes, so each can still go.
    */
-  private _seal(final = false): Chunk | null {
+  private _seal(final = false, beacon = false): Chunk | null {
     if (this._discarded) return null
-    let chunk: Chunk | null
-    try {
-      chunk = this._queue.seal({ final, lost: this._lost, dropped: this._dropped() })
-    } catch (err) {
-      this._onError(err)
-      return null
+    const t = this.config.upload.byteThreshold
+    let last: Chunk | null = null
+    for (;;) {
+      const chunk = this._sealPacked(PACK_REST_STORED * t, final)
+      if (chunk === null) break
+      last = chunk
+      if (this._queue.frameCount === 0) return chunk
     }
-    if (chunk === null) return null
-    this._admit(chunk)
-    return chunk
+    const piece = beacon
+      ? Math.min(
+          RAW_CAP_THRESHOLDS * t,
+          this.config.upload.beaconMaxBytes / 2,
+          BEACON_MAX_BYTES / 2,
+        )
+      : RAW_CAP_THRESHOLDS * t
+    while (this._queue.frameCount > 0) {
+      let chunk: Chunk | null
+      try {
+        chunk = this._queue.sealFront(piece, {
+          final: final && this._queue.pendingBytes <= piece,
+          lost: this._lost,
+          dropped: this._dropped(),
+        })
+      } catch (err) {
+        this._onError(err)
+        return last
+      }
+      if (chunk === null) break
+      this._admit(chunk)
+      last = chunk
+    }
+    return last
   }
 
   /**
@@ -1126,6 +1360,8 @@ export class CollectorRuntime {
     this._lastSealMono = this._clock.now()
     this._prepared.set(chunk, this._prepare(chunk))
     this._capOutbox()
+    // Less room now: a probe must not dump into what this body took.
+    this._links?.tellRoom()
   }
 
   private async _prepare(chunk: Chunk): Promise<void> {
@@ -1144,9 +1380,8 @@ export class CollectorRuntime {
    * next body says so.
    */
   private _capOutbox(): void {
-    let bytes = 0
-    for (const c of this._outbox) bytes += c.bytes.byteLength
-    const cap = Math.max(this.config.storage.quotaBytes, 8 * this.config.upload.byteThreshold)
+    let bytes = this._outboxBytes()
+    const cap = this._outboxCap()
     while (bytes > cap && this._outbox.length > 1) {
       const dropped = this._outbox.shift() as Chunk
       bytes -= dropped.bytes.byteLength
@@ -1154,6 +1389,60 @@ export class CollectorRuntime {
         this._noteLost(dropped.seq)
       }
     }
+  }
+
+  private _outboxCap(): number {
+    return Math.max(this.config.storage.quotaBytes, 8 * this.config.upload.byteThreshold)
+  }
+
+  private _outboxBytes(): number {
+    let bytes = 0
+    for (const c of this._outbox) bytes += c.bytes.byteLength
+    return bytes
+  }
+
+  /**
+   * What the page's own flight dumps may take: its share of what the outbox
+   * can still take before {@link _capOutbox} pushes a body out, and of what
+   * the store can before it evicts a copy. The page and each linked probe have
+   * a share apiece, so dumps in several realms at once still fit together.
+   */
+  private _dumpRoom(): number {
+    return this._roomShare(this._queue.pendingBytes)
+  }
+
+  /**
+   * A probe's share, as {@link _dumpRoom}. The probe hears it only after a
+   * forward or a seal, and in between the page's own records fill the buffer
+   * up to a body before it seals, so the buffer counts as a body at least.
+   */
+  private _probeRoom(): number {
+    return this._roomShare(Math.max(this._queue.pendingBytes, this.config.upload.byteThreshold))
+  }
+
+  /**
+   * One realm's share of the room left beside `pending` buffered bytes.
+   *
+   * The store's copies are shared with every tab and earlier page load on the
+   * origin, and a copy is the only one of a body pushed out of the outbox, so
+   * dump bodies stored past its quota would evict copies nothing else holds.
+   * The room is therefore also what the store has free, less the bodies in the
+   * outbox it has not stored yet. A store with no quota stores nothing and
+   * evicts nothing.
+   */
+  private _roomShare(pending: number): number {
+    let room = this._outboxCap() - this._outboxBytes() - pending
+    const store = this._store
+    if (store !== null && store.quota > 0) {
+      let unstored = 0
+      for (const c of this._outbox) if (!store.has(c.idempotencyKey)) unstored += c.bytes.byteLength
+      room = Math.min(room, store.quota - store.bytes - unstored - pending)
+    }
+    return Math.max(0, Math.floor(room / this._dumpShares()))
+  }
+
+  private _dumpShares(): number {
+    return 1 + (this._links?.linked() ?? 0)
   }
 
   private _noteBytes(c: Chunk): void {
@@ -1199,7 +1488,13 @@ export class CollectorRuntime {
         if (delay > 0) await this._sleep(delay)
       }
       if (signal.aborted) return
-      const outcome = await this._uploader.send(chunk, signal, pageHidden())
+      this._sending = chunk
+      let outcome: UploadOutcome
+      try {
+        outcome = await this._uploader.send(chunk, signal, pageHidden())
+      } finally {
+        this._sending = null
+      }
       // Addressed to the instance the body came from, by the `i` it carried.
       if (outcome.directive !== undefined && this._isOwn(chunk)) this._obey(outcome)
       if (outcome.ok || outcome.terminal) {
@@ -1241,7 +1536,10 @@ export class CollectorRuntime {
       const h = d.hold
       if (h !== undefined) {
         const forMs = Math.min(DIRECTIVE_HOLD_MAX_SPAN_MS, h.until - serverNow)
-        if (forMs > 0) this._escalation.hold(this._clock.now() + forMs)
+        if (forMs > 0) {
+          this._escalation.hold(this._clock.now() + forMs)
+          this._store?.setHold(this._dest, this._clock.wall() + forMs)
+        }
       }
       const e = d.elevate
       if (e !== undefined) {
@@ -1255,6 +1553,18 @@ export class CollectorRuntime {
     } catch (err) {
       this._onError(err)
     }
+  }
+
+  /**
+   * Take up the hold an earlier page load or session on this origin heard for
+   * the same destination, so a held workspace stays held until this session's
+   * own first answer. Bounded as the directive is, against this device's clock.
+   */
+  private _restoreHold(): void {
+    const until = this._store?.holdUntil(this._dest)
+    if (until === undefined) return
+    const forMs = Math.min(DIRECTIVE_HOLD_MAX_SPAN_MS, until - this._clock.wall())
+    if (forMs > 0) this._escalation.hold(this._clock.now() + forMs)
   }
 
   /**
@@ -1386,7 +1696,7 @@ export class CollectorRuntime {
     // it holds leaves now — unless it sealed a moment ago.
     if (this._clock.now() - this._lastSealMono < HIDDEN_SEAL_GAP_MS) return
     this._tick()
-    this._seal()
+    this._seal(false, true)
     void this._drainUrgent()
   }
 
@@ -1418,7 +1728,7 @@ export class CollectorRuntime {
       this._escalation.unload()
       this._tick()
       this._writeLife('frozen')
-      this._seal()
+      this._seal(false, true)
       this._beaconOutbox([])
       this._beaconed.clear()
       return
@@ -1439,7 +1749,7 @@ export class CollectorRuntime {
     if (this._unloadStep === 0) {
       this._escalation.unload()
       this._tick()
-      this._seal()
+      this._seal(false, true)
       this._unloadStep = 1
     }
     if (this._unloadStep === 1) {
@@ -1469,9 +1779,18 @@ export class CollectorRuntime {
     this._writeLife('resumed', Math.round(this._clock.now() - at))
   }
 
-  /** Beacon `first`, then every other body in the outbox, newest last; store each one. */
+  /**
+   * Beacon `first`, then every other body in the outbox, newest last, and the
+   * one whose upload is under way after them all; store each one. The beacon
+   * quota is shared, and that upload's request may already have reached
+   * ingest, so the bodies never sent come before it.
+   */
   private _beaconOutbox(first: readonly Chunk[]): void {
-    const rest = this._outbox.filter((c) => !first.includes(c))
+    const sending = this._sending
+    const rest = this._outbox.filter((c) => !first.includes(c) && c !== sending)
+    if (sending !== null && this._outbox.includes(sending) && !first.includes(sending)) {
+      rest.push(sending)
+    }
     for (const chunk of [...first, ...rest]) {
       if (this._beaconed.has(chunk)) continue
       const outcome = sendTail(this.config.endpoint, chunk.bytes, {
@@ -1502,6 +1821,7 @@ export class CollectorRuntime {
     this._ended = true
     this._realm?.detach()
     this._schedule.stop()
+    this._packer?.clear()
     this._life.abort()
     this._wake?.()
     for (const h of [

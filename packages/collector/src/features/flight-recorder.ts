@@ -17,6 +17,8 @@ export const flightRecorder: FlightRecorderFeature = {
     const recorder = new FlightRecorder({
       ring: ring as ByteRing,
       sink: d.sink,
+      dump: d.dump,
+      sliceBytes: d.sliceBytes,
       adapter: d.adapter,
       keys: d.keys,
       conn: d.conn,
@@ -26,6 +28,8 @@ export const flightRecorder: FlightRecorderFeature = {
     const triggers = new TriggerEngine({
       config: d.config.triggers,
       medians: { medianFor: d.medianFor, medianSamplesFor: d.medianSamplesFor },
+      liveness: d.liveness,
+      canFire: d.canFire,
       onFire: d.onFire,
     })
     return {

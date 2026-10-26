@@ -53,6 +53,7 @@ import type {
   Mono,
   PendingRequest,
   TrackKeyResolver,
+  TrackLiveness,
 } from '../types.js'
 
 /**
@@ -224,16 +225,28 @@ export class TrackKeys implements TrackKeyResolver {
       }
     }
 
+    const type = msg.type
     const alias = trackAliasOf(msg)
     if (alias !== undefined) {
       // SUBSCRIBE_OK carries the alias and no id at all, so the binding's
       // request comes from the stream — which is precisely what the map is
       // for, reused here for free.
-      this.bind(dir, alias, rid ?? this.pending.get(streamId)?.req.requestId, streamId)
+      //
+      // A binding lives in the map of the direction its objects travel. Every
+      // message that carries an alias travels with them, except a SUBSCRIBE
+      // that carries one (through draft-11, where the subscriber chooses the
+      // alias): it goes to the publisher, and the objects come back.
+      const dataDir: Direction = type === 'subscribe' ? (dir === 'tx' ? 'rx' : 'tx') : dir
+      this.bind(dataDir, alias, rid ?? this.pending.get(streamId)?.req.requestId, streamId)
     }
 
-    const type = msg.type
-    if (typeof type === 'string' && CLOSING_TYPES.has(type)) this.retire(streamId)
+    if (typeof type === 'string' && CLOSING_TYPES.has(type)) {
+      // A closing message that names its request ends that request alone.
+      // Before draft-17 every request shares the one control stream, so
+      // retiring by stream there would end every subscription the session has.
+      if (rid !== undefined) this.retireRequest(rid)
+      else this.retire(streamId)
+    }
   }
 
   pendingFor(streamId: number): PendingRequest | undefined {
@@ -287,6 +300,24 @@ export class TrackKeys implements TrackKeyResolver {
   releaseFetch(dir: Direction, requestId: bigint): void {
     const m = dir === 'tx' ? this.fetchTx : this.fetchRx
     if (m.delete(requestId)) this.live--
+  }
+
+  /**
+   * Whether the bucket still belongs to an open request: its alias binding has
+   * not been rebound or ended, or its fetch stream has not closed.
+   *
+   * An alias first seen on the data plane, with no request observed behind it,
+   * is `unbound` rather than either: a collector armed mid-session never sees
+   * the request, so it never sees the request end either.
+   */
+  liveness(key: BucketKey): TrackLiveness {
+    if (key.kind === 'fetch') {
+      return (key.dir === 'tx' ? this.fetchTx : this.fetchRx).get(key.id) === key ? 'open' : 'ended'
+    }
+    const b = (key.dir === 'tx' ? this.aliasTx : this.aliasRx).get(key.id)
+    if (b === undefined || b.key !== key) return 'ended'
+    if (b.live) return 'open'
+    return b.requestId === undefined ? 'unbound' : 'ended'
   }
 
   /** Two live requests bound this bucket's alias at once (draft-20 §5.1). */
@@ -422,6 +453,14 @@ export class TrackKeys implements TrackKeyResolver {
       if (b.streamId === streamId) b.live = false
     }
     this.byStream.delete(streamId)
+  }
+
+  private retireRequest(requestId: bigint): void {
+    for (const m of [this.aliasTx, this.aliasRx]) {
+      for (const b of m.values()) {
+        if (b.requestId === requestId) b.live = false
+      }
+    }
   }
 
   private refuse(dir: Direction, kind: BucketKind, id: bigint): null {

@@ -7,6 +7,7 @@ import {
   idempotencyKey,
   joinSegment,
   readPreamble,
+  splitFrames,
   writePreamble,
 } from '../envelope/index.js'
 import type { BatchRecord, ClockSource, DetailLevel } from '../types.js'
@@ -55,6 +56,17 @@ export interface SealOptions {
   readonly lost?: readonly number[]
   /** Records dropped on the device so far. */
   readonly dropped?: number
+}
+
+/** The first `count` frames of the open stream, `bytes` long. */
+export interface PackedFront {
+  readonly bytes: number
+  readonly count: number
+}
+
+/** The open stream's front, gzipped into `segment`. */
+export interface PackedFrames extends PackedFront {
+  readonly segment: DeflateSegment
 }
 
 const platformClock: ClockSource = {
@@ -114,19 +126,63 @@ export class FlushQueue extends FrameBuffer {
    * already compressed. `segment` is frames another realm gzipped, so the
    * body ends with them; the open frames go in uncompressed, and the caller
    * keeps them few. Always takes a number: the segment is never empty.
+   *
+   * With `front`, `segment` is instead the open stream's own first frames,
+   * gzipped: the body is those, and the frames after them stay open for the
+   * next seal, or with `rest` follow them in the body uncompressed, which
+   * takes an {@link DeflateSegment.open | open} segment. `front` must
+   * describe the stream's front as it is now.
    */
-  sealSegment(segment: DeflateSegment, o: SealOptions = {}): Chunk {
+  sealSegment(
+    segment: DeflateSegment,
+    o: SealOptions = {},
+    front?: PackedFront,
+    rest = false,
+  ): Chunk {
+    if (front && rest && !(front.bytes <= this.pendingBytes && front.count <= this.frameCount)) {
+      throw new RangeError('front')
+    }
     const seq = this._seq
     const key = idempotencyKey(this._sessionId, this._instanceId, seq)
-    const head = new FrameWriter({ initialBytes: 512 + this.pendingBytes })
+    const head = new FrameWriter({ initialBytes: 512 + (front ? 0 : this.pendingBytes) })
     head.json(this._batch(seq, key, o))
-    head.append(this.peek(), this.frameCount)
-    const member = joinSegment(head.take(), segment)
-    this.takeFrames()
+    if (!front) head.append(this.peek(), this.frameCount)
+    const member = joinSegment(
+      head.take(),
+      segment,
+      front && rest ? this.peek().subarray(front.bytes) : undefined,
+    )
+    if (!front) this.takeFrames()
+    else if (rest) this.drop(this.pendingBytes, this.frameCount)
+    else this.drop(front.bytes, front.count)
     this._seq = seq + 1
     const bytes = new Uint8Array(BODY_PREAMBLE_BYTES + member.byteLength)
     bytes.set(writePreamble({ version: BODY_VERSION, gzipped: true }), 0)
     bytes.set(member, BODY_PREAMBLE_BYTES)
+    return this._chunk(seq, key, bytes)
+  }
+
+  /**
+   * Seal the stream's first frames, up to about `most` bytes, cut in front of
+   * a JSON frame, like {@link seal}; the rest stay open. `null` when there is
+   * nothing to seal.
+   */
+  sealFront(most: number, o: SealOptions = {}): Chunk | null {
+    if (this.pendingBytes <= most) return this.seal(o)
+    const span = splitFrames(this.peek(), this.frameCount, most, 1)[0]
+    if (span === undefined || span.count === this.frameCount) return this.seal(o)
+    const seq = this._seq
+    const key = idempotencyKey(this._sessionId, this._instanceId, seq)
+    const head = new FrameWriter({ initialBytes: 512 })
+    head.json(this._batch(seq, key, o))
+    const batch = head.take()
+    const n = span.bytes.byteLength
+    const bytes = new Uint8Array(BODY_PREAMBLE_BYTES + batch.byteLength + n)
+    bytes.set(writePreamble({ version: BODY_VERSION, gzipped: false }), 0)
+    bytes.set(batch, BODY_PREAMBLE_BYTES)
+    bytes.set(span.bytes, BODY_PREAMBLE_BYTES + batch.byteLength)
+    this.drop(n, span.count)
+    this._seq = seq + 1
     return this._chunk(seq, key, bytes)
   }
 

@@ -386,6 +386,7 @@ describe('a linked worker writes object headers and forwards them', () => {
       instanceId: 'inst-1',
       base: 0,
       level: 'baseline',
+      room: 8 * 1024 * 1024,
       config: { metrics, flightRecorder, limits, privacy, upload, context },
     }
     channel.port1.postMessage(envelope(linked), [page.port2])

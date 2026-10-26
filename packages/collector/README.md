@@ -89,8 +89,10 @@ init({
 ```
 
 By default a session uploads when it is ready, 45 s later, then every 60 s or
-once 32 KB is waiting, whichever comes first. `upload.earlyFlushesMs`,
-`upload.intervalMs` and `upload.byteThreshold` set those.
+once 32 KB is waiting, whichever comes first. While detail is raised, the 32 KB
+is counted compressed, and an upload holds at most 64 times that uncompressed.
+`upload.earlyFlushesMs`, `upload.intervalMs` and `upload.byteThreshold` set
+those.
 
 The flight recorder uses memory (`depth`, 32 MB by default) only when a trigger
 is set, in each page or worker that opens a WebTransport. A page that only
@@ -166,7 +168,8 @@ Before a session begins, `ids()` already answers with the ids it will be
 uploaded under, and context passed to `init()` or `setContext()` is sent with
 it. Annotations, metric samples and `escalate()` calls made before then are
 not recorded; metric definitions are kept. A capture window still open when
-a session ends closes with it, and the next session starts at `detail`.
+a session ends closes with it, and the next session starts at `detail`, or
+at `baseline` while detail is held.
 
 Without any call, the collector:
 
@@ -235,12 +238,12 @@ test fixture. It deletes every stored upload as well.
 Drafts 07 through 22. Your bundle holds the drafts and features you import and
 nothing else. Pick the entry that matches your player:
 
-| Import                             | Drafts | Features  | Gzipped    |
-| ---------------------------------- | ------ | --------- | ---------- |
-| `@moqtap/collector`                | all    | all       | 65.5 KB    |
-| `@moqtap/collector/draftNN`        | one    | all       | 46–48.5 KB |
-| `@moqtap/collector/draftNN/thin`   | one    | none      | 38–40.5 KB |
-| `compose({ features: [workers] })` | none   | `workers` | 17 KB      |
+| Import                             | Drafts | Features  | Gzipped      |
+| ---------------------------------- | ------ | --------- | ------------ |
+| `@moqtap/collector`                | all    | all       | 72.3 KB      |
+| `@moqtap/collector/draftNN`        | one    | all       | 52.7–55.2 KB |
+| `@moqtap/collector/draftNN/thin`   | one    | none      | 40.1–42.7 KB |
+| `compose({ features: [workers] })` | none   | `workers` | 19.6 KB      |
 
 ```typescript
 import { init } from '@moqtap/collector/draft14'
@@ -259,7 +262,10 @@ The features:
   `escalation` as well.
 - `customMetrics`: `defineMetric()` and `observe()`.
 - `persistence`: stores each upload in IndexedDB until ingest accepts it, so
-  one the page could not send is sent on the next page load.
+  one the page could not send is sent on the next page load. It also keeps
+  detail held at `baseline` across page loads, in a second IndexedDB database
+  (`moqtap-collector:holds`); without it, a new page load is held only once
+  its first upload is answered.
 
 ### Compose your own
 
@@ -364,11 +370,11 @@ its own release.
 The worker entries export `initWorker` alone, without the page's uploader,
 storage and session:
 
-| Import                                  | Drafts | Flight recorder | Gzipped    |
-| --------------------------------------- | ------ | --------------- | ---------- |
-| `@moqtap/collector/worker`              | all    | yes             | 49.3 KB    |
-| `@moqtap/collector/draftNN/worker`      | one    | yes             | 30–32.5 KB |
-| `@moqtap/collector/draftNN/thin/worker` | one    | no              | 26.5–29 KB |
+| Import                                  | Drafts | Flight recorder | Gzipped      |
+| --------------------------------------- | ------ | --------------- | ------------ |
+| `@moqtap/collector/worker`              | all    | yes             | 51.2 KB      |
+| `@moqtap/collector/draftNN/worker`      | one    | yes             | 32.0–34.5 KB |
+| `@moqtap/collector/draftNN/thin/worker` | one    | no              | 27.6–30.1 KB |
 
 When every connection lives in the worker, pair one of these with a page that
 imports no draft, as in [Compose your own](#compose-your-own). Like every

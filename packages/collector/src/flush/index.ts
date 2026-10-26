@@ -96,6 +96,7 @@ export {
   type ChunkIndexEntry,
   ChunkStore,
   type ChunkStoreOptions,
+  type HoldRow,
   IdbBackend,
   MemoryBackend,
 } from './idb.js'
@@ -107,6 +108,14 @@ export {
   platformLocks,
 } from './locks.js'
 export { ReleasePacer, type ReleasePacerOptions } from './pacer.js'
-export { compress, FlushQueue, type FlushQueueOptions, type SealOptions } from './queue.js'
+export { PACK_MIN_RATIO, Packer, type PackerOptions } from './pack.js'
+export {
+  compress,
+  FlushQueue,
+  type FlushQueueOptions,
+  type PackedFrames,
+  type PackedFront,
+  type SealOptions,
+} from './queue.js'
 export { FlushSchedule, type FlushScheduleOptions, type TimerSource } from './schedule.js'
 export { RECV_HEADER, SEND_HEADER, Uploader, type UploaderOptions } from './uploader.js'

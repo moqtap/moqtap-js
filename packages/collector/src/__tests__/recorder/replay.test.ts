@@ -20,6 +20,7 @@ import {
 } from '@moqtap/codec/draft20'
 import { describe, expect, it } from 'vitest'
 import { DRAFT20_ADAPTER } from '../../drafts/draft20/index.js'
+import { deflateSegment } from '../../envelope/index.js'
 import {
   DATAGRAM_STREAM_ID,
   FlightRecorder,
@@ -27,7 +28,14 @@ import {
   replayWindow,
 } from '../../recorder/index.js'
 import { ByteRing } from '../../ring/index.js'
-import type { EnvelopeRecord, FlightRecord, RecordSink, TriggerConfig } from '../../types.js'
+import type {
+  BucketKey,
+  EnvelopeRecord,
+  FlightRecord,
+  RecordSink,
+  TrackKeyResolver,
+  TriggerConfig,
+} from '../../types.js'
 
 /* ── vectors ─────────────────────────────────────────────────────────────── */
 
@@ -122,13 +130,14 @@ function pushChunks(
   streamId: number,
   bytes: Uint8Array,
   times: readonly number[],
+  sessionId = 's',
 ): void {
   const size = Math.ceil(bytes.length / times.length)
   for (let n = 0; n < times.length; n++) {
     const slice = bytes.subarray(n * size, Math.min((n + 1) * size, bytes.length))
     if (slice.length === 0) continue
     ring.push({
-      sessionId: 's',
+      sessionId,
       streamId,
       dir: 'rx',
       control: false,
@@ -502,5 +511,265 @@ describe('armed costs nothing, and a trigger costs one record', () => {
     const record = sink.records[0] as FlightRecord
     expect(record.cols.at).toEqual([980])
     expect(record.windowStart).toBe(950)
+  })
+})
+
+/* ── a dump larger than a body ───────────────────────────────────────────── */
+
+/** The largest compressed piece a worker forwards as one body (`api/probe.ts`). */
+const PIECE_MAX_BYTES = 48 * 1024
+
+/** Deterministic noise, so a failure reproduces. */
+function noise(seed: number): () => number {
+  let s = seed >>> 0
+  return () => {
+    s = (Math.imul(s, 1_664_525) + 1_013_904_223) >>> 0
+    return s / 2 ** 32
+  }
+}
+
+/**
+ * A live-looking ring: four tracks of ~30 fps media, one subgroup stream per
+ * group, every object its own chunk, arrival times jittered at microsecond
+ * resolution and sizes varying object to object. Jitter is what makes the
+ * time columns expensive to compress; evenly spaced timestamps flatter gzip.
+ */
+function jitteredRing(objects: number): ByteRing {
+  const ring = ringOf(64 << 20)
+  const rand = noise(7)
+  const tracks = 4
+  const perGroup = 30
+  let streamId = 0
+  let made = 0
+  for (let group = 0; made < objects; group++) {
+    for (let track = 0; track < tracks && made < objects; track++) {
+      const n = Math.min(perGroup, objects - made)
+      const specs = Array.from({ length: n }, (_, i) => ({
+        id: BigInt(i),
+        bytes: 40 + Math.floor(rand() * 400),
+      }))
+      const base = group * 1_000 + track * 7
+      const times = specs.map((_, i) => base + i * 33.333 + rand() * 12)
+      pushChunks(ring, streamId, subgroupBytes(BigInt(track + 1), BigInt(group), specs), times)
+      streamId += 4
+      made += n
+    }
+  }
+  return ring
+}
+
+const flights = (sink: Sink): FlightRecord[] =>
+  sink.records.filter((r): r is FlightRecord => r.t === 'flight')
+
+describe('a dump larger than one body', () => {
+  it('arrives whole, in slices that each fit a body, at 12,000 jittered objects', async () => {
+    const ring = jitteredRing(12_000)
+    const sink = new Sink()
+    const rec = recorderOn(ring, sink)
+    rec.arm(STALL_ONLY)
+    const at = 1e9
+
+    rec.fire({ kind: 'stall', atMono: at, detail: 'test' })
+
+    const whole = replayWindow(ring, DRAFT20_ADAPTER, {
+      fromMono: Number.NEGATIVE_INFINITY,
+      toMono: at,
+    })
+    expect(whole.rows).toHaveLength(12_000)
+    const slices = flights(sink)
+    const encoder = new TextEncoder()
+    for (const [i, s] of slices.entries()) {
+      const json = encoder.encode(JSON.stringify(s))
+      expect(json.byteLength).toBeLessThanOrEqual(32 * 1024)
+      const packed = await deflateSegment(json)
+      expect(packed.deflate.byteLength).toBeLessThanOrEqual(PIECE_MAX_BYTES)
+      expect(s.part).toBe(i)
+      expect(s.parts).toBe(slices.length)
+      expect(s.truncated).toBe(false)
+      expect(s.ts).toBe(at)
+      // Each slice's window starts where the one before it ended.
+      if (i > 0) expect(s.windowStart).toBe((slices[i - 1] as FlightRecord).windowEnd)
+    }
+    expect(slices.length).toBeGreaterThan(1)
+    expect((slices[0] as FlightRecord).windowStart).toBe(
+      Math.round(whole.windowStart * 1000) / 1000,
+    )
+    expect((slices.at(-1) as FlightRecord).windowEnd).toBe(at)
+
+    // Every object, once, in arrival order.
+    const at2 = slices.flatMap((s) => s.cols.at)
+    expect(at2).toEqual(whole.rows.map((r) => Math.round(r.at * 1000) / 1000))
+    expect(slices.flatMap((s) => s.cols.key)).toHaveLength(12_000)
+    expect(rec.capturesFired).toBe(1)
+  })
+
+  it('keeps the newest objects that fit its byte budget, and says the head is gone', async () => {
+    const ring = jitteredRing(12_000)
+    const sink = new Sink()
+    const rec = new FlightRecorder({
+      ring,
+      sink,
+      adapter: () => DRAFT20_ADAPTER,
+      sliceBytes: 8 * 1024,
+      maxBytes: 64 * 1024,
+    })
+    rec.arm(STALL_ONLY)
+
+    rec.fire({ kind: 'stall', atMono: 1e9, detail: 'test' })
+
+    const slices = flights(sink)
+    const encoder = new TextEncoder()
+    let total = 0
+    for (const s of slices) {
+      const bytes = encoder.encode(JSON.stringify(s)).byteLength
+      expect(bytes).toBeLessThanOrEqual(8 * 1024)
+      total += bytes
+      expect(s.truncated).toBe(true)
+    }
+    expect(total).toBeLessThanOrEqual(64 * 1024)
+    const kept = slices.flatMap((s) => s.cols.at)
+    expect(kept.length).toBeLessThan(12_000)
+    // What survives is the end of the window: the moments just before the trigger.
+    const whole = replayWindow(ring, DRAFT20_ADAPTER, { fromMono: -Infinity, toMono: 1e9 })
+    const newest = whole.rows.slice(-kept.length).map((r) => Math.round(r.at * 1000) / 1000)
+    expect(kept).toEqual(newest)
+    expect((slices[0] as FlightRecord).windowStart).toBe(kept[0])
+  })
+
+  it('names its dump and where it ends on every slice, since a trace keeps no ts', () => {
+    const ring = jitteredRing(6_000)
+    const sink = new Sink()
+    const rec = recorderOn(ring, sink)
+    rec.arm(STALL_ONLY)
+
+    rec.fire({ kind: 'stall', atMono: 1e9, detail: 'test' })
+    rec.fire({ kind: 'stall', atMono: 1e9 + 1, detail: 'test' })
+
+    const slices = flights(sink)
+    const first = slices.filter((s) => s.ts === 1e9)
+    const second = slices.filter((s) => s.ts === 1e9 + 1)
+    expect(first.length).toBeGreaterThan(1)
+    expect(second.length).toBe(first.length)
+    // What a trace keeps of each slice: everything but its `t` and `ts`.
+    const kept = (s: FlightRecord) => {
+      const { t: _t, ts: _ts, ...rest } = s
+      return rest
+    }
+    expect(new Set(first.map((s) => kept(s).dump)).size).toBe(1)
+    expect(new Set(second.map((s) => kept(s).dump)).size).toBe(1)
+    expect(kept(first[0] as FlightRecord).dump).not.toBe(kept(second[0] as FlightRecord).dump)
+    expect(first.map((s) => kept(s).dumpEnd)).toEqual(first.map(() => 1e9))
+    expect(second.map((s) => kept(s).dumpEnd)).toEqual(second.map(() => 1e9 + 1))
+  })
+
+  it('stays one record, with no slice fields, when it fits', () => {
+    const ring = ringOf()
+    const sink = new Sink()
+    const rec = recorderOn(ring, sink)
+    rec.arm(STALL_ONLY)
+    pushChunks(ring, 1, subgroupBytes(1n, 0n, [{ id: 0n, bytes: 10 }]), [10])
+
+    rec.fire({ kind: 'stall', atMono: 20, detail: 'test' })
+
+    const [only] = flights(sink)
+    expect(flights(sink)).toHaveLength(1)
+    expect(only).not.toHaveProperty('part')
+    expect(only).not.toHaveProperty('parts')
+  })
+})
+
+describe('a ring that outlived a reconnect', () => {
+  /** A live resolver, told apart from the replay's fallback by its epoch. */
+  function liveKeys(epoch: number): TrackKeyResolver {
+    return {
+      aliasKey: (dir, id): BucketKey => ({ dir, kind: 'alias', id, epoch }),
+      fetchKey: (dir, id): BucketKey => ({ dir, kind: 'fetch', id, epoch }),
+      applyControl: () => {},
+      pendingFor: () => undefined,
+      bucketsRefused: 0,
+    }
+  }
+
+  function twoConnections(): ByteRing {
+    const ring = ringOf()
+    // Stream ids restart at 0 on every connection, so both use stream 0.
+    pushChunks(
+      ring,
+      0,
+      subgroupBytes(1n, 5n, [
+        { id: 0n, bytes: 30 },
+        { id: 1n, bytes: 30 },
+      ]),
+      [10],
+      'a',
+    )
+    pushChunks(
+      ring,
+      0,
+      subgroupBytes(1n, 9n, [
+        { id: 0n, bytes: 30 },
+        { id: 1n, bytes: 30 },
+      ]),
+      [50],
+      'b',
+    )
+    return ring
+  }
+
+  it('walks each connection stream on its own, and resolves aliases per connection', () => {
+    const r = replayWindow(twoConnections(), DRAFT20_ADAPTER, WHOLE_RING, {
+      keys: liveKeys(7),
+      sessionId: 'b',
+    })
+
+    expect(r.streamsSkipped).toBe(0)
+    expect(r.rows.map((o) => [o.groupId, o.objectId])).toEqual([
+      [9n, 0n],
+      [9n, 1n],
+    ])
+    expect(r.rows.every((o) => o.key.epoch === 7)).toBe(true)
+  })
+
+  it('does not splice two connections that share a stream id', () => {
+    const r = replayWindow(twoConnections(), DRAFT20_ADAPTER, WHOLE_RING)
+
+    expect(r.streamsSkipped).toBe(0)
+    expect(r.rows.map((o) => [o.groupId, o.objectId])).toEqual([
+      [5n, 0n],
+      [5n, 1n],
+      [9n, 0n],
+      [9n, 1n],
+    ])
+  })
+
+  it('replays as one record only the connection it names', () => {
+    const rec = replayRing(twoConnections(), DRAFT20_ADAPTER, WHOLE_RING, {
+      keys: liveKeys(7),
+      conn: 'b',
+    })
+
+    expect(rec.conn).toBe('b')
+    expect(rec.cols.group).toEqual([9, 9])
+    expect(rec.cols.key).toEqual(['rx:alias:1:7', 'rx:alias:1:7'])
+  })
+
+  it('dumps only the triggering connection, keyed by its own resolver', () => {
+    const ring = twoConnections()
+    const sink = new Sink()
+    const rec = new FlightRecorder({
+      ring,
+      sink,
+      adapter: () => DRAFT20_ADAPTER,
+      keys: () => liveKeys(3),
+      conn: () => 'b',
+    })
+    rec.arm(STALL_ONLY)
+
+    rec.fire({ kind: 'stall', atMono: 100, detail: 'after reconnect' })
+
+    const record = sink.records[0] as FlightRecord
+    expect(record.conn).toBe('b')
+    expect(record.cols.group).toEqual([9, 9])
+    expect(record.truncated).toBe(false)
   })
 })

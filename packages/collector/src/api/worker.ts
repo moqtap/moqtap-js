@@ -153,7 +153,13 @@ export function initWorkerWith(
       target.addEventListener('message', onMessage)
       target.start?.()
       target.postMessage(
-        envelope({ t: 'hello', timeOrigin: options.timeOrigin ?? performance.timeOrigin }),
+        envelope({
+          t: 'hello',
+          timeOrigin: options.timeOrigin ?? performance.timeOrigin,
+          // Whether this worker can run the page's triggers on its transports;
+          // the page is where a missing recorder is reported.
+          recorder: build.recorder !== undefined,
+        }),
       )
     } catch (err) {
       options.onInternalError?.(err)

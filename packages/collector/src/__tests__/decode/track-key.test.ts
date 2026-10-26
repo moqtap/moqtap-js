@@ -9,6 +9,9 @@
  * everything into one bucket.
  */
 
+import { decodeMessage as decode07, encodeMessage as encode07 } from '@moqtap/codec/draft07'
+import { decodeMessage as decode11, encodeMessage as encode11 } from '@moqtap/codec/draft11'
+import { decodeMessage as decode14, encodeMessage as encode14 } from '@moqtap/codec/draft14'
 import { describe, expect, it } from 'vitest'
 import { TrackKeys } from '../../decode/track-key.js'
 import type { AnyMessage, BucketKey } from '../../types.js'
@@ -125,6 +128,151 @@ describe('TrackKeys — bucket keys', () => {
     const keys = new TrackKeys()
     expect(keys.fetchKey('rx', 12n)).toEqual({ dir: 'rx', kind: 'fetch', id: 12n, epoch: 0 })
     expect(keys.fetchKey('rx', 12n)).toBe(keys.fetchKey('rx', 12n))
+  })
+})
+
+/** A draft-14 control message, encoded and decoded back through the codec. */
+function msg14(m: Parameters<typeof encode14>[0]): AnyMessage {
+  const r = decode14(encode14(m))
+  if (!r.ok) throw new Error('draft-14 vector did not decode')
+  return r.value as unknown as AnyMessage
+}
+
+const sub14 = (requestId: bigint, alias: bigint) =>
+  msg14({
+    type: 'subscribe_ok',
+    request_id: requestId,
+    track_alias: alias,
+    expires: 0n,
+    group_order: 1,
+    content_exists: 0n,
+    parameters: {},
+  } as Parameters<typeof encode14>[0])
+
+/** A draft-07 control message, encoded and decoded back through the codec. */
+function msg07(m: Parameters<typeof encode07>[0]): AnyMessage {
+  const r = decode07(encode07(m))
+  if (!r.ok) throw new Error('draft-07 vector did not decode')
+  return r.value as unknown as AnyMessage
+}
+
+/** A draft-11 control message, encoded and decoded back through the codec. */
+function msg11(m: Parameters<typeof encode11>[0]): AnyMessage {
+  const r = decode11(encode11(m))
+  if (!r.ok) throw new Error('draft-11 vector did not decode')
+  return r.value as unknown as AnyMessage
+}
+
+const sub07 = (id: bigint, alias: bigint) =>
+  msg07({
+    type: 'subscribe',
+    subscribe_id: id,
+    track_alias: alias,
+    track_namespace: ['moqtap', 'test'],
+    track_name: 'video',
+    subscriber_priority: 0,
+    group_order: 0,
+    filter_type: 1n,
+    parameters: {},
+  } as Parameters<typeof encode07>[0])
+
+const sub11 = (id: bigint, alias: bigint) =>
+  msg11({
+    type: 'subscribe',
+    request_id: id,
+    track_alias: alias,
+    track_namespace: ['moqtap', 'test'],
+    track_name: 'video',
+    subscriber_priority: 0,
+    group_order: 0,
+    forward: 1n,
+    filter_type: 2n,
+    parameters: {},
+  } as Parameters<typeof encode11>[0])
+
+describe('TrackKeys — which buckets are still open', () => {
+  it('binds a subscriber-chosen alias to the objects it labels, through draft-11', () => {
+    // Through draft-11 the subscriber sends the alias in SUBSCRIBE and the
+    // objects come back the other way, on the one shared control stream.
+    for (const [sub, unsub] of [
+      [sub07, (id: bigint) => msg07({ type: 'unsubscribe', subscribe_id: id })],
+      [sub11, (id: bigint) => msg11({ type: 'unsubscribe', request_id: id })],
+    ] as const) {
+      const keys = new TrackKeys()
+      keys.applyControl(sub(1n, 5n), 'tx', 0, 1)
+      keys.applyControl(sub(2n, 6n), 'tx', 0, 2)
+      const old = keys.aliasKey('rx', 5n) as BucketKey
+      const kept = keys.aliasKey('rx', 6n) as BucketKey
+      expect(keys.liveness(old)).toBe('open')
+      expect(keys.bucketCount).toBe(2)
+
+      keys.applyControl(unsub(1n), 'tx', 0, 3)
+      expect(keys.liveness(old)).toBe('ended')
+      expect(keys.liveness(kept)).toBe('open')
+
+      // The alias is the subscriber's to reuse, and the reuse is a new track.
+      keys.applyControl(sub(3n, 5n), 'tx', 0, 4)
+      const next = keys.aliasKey('rx', 5n) as BucketKey
+      expect(next.epoch).toBe(1)
+      expect(keys.liveness(next)).toBe('open')
+    }
+  })
+
+  it('binds a SUBSCRIBE seen arriving to the objects sent back, through draft-11', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(sub07(1n, 5n), 'rx', 0, 1)
+    const k = keys.aliasKey('tx', 5n) as BucketKey
+    expect(keys.liveness(k)).toBe('open')
+    keys.applyControl(msg07({ type: 'unsubscribe', subscribe_id: 1n }), 'rx', 0, 2)
+    expect(keys.liveness(k)).toBe('ended')
+  })
+
+  it('ends only the request an UNSUBSCRIBE names, on the one shared control stream', () => {
+    // Before draft-17 every request rides control stream 0. An ABR switch
+    // unsubscribes the old rendition and leaves the new one, and audio, open.
+    const keys = new TrackKeys()
+    keys.applyControl(sub14(0n, 1n), 'rx', 0, 1)
+    keys.applyControl(sub14(2n, 2n), 'rx', 0, 2)
+    const old = keys.aliasKey('rx', 1n) as BucketKey
+    const kept = keys.aliasKey('rx', 2n) as BucketKey
+    expect(keys.liveness(old)).toBe('open')
+
+    keys.applyControl(msg14({ type: 'unsubscribe', request_id: 0n }), 'tx', 0, 3)
+    expect(keys.liveness(old)).toBe('ended')
+    expect(keys.liveness(kept)).toBe('open')
+  })
+
+  it('ends a binding at a draft-20 PUBLISH_DONE on its own stream', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(msg(publishBytes(0n, 5n)), 'rx', 1, 1)
+    const k = keys.aliasKey('rx', 5n) as BucketKey
+    expect(keys.liveness(k)).toBe('open')
+    keys.applyControl(msg(publishDoneBytes()), 'rx', 1, 2)
+    expect(keys.liveness(k)).toBe('ended')
+  })
+
+  it('ends the old epoch at a rebind, and a fetch when its stream is released', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(msg(publishBytes(0n, 5n)), 'rx', 1, 1)
+    const first = keys.aliasKey('rx', 5n) as BucketKey
+    keys.closeStream(1)
+    keys.applyControl(msg(publishBytes(2n, 5n)), 'rx', 2, 2)
+    expect(keys.liveness(first)).toBe('ended')
+    expect(keys.liveness(keys.aliasKey('rx', 5n) as BucketKey)).toBe('open')
+
+    const f = keys.fetchKey('rx', 12n) as BucketKey
+    expect(keys.liveness(f)).toBe('open')
+    keys.releaseFetch('rx', 12n)
+    expect(keys.liveness(f)).toBe('ended')
+  })
+
+  it('calls an alias with no request observed behind it unbound until one binds it', () => {
+    // A collector armed mid-session sees neither the request nor its end.
+    const keys = new TrackKeys()
+    const k = keys.aliasKey('rx', 4n) as BucketKey
+    expect(keys.liveness(k)).toBe('unbound')
+    keys.applyControl(msg(publishBytes(0n, 4n)), 'rx', 1, 1)
+    expect(keys.liveness(k)).toBe('open')
   })
 })
 

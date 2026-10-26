@@ -2,10 +2,8 @@
  * `CompressionStream('gzip')`.
  *
  * "Compress with `CompressionStream('gzip')` — platform-native, no dependency,
- * no CSP allowance. Measured 22.6x on the default payload." The spec also
- * records that no compression exists anywhere in the codebase today, so every
- * gzip figure in the reference docs describes a capability that had to be
- * built; this file is it.
+ * no CSP allowance." Platform-native gzip is the only compressor in the
+ * package, and this file is it.
  *
  * Two functions, deliberately: a *predicate* and a *doer*. `encodeBody` in
  * `./body.ts` is the one that never throws, and it can only make that promise
@@ -13,9 +11,10 @@
  * silently returning the input, and {@link gzipSupported} answers the cheap
  * question without constructing anything.
  *
- * The 22.6x compression figure was measured with whole-file `gzip -9`, not with
- * `CompressionStream` over ~32 KB segments with no shared dictionary between
- * them. The per-segment ratio this file actually achieves is unmeasured.
+ * What it achieves depends on the records more than on the compressor: in a
+ * ~32 KB segment, with no dictionary shared between segments, of flight dump
+ * columns, jittered arrival times compress far worse than evenly spaced ones,
+ * about 4× in the tests.
  */
 
 /**
@@ -54,7 +53,30 @@ function asBufferSource(input: Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 /**
- * Gzip one buffer, whole.
+ * Bytes handed to the compressor in one task. `CompressionStream` compresses
+ * each chunk as it is written, on the thread that writes it, so a large input
+ * written whole is one long task: 272 KB of object headers takes about 5 ms
+ * on a desktop, and several times that on a low-end phone, on a player's
+ * main thread. Written in pieces this long, with a task between them, no task
+ * compresses more than about a millisecond's worth on a desktop.
+ */
+const PIECE_BYTES = 32 * 1024
+
+/** The next task: a message to a channel of its own, which no timer clamps or fakes. */
+function nextTask(): Promise<void> {
+  return new Promise((resolve) => {
+    const c = new MessageChannel()
+    c.port1.onmessage = () => {
+      c.port1.close()
+      resolve()
+    }
+    c.port2.postMessage(0)
+  })
+}
+
+/**
+ * Gzip one buffer, whole, written to the compressor in pieces of
+ * {@link PIECE_BYTES} with a task between them.
  *
  * Rejects when `CompressionStream` is missing or the stream errors. Callers on
  * the upload path must go through {@link encodeBody}, which catches; this is
@@ -84,7 +106,11 @@ export async function gzip(input: Uint8Array): Promise<Uint8Array> {
   // carrying raw control and header bytes does not. The naive form would
   // therefore hang on exactly the sessions with the most to report.
   const written = (async () => {
-    await writer.write(asBufferSource(input))
+    const view = asBufferSource(input)
+    for (let at = 0; at < view.byteLength || at === 0; at += PIECE_BYTES) {
+      if (at > 0 && typeof MessageChannel === 'function') await nextTask()
+      await writer.write(view.subarray(at, at + PIECE_BYTES))
+    }
     await writer.close()
   })()
   // Never let that promise float: if the read loop throws first we return

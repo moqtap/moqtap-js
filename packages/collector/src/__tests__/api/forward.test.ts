@@ -4,7 +4,8 @@
  * Every frame arrives once and in order, whatever the compressor does: a piece
  * that comes out too large for a body is split and compressed again, one that
  * cannot be split or compressed goes as it is, and a forward asked for while
- * a compression runs follows it rather than overtaking it.
+ * a compression runs follows it rather than overtaking it. While detail is
+ * raised the page packs what it is forwarded, so frames go to it as they are.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -21,7 +22,7 @@ import { ProbeRuntime, type ProbeTuning } from '../../api/probe.js'
 import type { DeflateSegment } from '../../envelope/index.js'
 import { crc32, readFrames } from '../../envelope/index.js'
 import { installWebTransportHook } from '../../transport/index.js'
-import type { EnvelopeRecord } from '../../types.js'
+import type { DetailLevel, EnvelopeRecord } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
 import { workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
@@ -33,6 +34,10 @@ interface Harness {
   /** Deliver `objects` objects of group `group` on the probe's transport. */
   send(group: number, objects: number): Promise<void>
   forward(): void
+  /** The page's detail level, as the page announces it. */
+  level(level: DetailLevel): void
+  /** Close the rollup interval, as the probe's metrics timer does. */
+  tick(): void
   stop(): void
 }
 
@@ -67,17 +72,23 @@ async function harness(tuning: ProbeTuning): Promise<Harness> {
     instanceId: 'inst',
     base: 0,
     level: 'headers+sizes',
+    room: 8 * 1024 * 1024,
     config: { metrics, flightRecorder, limits, privacy, upload, context },
   }
   const realm: { WebTransport?: unknown } = { WebTransport: MockWebTransport }
   const hook = installWebTransportHook(realm, null)
-  // The probe's own timer never fires here: the test asks for each forward.
+  // The probe's own timers never fire here: the test runs each one it needs.
+  const timers: { fn: () => void; ms: number }[] = []
   const probe = new ProbeRuntime(
     linked,
     port,
     hook,
     workerBuild,
-    { setTimer: () => 0, clearTimer: () => {}, onInternalError: (e) => errors.push(e) },
+    {
+      setTimer: (fn, ms) => timers.push({ fn, ms }),
+      clearTimer: () => {},
+      onInternalError: (e) => errors.push(e),
+    },
     tuning,
   )
   probe.start()
@@ -98,6 +109,8 @@ async function harness(tuning: ProbeTuning): Promise<Harness> {
       await settle(2)
     },
     forward: () => onmessage?.({ data: envelope({ t: 'forward' }) } as MessageEvent),
+    level: (level) => onmessage?.({ data: envelope({ t: 'level', level }) } as MessageEvent),
+    tick: () => timers.find((t) => t.ms === metrics.intervalMs)?.fn(),
     stop: () => onmessage?.({ data: envelope({ t: 'unlinked' }) } as MessageEvent),
   }
 }
@@ -131,9 +144,30 @@ afterEach(() => {
 })
 
 describe('a compressing probe', () => {
+  it('forwards frames as they are while detail is raised, in parts the page takes at baseline', async () => {
+    const h = await harness({ compressMinBytes: 1, deflate: async (b) => stored(b) })
+    for (let group = 0; group < 8; group += 1) await h.send(group, 300)
+    h.forward()
+    await settle(20)
+    h.stop()
+
+    expect(h.forwards).toHaveLength(1)
+    const parts = h.forwards[0]?.parts ?? []
+    expect(parts.length).toBeGreaterThan(1)
+    for (const p of parts) {
+      expect('frames' in p).toBe(true)
+      expect(p.byteLength).toBeLessThanOrEqual(8 * 32 * 1024)
+    }
+    expect(parts.reduce((n, p) => n + p.n, 0)).toBe(h.forwards[0]?.n)
+    const groups = hdrGroups(records(parts))
+    expect(groups).toHaveLength(2400)
+    expect(groups).toEqual([...groups].sort((a, b) => Number(a) - Number(b)))
+  })
+
   it('splits a piece that comes out too large for a body, and keeps every frame in order', async () => {
     const h = await harness({ compressMinBytes: 1, deflate: async (b) => stored(b) })
     for (let group = 0; group < 4; group += 1) await h.send(group, 200)
+    h.level('baseline')
     h.forward()
     await settle(20)
     h.stop()
@@ -159,6 +193,7 @@ describe('a compressing probe', () => {
       },
     })
     await h.send(0, 50)
+    h.level('baseline')
     h.forward()
     await settle(20)
     h.stop()
@@ -179,9 +214,12 @@ describe('a compressing probe', () => {
         }),
     })
     await h.send(0, 20)
+    h.level('baseline')
     h.forward()
     await settle(5)
+    h.level('headers+sizes')
     await h.send(1, 20)
+    h.level('baseline')
     h.forward()
     await settle(5)
     expect(h.forwards).toHaveLength(0)
@@ -197,5 +235,21 @@ describe('a compressing probe', () => {
       Array(20).fill('0'),
       Array(20).fill('1'),
     ])
+  })
+})
+
+describe('a probe’s rollups', () => {
+  it('hands the page each closed interval beside the frames rather than in them', async () => {
+    const h = await harness({})
+    await h.send(0, 3)
+    h.tick()
+    h.forward()
+    await settle(5)
+    h.stop()
+
+    const [f] = h.forwards
+    expect(records(f?.parts ?? []).filter((r) => r.t === 'rollup')).toEqual([])
+    expect(f?.rollups?.map((r) => r.tracks.reduce((n, t) => n + t.objects, 0))).toEqual([3])
+    expect(f?.conns[0]?.rollup).toBeNull()
   })
 })

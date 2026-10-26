@@ -5,8 +5,10 @@
 
 import { EscalationController } from '../api/escalation.js'
 import type { EscalationFeature } from '../api/features.js'
+import { Packer } from '../flush/pack.js'
 
 export const escalation: EscalationFeature = {
   feature: 'escalation',
   create: (o) => new EscalationController(o),
+  packer: (o) => new Packer(o),
 }

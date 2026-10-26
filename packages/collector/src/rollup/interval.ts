@@ -249,7 +249,14 @@ export class RollupEngine implements CountingSink, MedianSource {
    */
   owns(k: BucketKey): boolean {
     const cached = this.keyCache.get(k)
-    return cached !== undefined && cached.gen === this.gen
+    if (cached === undefined) return false
+    if (cached.gen === this.gen) return true
+    // An eviction of some other bucket invalidates every cached entry; the
+    // track is still this engine's while its bucket is the one the map holds.
+    const b = this.buckets.get(bucketKeyString(k))
+    if (b !== cached.bucket) return false
+    this.keyCache.set(k, { bucket: b, gen: this.gen })
+    return true
   }
 
   /* ── control-plane and send-side observations ─────────────────────────── */

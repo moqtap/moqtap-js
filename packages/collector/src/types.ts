@@ -738,6 +738,19 @@ export interface TrackKeyResolver {
   readonly bucketsRefused: number
 }
 
+/**
+ * Whether a bucket's track is still being delivered, as far as the control
+ * plane shows.
+ *
+ *  - `open`: an observed subscription, publish or fetch stands behind it and
+ *    has not ended.
+ *  - `ended`: its request, its stream or its connection has ended, or its alias
+ *    has been rebound.
+ *  - `unbound`: objects arrived under an alias no observed request bound, so
+ *    nothing seen can say whether it has ended.
+ */
+export type TrackLiveness = 'open' | 'ended' | 'unbound'
+
 /* ── decoder → rollup ───────────────────────────────────────── */
 
 /**
@@ -890,6 +903,12 @@ export type TriggerKind = 'stall' | 'cadence'
  * 6,000 ms on a 2 s GOP and 750 ms on a 250 ms one, from one key, without the
  * customer knowing their own GOP length. `minSamples` is the warm-up — until
  * the median is established the trigger must not fire at all.
+ *
+ * `stall.afterMs` applies to a track that is still subscribed or fetching on an
+ * open connection, once it has the same warm-up (`cadence.minSamples`, or 20
+ * without one) and normally delivers objects more often than `afterMs`. Neither
+ * trigger fires on the silence of a track whose subscription the collector did
+ * not see, since it cannot see that subscription end either.
  */
 export interface TriggerConfig {
   readonly stall?: { readonly afterMs: number }
@@ -1320,8 +1339,8 @@ export interface ConnCloseRecord extends RecordBase {
  * throws on a bigint. A `number` would silently lose precision past 2^53.
  *
  * Field names are short but descriptive on purpose: JSON field names are
- * the most compressible bytes on the wire and the reason 22.6× is reachable, so
- * shortening them past readability trades debuggability for nothing.
+ * the most compressible bytes on the wire, so shortening them past
+ * readability trades debuggability for almost nothing.
  */
 export interface RollupTrackWire {
   readonly key: {
@@ -1491,8 +1510,8 @@ export interface HdrRecord extends RecordBase {
  *
  * **Columnar — parallel arrays, never one row per object.** One row per object
  * is the shape the O(1)-per-object budget exists to avoid, and it is avoided
- * here too: the dump is a
- * single record no matter how many objects the window held.
+ * here too: the dump is one record per body-sized slice, however many objects
+ * each slice holds.
  *
  * Derived records cross the wire; the ring's payload bytes never do.
  */
@@ -1512,8 +1531,34 @@ export interface FlightRecord extends RecordBase {
     readonly bytes: readonly number[]
     readonly deliveryMs: readonly number[]
   }
-  /** The window did not fit; the ring had already overwritten its head. */
+  /**
+   * The dump does not hold every object its trigger asked for: the ring had
+   * already overwritten the window's head, a stream in it did not parse, or
+   * the oldest objects were left out to keep the dump within its object cap
+   * or its byte budget. In the last case `windowStart` is the first object
+   * kept.
+   */
   readonly truncated: boolean
+  /**
+   * Which slice of the dump this is, from 0, when the dump was too large for
+   * one body. Every slice repeats the dump's `conn`, `ts` and `trigger`, and
+   * its window is its own part of the dump's: each starts where the one before
+   * it ended. Absent on a dump that is one record.
+   */
+  readonly part?: number
+  /** How many slices the dump went out in. Present with {@link part}. */
+  readonly parts?: number
+  /**
+   * Which of its recorder's dumps this slice belongs to, so a reader can put
+   * one dump's slices together without its `ts`. Present with {@link part}.
+   */
+  readonly dump?: number
+  /**
+   * Where the whole dump's window ends: the trigger, on the same clock as
+   * every slice's columns. Every slice carries it, so a dump whose last slice
+   * never arrived is still placed exactly. Present with {@link part}.
+   */
+  readonly dumpEnd?: Mono
 }
 
 /** A customer annotation (`annotate()`). */

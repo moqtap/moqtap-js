@@ -20,6 +20,9 @@ import type { DetailLevel } from '../types.js'
  *    only to the ingest and project it belongs to. The key itself is never
  *    stored.
  *
+ * 4. **Ingest's hold is kept here too**, per destination, so a page load or a
+ *    new session is held from its start rather than from its first answer.
+ *
  * The store degrades rather than fails. IndexedDB is absent in some contexts,
  * throws on open in private-mode and sandboxed-iframe contexts, and can reject
  * any write with `QuotaExceededError`. None of that may take the session's
@@ -66,6 +69,18 @@ export interface ChunkIndexEntry extends ChunkDestination {
   readonly size: number
 }
 
+/** Ingest's hold on one destination, as a time on the device's wall clock. */
+export interface HoldRow {
+  /** {@link holdKey} of the destination. */
+  readonly key: string
+  readonly untilWallMs: number
+}
+
+/** The row key of a destination's hold. */
+export function holdKey(dest: ChunkDestination): string {
+  return `${dest.endpoint} ${dest.keyHash}`
+}
+
 /**
  * The persistence seam.
  *
@@ -81,6 +96,9 @@ export interface ChunkBackend {
   put(entry: ChunkIndexEntry, chunk: Chunk): Promise<void>
   get(key: string): Promise<Chunk | undefined>
   remove(key: string): Promise<void>
+  /** Absent on a backend that keeps no holds: every page load then starts unheld. */
+  loadHolds?(): Promise<HoldRow[]>
+  putHold?(row: HoldRow): Promise<void>
   close(): void
 }
 
@@ -112,6 +130,15 @@ const CHUNKS = 'chunks'
  * describe.
  */
 const INDEX = 'index'
+/**
+ * Ingest's holds, one row per destination, in a database of their own: a new
+ * store in the chunks' database would raise its version, and a collector of an
+ * earlier release on the same origin cannot open a database newer than its own,
+ * so it would lose its stored bodies to this one's holds.
+ */
+const HOLDS = 'holds'
+const HOLDS_DB_SUFFIX = ':holds'
+const HOLDS_DB_VERSION = 1
 /** The version-1 per-session counter store, deleted on upgrade. */
 const LEGACY_META = 'meta'
 
@@ -146,9 +173,19 @@ export class MemoryBackend implements ChunkBackend {
   readonly durable = false
   private readonly _chunks = new Map<string, Chunk>()
   private readonly _index = new Map<string, ChunkIndexEntry>()
+  private readonly _holds = new Map<string, HoldRow>()
 
   loadIndex(): Promise<ChunkIndexEntry[]> {
     return Promise.resolve([...this._index.values()])
+  }
+
+  loadHolds(): Promise<HoldRow[]> {
+    return Promise.resolve([...this._holds.values()])
+  }
+
+  putHold(row: HoldRow): Promise<void> {
+    this._holds.set(row.key, row)
+    return Promise.resolve()
   }
 
   put(entry: ChunkIndexEntry, chunk: Chunk): Promise<void> {
@@ -180,17 +217,68 @@ const request = <T>(req: IDBRequest<T>): Promise<T> =>
     req.onerror = () => reject(req.error ?? new Error('idb request failed'))
   })
 
-/** IndexedDB backend. Two object stores: chunk bodies and a small index. */
+function openHolds(dbName: string, factory: IDBFactory): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    let req: IDBOpenDBRequest
+    try {
+      req = factory.open(dbName + HOLDS_DB_SUFFIX, HOLDS_DB_VERSION)
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)))
+      return
+    }
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(HOLDS)) db.createObjectStore(HOLDS, { keyPath: 'key' })
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error ?? new Error('indexedDB.open failed'))
+    req.onblocked = () => reject(new Error('indexedDB.open blocked'))
+  })
+}
+
+/**
+ * IndexedDB backend. Two object stores, chunk bodies and a small index, and
+ * the holds in a database of their own.
+ */
 export class IdbBackend implements ChunkBackend {
   readonly durable = true
   private readonly _db: IDBDatabase
+  /** `null` when the holds' database would not open; the chunks do not depend on it. */
+  private _holds: IDBDatabase | null = null
 
   private constructor(db: IDBDatabase) {
     this._db = db
   }
 
-  static open(dbName: string, factory: IDBFactory): Promise<IdbBackend> {
-    return new Promise<IdbBackend>((resolve, reject) => {
+  static async open(
+    dbName: string,
+    factory: IDBFactory,
+    onError?: (err: unknown) => void,
+  ): Promise<IdbBackend> {
+    // Both requests at once, so a session waits for the slower of the two
+    // rather than for both in turn. A holds database that fails costs only
+    // the hold, and is reported only when the chunks opened: otherwise the
+    // chunks' failure is the one that says why.
+    const chunks = IdbBackend._openChunks(dbName, factory)
+    const holds = openHolds(dbName, factory).then(
+      (db) => ({ db, err: undefined }),
+      (err: unknown) => ({ db: null, err }),
+    )
+    let backend: IdbBackend
+    try {
+      backend = new IdbBackend(await chunks)
+    } catch (err) {
+      void holds.then((h) => h.db?.close())
+      throw err
+    }
+    const h = await holds
+    if (h.err !== undefined) onError?.(h.err)
+    backend._holds = h.db
+    return backend
+  }
+
+  private static _openChunks(dbName: string, factory: IDBFactory): Promise<IDBDatabase> {
+    return new Promise<IDBDatabase>((resolve, reject) => {
       let req: IDBOpenDBRequest
       try {
         req = factory.open(dbName, DB_VERSION)
@@ -205,7 +293,7 @@ export class IdbBackend implements ChunkBackend {
         // Version-1 rows stay: they are swept once under their own keys.
         if (db.objectStoreNames.contains(LEGACY_META)) db.deleteObjectStore(LEGACY_META)
       }
-      req.onsuccess = () => resolve(new IdbBackend(req.result))
+      req.onsuccess = () => resolve(req.result)
       req.onerror = () => reject(req.error ?? new Error('indexedDB.open failed'))
       req.onblocked = () => reject(new Error('indexedDB.open blocked'))
     })
@@ -258,6 +346,18 @@ export class IdbBackend implements ChunkBackend {
     }
   }
 
+  loadHolds(): Promise<HoldRow[]> {
+    if (this._holds === null) return Promise.resolve([])
+    const tx = this._holds.transaction(HOLDS, 'readonly')
+    return request<HoldRow[]>(tx.objectStore(HOLDS).getAll() as IDBRequest<HoldRow[]>)
+  }
+
+  putHold(row: HoldRow): Promise<void> {
+    if (this._holds === null) return Promise.resolve()
+    const tx = this._holds.transaction(HOLDS, 'readwrite')
+    return request(tx.objectStore(HOLDS).put(row)).then(() => undefined)
+  }
+
   remove(key: string): Promise<void> {
     const tx = this._db.transaction([CHUNKS, INDEX], 'readwrite')
     return Promise.all([
@@ -268,6 +368,7 @@ export class IdbBackend implements ChunkBackend {
 
   close(): void {
     this._db.close()
+    this._holds?.close()
   }
 }
 
@@ -296,6 +397,7 @@ export class ChunkStore {
   private readonly _quota: number
   private readonly _onError: ((err: unknown) => void) | undefined
   private readonly _index = new Map<string, ChunkIndexEntry>()
+  private readonly _holds = new Map<string, number>()
   private _bytes = 0
   private _evictedFifo = 0
   private _refused = 0
@@ -332,7 +434,7 @@ export class ChunkStore {
           : options.factory
       if (factory !== null) {
         try {
-          backend = await IdbBackend.open(dbName, factory)
+          backend = await IdbBackend.open(dbName, factory, onError)
         } catch (err) {
           onError?.(err)
           backend = undefined
@@ -352,6 +454,11 @@ export class ChunkStore {
   /** Bytes currently persisted, across every session sharing the origin. */
   get bytes(): number {
     return this._bytes
+  }
+
+  /** The byte quota every copy shares. */
+  get quota(): number {
+    return this._quota
   }
 
   get chunks(): number {
@@ -468,6 +575,33 @@ export class ChunkStore {
     }
   }
 
+  /**
+   * The end of ingest's hold on `dest`, on the device's wall clock, as the
+   * last page load or session on the origin heard it. `undefined`: none heard.
+   */
+  holdUntil(dest: ChunkDestination): number | undefined {
+    return this._holds.get(holdKey(dest))
+  }
+
+  /**
+   * Keep ingest's hold on `dest` until `untilWallMs`. Known to this store at
+   * once, so a session that follows in the same page is held from its start;
+   * written behind, and a write that fails costs only the next page load's.
+   */
+  setHold(dest: ChunkDestination, untilWallMs: number): void {
+    const key = holdKey(dest)
+    this._holds.set(key, untilWallMs)
+    const put = this._backend.putHold
+    if (put === undefined) return
+    try {
+      void put
+        .call(this._backend, { key, untilWallMs })
+        .catch((err: unknown) => this._onError?.(err))
+    } catch (err) {
+      this._onError?.(err)
+    }
+  }
+
   /** Drop one session's stored bodies and nothing else. */
   async clearSession(sessionId: string): Promise<void> {
     const keys = [...this._index.values()]
@@ -491,6 +625,16 @@ export class ChunkStore {
         const e = normalise(raw as StoredRow, raw.size ?? 0)
         this._index.set(e.key, e)
         this._bytes += e.size
+      }
+    } catch (err) {
+      this._onError?.(err)
+    }
+    try {
+      const holds = (await this._backend.loadHolds?.()) ?? []
+      for (const h of holds) {
+        if (typeof h.key === 'string' && Number.isFinite(h.untilWallMs)) {
+          this._holds.set(h.key, h.untilWallMs)
+        }
       }
     } catch (err) {
       this._onError?.(err)
