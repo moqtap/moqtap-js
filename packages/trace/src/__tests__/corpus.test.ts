@@ -421,12 +421,9 @@ describe.skipIf(CORPUS == null)(SUITE, () => {
       )
       const opened = trace.events.filter((event) => event.type === 'stream-opened')
 
-      // Draft-18 gives each request its own bidirectional stream, so these are
-      // four distinct QUIC streams. The recorder does not see stream IDs and
-      // writes 0 for all of them, which is why a stream id alone cannot key a
-      // flow and why Event 1 carries the stream header's identifiers. The
-      // assertion pins today's behaviour so a change to it is visible, not
-      // because 0 is correct.
+      // Three distinct QUIC streams (both control streams, and one subgroup
+      // stream recorded twice) all written as 0 by their recorder. A reader
+      // must accept a file whose stream id keys nothing.
       expect(opened).toHaveLength(4)
       expect(opened.every((event) => event.type === 'stream-opened' && event.streamId === 0n)).toBe(
         true,

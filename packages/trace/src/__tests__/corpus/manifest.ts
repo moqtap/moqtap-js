@@ -57,7 +57,9 @@ const DESCRIPTIONS: Record<string, string> = {
   'capture-observer-draft16-moq-rs':
     'A real proxy-perspective capture of a subgroup delivery from moq-rs on draft-16, recorded by `moqtap intercept`: 52 object headers on one track, every data event declaring stream 0. A real file in which the stream id keys nothing.',
   'capture-observer-draft18-moq-rs':
-    'The same against moq-rs on draft-18, where each request takes its own bidirectional stream: four stream-opened events all declaring stream 0, plus an error event. The unified SETUP message type (0x2F00) appears here and nowhere else in the corpus.',
+    'The same against moq-rs on draft-18, recorded before the proxy reported stream IDs: four stream-opened events (both control streams, and one subgroup stream twice) all declaring stream 0, plus an error event. The unified SETUP message type (0x2F00) appears in the two draft-18 observer captures and nowhere else in the corpus.',
+  'capture-observer-draft18-moq-rs-stream-ids':
+    'The same session against moq-rs on draft-18, with stream IDs: SETUP on control streams 2 and 3, SUBSCRIBE and SUBSCRIBE_OK on request stream 0, and two subgroup streams on 7 and 11. Request and control streams have no stream-opened event, since the format has no stream type for them.',
   'capture-client-draft19-imquic':
     'A real client-perspective session against meetecho/imquic on draft-19 — a C implementation over picoquic, and the newest draft any peer in the interop set speaks.',
 }
