@@ -31,6 +31,18 @@ jobs:
             exit 1
           fi
 
+      # The release is not published without its moqtap.com page, nor without
+      # the token that tells the site to publish that page.
+      - name: Verify the moqtap.com page documents this version
+        env:
+          SITE_DEPLOY_TOKEN: ${{ secrets.SITE_DEPLOY_TOKEN }}
+        run: |
+          node scripts/check-site-docs.mjs trace
+          if [ -z "$SITE_DEPLOY_TOKEN" ]; then
+            echo "::error::SITE_DEPLOY_TOKEN is not set, so moqtap.com could not be asked to publish this release's docs"
+            exit 1
+          fi
+
       - run: bun install --frozen-lockfile
 
       # Scoped to this package. A sibling's failing test must not block this
@@ -47,3 +59,13 @@ jobs:
       - name: Publish @moqtap/trace
         run: npm publish --access public
         working-directory: packages/trace
+
+      # moqtap.com rebuilds this package's page from docs/site.md at this tag.
+      # A failed dispatch fails the run.
+      - name: Publish the docs on moqtap.com
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SITE_DEPLOY_TOKEN }}
+          repository: moqtap/site
+          event-type: npm-docs-updated
+          client-payload: '{"package": "trace", "tag": "${{ github.ref_name }}"}'

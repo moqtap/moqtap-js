@@ -23,7 +23,7 @@ import { MESSAGE_ID_MAP } from '@moqtap/codec/draft21'
 import { createDraft21SessionState } from '@moqtap/codec/draft21/session'
 
 const recorder = createRecorder({
-  protocol: 'moqt-21',
+  protocol: 'moq-transport-21',
   perspective: 'client',
   detail: 'control',
   messageTypeId: (name) => Number(MESSAGE_ID_MAP.get(name) ?? 0),

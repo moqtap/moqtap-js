@@ -14,6 +14,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run lint
+      # The check every publish workflow gates the release on: each published
+      # package's moqtap.com page documents its package.json version.
+      - run: bun scripts/check-site-docs.mjs
 
   typecheck:
     runs-on: ubuntu-latest
