@@ -1,7 +1,7 @@
 ---
 title: "@moqtap/codec"
 description: MoQT wire-format codec and session state machine for TypeScript.
-version: 0.13.4
+version: 0.13.5
 ---
 
 **Encode, decode, and validate MoQT messages in JavaScript/TypeScript.**
@@ -148,15 +148,14 @@ import { joiningRequestIdOf, requestIdOf, trackAliasOf, trackOf } from '@moqtap/
 
 const decoded = codec.decodeMessage(bytes);
 if (decoded.ok) {
-  const msg = { ...decoded.value };
-  requestIdOf(msg);        // bigint, whichever name the draft uses
-  trackAliasOf(msg);       // bigint
-  trackOf(msg);            // { namespace, name }
-  joiningRequestIdOf(msg); // for a joining FETCH, the request it continues
+  requestIdOf(decoded.value);        // bigint, whichever name the draft uses
+  trackAliasOf(decoded.value);       // bigint
+  trackOf(decoded.value);            // { namespace, name }
+  joiningRequestIdOf(decoded.value); // for a joining FETCH, the request it continues
 }
 ```
 
-Each returns `undefined` when the message does not carry the field. `requestIdOf` is `undefined` for draft-17 and later responses, which carry no request ID. The accessors take any message as a plain record (`AnyMessage`), so pass a typed message as a copy, as above.
+Each returns `undefined` when the message does not carry the field. `requestIdOf` is `undefined` for draft-17 and later responses, which carry no request ID.
 
 ### Redacting authorization tokens
 

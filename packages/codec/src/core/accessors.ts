@@ -22,7 +22,7 @@
  * other tools.
  */
 
-/** Any decoded control message, from any draft. */
+/** A decoded control message viewed as a record of its fields. */
 export type AnyMessage = Readonly<Record<string, unknown>>
 
 /** A track's full identity: the namespace tuple plus the name within it. */
@@ -31,10 +31,16 @@ export interface TrackIdentity {
   readonly name: string
 }
 
-/** First defined value among several spellings of one field. */
-function pick(msg: AnyMessage, names: readonly string[]): unknown {
+/**
+ * First defined value among several spellings of one field.
+ *
+ * Takes `object` rather than {@link AnyMessage} so that every draft's message
+ * interfaces are accepted as they are: an interface has no index signature, so
+ * TypeScript will not assign it to a record type.
+ */
+function pick(msg: object, names: readonly string[]): unknown {
   for (const name of names) {
-    const value = msg[name]
+    const value = (msg as AnyMessage)[name]
     if (value != null) return value
   }
   return undefined
@@ -64,7 +70,7 @@ function bigintOf(value: unknown): bigint | undefined {
  * request there has its own bidirectional stream, and that stream — not a
  * field — is what ties a response to its request.
  */
-export function requestIdOf(msg: AnyMessage): bigint | undefined {
+export function requestIdOf(msg: object): bigint | undefined {
   return bigintOf(pick(msg, ['request_id', 'requestId', 'subscribe_id', 'subscribeId']))
 }
 
@@ -75,7 +81,7 @@ export function requestIdOf(msg: AnyMessage): bigint | undefined {
  * from draft-12, when assigning the alias became the publisher's job. PUBLISH
  * carries it alongside the track name in every draft that has PUBLISH.
  */
-export function trackAliasOf(msg: AnyMessage): bigint | undefined {
+export function trackAliasOf(msg: object): bigint | undefined {
   return bigintOf(pick(msg, ['track_alias', 'trackAlias']))
 }
 
@@ -90,8 +96,8 @@ export function trackAliasOf(msg: AnyMessage): bigint | undefined {
  * PUBLISH_NAMESPACE and its relatives are namespace-only and yield
  * `undefined`: a namespace is not a track.
  */
-export function trackOf(msg: AnyMessage): TrackIdentity | undefined {
-  const source = (pick(msg, ['standalone']) ?? msg) as AnyMessage
+export function trackOf(msg: object): TrackIdentity | undefined {
+  const source = (pick(msg, ['standalone']) ?? msg) as object
   const name = pick(source, ['track_name', 'trackName'])
   if (typeof name !== 'string') return undefined
   const namespace = pick(source, ['track_namespace', 'trackNamespace'])
@@ -107,8 +113,8 @@ export function trackOf(msg: AnyMessage): TrackIdentity | undefined {
  * Spelled `joining_subscribe_id` through draft-13 and `joining_request_id`
  * after it, nested under `joining` in every draft that has one.
  */
-export function joiningRequestIdOf(msg: AnyMessage): bigint | undefined {
-  const source = (pick(msg, ['joining']) ?? msg) as AnyMessage
+export function joiningRequestIdOf(msg: object): bigint | undefined {
+  const source = (pick(msg, ['joining']) ?? msg) as object
   return bigintOf(
     pick(source, [
       'joining_request_id',
