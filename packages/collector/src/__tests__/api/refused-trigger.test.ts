@@ -5,11 +5,11 @@
  * refusal is brought back down by the page's answer.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildOf } from '../../api/compose.js'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { initWith } from '../../api/init.js'
-import { envelope, FORWARD_INTERVAL_MS, linkMessage } from '../../api/link.js'
+import { envelope, linkMessage } from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
 import { escalation } from '../../features/escalation.js'
 import { flightRecorder } from '../../features/flight-recorder.js'
@@ -38,6 +38,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   teardownDormant()
   resetDormantForTest()
   g.WebTransport = originalWT
@@ -59,16 +60,35 @@ function holding() {
   }))
 }
 
+/** Longer than any gap a test here leaves between two objects in real time. */
+const STALL_AFTER_MS = 1_000
+
+/**
+ * `performance.now()`, which the transport hook stamps arrivals with, moved
+ * ahead by the test: a gap of any length without waiting it out.
+ */
+function skippableClock(): { skip(ms: number): void } {
+  const real = performance.now.bind(performance)
+  let ahead = 0
+  vi.spyOn(performance, 'now').mockImplementation(() => real() + ahead)
+  return {
+    skip(ms) {
+      ahead += ms
+    },
+  }
+}
+
 const config = (errors: unknown[]): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
   sessionId: 'sess-fixed',
-  flightRecorder: { triggers: { stall: { afterMs: 30 } } },
+  flightRecorder: { triggers: { stall: { afterMs: STALL_AFTER_MS } } },
   onInternalError: (e) => errors.push(e),
 })
 
 describe('a worker trigger under a hold', () => {
   it('leaves the worker at baseline, writing no per-object headers', async () => {
+    const clock = skippableClock()
     const errors: unknown[] = []
     const { posts, impl } = holding()
     const channel = new MessageChannel()
@@ -95,19 +115,22 @@ describe('a worker trigger under a hold', () => {
       for (;;) if ((await reader.read()).done) break
       await settle(2)
     }
-    // A steady track, one object every few milliseconds: a stall needs an
-    // established cadence shorter than its threshold.
-    for (let group = 1; group <= 25; group++) {
-      await send(group)
-      await new Promise((r) => setTimeout(r, 5))
-    }
-    // A gap past the stall threshold: the next object fires the trigger.
-    await new Promise((r) => setTimeout(r, 80))
+    // A steady track: every real gap between these objects, however loaded
+    // the runner, is far shorter than the stall threshold.
+    for (let group = 1; group <= 25; group++) await send(group)
+    // A gap past the threshold, on the clock the hook stamps arrivals with:
+    // the next object fires the trigger.
+    clock.skip(STALL_AFTER_MS * 2)
     await send(26)
     await settle(10)
     await send(27)
-    // The probe's next forward, which carries everything since the trigger.
-    await new Promise((r) => setTimeout(r, FORWARD_INTERVAL_MS + 50))
+    // The connection's close is the probe's last record of it, so once it is
+    // uploaded, everything since the trigger is too.
+    wt.close()
+    await until(async () => {
+      await c.flush()
+      return of(await allRecords(posts), 'conn-close').length > 0
+    }, 2_000)
     await c.end()
 
     const all = await allRecords(posts)
@@ -138,10 +161,12 @@ describe('a worker trigger under a hold', () => {
       if (m !== null) heard.push(m)
     }
     port.postMessage(envelope({ t: 'open' }))
-    await settle(10)
+    // The session begins and tells the probe; the hold in its first answer
+    // reaches the probe as a capped level.
+    await until(() => heard.some((m) => m.t === 'session'))
     c.annotate('x')
     await c.flush()
-    await settle(10)
+    await until(() => heard.some((m) => m.t === 'level' && m.capped === true))
 
     heard.length = 0
     port.postMessage(envelope({ t: 'trigger', kind: 'stall', at: 1 }))
