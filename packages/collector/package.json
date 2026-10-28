@@ -761,7 +761,7 @@
   },
   "devDependencies": {
     "@moqtap/codec": "workspace:*",
-    "@moqtap/test-vectors": "^0.18.2",
+    "@moqtap/test-vectors": "^0.19.0",
     "@types/node": "^24.13.3",
     "playwright-core": "1.62.1",
     "tsup": "^8.0.0",

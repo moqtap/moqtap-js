@@ -18,6 +18,7 @@ import {
   encodeDatagram,
   encodeFetchStream,
   encodeMessage,
+  encodeObjectProperties,
   encodeSubgroupStream,
   type FetchObjectPayload,
   type FetchStream,
@@ -46,7 +47,21 @@ export interface ObjSpec {
   /** Payload length. `0` with no `status` still encodes an Object Status of 0. */
   readonly bytes?: number
   readonly status?: bigint
-  readonly props?: Record<string, bigint>
+  /** Object Properties by draft-20 name; encoded into the object's property block. */
+  readonly props?: Partial<Record<keyof typeof PROPERTY_TYPES, bigint>>
+}
+
+/** The draft-20 property types `ObjSpec.props` names. */
+const PROPERTY_TYPES = { prior_group_id_gap: 0x3cn, prior_object_id_gap: 0x3en } as const
+
+function propertyBlock(props: NonNullable<ObjSpec['props']>): Uint8Array {
+  const entries = Object.entries(props).map(([name, value]) => ({
+    type: PROPERTY_TYPES[name as keyof typeof PROPERTY_TYPES],
+    value: value as bigint,
+  }))
+  // Delta-encoded types must ascend.
+  entries.sort((a, b) => (a.type < b.type ? -1 : 1))
+  return encodeObjectProperties(entries)
 }
 
 function objectPayload(o: ObjSpec): ObjectPayload {
@@ -58,10 +73,9 @@ function objectPayload(o: ObjSpec): ObjectPayload {
     objectId: o.id,
     payloadLength: len,
     payload: filled(len),
-    extensionData: new Uint8Array(0),
+    extensionData: o.props === undefined ? new Uint8Array(0) : propertyBlock(o.props),
   }
-  const withStatus = o.status === undefined ? base : { ...base, status: o.status }
-  return o.props === undefined ? withStatus : { ...withStatus, objectProperties: o.props }
+  return o.status === undefined ? base : { ...base, status: o.status }
 }
 
 export interface SubgroupSpec {
