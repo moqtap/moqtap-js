@@ -10,7 +10,7 @@ This file starts at 0.4.0. Earlier releases are in the git history. Versions
 published; their contents are folded into the 0.4.0 below, so every "before"
 in it describes 0.3.0 — the last version anyone can install.
 
-## [0.5.0] - Unreleased
+## [0.5.0] - 2026-10-28
 
 ### Added
 

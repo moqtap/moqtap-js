@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
-## [0.14.0] - Unreleased
+## [0.14.0] - 2026-10-28
 
 ### Changed
 
