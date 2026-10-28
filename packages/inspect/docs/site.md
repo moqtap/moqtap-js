@@ -23,7 +23,7 @@ decodes and turns them into what a person debugging a session wants to read:
 - **Problems**: error responses, requests left unanswered, blocked request IDs, GOAWAY and
   undecodable bytes, in time order and in one line each.
 - **Rollup delivery**: each track's delivery figures from the rollups in a
-  [`@moqtap/collector`](/npm-packages/moqtap-collector/) trace.
+  [`@moqtap/monitor-browser`](/npm-packages/moqtap-monitor-browser/) trace.
 
 Supports **drafts 07 through 22**. Works in Node.js, Bun, Deno and browsers. Every result is
 plain data, so it survives `postMessage` and `JSON.stringify`.

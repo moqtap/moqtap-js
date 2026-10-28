@@ -23,18 +23,9 @@
     },
     "packages/collector": {
       "name": "@moqtap/collector",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "dependencies": {
-        "@moqtap/codec": ">=0.13.4",
-      },
-      "devDependencies": {
-        "@moqtap/codec": "workspace:*",
-        "@moqtap/test-vectors": "^0.19.0",
-        "@types/node": "^24.13.3",
-        "playwright-core": "1.62.1",
-        "tsup": "^8.0.0",
-        "typescript": "^5.5.0",
-        "vitest": "^3.2.7",
+        "@moqtap/monitor-browser": "0.12.0",
       },
     },
     "packages/inspect": {
@@ -48,6 +39,22 @@
       },
       "peerDependencies": {
         "@moqtap/codec": ">=0.13.2",
+      },
+    },
+    "packages/monitor-browser": {
+      "name": "@moqtap/monitor-browser",
+      "version": "0.12.0",
+      "dependencies": {
+        "@moqtap/codec": ">=0.13.4",
+      },
+      "devDependencies": {
+        "@moqtap/codec": "workspace:*",
+        "@moqtap/test-vectors": "^0.19.0",
+        "@types/node": "^24.13.3",
+        "playwright-core": "1.62.1",
+        "tsup": "^8.0.0",
+        "typescript": "^5.5.0",
+        "vitest": "^3.2.7",
       },
     },
     "packages/trace": {
@@ -176,6 +183,8 @@
     "@moqtap/collector": ["@moqtap/collector@workspace:packages/collector"],
 
     "@moqtap/inspect": ["@moqtap/inspect@workspace:packages/inspect"],
+
+    "@moqtap/monitor-browser": ["@moqtap/monitor-browser@workspace:packages/monitor-browser"],
 
     "@moqtap/test-traces": ["@moqtap/test-traces@0.1.1", "", {}, "sha512-KA7EX98xtwdCntENa0H9sansK+PlnFuI2/W76umTlZwBK+Aq4rNL2bagp1cAqzs5C+yl9UybZPhxSCT1sGo3TA=="],
 

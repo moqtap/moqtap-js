@@ -42,13 +42,13 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
 
-      # The same check `publish-collector.yml` gates the release on, run here so
+      # The same check `publish-monitor-browser.yml` gates the release on, run here so
       # a packaging break arrives with the pull request that caused it rather
       # than at the tag. It reads `dist/`, so it has to follow `build` — and
       # this is the only job that runs `build` at all.
       - name: Smoke-test the built artefact
         run: bun run smoke
-        working-directory: packages/collector
+        working-directory: packages/monitor-browser
 
   # The collector against real Chromium, Firefox and WebKit. Kept apart from
   # `test` so that job never needs browsers installed.
@@ -63,10 +63,10 @@ jobs:
       # Run from the collector so `bunx` resolves its own `playwright-core`:
       # the browser builds have to match the version the tests drive.
       - name: Install the Playwright browsers
-        working-directory: packages/collector
+        working-directory: packages/monitor-browser
         run: bunx playwright-core install --with-deps chromium firefox webkit
 
-      - run: bun run --cwd packages/collector test:browsers
+      - run: bun run --cwd packages/monitor-browser test:browsers
 
   # Spec §7.1, decided: **no hard cap.** "10 KB was drawn before anything was
   # built; it is a target worth keeping in view, not a limit worth shipping a
@@ -100,7 +100,7 @@ jobs:
       - run: bun run build
 
       - name: Measure this commit
-        working-directory: packages/collector
+        working-directory: packages/monitor-browser
         run: bun run size --json --out "$RUNNER_TEMP/size-head.json" > /dev/null
 
       - name: Check out the base commit
@@ -118,17 +118,17 @@ jobs:
         if: github.event_name == 'pull_request'
         working-directory: base
         run: |
-          if [ ! -f packages/collector/scripts/size.ts ]; then
+          if [ ! -f packages/monitor-browser/scripts/size.ts ]; then
             echo "base commit has no size script — reporting absolute sizes only"
             exit 0
           fi
           bun install --frozen-lockfile
           bun run build
-          cd packages/collector
+          cd packages/monitor-browser
           bun run size --json --out "$RUNNER_TEMP/size-base.json" > /dev/null
 
       - name: Report
-        working-directory: packages/collector
+        working-directory: packages/monitor-browser
         run: |
           COMPARE=""
           if [ -f "$RUNNER_TEMP/size-base.json" ]; then

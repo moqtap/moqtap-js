@@ -1,7 +1,7 @@
 {
   "name": "@moqtap/collector",
-  "version": "0.11.0",
-  "description": "MoQT session collector — dormant WebTransport hook, counting decoder, and metered upload envelope",
+  "version": "0.12.0",
+  "description": "Renamed to @moqtap/monitor-browser. This release re-exports it.",
   "type": "module",
   "license": "FSL-1.1-MIT",
   "author": "moqtap",
@@ -10,762 +10,449 @@
     "url": "git+https://github.com/moqtap/moqtap-js.git",
     "directory": "packages/collector"
   },
-  "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/collector",
+  "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/monitor-browser",
   "bugs": "https://github.com/moqtap/moqtap-js/issues",
   "keywords": [
     "moqt",
     "moq",
-    "media-over-quic",
-    "webtransport",
-    "collector",
-    "observability",
-    "telemetry",
-    "rum",
-    "streaming",
-    "monitoring"
+    "deprecated"
   ],
-  "sideEffects": [
-    "./src/index.ts",
-    "./dist/index.js",
-    "./dist/index.cjs",
-    "./src/worker.ts",
-    "./dist/worker.js",
-    "./dist/worker.cjs",
-    "./src/drafts/draft07/entry.ts",
-    "./dist/draft07.js",
-    "./dist/draft07.cjs",
-    "./src/drafts/draft07/thin.ts",
-    "./dist/draft07-thin.js",
-    "./dist/draft07-thin.cjs",
-    "./src/drafts/draft07/worker.ts",
-    "./dist/draft07-worker.js",
-    "./dist/draft07-worker.cjs",
-    "./src/drafts/draft07/thin-worker.ts",
-    "./dist/draft07-thin-worker.js",
-    "./dist/draft07-thin-worker.cjs",
-    "./src/drafts/draft08/entry.ts",
-    "./dist/draft08.js",
-    "./dist/draft08.cjs",
-    "./src/drafts/draft08/thin.ts",
-    "./dist/draft08-thin.js",
-    "./dist/draft08-thin.cjs",
-    "./src/drafts/draft08/worker.ts",
-    "./dist/draft08-worker.js",
-    "./dist/draft08-worker.cjs",
-    "./src/drafts/draft08/thin-worker.ts",
-    "./dist/draft08-thin-worker.js",
-    "./dist/draft08-thin-worker.cjs",
-    "./src/drafts/draft09/entry.ts",
-    "./dist/draft09.js",
-    "./dist/draft09.cjs",
-    "./src/drafts/draft09/thin.ts",
-    "./dist/draft09-thin.js",
-    "./dist/draft09-thin.cjs",
-    "./src/drafts/draft09/worker.ts",
-    "./dist/draft09-worker.js",
-    "./dist/draft09-worker.cjs",
-    "./src/drafts/draft09/thin-worker.ts",
-    "./dist/draft09-thin-worker.js",
-    "./dist/draft09-thin-worker.cjs",
-    "./src/drafts/draft10/entry.ts",
-    "./dist/draft10.js",
-    "./dist/draft10.cjs",
-    "./src/drafts/draft10/thin.ts",
-    "./dist/draft10-thin.js",
-    "./dist/draft10-thin.cjs",
-    "./src/drafts/draft10/worker.ts",
-    "./dist/draft10-worker.js",
-    "./dist/draft10-worker.cjs",
-    "./src/drafts/draft10/thin-worker.ts",
-    "./dist/draft10-thin-worker.js",
-    "./dist/draft10-thin-worker.cjs",
-    "./src/drafts/draft11/entry.ts",
-    "./dist/draft11.js",
-    "./dist/draft11.cjs",
-    "./src/drafts/draft11/thin.ts",
-    "./dist/draft11-thin.js",
-    "./dist/draft11-thin.cjs",
-    "./src/drafts/draft11/worker.ts",
-    "./dist/draft11-worker.js",
-    "./dist/draft11-worker.cjs",
-    "./src/drafts/draft11/thin-worker.ts",
-    "./dist/draft11-thin-worker.js",
-    "./dist/draft11-thin-worker.cjs",
-    "./src/drafts/draft12/entry.ts",
-    "./dist/draft12.js",
-    "./dist/draft12.cjs",
-    "./src/drafts/draft12/thin.ts",
-    "./dist/draft12-thin.js",
-    "./dist/draft12-thin.cjs",
-    "./src/drafts/draft12/worker.ts",
-    "./dist/draft12-worker.js",
-    "./dist/draft12-worker.cjs",
-    "./src/drafts/draft12/thin-worker.ts",
-    "./dist/draft12-thin-worker.js",
-    "./dist/draft12-thin-worker.cjs",
-    "./src/drafts/draft13/entry.ts",
-    "./dist/draft13.js",
-    "./dist/draft13.cjs",
-    "./src/drafts/draft13/thin.ts",
-    "./dist/draft13-thin.js",
-    "./dist/draft13-thin.cjs",
-    "./src/drafts/draft13/worker.ts",
-    "./dist/draft13-worker.js",
-    "./dist/draft13-worker.cjs",
-    "./src/drafts/draft13/thin-worker.ts",
-    "./dist/draft13-thin-worker.js",
-    "./dist/draft13-thin-worker.cjs",
-    "./src/drafts/draft14/entry.ts",
-    "./dist/draft14.js",
-    "./dist/draft14.cjs",
-    "./src/drafts/draft14/thin.ts",
-    "./dist/draft14-thin.js",
-    "./dist/draft14-thin.cjs",
-    "./src/drafts/draft14/worker.ts",
-    "./dist/draft14-worker.js",
-    "./dist/draft14-worker.cjs",
-    "./src/drafts/draft14/thin-worker.ts",
-    "./dist/draft14-thin-worker.js",
-    "./dist/draft14-thin-worker.cjs",
-    "./src/drafts/draft15/entry.ts",
-    "./dist/draft15.js",
-    "./dist/draft15.cjs",
-    "./src/drafts/draft15/thin.ts",
-    "./dist/draft15-thin.js",
-    "./dist/draft15-thin.cjs",
-    "./src/drafts/draft15/worker.ts",
-    "./dist/draft15-worker.js",
-    "./dist/draft15-worker.cjs",
-    "./src/drafts/draft15/thin-worker.ts",
-    "./dist/draft15-thin-worker.js",
-    "./dist/draft15-thin-worker.cjs",
-    "./src/drafts/draft16/entry.ts",
-    "./dist/draft16.js",
-    "./dist/draft16.cjs",
-    "./src/drafts/draft16/thin.ts",
-    "./dist/draft16-thin.js",
-    "./dist/draft16-thin.cjs",
-    "./src/drafts/draft16/worker.ts",
-    "./dist/draft16-worker.js",
-    "./dist/draft16-worker.cjs",
-    "./src/drafts/draft16/thin-worker.ts",
-    "./dist/draft16-thin-worker.js",
-    "./dist/draft16-thin-worker.cjs",
-    "./src/drafts/draft17/entry.ts",
-    "./dist/draft17.js",
-    "./dist/draft17.cjs",
-    "./src/drafts/draft17/thin.ts",
-    "./dist/draft17-thin.js",
-    "./dist/draft17-thin.cjs",
-    "./src/drafts/draft17/worker.ts",
-    "./dist/draft17-worker.js",
-    "./dist/draft17-worker.cjs",
-    "./src/drafts/draft17/thin-worker.ts",
-    "./dist/draft17-thin-worker.js",
-    "./dist/draft17-thin-worker.cjs",
-    "./src/drafts/draft18/entry.ts",
-    "./dist/draft18.js",
-    "./dist/draft18.cjs",
-    "./src/drafts/draft18/thin.ts",
-    "./dist/draft18-thin.js",
-    "./dist/draft18-thin.cjs",
-    "./src/drafts/draft18/worker.ts",
-    "./dist/draft18-worker.js",
-    "./dist/draft18-worker.cjs",
-    "./src/drafts/draft18/thin-worker.ts",
-    "./dist/draft18-thin-worker.js",
-    "./dist/draft18-thin-worker.cjs",
-    "./src/drafts/draft19/entry.ts",
-    "./dist/draft19.js",
-    "./dist/draft19.cjs",
-    "./src/drafts/draft19/thin.ts",
-    "./dist/draft19-thin.js",
-    "./dist/draft19-thin.cjs",
-    "./src/drafts/draft19/worker.ts",
-    "./dist/draft19-worker.js",
-    "./dist/draft19-worker.cjs",
-    "./src/drafts/draft19/thin-worker.ts",
-    "./dist/draft19-thin-worker.js",
-    "./dist/draft19-thin-worker.cjs",
-    "./src/drafts/draft20/entry.ts",
-    "./dist/draft20.js",
-    "./dist/draft20.cjs",
-    "./src/drafts/draft20/thin.ts",
-    "./dist/draft20-thin.js",
-    "./dist/draft20-thin.cjs",
-    "./src/drafts/draft20/worker.ts",
-    "./dist/draft20-worker.js",
-    "./dist/draft20-worker.cjs",
-    "./src/drafts/draft20/thin-worker.ts",
-    "./dist/draft20-thin-worker.js",
-    "./dist/draft20-thin-worker.cjs",
-    "./src/drafts/draft21/entry.ts",
-    "./dist/draft21.js",
-    "./dist/draft21.cjs",
-    "./src/drafts/draft21/thin.ts",
-    "./dist/draft21-thin.js",
-    "./dist/draft21-thin.cjs",
-    "./src/drafts/draft21/worker.ts",
-    "./dist/draft21-worker.js",
-    "./dist/draft21-worker.cjs",
-    "./src/drafts/draft21/thin-worker.ts",
-    "./dist/draft21-thin-worker.js",
-    "./dist/draft21-thin-worker.cjs",
-    "./src/drafts/draft22/entry.ts",
-    "./dist/draft22.js",
-    "./dist/draft22.cjs",
-    "./src/drafts/draft22/thin.ts",
-    "./dist/draft22-thin.js",
-    "./dist/draft22-thin.cjs",
-    "./src/drafts/draft22/worker.ts",
-    "./dist/draft22-worker.js",
-    "./dist/draft22-worker.cjs",
-    "./src/drafts/draft22/thin-worker.ts",
-    "./dist/draft22-thin-worker.js",
-    "./dist/draft22-thin-worker.cjs"
-  ],
-  "engines": {
-    "node": ">=18"
-  },
+  "sideEffects": true,
   "exports": {
     ".": {
-      "bun": "./src/index.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js",
+      "require": "./lib/index.cjs"
     },
     "./worker": {
-      "bun": "./src/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/worker.js",
-      "require": "./dist/worker.cjs"
+      "types": "./lib/worker.d.ts",
+      "import": "./lib/worker.js",
+      "require": "./lib/worker.cjs"
     },
     "./compose": {
-      "bun": "./src/compose.ts",
-      "types": "./dist/compose.d.ts",
-      "import": "./dist/compose.js",
-      "require": "./dist/compose.cjs"
+      "types": "./lib/compose.d.ts",
+      "import": "./lib/compose.js",
+      "require": "./lib/compose.cjs"
     },
     "./features": {
-      "bun": "./src/features/index.ts",
-      "types": "./dist/features.d.ts",
-      "import": "./dist/features.js",
-      "require": "./dist/features.cjs"
+      "types": "./lib/features.d.ts",
+      "import": "./lib/features.js",
+      "require": "./lib/features.cjs"
     },
     "./internal": {
-      "bun": "./src/internal.ts",
-      "types": "./dist/internal.d.ts",
-      "import": "./dist/internal.js",
-      "require": "./dist/internal.cjs"
+      "types": "./lib/internal.d.ts",
+      "import": "./lib/internal.js",
+      "require": "./lib/internal.cjs"
     },
     "./draft07": {
-      "bun": "./src/drafts/draft07/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft07.js",
-      "require": "./dist/draft07.cjs"
+      "types": "./lib/draft07.d.ts",
+      "import": "./lib/draft07.js",
+      "require": "./lib/draft07.cjs"
     },
     "./draft07/thin": {
-      "bun": "./src/drafts/draft07/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft07-thin.js",
-      "require": "./dist/draft07-thin.cjs"
+      "types": "./lib/draft07/thin.d.ts",
+      "import": "./lib/draft07/thin.js",
+      "require": "./lib/draft07/thin.cjs"
     },
     "./draft07/worker": {
-      "bun": "./src/drafts/draft07/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft07-worker.js",
-      "require": "./dist/draft07-worker.cjs"
+      "types": "./lib/draft07/worker.d.ts",
+      "import": "./lib/draft07/worker.js",
+      "require": "./lib/draft07/worker.cjs"
     },
     "./draft07/thin/worker": {
-      "bun": "./src/drafts/draft07/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft07-thin-worker.js",
-      "require": "./dist/draft07-thin-worker.cjs"
+      "types": "./lib/draft07/thin/worker.d.ts",
+      "import": "./lib/draft07/thin/worker.js",
+      "require": "./lib/draft07/thin/worker.cjs"
     },
     "./draft07/decoder": {
-      "bun": "./src/drafts/draft07/decoder.ts",
-      "types": "./dist/draft07-decoder.d.ts",
-      "import": "./dist/draft07-decoder.js",
-      "require": "./dist/draft07-decoder.cjs"
+      "types": "./lib/draft07/decoder.d.ts",
+      "import": "./lib/draft07/decoder.js",
+      "require": "./lib/draft07/decoder.cjs"
     },
     "./draft08": {
-      "bun": "./src/drafts/draft08/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft08.js",
-      "require": "./dist/draft08.cjs"
+      "types": "./lib/draft08.d.ts",
+      "import": "./lib/draft08.js",
+      "require": "./lib/draft08.cjs"
     },
     "./draft08/thin": {
-      "bun": "./src/drafts/draft08/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft08-thin.js",
-      "require": "./dist/draft08-thin.cjs"
+      "types": "./lib/draft08/thin.d.ts",
+      "import": "./lib/draft08/thin.js",
+      "require": "./lib/draft08/thin.cjs"
     },
     "./draft08/worker": {
-      "bun": "./src/drafts/draft08/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft08-worker.js",
-      "require": "./dist/draft08-worker.cjs"
+      "types": "./lib/draft08/worker.d.ts",
+      "import": "./lib/draft08/worker.js",
+      "require": "./lib/draft08/worker.cjs"
     },
     "./draft08/thin/worker": {
-      "bun": "./src/drafts/draft08/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft08-thin-worker.js",
-      "require": "./dist/draft08-thin-worker.cjs"
+      "types": "./lib/draft08/thin/worker.d.ts",
+      "import": "./lib/draft08/thin/worker.js",
+      "require": "./lib/draft08/thin/worker.cjs"
     },
     "./draft08/decoder": {
-      "bun": "./src/drafts/draft08/decoder.ts",
-      "types": "./dist/draft08-decoder.d.ts",
-      "import": "./dist/draft08-decoder.js",
-      "require": "./dist/draft08-decoder.cjs"
+      "types": "./lib/draft08/decoder.d.ts",
+      "import": "./lib/draft08/decoder.js",
+      "require": "./lib/draft08/decoder.cjs"
     },
     "./draft09": {
-      "bun": "./src/drafts/draft09/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft09.js",
-      "require": "./dist/draft09.cjs"
+      "types": "./lib/draft09.d.ts",
+      "import": "./lib/draft09.js",
+      "require": "./lib/draft09.cjs"
     },
     "./draft09/thin": {
-      "bun": "./src/drafts/draft09/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft09-thin.js",
-      "require": "./dist/draft09-thin.cjs"
+      "types": "./lib/draft09/thin.d.ts",
+      "import": "./lib/draft09/thin.js",
+      "require": "./lib/draft09/thin.cjs"
     },
     "./draft09/worker": {
-      "bun": "./src/drafts/draft09/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft09-worker.js",
-      "require": "./dist/draft09-worker.cjs"
+      "types": "./lib/draft09/worker.d.ts",
+      "import": "./lib/draft09/worker.js",
+      "require": "./lib/draft09/worker.cjs"
     },
     "./draft09/thin/worker": {
-      "bun": "./src/drafts/draft09/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft09-thin-worker.js",
-      "require": "./dist/draft09-thin-worker.cjs"
+      "types": "./lib/draft09/thin/worker.d.ts",
+      "import": "./lib/draft09/thin/worker.js",
+      "require": "./lib/draft09/thin/worker.cjs"
     },
     "./draft09/decoder": {
-      "bun": "./src/drafts/draft09/decoder.ts",
-      "types": "./dist/draft09-decoder.d.ts",
-      "import": "./dist/draft09-decoder.js",
-      "require": "./dist/draft09-decoder.cjs"
+      "types": "./lib/draft09/decoder.d.ts",
+      "import": "./lib/draft09/decoder.js",
+      "require": "./lib/draft09/decoder.cjs"
     },
     "./draft10": {
-      "bun": "./src/drafts/draft10/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft10.js",
-      "require": "./dist/draft10.cjs"
+      "types": "./lib/draft10.d.ts",
+      "import": "./lib/draft10.js",
+      "require": "./lib/draft10.cjs"
     },
     "./draft10/thin": {
-      "bun": "./src/drafts/draft10/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft10-thin.js",
-      "require": "./dist/draft10-thin.cjs"
+      "types": "./lib/draft10/thin.d.ts",
+      "import": "./lib/draft10/thin.js",
+      "require": "./lib/draft10/thin.cjs"
     },
     "./draft10/worker": {
-      "bun": "./src/drafts/draft10/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft10-worker.js",
-      "require": "./dist/draft10-worker.cjs"
+      "types": "./lib/draft10/worker.d.ts",
+      "import": "./lib/draft10/worker.js",
+      "require": "./lib/draft10/worker.cjs"
     },
     "./draft10/thin/worker": {
-      "bun": "./src/drafts/draft10/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft10-thin-worker.js",
-      "require": "./dist/draft10-thin-worker.cjs"
+      "types": "./lib/draft10/thin/worker.d.ts",
+      "import": "./lib/draft10/thin/worker.js",
+      "require": "./lib/draft10/thin/worker.cjs"
     },
     "./draft10/decoder": {
-      "bun": "./src/drafts/draft10/decoder.ts",
-      "types": "./dist/draft10-decoder.d.ts",
-      "import": "./dist/draft10-decoder.js",
-      "require": "./dist/draft10-decoder.cjs"
+      "types": "./lib/draft10/decoder.d.ts",
+      "import": "./lib/draft10/decoder.js",
+      "require": "./lib/draft10/decoder.cjs"
     },
     "./draft11": {
-      "bun": "./src/drafts/draft11/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft11.js",
-      "require": "./dist/draft11.cjs"
+      "types": "./lib/draft11.d.ts",
+      "import": "./lib/draft11.js",
+      "require": "./lib/draft11.cjs"
     },
     "./draft11/thin": {
-      "bun": "./src/drafts/draft11/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft11-thin.js",
-      "require": "./dist/draft11-thin.cjs"
+      "types": "./lib/draft11/thin.d.ts",
+      "import": "./lib/draft11/thin.js",
+      "require": "./lib/draft11/thin.cjs"
     },
     "./draft11/worker": {
-      "bun": "./src/drafts/draft11/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft11-worker.js",
-      "require": "./dist/draft11-worker.cjs"
+      "types": "./lib/draft11/worker.d.ts",
+      "import": "./lib/draft11/worker.js",
+      "require": "./lib/draft11/worker.cjs"
     },
     "./draft11/thin/worker": {
-      "bun": "./src/drafts/draft11/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft11-thin-worker.js",
-      "require": "./dist/draft11-thin-worker.cjs"
+      "types": "./lib/draft11/thin/worker.d.ts",
+      "import": "./lib/draft11/thin/worker.js",
+      "require": "./lib/draft11/thin/worker.cjs"
     },
     "./draft11/decoder": {
-      "bun": "./src/drafts/draft11/decoder.ts",
-      "types": "./dist/draft11-decoder.d.ts",
-      "import": "./dist/draft11-decoder.js",
-      "require": "./dist/draft11-decoder.cjs"
+      "types": "./lib/draft11/decoder.d.ts",
+      "import": "./lib/draft11/decoder.js",
+      "require": "./lib/draft11/decoder.cjs"
     },
     "./draft12": {
-      "bun": "./src/drafts/draft12/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft12.js",
-      "require": "./dist/draft12.cjs"
+      "types": "./lib/draft12.d.ts",
+      "import": "./lib/draft12.js",
+      "require": "./lib/draft12.cjs"
     },
     "./draft12/thin": {
-      "bun": "./src/drafts/draft12/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft12-thin.js",
-      "require": "./dist/draft12-thin.cjs"
+      "types": "./lib/draft12/thin.d.ts",
+      "import": "./lib/draft12/thin.js",
+      "require": "./lib/draft12/thin.cjs"
     },
     "./draft12/worker": {
-      "bun": "./src/drafts/draft12/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft12-worker.js",
-      "require": "./dist/draft12-worker.cjs"
+      "types": "./lib/draft12/worker.d.ts",
+      "import": "./lib/draft12/worker.js",
+      "require": "./lib/draft12/worker.cjs"
     },
     "./draft12/thin/worker": {
-      "bun": "./src/drafts/draft12/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft12-thin-worker.js",
-      "require": "./dist/draft12-thin-worker.cjs"
+      "types": "./lib/draft12/thin/worker.d.ts",
+      "import": "./lib/draft12/thin/worker.js",
+      "require": "./lib/draft12/thin/worker.cjs"
     },
     "./draft12/decoder": {
-      "bun": "./src/drafts/draft12/decoder.ts",
-      "types": "./dist/draft12-decoder.d.ts",
-      "import": "./dist/draft12-decoder.js",
-      "require": "./dist/draft12-decoder.cjs"
+      "types": "./lib/draft12/decoder.d.ts",
+      "import": "./lib/draft12/decoder.js",
+      "require": "./lib/draft12/decoder.cjs"
     },
     "./draft13": {
-      "bun": "./src/drafts/draft13/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft13.js",
-      "require": "./dist/draft13.cjs"
+      "types": "./lib/draft13.d.ts",
+      "import": "./lib/draft13.js",
+      "require": "./lib/draft13.cjs"
     },
     "./draft13/thin": {
-      "bun": "./src/drafts/draft13/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft13-thin.js",
-      "require": "./dist/draft13-thin.cjs"
+      "types": "./lib/draft13/thin.d.ts",
+      "import": "./lib/draft13/thin.js",
+      "require": "./lib/draft13/thin.cjs"
     },
     "./draft13/worker": {
-      "bun": "./src/drafts/draft13/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft13-worker.js",
-      "require": "./dist/draft13-worker.cjs"
+      "types": "./lib/draft13/worker.d.ts",
+      "import": "./lib/draft13/worker.js",
+      "require": "./lib/draft13/worker.cjs"
     },
     "./draft13/thin/worker": {
-      "bun": "./src/drafts/draft13/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft13-thin-worker.js",
-      "require": "./dist/draft13-thin-worker.cjs"
+      "types": "./lib/draft13/thin/worker.d.ts",
+      "import": "./lib/draft13/thin/worker.js",
+      "require": "./lib/draft13/thin/worker.cjs"
     },
     "./draft13/decoder": {
-      "bun": "./src/drafts/draft13/decoder.ts",
-      "types": "./dist/draft13-decoder.d.ts",
-      "import": "./dist/draft13-decoder.js",
-      "require": "./dist/draft13-decoder.cjs"
+      "types": "./lib/draft13/decoder.d.ts",
+      "import": "./lib/draft13/decoder.js",
+      "require": "./lib/draft13/decoder.cjs"
     },
     "./draft14": {
-      "bun": "./src/drafts/draft14/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft14.js",
-      "require": "./dist/draft14.cjs"
+      "types": "./lib/draft14.d.ts",
+      "import": "./lib/draft14.js",
+      "require": "./lib/draft14.cjs"
     },
     "./draft14/thin": {
-      "bun": "./src/drafts/draft14/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft14-thin.js",
-      "require": "./dist/draft14-thin.cjs"
+      "types": "./lib/draft14/thin.d.ts",
+      "import": "./lib/draft14/thin.js",
+      "require": "./lib/draft14/thin.cjs"
     },
     "./draft14/worker": {
-      "bun": "./src/drafts/draft14/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft14-worker.js",
-      "require": "./dist/draft14-worker.cjs"
+      "types": "./lib/draft14/worker.d.ts",
+      "import": "./lib/draft14/worker.js",
+      "require": "./lib/draft14/worker.cjs"
     },
     "./draft14/thin/worker": {
-      "bun": "./src/drafts/draft14/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft14-thin-worker.js",
-      "require": "./dist/draft14-thin-worker.cjs"
+      "types": "./lib/draft14/thin/worker.d.ts",
+      "import": "./lib/draft14/thin/worker.js",
+      "require": "./lib/draft14/thin/worker.cjs"
     },
     "./draft14/decoder": {
-      "bun": "./src/drafts/draft14/decoder.ts",
-      "types": "./dist/draft14-decoder.d.ts",
-      "import": "./dist/draft14-decoder.js",
-      "require": "./dist/draft14-decoder.cjs"
+      "types": "./lib/draft14/decoder.d.ts",
+      "import": "./lib/draft14/decoder.js",
+      "require": "./lib/draft14/decoder.cjs"
     },
     "./draft15": {
-      "bun": "./src/drafts/draft15/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft15.js",
-      "require": "./dist/draft15.cjs"
+      "types": "./lib/draft15.d.ts",
+      "import": "./lib/draft15.js",
+      "require": "./lib/draft15.cjs"
     },
     "./draft15/thin": {
-      "bun": "./src/drafts/draft15/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft15-thin.js",
-      "require": "./dist/draft15-thin.cjs"
+      "types": "./lib/draft15/thin.d.ts",
+      "import": "./lib/draft15/thin.js",
+      "require": "./lib/draft15/thin.cjs"
     },
     "./draft15/worker": {
-      "bun": "./src/drafts/draft15/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft15-worker.js",
-      "require": "./dist/draft15-worker.cjs"
+      "types": "./lib/draft15/worker.d.ts",
+      "import": "./lib/draft15/worker.js",
+      "require": "./lib/draft15/worker.cjs"
     },
     "./draft15/thin/worker": {
-      "bun": "./src/drafts/draft15/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft15-thin-worker.js",
-      "require": "./dist/draft15-thin-worker.cjs"
+      "types": "./lib/draft15/thin/worker.d.ts",
+      "import": "./lib/draft15/thin/worker.js",
+      "require": "./lib/draft15/thin/worker.cjs"
     },
     "./draft15/decoder": {
-      "bun": "./src/drafts/draft15/decoder.ts",
-      "types": "./dist/draft15-decoder.d.ts",
-      "import": "./dist/draft15-decoder.js",
-      "require": "./dist/draft15-decoder.cjs"
+      "types": "./lib/draft15/decoder.d.ts",
+      "import": "./lib/draft15/decoder.js",
+      "require": "./lib/draft15/decoder.cjs"
     },
     "./draft16": {
-      "bun": "./src/drafts/draft16/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft16.js",
-      "require": "./dist/draft16.cjs"
+      "types": "./lib/draft16.d.ts",
+      "import": "./lib/draft16.js",
+      "require": "./lib/draft16.cjs"
     },
     "./draft16/thin": {
-      "bun": "./src/drafts/draft16/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft16-thin.js",
-      "require": "./dist/draft16-thin.cjs"
+      "types": "./lib/draft16/thin.d.ts",
+      "import": "./lib/draft16/thin.js",
+      "require": "./lib/draft16/thin.cjs"
     },
     "./draft16/worker": {
-      "bun": "./src/drafts/draft16/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft16-worker.js",
-      "require": "./dist/draft16-worker.cjs"
+      "types": "./lib/draft16/worker.d.ts",
+      "import": "./lib/draft16/worker.js",
+      "require": "./lib/draft16/worker.cjs"
     },
     "./draft16/thin/worker": {
-      "bun": "./src/drafts/draft16/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft16-thin-worker.js",
-      "require": "./dist/draft16-thin-worker.cjs"
+      "types": "./lib/draft16/thin/worker.d.ts",
+      "import": "./lib/draft16/thin/worker.js",
+      "require": "./lib/draft16/thin/worker.cjs"
     },
     "./draft16/decoder": {
-      "bun": "./src/drafts/draft16/decoder.ts",
-      "types": "./dist/draft16-decoder.d.ts",
-      "import": "./dist/draft16-decoder.js",
-      "require": "./dist/draft16-decoder.cjs"
+      "types": "./lib/draft16/decoder.d.ts",
+      "import": "./lib/draft16/decoder.js",
+      "require": "./lib/draft16/decoder.cjs"
     },
     "./draft17": {
-      "bun": "./src/drafts/draft17/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft17.js",
-      "require": "./dist/draft17.cjs"
+      "types": "./lib/draft17.d.ts",
+      "import": "./lib/draft17.js",
+      "require": "./lib/draft17.cjs"
     },
     "./draft17/thin": {
-      "bun": "./src/drafts/draft17/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft17-thin.js",
-      "require": "./dist/draft17-thin.cjs"
+      "types": "./lib/draft17/thin.d.ts",
+      "import": "./lib/draft17/thin.js",
+      "require": "./lib/draft17/thin.cjs"
     },
     "./draft17/worker": {
-      "bun": "./src/drafts/draft17/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft17-worker.js",
-      "require": "./dist/draft17-worker.cjs"
+      "types": "./lib/draft17/worker.d.ts",
+      "import": "./lib/draft17/worker.js",
+      "require": "./lib/draft17/worker.cjs"
     },
     "./draft17/thin/worker": {
-      "bun": "./src/drafts/draft17/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft17-thin-worker.js",
-      "require": "./dist/draft17-thin-worker.cjs"
+      "types": "./lib/draft17/thin/worker.d.ts",
+      "import": "./lib/draft17/thin/worker.js",
+      "require": "./lib/draft17/thin/worker.cjs"
     },
     "./draft17/decoder": {
-      "bun": "./src/drafts/draft17/decoder.ts",
-      "types": "./dist/draft17-decoder.d.ts",
-      "import": "./dist/draft17-decoder.js",
-      "require": "./dist/draft17-decoder.cjs"
+      "types": "./lib/draft17/decoder.d.ts",
+      "import": "./lib/draft17/decoder.js",
+      "require": "./lib/draft17/decoder.cjs"
     },
     "./draft18": {
-      "bun": "./src/drafts/draft18/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft18.js",
-      "require": "./dist/draft18.cjs"
+      "types": "./lib/draft18.d.ts",
+      "import": "./lib/draft18.js",
+      "require": "./lib/draft18.cjs"
     },
     "./draft18/thin": {
-      "bun": "./src/drafts/draft18/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft18-thin.js",
-      "require": "./dist/draft18-thin.cjs"
+      "types": "./lib/draft18/thin.d.ts",
+      "import": "./lib/draft18/thin.js",
+      "require": "./lib/draft18/thin.cjs"
     },
     "./draft18/worker": {
-      "bun": "./src/drafts/draft18/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft18-worker.js",
-      "require": "./dist/draft18-worker.cjs"
+      "types": "./lib/draft18/worker.d.ts",
+      "import": "./lib/draft18/worker.js",
+      "require": "./lib/draft18/worker.cjs"
     },
     "./draft18/thin/worker": {
-      "bun": "./src/drafts/draft18/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft18-thin-worker.js",
-      "require": "./dist/draft18-thin-worker.cjs"
+      "types": "./lib/draft18/thin/worker.d.ts",
+      "import": "./lib/draft18/thin/worker.js",
+      "require": "./lib/draft18/thin/worker.cjs"
     },
     "./draft18/decoder": {
-      "bun": "./src/drafts/draft18/decoder.ts",
-      "types": "./dist/draft18-decoder.d.ts",
-      "import": "./dist/draft18-decoder.js",
-      "require": "./dist/draft18-decoder.cjs"
+      "types": "./lib/draft18/decoder.d.ts",
+      "import": "./lib/draft18/decoder.js",
+      "require": "./lib/draft18/decoder.cjs"
     },
     "./draft19": {
-      "bun": "./src/drafts/draft19/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft19.js",
-      "require": "./dist/draft19.cjs"
+      "types": "./lib/draft19.d.ts",
+      "import": "./lib/draft19.js",
+      "require": "./lib/draft19.cjs"
     },
     "./draft19/thin": {
-      "bun": "./src/drafts/draft19/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft19-thin.js",
-      "require": "./dist/draft19-thin.cjs"
+      "types": "./lib/draft19/thin.d.ts",
+      "import": "./lib/draft19/thin.js",
+      "require": "./lib/draft19/thin.cjs"
     },
     "./draft19/worker": {
-      "bun": "./src/drafts/draft19/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft19-worker.js",
-      "require": "./dist/draft19-worker.cjs"
+      "types": "./lib/draft19/worker.d.ts",
+      "import": "./lib/draft19/worker.js",
+      "require": "./lib/draft19/worker.cjs"
     },
     "./draft19/thin/worker": {
-      "bun": "./src/drafts/draft19/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft19-thin-worker.js",
-      "require": "./dist/draft19-thin-worker.cjs"
+      "types": "./lib/draft19/thin/worker.d.ts",
+      "import": "./lib/draft19/thin/worker.js",
+      "require": "./lib/draft19/thin/worker.cjs"
     },
     "./draft19/decoder": {
-      "bun": "./src/drafts/draft19/decoder.ts",
-      "types": "./dist/draft19-decoder.d.ts",
-      "import": "./dist/draft19-decoder.js",
-      "require": "./dist/draft19-decoder.cjs"
+      "types": "./lib/draft19/decoder.d.ts",
+      "import": "./lib/draft19/decoder.js",
+      "require": "./lib/draft19/decoder.cjs"
     },
     "./draft20": {
-      "bun": "./src/drafts/draft20/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft20.js",
-      "require": "./dist/draft20.cjs"
+      "types": "./lib/draft20.d.ts",
+      "import": "./lib/draft20.js",
+      "require": "./lib/draft20.cjs"
     },
     "./draft20/thin": {
-      "bun": "./src/drafts/draft20/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft20-thin.js",
-      "require": "./dist/draft20-thin.cjs"
+      "types": "./lib/draft20/thin.d.ts",
+      "import": "./lib/draft20/thin.js",
+      "require": "./lib/draft20/thin.cjs"
     },
     "./draft20/worker": {
-      "bun": "./src/drafts/draft20/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft20-worker.js",
-      "require": "./dist/draft20-worker.cjs"
+      "types": "./lib/draft20/worker.d.ts",
+      "import": "./lib/draft20/worker.js",
+      "require": "./lib/draft20/worker.cjs"
     },
     "./draft20/thin/worker": {
-      "bun": "./src/drafts/draft20/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft20-thin-worker.js",
-      "require": "./dist/draft20-thin-worker.cjs"
+      "types": "./lib/draft20/thin/worker.d.ts",
+      "import": "./lib/draft20/thin/worker.js",
+      "require": "./lib/draft20/thin/worker.cjs"
     },
     "./draft20/decoder": {
-      "bun": "./src/drafts/draft20/decoder.ts",
-      "types": "./dist/draft20-decoder.d.ts",
-      "import": "./dist/draft20-decoder.js",
-      "require": "./dist/draft20-decoder.cjs"
+      "types": "./lib/draft20/decoder.d.ts",
+      "import": "./lib/draft20/decoder.js",
+      "require": "./lib/draft20/decoder.cjs"
     },
     "./draft21": {
-      "bun": "./src/drafts/draft21/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft21.js",
-      "require": "./dist/draft21.cjs"
+      "types": "./lib/draft21.d.ts",
+      "import": "./lib/draft21.js",
+      "require": "./lib/draft21.cjs"
     },
     "./draft21/thin": {
-      "bun": "./src/drafts/draft21/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft21-thin.js",
-      "require": "./dist/draft21-thin.cjs"
+      "types": "./lib/draft21/thin.d.ts",
+      "import": "./lib/draft21/thin.js",
+      "require": "./lib/draft21/thin.cjs"
     },
     "./draft21/worker": {
-      "bun": "./src/drafts/draft21/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft21-worker.js",
-      "require": "./dist/draft21-worker.cjs"
+      "types": "./lib/draft21/worker.d.ts",
+      "import": "./lib/draft21/worker.js",
+      "require": "./lib/draft21/worker.cjs"
     },
     "./draft21/thin/worker": {
-      "bun": "./src/drafts/draft21/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft21-thin-worker.js",
-      "require": "./dist/draft21-thin-worker.cjs"
+      "types": "./lib/draft21/thin/worker.d.ts",
+      "import": "./lib/draft21/thin/worker.js",
+      "require": "./lib/draft21/thin/worker.cjs"
     },
     "./draft21/decoder": {
-      "bun": "./src/drafts/draft21/decoder.ts",
-      "types": "./dist/draft21-decoder.d.ts",
-      "import": "./dist/draft21-decoder.js",
-      "require": "./dist/draft21-decoder.cjs"
+      "types": "./lib/draft21/decoder.d.ts",
+      "import": "./lib/draft21/decoder.js",
+      "require": "./lib/draft21/decoder.cjs"
     },
     "./draft22": {
-      "bun": "./src/drafts/draft22/entry.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft22.js",
-      "require": "./dist/draft22.cjs"
+      "types": "./lib/draft22.d.ts",
+      "import": "./lib/draft22.js",
+      "require": "./lib/draft22.cjs"
     },
     "./draft22/thin": {
-      "bun": "./src/drafts/draft22/thin.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/draft22-thin.js",
-      "require": "./dist/draft22-thin.cjs"
+      "types": "./lib/draft22/thin.d.ts",
+      "import": "./lib/draft22/thin.js",
+      "require": "./lib/draft22/thin.cjs"
     },
     "./draft22/worker": {
-      "bun": "./src/drafts/draft22/worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft22-worker.js",
-      "require": "./dist/draft22-worker.cjs"
+      "types": "./lib/draft22/worker.d.ts",
+      "import": "./lib/draft22/worker.js",
+      "require": "./lib/draft22/worker.cjs"
     },
     "./draft22/thin/worker": {
-      "bun": "./src/drafts/draft22/thin-worker.ts",
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/draft22-thin-worker.js",
-      "require": "./dist/draft22-thin-worker.cjs"
+      "types": "./lib/draft22/thin/worker.d.ts",
+      "import": "./lib/draft22/thin/worker.js",
+      "require": "./lib/draft22/thin/worker.cjs"
     },
     "./draft22/decoder": {
-      "bun": "./src/drafts/draft22/decoder.ts",
-      "types": "./dist/draft22-decoder.d.ts",
-      "import": "./dist/draft22-decoder.js",
-      "require": "./dist/draft22-decoder.cjs"
+      "types": "./lib/draft22/decoder.d.ts",
+      "import": "./lib/draft22/decoder.js",
+      "require": "./lib/draft22/decoder.cjs"
     }
   },
   "files": [
-    "dist",
-    "src",
-    "!src/__tests__",
-    "!dist/__tests__",
-    "CHANGELOG.md",
-    "ERROR-CODES.md",
-    "error-codes.json"
+    "lib",
+    "CHANGELOG.md"
   ],
-  "scripts": {
-    "build": "tsup",
-    "test": "vitest run",
-    "test:browsers": "vitest run --config vitest.browsers.config.ts",
-    "size": "bun run scripts/size.ts",
-    "smoke": "bun run scripts/smoke.ts",
-    "codes": "bun run scripts/error-codes.ts"
-  },
   "dependencies": {
-    "@moqtap/codec": ">=0.13.4"
+    "@moqtap/monitor-browser": "0.12.0"
   },
-  "devDependencies": {
-    "@moqtap/codec": "workspace:*",
-    "@moqtap/test-vectors": "^0.19.0",
-    "@types/node": "^24.13.3",
-    "playwright-core": "1.62.1",
-    "tsup": "^8.0.0",
-    "typescript": "^5.5.0",
-    "vitest": "^3.2.7"
+  "engines": {
+    "node": ">=18"
   }
 }

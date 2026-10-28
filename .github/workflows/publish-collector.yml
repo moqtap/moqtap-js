@@ -1,5 +1,8 @@
 name: Publish @moqtap/collector
 
+# The last release under the old name: a package that re-exports
+# @moqtap/monitor-browser. Publish @moqtap/monitor-browser first.
+
 on:
   push:
     tags:
@@ -31,8 +34,11 @@ jobs:
             exit 1
           fi
 
-      # The release is not published without its moqtap.com page, nor without
-      # the token that tells the site to publish that page.
+      - name: Verify the re-exported version is on npm
+        run: |
+          DEP=$(node -p "require('./packages/collector/package.json').dependencies['@moqtap/monitor-browser']")
+          npm view "@moqtap/monitor-browser@$DEP" version
+
       - name: Verify the moqtap.com page documents this version
         env:
           SITE_DEPLOY_TOKEN: ${{ secrets.SITE_DEPLOY_TOKEN }}
@@ -44,45 +50,17 @@ jobs:
           fi
 
       - run: bun install --frozen-lockfile
-
-      # Scoped to this package. A sibling's failing test must not block this
-      # release: the packages share a repository, not a release cadence.
-      # The build runs first because the checks below resolve this package by
-      # bare specifier through its `exports` map, which points at `dist/` --
-      # there is nothing to resolve until it has been built.
       - run: bun run --cwd packages/codec build
-      - run: bun run --cwd packages/collector build
-      - run: ./node_modules/.bin/biome check packages/collector
-      - run: ./node_modules/.bin/tsc --build packages/collector
-      - run: bun run --cwd packages/collector test
+      - run: bun run --cwd packages/monitor-browser build
 
-      # The checks above read `src/`. This one is the only thing in the repo
-      # that touches the artefact npm is about to upload: it
-      # packs the tarball, extracts it into a throwaway consumer's
-      # `node_modules`, resolves every `exports` entry by bare specifier in both
-      # ESM and CJS, typechecks the emitted `.d.ts` in a program holding none of
-      # this package's source, and asserts the §3.1 side-effect boundary — the
-      # main entry patches `globalThis.WebTransport`, the draft entries do not.
-      #
-      # It must run AFTER `build` and immediately BEFORE `publish`: `npm publish`
-      # re-packs from the same directory this step just read, so anything that
-      # writes to `dist/` in between would ship files this step never checked.
-      - name: Smoke-test the built artefact
-        run: bun run smoke
-        working-directory: packages/collector
-
-      # §7.1 wants the number on the record for every release too, not only on
-      # every pull request. Reported, never enforced — there is no cap.
-      - name: Report bundle size
-        run: bun run size
-        working-directory: packages/collector
+      # Every entry resolves, in ESM and CJS, to the same module as the new name.
+      - name: Check the re-exports
+        run: node scripts/check-collector-shim.mjs
 
       - name: Publish @moqtap/collector
         run: npm publish --access public
         working-directory: packages/collector
 
-      # moqtap.com rebuilds this package's page from docs/site.md at this tag.
-      # A failed dispatch fails the run.
       - name: Publish the docs on moqtap.com
         uses: peter-evans/repository-dispatch@v3
         with:

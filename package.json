@@ -12,8 +12,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --fix .",
     "typecheck": "bun run build && tsc --build",
-    "size": "bun run build && bun run --cwd packages/collector size",
-    "smoke": "bun run --cwd packages/collector smoke"
+    "size": "bun run build && bun run --cwd packages/monitor-browser size",
+    "smoke": "bun run --cwd packages/monitor-browser smoke"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
