@@ -11,26 +11,18 @@ This file starts at 0.9.0. Earlier releases are in the git history.
 
 ### Changed
 
-- **Breaking: `objectProperties` is gone from decoded Objects on drafts 17 to
-  22.** It was a map keyed by name that dropped every odd-typed property, kept
-  only the last of a repeated type and could not re-encode a type it did not
-  name. Decoded Objects now carry the property block as raw bytes in
-  `extensionData`, as drafts 08 to 16 already did, and datagrams on drafts 17
-  to 22 gain `extensionData` too. Read the properties with
-  `decodeObjectProperties`. Encoders write `extensionData` as given.
-- The data stream decoders no longer parse properties at all, so
-  `decodeDatagram` allocates nothing for them on any draft.
+- **Breaking:** decoded Objects on drafts 17 to 22 no longer have
+  `objectProperties`. The property block is in `extensionData` as raw bytes, as
+  on drafts 08 to 16, and datagrams on drafts 17 to 22 gain `extensionData`.
+  Decode it with `decodeObjectProperties`. Encoders write `extensionData` as
+  given.
 
 ### Added
 
-- `decodeObjectProperties(bytes)` and `encodeObjectProperties(props)` on every
-  draft from 08 to 22, on each draft's codec and as named exports. The decoded
-  list keeps wire order, repeated types and odd-typed values (as views, not
-  copies), decodes Immutable Properties (0xB) where the draft defines it, and
-  refuses a block the draft's rules make malformed.
-- `extensionDataByteOffset` on decoded Objects and datagrams: where the property
-  block starts, past its length field.
-- Types `ObjectProperty` and `ObjectPropertyInit`.
+- `decodeObjectProperties(bytes)` and `encodeObjectProperties(props)` on drafts
+  08 to 22, on each draft's codec and as named exports, with types
+  `ObjectProperty` and `ObjectPropertyInit`.
+- `extensionDataByteOffset` on decoded Objects and datagrams.
 
 ## [0.13.5] - 2026-10-27
 

@@ -130,7 +130,7 @@ Drafts 08 and later also have `decodeDataStream(streamType, bytes)`, with `strea
 
 ### Object properties
 
-The data stream decoders hand back each Object's property block — Extension Headers before draft-17 — as raw bytes in `extensionData`, with `extensionDataByteOffset` giving where it starts. They do not parse it, so a decoder run on every Object pays nothing for properties it never reads. Ask for them with the draft's `decodeObjectProperties`:
+The data stream decoders return each Object's property block (Extension Headers before draft-17) as raw bytes in `extensionData`, with `extensionDataByteOffset` giving where it starts. Decode it with the draft's `decodeObjectProperties`:
 
 ```typescript
 const result = codec.decodeObjectProperties(obj.extensionData);
@@ -145,7 +145,7 @@ if (result.ok) {
 const extensionData = codec.encodeObjectProperties([{ type: 0x3cn, value: 2n }]);
 ```
 
-The list keeps the wire order, repeated types, odd-typed values and types the draft does not name. A block that is malformed by the draft's rules — a property running past the block, a value longer than the draft allows — is a decode error.
+The list keeps wire order, repeated types, odd-typed values and unknown types. A block malformed by the draft's rules, such as a property running past the block or a value longer than the draft allows, is a decode error.
 
 ### VarInt
 

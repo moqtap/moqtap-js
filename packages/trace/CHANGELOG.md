@@ -14,17 +14,11 @@ in it describes 0.3.0 — the last version anyone can install.
 
 ### Added
 
-- **Object properties in the trace.** Event 3 (`object-header`) gains an
-  optional `"props"` key, read and written as `properties`: the object's
-  property block — Object Properties, Extension Headers before draft-17 —
-  byte for byte, at the `headers` level. No level recorded it before, so a
-  trace could not show a LOC object's timestamp or codec configuration, or the
-  key ID of an encrypted object. An empty block and an absent one stay
-  distinct. See SPEC.md, Event 3.
+- Event 3 (`object-header`) gains an optional `"props"` key, read and written
+  as `properties`: the object's property block byte for byte, recorded at the
+  `headers` level. An empty block and an absent one stay distinct. See SPEC.md,
+  Event 3.
 - `recordObjectHeader` takes the block as an optional sixth argument.
-
-Readers older than this keep `"props"` in the event's `extra` and write it back
-unchanged.
 
 ## [0.4.2] - 2026-10-03
 

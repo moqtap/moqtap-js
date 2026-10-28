@@ -25,12 +25,6 @@ import type {
 const FETCH_STREAM_TYPE = 0x05n
 
 // ─── Object Properties ───────────────────────────────────────────────────────
-//
-// The decoders hand back each Object's property block as raw bytes in
-// `extensionData` and do not parse it. The collector runs `decodeDatagram` on
-// every datagram of a consumer's session and reads no property, so parsing
-// there would be paid by every page and used by none. A caller that wants the
-// properties decodes `extensionData` with `decodeObjectProperties`.
 
 /**
  * Draft-18's property block: each Type a delta from the one before it, an odd
@@ -42,11 +36,7 @@ const PROPERTY_RULES: ObjectPropertyRules = {
   immutableType: 0x0bn,
 }
 
-/**
- * Decode an Object's property block — the `extensionData` of a decoded Object —
- * into the properties it carries, in wire order. Odd-typed values are views into
- * `bytes`, not copies.
- */
+/** Decode an Object's `extensionData` in wire order; odd-typed values are views into `bytes`. */
 export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]> {
   try {
     const r = new BufferReader(bytes)

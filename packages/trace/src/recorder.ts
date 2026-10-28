@@ -106,9 +106,7 @@ export interface TraceRecorder {
 
   /**
    * Record an object header event. Ignored below 'headers' detail level.
-   *
-   * `properties` is the Object's property block as the wire carried it; omit it
-   * when the Object had no properties field.
+   * `properties` is the raw property block; omit it when there was no properties field.
    */
   recordObjectHeader(
     streamId: bigint,

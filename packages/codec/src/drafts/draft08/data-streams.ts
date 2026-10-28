@@ -27,21 +27,13 @@ const DATAGRAM_STATUS_TYPE = 0x02n
 const FETCH_STREAM_TYPE = 0x05n
 
 // ─── Extension Headers ──────────────────────────────────────────────────────
-//
-// The decoders hand back each Object's Extension Headers as raw bytes in
-// `extensionData` and do not parse them. A caller that wants them decodes
-// `extensionData` with `decodeObjectProperties` — the name later drafts give
-// the same structure.
 
-/** Draft-08's Extension Headers: absolute types; no length limit and no Immutable Extensions yet. */
+/** Draft-08's Extension Headers: absolute types; no length limit, no Immutable Extensions. */
 const PROPERTY_RULES: ObjectPropertyRules = {
   deltaTypes: false,
 }
 
-/**
- * Decode an Object's Extension Headers — the `extensionData` of a decoded
- * Object — in wire order. Odd-typed values are views into `bytes`, not copies.
- */
+/** Decode an Object's `extensionData` in wire order; odd-typed values are views into `bytes`. */
 export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]> {
   try {
     const r = new BufferReader(bytes)

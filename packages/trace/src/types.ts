@@ -320,20 +320,10 @@ export interface ObjectHeaderEvent extends BaseEvent {
   readonly publisherPriority: number
   readonly objectStatus: number
   /**
-   * The Object's property block — Object Properties, Extension Headers before
-   * draft-17 — exactly as the wire carried it, past its length field.
-   *
-   * Absent when the Object had no properties field, which is not the same as an
-   * empty block: a subgroup stream with the PROPERTIES flag carries a zero
-   * length on every Object that has none. Kept as bytes rather than decoded
-   * because the encoding is the draft's, and a reader decodes it with the codec
-   * that reads the rest of the session; a decoded form would freeze one draft's
-   * rules into the format.
-   *
-   * Recorded from `'headers'` up. It is object metadata a payload's consumer
-   * reads before the payload — timestamps, frame marking, a codec
-   * configuration — and before this key no level recorded it, so a trace could
-   * not show what decided how its media was decoded.
+   * The Object's property block (Object Properties; Extension Headers before
+   * draft-17) as the wire carried it, past its length field. Absent when the
+   * Object had no properties field; an empty block means a zero length was on
+   * the wire. Recorded from `'headers'` up.
    */
   readonly properties?: Uint8Array
 }

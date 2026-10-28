@@ -103,11 +103,8 @@ const DRAFTS: readonly Draft[] = [
  *
  * The middle one is zero-length, which is the only way an Object Status reaches
  * the wire, and the Object after it is what proves the status varint was
- * consumed. Two of them carry a property block so that a draft with the
- * Properties flag has bytes to place and both paths must agree on where they
- * sit; header types without the flag encode nothing and both paths agree on
- * nothing — which is still an agreement worth asserting. The blocks are opaque
- * here: no decoder parses them, so they need only be bytes.
+ * consumed. Two of them carry an opaque property block; header types without
+ * the Properties flag encode none.
  *
  * The Object IDs are not contiguous. Delta encoding is `previous + delta + 1`,
  * so a run of 0, 1, 2 hides an off-by-one in the delta arithmetic behind a

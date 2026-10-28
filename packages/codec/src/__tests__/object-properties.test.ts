@@ -68,8 +68,7 @@ describe('decodeObjectProperties', () => {
   })
 
   it('refuses a value longer than 2^16-1 bytes where the draft caps it', () => {
-    // Length 65536 as a MoQT varint: 0xc1 0x00 0x00. No value bytes follow; the
-    // length is refused before the block's end is.
+    // Length 65536 (varint c10000) with no value bytes: the length check fires first.
     const r = decode22(hexToBytes('0dc10000'))
     expect(r.ok).toBe(false)
     if (r.ok) return

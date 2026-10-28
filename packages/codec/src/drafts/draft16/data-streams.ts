@@ -20,19 +20,7 @@ import type {
   SubgroupStreamHeader,
 } from './types.js'
 
-// ─── Data Stream Encoding/Decoding ─────────────────────────────────────────────
-
-const FETCH_STREAM_TYPE = 0x05n
-
-/**
- * Encode a subgroup stream header + objects.
- */
 // ─── Extension Headers ──────────────────────────────────────────────────────
-//
-// The decoders hand back each Object's Extension Headers as raw bytes in
-// `extensionData` and do not parse them. A caller that wants them decodes
-// `extensionData` with `decodeObjectProperties` — the name later drafts give
-// the same structure.
 
 /** Draft-16's Extension Headers: each Type a delta from the one before it, an odd type's value at most 2^16-1 bytes, Immutable Extensions at 0xB. */
 const PROPERTY_RULES: ObjectPropertyRules = {
@@ -41,10 +29,7 @@ const PROPERTY_RULES: ObjectPropertyRules = {
   immutableType: 0x0bn,
 }
 
-/**
- * Decode an Object's Extension Headers — the `extensionData` of a decoded
- * Object — in wire order. Odd-typed values are views into `bytes`, not copies.
- */
+/** Decode an Object's `extensionData` in wire order; odd-typed values are views into `bytes`. */
 export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]> {
   try {
     const r = new BufferReader(bytes)
@@ -63,6 +48,13 @@ export function encodeObjectProperties(props: readonly ObjectPropertyInit[]): Ui
   return w.finish()
 }
 
+// ─── Data Stream Encoding/Decoding ─────────────────────────────────────────────
+
+const FETCH_STREAM_TYPE = 0x05n
+
+/**
+ * Encode a subgroup stream header + objects.
+ */
 export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
   const w = new BufferWriter()
   const streamType = stream.headerType

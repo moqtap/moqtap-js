@@ -332,7 +332,7 @@ export interface ObjectPayload {
   readonly payloadLength: number
   readonly status?: bigint
   readonly extensionData: Uint8Array
-  /** Absolute offset of the block\'s first byte, past its length field. */
+  /** Absolute offset of the property block's first byte, past its length field. */
   readonly extensionDataByteOffset?: number
   readonly payload: Uint8Array
 }
@@ -358,7 +358,7 @@ export interface DatagramObject {
   readonly endOfGroup?: boolean
   readonly objectStatus?: bigint
   readonly extensionData?: Uint8Array
-  /** Absolute offset of the block\'s first byte, past its length field. */
+  /** Absolute offset of the property block's first byte, past its length field. */
   readonly extensionDataByteOffset?: number
   readonly payloadLength: number
   readonly payload: Uint8Array

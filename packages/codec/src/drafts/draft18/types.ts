@@ -282,11 +282,7 @@ export interface ObjectPayload {
   readonly objectId: bigint
   readonly payloadLength: number
   readonly status?: bigint
-  /**
-   * The Object's property block exactly as the wire carried it, a view into the
-   * decoded bytes. Empty when the Object carried none. Decode it with
-   * `decodeObjectProperties`.
-   */
+  /** The raw property block, empty when none; decode with `decodeObjectProperties`. */
   readonly extensionData: Uint8Array
   /**
    * Absolute offset of the property block's first byte, past its length field.
@@ -317,11 +313,7 @@ export interface DatagramObject {
   readonly publisherPriority: number
   readonly endOfGroup?: boolean
   readonly objectStatus?: bigint
-  /**
-   * The Object's property block exactly as the wire carried it, a view into the
-   * decoded bytes. Absent when the PROPERTIES bit was clear. Decode it with
-   * `decodeObjectProperties`.
-   */
+  /** The raw property block, absent when the PROPERTIES bit is clear; see `decodeObjectProperties`. */
   readonly extensionData?: Uint8Array
   /**
    * Absolute offset of the property block's first byte, past its length field.

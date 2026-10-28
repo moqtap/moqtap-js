@@ -1,17 +1,6 @@
 /**
- * Object Properties — called Extension Headers before draft-17 — read and
- * written as an ordered list.
- *
- * The data-stream decoders do not call this. They hand back the property block
- * as raw bytes (`extensionData`) and nothing more, because the collector runs
- * them on every datagram of a consumer's session and reads none of it. A
- * consumer that wants the properties asks for them with the draft's own
- * `decodeObjectProperties`, which binds the rules below to that draft's varint.
- *
- * A list and not a map, for the same reasons control-message parameters are a
- * list: a type may repeat, an odd type carries bytes rather than a number, and
- * a type nothing names has no key to sit under. Every one of those is lost by a
- * map keyed by name, and the encoder could not put the bytes back.
+ * Object Properties (Extension Headers before draft-17), read and written as an
+ * ordered list: a type may repeat and unknown types must round-trip.
  */
 
 import type { BufferReader } from './buffer-reader.js'
@@ -30,10 +19,8 @@ export interface ObjectProperty {
   /** The value of an odd type: a view into the decoded block, not a copy. */
   readonly bytes?: Uint8Array
   /**
-   * The contents of an Immutable Properties (Immutable Extensions) property,
-   * decoded by the same rules. Their offsets are from the start of the outer
-   * block too, so a caller can point at them without adding anything up. The
-   * raw value stays in `bytes`.
+   * The decoded contents of an Immutable Properties (Immutable Extensions)
+   * property. Offsets are from the start of the outer block.
    */
   readonly properties?: readonly ObjectProperty[]
 }
@@ -46,19 +33,15 @@ export interface ObjectPropertyInit {
   /** Required for an odd type, unless `properties` is given. */
   readonly bytes?: Uint8Array
   /**
-   * The contents of an Immutable Properties property, encoded in place of
-   * `bytes`. When both are given `bytes` wins: those are the serialization the
-   * original publisher chose, and the property MUST NOT change it.
+   * The contents of an Immutable Properties property, encoded when `bytes` is
+   * absent; `bytes` takes precedence.
    */
   readonly properties?: readonly ObjectPropertyInit[]
 }
 
 /** What separates one draft's property block from another's. */
 export interface ObjectPropertyRules {
-  /**
-   * Whether each Type is a delta from the one before it (draft-16 on) rather
-   * than absolute. Delta encoding also forces the types into ascending order.
-   */
+  /** Each Type is a delta from the previous one (draft-16 on), so types ascend. */
   readonly deltaTypes: boolean
   /** The largest value an odd type may carry, where the draft sets one. */
   readonly maxValueLength?: number
@@ -69,14 +52,8 @@ export interface ObjectPropertyRules {
 const MAX_U64 = 0xffffffffffffffffn
 
 /**
- * Read properties from `r` until `end`.
- *
- * Throws `CONSTRAINT_VIOLATION` for a block that is malformed by the draft's
- * own rules — a property that runs past the block, a value longer than the
- * draft allows, a delta past 2^64 - 1, Immutable Properties inside Immutable
- * Properties. A truncated property is malformed here, not a reason to wait for
- * more bytes: the caller has already cut the block to the length the object
- * declared.
+ * Read properties from `r` until `end`. Throws `CONSTRAINT_VIOLATION` for a
+ * malformed block, including a truncated one: `end` is the declared length.
  */
 export function readObjectProperties(
   r: BufferReader,
@@ -128,8 +105,6 @@ export function readObjectProperties(
             offset,
           )
         }
-        // The contents are read off the same reader, so their offsets stay
-        // relative to the outer block.
         const properties = readObjectProperties(r, valueEnd, rules, true)
         const bytes = r.buffer.subarray(valueStart, valueEnd)
         props.push({ type, offset, length: valueEnd - offset, bytes, properties })

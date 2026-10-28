@@ -47,12 +47,6 @@ const FETCH_END_OF_RANGE_MARKERS: ReadonlySet<number> = new Set([
 ])
 
 // ─── Object Properties ───────────────────────────────────────────────────────
-//
-// The decoders hand back each Object's property block as raw bytes in
-// `extensionData` and do not parse it. The collector runs `decodeDatagram` on
-// every datagram of a consumer's session and reads no property, so parsing
-// there would be paid by every page and used by none. A caller that wants the
-// properties decodes `extensionData` with `decodeObjectProperties`.
 
 /**
  * Draft-22's property block: each Type a delta from the one before it, an odd
@@ -65,11 +59,7 @@ const PROPERTY_RULES: ObjectPropertyRules = {
   immutableType: 0x0bn,
 }
 
-/**
- * Decode an Object's property block — the `extensionData` of a decoded Object —
- * into the properties it carries, in wire order. Odd-typed values are views into
- * `bytes`, not copies.
- */
+/** Decode an Object's `extensionData` in wire order; odd-typed values are views into `bytes`. */
 export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]> {
   try {
     const r = new BufferReader(bytes)
@@ -212,9 +202,7 @@ export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
     w.writeVarInt(delta)
     if (propertiesPresent) {
       const props = obj.extensionData
-      // Legal here and only here: on a subgroup stream the field is present
-      // on every object and an empty one sets Properties Length to 0. The
-      // same thing on a datagram is a PROTOCOL_VIOLATION.
+      // An empty block is legal on a subgroup stream (Properties Length 0).
       w.writeVarInt(BigInt(props.byteLength))
       w.writeBytes(props)
     }
@@ -252,8 +240,7 @@ export function encodeDatagram(dg: DatagramObject): Uint8Array {
 
   if (propertiesPresent) {
     const props = dg.extensionData ?? new Uint8Array(0)
-    // Section 11.2.1 makes this a PROTOCOL_VIOLATION on receipt. An object
-    // with no properties leaves the PROPERTIES bit clear instead.
+    // An empty block is a PROTOCOL_VIOLATION on receipt (Section 11.2.1).
     w.writeVarInt(BigInt(props.byteLength))
     w.writeBytes(props)
   }

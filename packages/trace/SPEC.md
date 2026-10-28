@@ -38,15 +38,12 @@ The `"detail"` field (see Part 2 header) declares what was recorded. Each level 
 
 Levels `"headers+data"` and `"full"`, and the `"raw"` field on Event 0 and [Event 6](#event-6-error), are **payload-bearing** — see [Privacy Considerations](#privacy-considerations). So is [Event 6](#event-6-error)'s `"raw"`, which is why it is gated at `"full"` and not at Event 6's own `control`+: an error naming a *data* stream has subgroup framing and object payload behind it, which is media, and inheriting the event's level would have put it in traces whose declared level excludes payloads entirely.
 
-**No level carries data-stream framing bytes.** `"raw"` exists only on Event 0,
-and Event 4's `"pl"` begins after the object header, so the bytes of a
-`SUBGROUP_HEADER`, a fetch header or a datagram header are recorded at no level
-including `"full"`. What those headers carry is recorded as decoded fields
-instead — see [Event 1](#event-1-stream-opened). Closing that gap needs a new
-key and is not in this revision; the level's description no longer implies
-otherwise. The one part of an object's framing recorded as bytes is its
-property block, [Event 3's `"props"`](#event-3-object-header), because the
-block's encoding is the draft's and has no decoded form this format could hold.
+**Data-stream framing is recorded as decoded fields, not bytes.** `"raw"` exists
+only on Event 0, and Event 4's `"pl"` begins after the object header, so the bytes
+of a `SUBGROUP_HEADER`, a fetch header or a datagram header are recorded at no
+level, including `"full"`; see [Event 1](#event-1-stream-opened). The exception is
+an object's property block, recorded as bytes in
+[Event 3's `"props"`](#event-3-object-header).
 
 At any detail level, the recorder MAY be configured to **mask payloads** — replacing payload bytes with zeroes before writing. This preserves payload sizes for bandwidth analysis while stripping media content. Sources MUST advertise masking via `"payloadMasked": true` in the header's `"custom"` map when active.
 
@@ -267,29 +264,16 @@ Object header events and object payload events (event 4) for the same object sha
 
 #### `"props"` — the property block
 
-Object Properties — called Extension Headers before draft-17 — are the part of
-an object a consumer reads before its payload: a LOC object's timestamp, frame
-marking and codec configuration, the gaps a publisher signals after a restart,
-the key ID of an encrypted object. Before this key no level recorded them, and
-none of them can be recovered from the payload, so a trace could show an
-object's bytes but not what decided how they were decoded.
+Object Properties (Extension Headers before draft-17). A reader decodes the
+block with the codec for the session's draft.
 
-- **Bytes, not a decoded list.** Every draft encodes the block differently —
-  absolute or delta types, two varint encodings — and a reader already holds
-  the codec for the session's draft. A decoded form would freeze one draft's
-  rules into this format, and the block MUST be recorded byte for byte so a
-  reader decodes exactly what the endpoint saw. Immutable Properties, which an
-  encrypted object authenticates, depend on that.
+- **Bytes.** The block MUST be recorded byte for byte, past its length field.
 - **Absent and empty differ.** A writer MUST omit the key when the object had no
   properties field, and MUST write an empty byte string when the field was
-  present with a length of 0 — on a subgroup stream with the PROPERTIES flag,
-  every object without properties carries one. A reader MUST keep the
-  distinction.
-- **`headers`+, not payload-bearing.** The block is object metadata, not media.
-  A property value can still carry application data — a codec configuration is
-  a few dozen bytes of it — so a source that must not share any object content
-  MAY drop the key along with the payload. Dropping it does not change the
-  trace's detail level.
+  present with a length of 0. A reader MUST keep the distinction.
+- **Optional content.** A source that must not share any object content MAY drop
+  the key along with the payload. Dropping it does not change the trace's
+  detail level.
 
 ### Event 4: Object Payload
 

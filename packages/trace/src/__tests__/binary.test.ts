@@ -478,9 +478,7 @@ describe('binary .moqtrace format', () => {
       }
       const { events } = roundTrip([
         { ...header, seq: 3, objectId: 1n, properties: block },
-        // An empty block is a property field that carried nothing, which a
-        // subgroup stream with the PROPERTIES flag writes on every Object
-        // without properties. It must not read back as an absent field.
+        // An empty block must not read back as an absent one.
         { ...header, seq: 4, objectId: 2n, properties: new Uint8Array(0) },
       ])
       const [withBlock, empty] = events

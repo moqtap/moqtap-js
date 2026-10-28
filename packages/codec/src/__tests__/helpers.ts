@@ -229,11 +229,8 @@ interface DecodedProperty {
 }
 
 /**
- * Assert that a property block decodes to the corpus's list of entries.
- *
- * `decode` is the draft's own `decodeObjectProperties`. The entry's `name` is
- * not asserted: the codec names nothing, and the name is the corpus's gloss on
- * the type rather than anything the wire carries.
+ * Assert that a property block decodes to the corpus's list of entries. `name`
+ * is not asserted: the wire carries none.
  */
 export function expectPropertyList(
   decode: (bytes: Uint8Array) => { ok: true; value: readonly DecodedProperty[] } | { ok: false },
@@ -272,12 +269,8 @@ function expectEntries(
 }
 
 /**
- * Whether a data stream's bytes are refused by an endpoint: the stream decode
- * fails, or one of its objects carries a property block that does not decode.
- *
- * The stream decoders return each block as raw bytes and leave it unparsed, as
- * a forwarder would, so a malformed block is only refused once something asks
- * for the properties.
+ * Whether an endpoint refuses a data stream: the stream decode fails, or one of
+ * its objects carries a property block that does not decode.
  */
 export function endpointRefuses(
   result: { ok: boolean; value?: unknown },
