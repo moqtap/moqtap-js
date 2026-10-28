@@ -1610,8 +1610,7 @@ describe('the page going away', () => {
       await c.flush()
       c.annotate('in-flight')
       void c.flush()
-      await settle()
-      expect(sent).toBe(2)
+      await until(() => sent === 2)
       c.annotate('never-sent')
       life.fire('pagehide', { persisted: false })
 
