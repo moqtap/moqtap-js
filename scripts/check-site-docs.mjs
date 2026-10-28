@@ -1,5 +1,6 @@
 // Every published package carries its moqtap.com page in docs/site.md, and the
 // page's `version` must be the version package.json is about to release.
+// Packages in README_ONLY carry no page.
 //
 //   node scripts/check-site-docs.mjs            every published package
 //   node scripts/check-site-docs.mjs collector  one package
@@ -8,12 +9,17 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = join(import.meta.dirname, '..', 'packages')
+
+const README_ONLY = new Set(['media'])
+
 const named = process.argv.slice(2)
 const packages = named.length
   ? named
   : readdirSync(root).filter((d) => {
       const pkg = join(root, d, 'package.json')
-      return existsSync(pkg) && !JSON.parse(readFileSync(pkg, 'utf8')).private
+      return (
+        existsSync(pkg) && !JSON.parse(readFileSync(pkg, 'utf8')).private && !README_ONLY.has(d)
+      )
     })
 
 let failed = false

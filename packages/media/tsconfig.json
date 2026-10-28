@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // tsup owns `dist`; `tsc --build` only typechecks.
+    "noEmit": true,
+    "composite": true
+  },
+  "include": ["src"]
+}

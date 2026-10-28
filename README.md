@@ -10,6 +10,7 @@ JavaScript/TypeScript implementation of [MoQT (Media over QUIC Transport)](https
 | [`@moqtap/trace`](./packages/trace) | Session recorder and `.moqtrace` binary format |
 | [`@moqtap/monitor-browser`](./packages/monitor-browser) | Browser monitor — `WebTransport` hook and metered upload |
 | [`@moqtap/collector`](./packages/collector) | Renamed to `@moqtap/monitor-browser` |
+| [`@moqtap/media`](./packages/media) | Media payloads: ISO BMFF and CMAF boxes, Annex-B H.264/H.265, MSF/CMSF catalogs |
 | [`@moqtap/viewer`](./packages/viewer) | The `.moqtrace` viewer as a static bundle (not on npm; released as `viewer-v*` tags) |
 
 ## Features
@@ -74,6 +75,7 @@ Per package, not per repository -- see the `LICENSE` file beside each one.
 | --- | --- |
 | `@moqtap/codec` | MIT |
 | `@moqtap/trace` | MIT |
+| `@moqtap/media` | MIT |
 | `@moqtap/viewer` | MIT |
 | `@moqtap/collector` | [FSL-1.1-MIT](./packages/collector/LICENSE) |
 | `@moqtap/monitor-browser` | [FSL-1.1-MIT](./packages/monitor-browser/LICENSE) -- source available; becomes MIT two years after each release |

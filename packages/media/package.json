@@ -1,0 +1,73 @@
+{
+  "name": "@moqtap/media",
+  "version": "0.1.0",
+  "description": "Media payloads carried over MoQT made readable: ISO BMFF and CMAF boxes, Annex-B H.264/H.265 and MSF/CMSF catalogs",
+  "type": "module",
+  "license": "MIT",
+  "author": "moqtap",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moqtap/moqtap-js.git",
+    "directory": "packages/media"
+  },
+  "homepage": "https://github.com/moqtap/moqtap-js/tree/master/packages/media",
+  "bugs": "https://github.com/moqtap/moqtap-js/issues",
+  "keywords": [
+    "moqt",
+    "moq",
+    "media-over-quic",
+    "cmaf",
+    "cmsf",
+    "msf",
+    "fmp4",
+    "isobmff",
+    "h264",
+    "hevc"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./bmff": {
+      "bun": "./src/bmff.ts",
+      "types": "./dist/bmff.d.ts",
+      "import": "./dist/bmff.js",
+      "require": "./dist/bmff.cjs"
+    },
+    "./annexb": {
+      "bun": "./src/annexb.ts",
+      "types": "./dist/annexb.d.ts",
+      "import": "./dist/annexb.js",
+      "require": "./dist/annexb.cjs"
+    },
+    "./catalog": {
+      "bun": "./src/catalog.ts",
+      "types": "./dist/catalog.d.ts",
+      "import": "./dist/catalog.js",
+      "require": "./dist/catalog.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/__tests__",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@moqtap/test-vectors": "^0.20.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.7"
+  }
+}

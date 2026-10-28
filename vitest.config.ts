@@ -6,6 +6,7 @@ export default defineConfig({
       'packages/codec',
       'packages/trace',
       'packages/inspect',
+      'packages/media',
       'packages/monitor-browser',
       'packages/viewer',
     ],

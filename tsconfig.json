@@ -4,6 +4,7 @@
     { "path": "packages/codec" },
     { "path": "packages/trace" },
     { "path": "packages/inspect" },
+    { "path": "packages/media" },
     { "path": "packages/monitor-browser" },
     { "path": "packages/monitor-browser/tsconfig.browser.json" },
     { "path": "packages/viewer" }
