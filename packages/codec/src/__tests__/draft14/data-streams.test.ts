@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createDraft14Codec } from '../../drafts/draft14/codec.js'
 import type { DatagramObject, FetchStream, SubgroupStream } from '../../drafts/draft14/types.js'
-import { bytesToHex, hexToBytes, loadVectorDir } from '../helpers.js'
+import { bytesToHex, expectPropertyList, hexToBytes, loadVectorDir } from '../helpers.js'
 
 const codec = createDraft14Codec()
 
@@ -155,7 +155,23 @@ function assertSubgroupMatch(
       if (eo.payload_length !== undefined) {
         expect(String(ao.payloadLength)).toBe(String(eo.payload_length))
       }
+      if (eo.extension_headers !== undefined) {
+        expectPropertyList(
+          codec.decodeObjectProperties,
+          ao.extensionData as Uint8Array,
+          eo.extension_headers,
+          `objects[${i}].extension_headers`,
+        )
+      }
       if (eo.payload_hex !== undefined) {
+        if (eo.extension_headers !== undefined) {
+          expectPropertyList(
+            codec.decodeObjectProperties,
+            ao.extensionData as Uint8Array,
+            eo.extension_headers,
+            `objects[${i}].extension_headers`,
+          )
+        }
         expect(bytesToHex(ao.payload as Uint8Array)).toBe(eo.payload_hex)
       }
       if (eo.extension_headers_length !== undefined) {
@@ -191,6 +207,14 @@ function assertDatagramMatch(
   }
   if (expected.publisher_priority !== undefined) {
     expect(String(actual.publisherPriority)).toBe(String(expected.publisher_priority))
+  }
+  if (expected.extension_headers !== undefined) {
+    expectPropertyList(
+      codec.decodeObjectProperties,
+      actual.extensionData as Uint8Array | undefined,
+      expected.extension_headers,
+      'extension_headers',
+    )
   }
   if (expected.payload_hex !== undefined) {
     expect(bytesToHex(actual.payload as Uint8Array)).toBe(expected.payload_hex)
@@ -231,7 +255,23 @@ function assertFetchMatch(
       if (eo.payload_length !== undefined) {
         expect(String(ao.payloadLength)).toBe(String(eo.payload_length))
       }
+      if (eo.extension_headers !== undefined) {
+        expectPropertyList(
+          codec.decodeObjectProperties,
+          ao.extensionData as Uint8Array,
+          eo.extension_headers,
+          `objects[${i}].extension_headers`,
+        )
+      }
       if (eo.payload_hex !== undefined) {
+        if (eo.extension_headers !== undefined) {
+          expectPropertyList(
+            codec.decodeObjectProperties,
+            ao.extensionData as Uint8Array,
+            eo.extension_headers,
+            `objects[${i}].extension_headers`,
+          )
+        }
         expect(bytesToHex(ao.payload as Uint8Array)).toBe(eo.payload_hex)
       }
       if (eo.extension_headers_length !== undefined) {

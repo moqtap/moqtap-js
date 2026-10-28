@@ -1,5 +1,11 @@
 import { BufferReader } from '../../core/buffer-reader.js'
 import { BufferWriter } from '../../core/buffer-writer.js'
+import type {
+  ObjectProperty,
+  ObjectPropertyInit,
+  ObjectPropertyRules,
+} from '../../core/object-properties.js'
+import { readObjectProperties, writeObjectProperties } from '../../core/object-properties.js'
 import type { DecodeResult } from '../../core/types.js'
 import { DecodeError } from '../../core/types.js'
 import type {
@@ -19,6 +25,40 @@ const SUBGROUP_STREAM_TYPE = 0x04n
 const DATAGRAM_TYPE = 0x01n
 const DATAGRAM_STATUS_TYPE = 0x02n
 const FETCH_STREAM_TYPE = 0x05n
+
+// ─── Extension Headers ──────────────────────────────────────────────────────
+//
+// The decoders hand back each Object's Extension Headers as raw bytes in
+// `extensionData` and do not parse them. A caller that wants them decodes
+// `extensionData` with `decodeObjectProperties` — the name later drafts give
+// the same structure.
+
+/** Draft-08's Extension Headers: absolute types; no length limit and no Immutable Extensions yet. */
+const PROPERTY_RULES: ObjectPropertyRules = {
+  deltaTypes: false,
+}
+
+/**
+ * Decode an Object's Extension Headers — the `extensionData` of a decoded
+ * Object — in wire order. Odd-typed values are views into `bytes`, not copies.
+ */
+export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]> {
+  try {
+    const r = new BufferReader(bytes)
+    const value = readObjectProperties(r, bytes.byteLength, PROPERTY_RULES)
+    return { ok: true, value, bytesRead: r.offset }
+  } catch (e) {
+    if (e instanceof DecodeError) return { ok: false, error: e }
+    throw e
+  }
+}
+
+/** Encode Extension Headers into a block to carry as an Object's `extensionData`. */
+export function encodeObjectProperties(props: readonly ObjectPropertyInit[]): Uint8Array {
+  const w = new BufferWriter(32)
+  writeObjectProperties(w, props, PROPERTY_RULES, () => new BufferWriter(32))
+  return w.finish()
+}
 
 export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
   const w = new BufferWriter()
@@ -116,6 +156,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
       // Parse extensions (even type = varint value, odd type = length-prefixed)
       const extensionCount = Number(r.readVarInt())
       const extStart = r.offset
+      const extensionDataByteOffset = extStart
       for (let i = 0; i < extensionCount; i++) {
         const extType = Number(r.readVarInt())
         if (extType % 2 === 0) {
@@ -145,6 +186,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
         objectId,
         extensionCount: BigInt(extensionCount),
         extensionData,
+        extensionDataByteOffset,
         payloadLength,
         payload,
       }
@@ -191,6 +233,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     // Parse extensions (even type = varint value, odd type = length-prefixed)
     const extensionCount = Number(r.readVarInt())
     const extStart = r.offset
+    const extensionDataByteOffset = extStart
     for (let i = 0; i < extensionCount; i++) {
       const extType = Number(r.readVarInt())
       if (extType % 2 === 0) {
@@ -219,6 +262,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
       publisherPriority,
       extensionCount: BigInt(extensionCount),
       extensionData,
+      extensionDataByteOffset,
       objectStatus: objectStatus ?? 0n,
       payloadLength,
       payload,
@@ -293,6 +337,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
       // Parse extensions (even type = varint value, odd type = length-prefixed)
       const extensionCount = Number(r.readVarInt())
       const extStart = r.offset
+      const extensionDataByteOffset = extStart
       for (let i = 0; i < extensionCount; i++) {
         const extType = Number(r.readVarInt())
         if (extType % 2 === 0) {
@@ -325,6 +370,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
         publisherPriority,
         extensionCount: BigInt(extensionCount),
         extensionData,
+        extensionDataByteOffset,
         payloadLength,
         payload,
       }

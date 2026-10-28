@@ -1,7 +1,7 @@
 ---
 title: "@moqtap/codec"
 description: MoQT wire-format codec and session state machine for TypeScript.
-version: 0.13.5
+version: 0.14.0
 ---
 
 **Encode, decode, and validate MoQT messages in JavaScript/TypeScript.**
@@ -127,6 +127,25 @@ codec.createDataStreamDecoder();
 ```
 
 Drafts 08 and later also have `decodeDataStream(streamType, bytes)`, with `streamType` one of `'subgroup'`, `'datagram'` or `'fetch'`. Drafts 08 to 10 add `'datagram_status'`, with `encodeDatagramStatus` and `decodeDatagramStatus`.
+
+### Object properties
+
+The data stream decoders hand back each Object's property block — Extension Headers before draft-17 — as raw bytes in `extensionData`, with `extensionDataByteOffset` giving where it starts. They do not parse it, so a decoder run on every Object pays nothing for properties it never reads. Ask for them with the draft's `decodeObjectProperties`:
+
+```typescript
+const result = codec.decodeObjectProperties(obj.extensionData);
+if (result.ok) {
+  for (const p of result.value) {
+    // p.type: bigint; p.value for an even type, p.bytes for an odd one;
+    // p.properties for the contents of Immutable Properties (0xB)
+  }
+}
+
+// The reverse, for building an Object to encode
+const extensionData = codec.encodeObjectProperties([{ type: 0x3cn, value: 2n }]);
+```
+
+The list keeps the wire order, repeated types, odd-typed values and types the draft does not name. A block that is malformed by the draft's rules — a property running past the block, a value longer than the draft allows — is a decode error.
 
 ### VarInt
 

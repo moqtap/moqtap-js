@@ -1,5 +1,11 @@
 import { MoqtBufferReader as BufferReader } from '../../core/buffer-reader.js'
 import { MoqtBufferWriter as BufferWriter } from '../../core/buffer-writer.js'
+import type {
+  ObjectProperty,
+  ObjectPropertyInit,
+  ObjectPropertyRules,
+} from '../../core/object-properties.js'
+import { readObjectProperties, writeObjectProperties } from '../../core/object-properties.js'
 import type { DecodeResult } from '../../core/types.js'
 import { DecodeError } from '../../core/types.js'
 import type {
@@ -17,15 +23,6 @@ import type {
 // ─── Data Stream Encoding/Decoding ─────────────────────────────────────────
 
 const FETCH_STREAM_TYPE = 0x05n
-
-// Object property type IDs
-const OBJPROP_PRIOR_GROUP_ID_GAP = 0x3cn
-const OBJPROP_PRIOR_OBJECT_ID_GAP = 0x3en
-
-const KNOWN_OBJ_PROPS: ReadonlyMap<bigint, string> = new Map([
-  [OBJPROP_PRIOR_OBJECT_ID_GAP, 'prior_object_id_gap'],
-  [OBJPROP_PRIOR_GROUP_ID_GAP, 'prior_group_id_gap'],
-])
 
 // ─── Fetch stream Serialization Flags (draft-20 Section 11.4.4, Table 7) ────
 
@@ -49,50 +46,45 @@ const FETCH_END_OF_RANGE_MARKERS: ReadonlySet<number> = new Set([
   FETCH_MARKER_TIMED_OUT,
 ])
 
-function decodeObjectProperties(r: BufferReader, propsLength: number): Record<string, bigint> {
-  const endOff = r.offset + propsLength
-  const props: Record<string, bigint> = {}
-  let prevType = 0n
+// ─── Object Properties ───────────────────────────────────────────────────────
+//
+// The decoders hand back each Object's property block as raw bytes in
+// `extensionData` and do not parse it. The collector runs `decodeDatagram` on
+// every datagram of a consumer's session and reads no property, so parsing
+// there would be paid by every page and used by none. A caller that wants the
+// properties decodes `extensionData` with `decodeObjectProperties`.
 
-  while (r.offset < endOff) {
-    const delta = r.readVarInt()
-    const propType = prevType + delta
-    prevType = propType
-
-    if (propType % 2n === 0n) {
-      const value = r.readVarInt()
-      const name = KNOWN_OBJ_PROPS.get(propType) ?? `0x${propType.toString(16)}`
-      props[name] = value
-    } else {
-      const length = Number(r.readVarInt())
-      // Skip unknown odd properties
-      r.readBytes(length)
-    }
-  }
-  return props
+/**
+ * Draft-20's property block: each Type a delta from the one before it, an odd
+ * type's value at most 2^16-1 bytes, Immutable Properties at 0xB.
+ */
+const PROPERTY_RULES: ObjectPropertyRules = {
+  deltaTypes: true,
+  maxValueLength: 0xffff,
+  immutableType: 0x0bn,
 }
 
-function encodeObjectProperties(props: Record<string, bigint>, w: BufferWriter): void {
-  const reverseMap = new Map<string, bigint>()
-  for (const [id, name] of KNOWN_OBJ_PROPS) {
-    reverseMap.set(name, id)
+/**
+ * Decode an Object's property block — the `extensionData` of a decoded Object —
+ * into the properties it carries, in wire order. Odd-typed values are views into
+ * `bytes`, not copies.
+ */
+export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]> {
+  try {
+    const r = new BufferReader(bytes)
+    const value = readObjectProperties(r, bytes.byteLength, PROPERTY_RULES)
+    return { ok: true, value, bytesRead: r.offset }
+  } catch (e) {
+    if (e instanceof DecodeError) return { ok: false, error: e }
+    throw e
   }
+}
 
-  const entries: Array<{ type: bigint; value: bigint }> = []
-  for (const [name, value] of Object.entries(props)) {
-    const typeId = reverseMap.get(name)
-    if (typeId !== undefined) {
-      entries.push({ type: typeId, value })
-    }
-  }
-  entries.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0))
-
-  let prevType = 0n
-  for (const entry of entries) {
-    w.writeVarInt(entry.type - prevType)
-    w.writeVarInt(entry.value)
-    prevType = entry.type
-  }
+/** Encode properties into a block to carry as an Object's `extensionData`. */
+export function encodeObjectProperties(props: readonly ObjectPropertyInit[]): Uint8Array {
+  const w = new BufferWriter(32)
+  writeObjectProperties(w, props, PROPERTY_RULES, () => new BufferWriter(32))
+  return w.finish()
 }
 
 // ─── SUBGROUP_HEADER Type Flags (draft-20 Section 11.4.2) ───────────────────
@@ -215,18 +207,12 @@ export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
     const delta = prevObjectId < 0n ? obj.objectId : obj.objectId - prevObjectId - 1n
     w.writeVarInt(delta)
     if (propertiesPresent) {
-      if (obj.objectProperties && Object.keys(obj.objectProperties).length > 0) {
-        const tmpW = new BufferWriter(32)
-        encodeObjectProperties(obj.objectProperties, tmpW)
-        const raw = tmpW.finish()
-        w.writeVarInt(BigInt(raw.byteLength))
-        w.writeBytes(raw)
-      } else {
-        // Legal here and only here: on a subgroup stream the field is present
-        // on every object and an empty one sets Properties Length to 0. The
-        // same thing on a datagram is a PROTOCOL_VIOLATION.
-        w.writeVarInt(0n)
-      }
+      const props = obj.extensionData
+      // Legal here and only here: on a subgroup stream the field is present
+      // on every object and an empty one sets Properties Length to 0. The
+      // same thing on a datagram is a PROTOCOL_VIOLATION.
+      w.writeVarInt(BigInt(props.byteLength))
+      w.writeBytes(props)
     }
     w.writeVarInt(BigInt(obj.payloadLength))
     if (obj.payloadLength === 0) {
@@ -261,17 +247,11 @@ export function encodeDatagram(dg: DatagramObject): Uint8Array {
   }
 
   if (propertiesPresent) {
-    if (dg.objectProperties && Object.keys(dg.objectProperties).length > 0) {
-      const tmpW = new BufferWriter(32)
-      encodeObjectProperties(dg.objectProperties, tmpW)
-      const raw = tmpW.finish()
-      w.writeVarInt(BigInt(raw.byteLength))
-      w.writeBytes(raw)
-    } else {
-      // Section 11.3.1 makes this a PROTOCOL_VIOLATION on receipt. An object
-      // with no properties leaves the PROPERTIES bit clear instead.
-      w.writeVarInt(0n)
-    }
+    const props = dg.extensionData ?? new Uint8Array(0)
+    // Section 11.3.1 makes this a PROTOCOL_VIOLATION on receipt. An object
+    // with no properties leaves the PROPERTIES bit clear instead.
+    w.writeVarInt(BigInt(props.byteLength))
+    w.writeBytes(props)
   }
 
   if (isStatus) {
@@ -324,15 +304,9 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
       if (flags & 0x04) w.writeVarInt(objectIdDeltaFor(flags, obj.objectId, prevObjectId))
       if (flags & 0x10) w.writeUint8(obj.publisherPriority)
       if (flags & 0x20) {
-        if (obj.objectProperties && Object.keys(obj.objectProperties).length > 0) {
-          const tmpW = new BufferWriter(32)
-          encodeObjectProperties(obj.objectProperties, tmpW)
-          const raw = tmpW.finish()
-          w.writeVarInt(BigInt(raw.byteLength))
-          w.writeBytes(raw)
-        } else {
-          w.writeVarInt(0n)
-        }
+        const props = obj.extensionData
+        w.writeVarInt(BigInt(props.byteLength))
+        w.writeBytes(props)
       }
       w.writeVarInt(BigInt(obj.payloadLength))
       if (obj.payloadLength > 0) {
@@ -348,15 +322,9 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
       if (flags & 0x04) w.writeVarInt(objectIdDeltaFor(flags, obj.objectId, prevObjectId))
       if (flags & 0x10) w.writeUint8(obj.publisherPriority)
       if (flags & 0x20) {
-        if (obj.objectProperties && Object.keys(obj.objectProperties).length > 0) {
-          const tmpW = new BufferWriter(32)
-          encodeObjectProperties(obj.objectProperties, tmpW)
-          const raw = tmpW.finish()
-          w.writeVarInt(BigInt(raw.byteLength))
-          w.writeBytes(raw)
-        } else {
-          w.writeVarInt(0n)
-        }
+        const props = obj.extensionData
+        w.writeVarInt(BigInt(props.byteLength))
+        w.writeBytes(props)
       }
       w.writeVarInt(BigInt(obj.payloadLength))
       if (obj.payloadLength > 0) {
@@ -508,13 +476,12 @@ function readSubgroupObject(
   // the delta itself for the first Object on the stream.
   const objectId = isFirst ? delta : prevObjectId + 1n + delta
 
-  const extensionData = new Uint8Array(0)
-  let objectProperties: Record<string, bigint> | undefined
+  let extensionData = new Uint8Array(0)
+  let extensionDataByteOffset: number | undefined
   if (propertiesPresent) {
     const propsLen = Number(r.readVarInt())
-    if (propsLen > 0) {
-      objectProperties = decodeObjectProperties(r, propsLen)
-    }
+    extensionDataByteOffset = base + r.offset
+    extensionData = r.readBytesView(propsLen)
   }
 
   const payloadLength = Number(r.readVarInt())
@@ -545,8 +512,8 @@ function readSubgroupObject(
     extensionData,
   }
   if (status !== undefined) (obj as unknown as Record<string, unknown>).status = status
-  if (objectProperties !== undefined)
-    (obj as unknown as Record<string, unknown>).objectProperties = objectProperties
+  if (extensionDataByteOffset !== undefined)
+    (obj as unknown as Record<string, unknown>).extensionDataByteOffset = extensionDataByteOffset
   return obj
 }
 
@@ -621,7 +588,8 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
       publisherPriority = r.readUint8()
     }
 
-    let objectProperties: Record<string, bigint> | undefined
+    let extensionData: Uint8Array | undefined
+    let extensionDataByteOffset: number | undefined
     if (propertiesPresent) {
       const propsLen = Number(r.readVarInt())
       if (propsLen === 0) {
@@ -638,7 +606,8 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
           ),
         }
       }
-      objectProperties = decodeObjectProperties(r, propsLen)
+      extensionDataByteOffset = r.offset
+      extensionData = r.readBytesView(propsLen)
     }
 
     let objectStatus: bigint | undefined
@@ -692,8 +661,11 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     if (endOfGroup) (result as unknown as Record<string, unknown>).endOfGroup = true
     if (objectStatus !== undefined)
       (result as unknown as Record<string, unknown>).objectStatus = objectStatus
-    if (objectProperties !== undefined)
-      (result as unknown as Record<string, unknown>).objectProperties = objectProperties
+    if (extensionData !== undefined)
+      (result as unknown as Record<string, unknown>).extensionData = extensionData
+    if (extensionDataByteOffset !== undefined)
+      (result as unknown as Record<string, unknown>).extensionDataByteOffset =
+        extensionDataByteOffset
 
     return { ok: true, value: result, bytesRead: r.offset }
   } catch (e) {
@@ -739,7 +711,7 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
   let payloadLength: number
   let payload: Uint8Array
   let payloadByteOffset: number
-  const extensionData = new Uint8Array(0)
+  let extensionData = new Uint8Array(0)
 
   if (flags >= 0x80) {
     // End-of-Range marker. Section 11.4.4: "Any other value is a
@@ -816,12 +788,11 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
     if (priorityPresent) {
       st.prevPriority = r.readUint8()
     }
-    let objectProperties: Record<string, bigint> | undefined
+    let extensionDataByteOffset: number | undefined
     if (propsPresent) {
       const propsLen = Number(r.readVarInt())
-      if (propsLen > 0) {
-        objectProperties = decodeObjectProperties(r, propsLen)
-      }
+      extensionDataByteOffset = base + r.offset
+      extensionData = r.readBytesView(propsLen)
     }
     payloadLength = Number(r.readVarInt())
     payloadByteOffset = base + r.offset
@@ -844,8 +815,8 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
       (obj as unknown as Record<string, unknown>).groupIdDelta = groupDelta
     if (objectDelta !== undefined)
       (obj as unknown as Record<string, unknown>).objectIdDelta = objectDelta
-    if (objectProperties)
-      (obj as unknown as Record<string, unknown>).objectProperties = objectProperties
+    if (extensionDataByteOffset !== undefined)
+      (obj as unknown as Record<string, unknown>).extensionDataByteOffset = extensionDataByteOffset
 
     st.prevGroupId = groupId
     st.prevObjectId = objectId
@@ -905,12 +876,11 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
     st.prevPriority = r.readUint8()
   }
 
-  let objectProperties: Record<string, bigint> | undefined
+  let extensionDataByteOffset: number | undefined
   if (propsPresent) {
     const propsLen = Number(r.readVarInt())
-    if (propsLen > 0) {
-      objectProperties = decodeObjectProperties(r, propsLen)
-    }
+    extensionDataByteOffset = base + r.offset
+    extensionData = r.readBytesView(propsLen)
   }
 
   payloadLength = Number(r.readVarInt())
@@ -938,8 +908,8 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
     (obj as unknown as Record<string, unknown>).groupIdDelta = groupDelta
   if (objectDelta !== undefined)
     (obj as unknown as Record<string, unknown>).objectIdDelta = objectDelta
-  if (objectProperties)
-    (obj as unknown as Record<string, unknown>).objectProperties = objectProperties
+  if (extensionDataByteOffset !== undefined)
+    (obj as unknown as Record<string, unknown>).extensionDataByteOffset = extensionDataByteOffset
 
   st.prevGroupId = groupId
   st.prevSubgroupId = subgroupId

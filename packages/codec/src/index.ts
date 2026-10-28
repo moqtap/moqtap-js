@@ -193,6 +193,7 @@ export {
   trackAliasOf,
   trackOf,
 } from './core/accessors.js'
+export type { ObjectProperty, ObjectPropertyInit } from './core/object-properties.js'
 export type {
   BaseCodec,
   CodecOptions,

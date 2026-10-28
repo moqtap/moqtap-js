@@ -273,8 +273,17 @@ export interface ObjectPayload {
   readonly objectId: bigint
   readonly payloadLength: number
   readonly status?: bigint
+  /**
+   * The Object's property block exactly as the wire carried it, a view into the
+   * decoded bytes. Empty when the Object carried none. Decode it with
+   * `decodeObjectProperties`.
+   */
   readonly extensionData: Uint8Array
-  readonly objectProperties?: Record<string, bigint>
+  /**
+   * Absolute offset of the property block's first byte, past its length field.
+   * Absent when the Object had no properties field at all.
+   */
+  readonly extensionDataByteOffset?: number
   readonly payload: Uint8Array
 }
 
@@ -298,7 +307,17 @@ export interface DatagramObject {
   readonly publisherPriority: number
   readonly endOfGroup?: boolean
   readonly objectStatus?: bigint
-  readonly objectProperties?: Record<string, bigint>
+  /**
+   * The Object's property block exactly as the wire carried it, a view into the
+   * decoded bytes. Absent when the PROPERTIES bit was clear. Decode it with
+   * `decodeObjectProperties`.
+   */
+  readonly extensionData?: Uint8Array
+  /**
+   * Absolute offset of the property block's first byte, past its length field.
+   * Absent when the Object had no properties field at all.
+   */
+  readonly extensionDataByteOffset?: number
   readonly payloadLength: number
   readonly payload: Uint8Array
 }
@@ -308,7 +327,6 @@ export interface FetchObjectPayload extends ObjectPayload {
   readonly groupId: bigint
   readonly subgroupId: bigint
   readonly publisherPriority: number
-  readonly objectProperties?: Record<string, bigint>
 }
 
 export interface FetchStream {

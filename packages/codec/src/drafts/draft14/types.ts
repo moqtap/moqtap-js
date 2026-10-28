@@ -399,6 +399,8 @@ export interface ObjectPayload {
   readonly payload: Uint8Array
   readonly status?: bigint
   readonly extensionData: Uint8Array
+  /** Absolute offset of the block\'s first byte, past its length field. */
+  readonly extensionDataByteOffset?: number
 }
 
 export interface SubgroupStream {
@@ -421,6 +423,8 @@ export interface DatagramObject {
   readonly endOfGroup?: boolean
   readonly objectStatus?: bigint
   readonly extensionData?: Uint8Array
+  /** Absolute offset of the block\'s first byte, past its length field. */
+  readonly extensionDataByteOffset?: number
   readonly payloadLength: number
   readonly payload: Uint8Array
 }

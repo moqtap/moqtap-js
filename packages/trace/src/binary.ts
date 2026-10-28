@@ -542,6 +542,7 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
       base.o = event.objectId
       base.pp = int(event.publisherPriority)
       base.os = int(event.objectStatus)
+      if (event.properties != null) base.props = event.properties
       break
     }
     case 'object-payload': {
@@ -986,6 +987,7 @@ function decodeEvent(src: Decoding): TraceEvent {
         objectId: requireUint(src, 'o'),
         publisherPriority: Number(take(src, 'pp') ?? 0),
         objectStatus: Number(take(src, 'os') ?? 0),
+        ...optional(src, 'props', 'properties', asByteString),
       }
 
     case 'object-payload':

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { createDraft19Codec } from '../../drafts/draft19/codec.js'
 import type { DatagramObject, FetchStream, SubgroupStream } from '../../drafts/draft19/types.js'
-import { bytesToHex, hexToBytes, loadVectorDir } from '../helpers.js'
+import {
+  bytesToHex,
+  endpointRefuses,
+  expectPropertyList,
+  hexToBytes,
+  loadVectorDir,
+} from '../helpers.js'
 
 const codec = createDraft19Codec()
 
@@ -19,7 +25,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
           it('should fail to decode', () => {
             const streamType = getStreamType(messageType, vector)
             const result = codec.decodeDataStream(streamType, bytes)
-            expect(result.ok).toBe(false)
+            expect(endpointRefuses(result, codec.decodeObjectProperties)).toBe(true)
           })
         } else if (vector.decoded) {
           const decoded = vector.decoded
@@ -134,18 +140,12 @@ function assertDataStreamMatch(
     expect(String(a.objectStatus)).toBe(String(expected.object_status))
   }
   if (expected.object_properties !== undefined) {
-    const expectedProps = expected.object_properties as Record<string, unknown>
-    if (Object.keys(expectedProps).length === 0) {
-      if (a.objectProperties) {
-        expect(Object.keys(a.objectProperties as Record<string, unknown>).length).toBe(0)
-      }
-    } else {
-      const actualProps = a.objectProperties as Record<string, unknown>
-      expect(actualProps).toBeDefined()
-      for (const [k, v] of Object.entries(expectedProps)) {
-        expect(String(actualProps[k])).toBe(String(v))
-      }
-    }
+    expectPropertyList(
+      codec.decodeObjectProperties,
+      a.extensionData as Uint8Array | undefined,
+      expected.object_properties,
+      'object_properties',
+    )
   }
 
   if (expected.payload_hex !== undefined) {
@@ -181,18 +181,12 @@ function assertDataStreamMatch(
         expect(String(ao.publisherPriority)).toBe(String(eo.publisher_priority))
       }
       if (eo.object_properties !== undefined) {
-        const expectedObjProps = eo.object_properties as Record<string, unknown>
-        if (Object.keys(expectedObjProps).length === 0) {
-          if (ao.objectProperties) {
-            expect(Object.keys(ao.objectProperties as Record<string, unknown>).length).toBe(0)
-          }
-        } else {
-          const actualObjProps = ao.objectProperties as Record<string, unknown>
-          expect(actualObjProps).toBeDefined()
-          for (const [k, v] of Object.entries(expectedObjProps)) {
-            expect(String(actualObjProps[k])).toBe(String(v))
-          }
-        }
+        expectPropertyList(
+          codec.decodeObjectProperties,
+          ao.extensionData as Uint8Array,
+          eo.object_properties,
+          `objects[${i}].object_properties`,
+        )
       }
       if (eo.payload_hex !== undefined) {
         expect(bytesToHex(ao.payload as Uint8Array)).toBe(eo.payload_hex)

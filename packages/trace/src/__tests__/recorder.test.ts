@@ -174,6 +174,23 @@ describe('TraceRecorder', () => {
     ])
   })
 
+  it('records an object property block at headers level', () => {
+    const recorder = createRecorder({
+      detail: 'headers',
+      protocol: 'moq-transport-22',
+      perspective: 'client',
+      clock: () => 0,
+    })
+    const block = new Uint8Array([0x3c, 0x02])
+
+    recorder.recordObjectHeader(1n, 0n, 0n, 128, 0, block)
+    recorder.recordObjectHeader(1n, 0n, 1n, 128, 0)
+
+    const [withBlock, without] = recorder.finalize().events
+    expect(withBlock?.type === 'object-header' && withBlock.properties).toEqual(block)
+    expect(without).not.toHaveProperty('properties')
+  })
+
   it('detail level filters payload events below headers+sizes', () => {
     const recorder = createRecorder({
       detail: 'headers',

@@ -1,5 +1,11 @@
 import { BufferReader } from '../../core/buffer-reader.js'
 import { BufferWriter } from '../../core/buffer-writer.js'
+import type {
+  ObjectProperty,
+  ObjectPropertyInit,
+  ObjectPropertyRules,
+} from '../../core/object-properties.js'
+import { readObjectProperties, writeObjectProperties } from '../../core/object-properties.js'
 import type { DecodeResult } from '../../core/types.js'
 import { DecodeError } from '../../core/types.js'
 import type {
@@ -26,6 +32,42 @@ const FETCH_STREAM_TYPE = 0x05n
  * Encode a subgroup stream header + objects.
  * Uses the headerType from the stream to reproduce the exact wire type byte.
  */
+// ─── Extension Headers ──────────────────────────────────────────────────────
+//
+// The decoders hand back each Object's Extension Headers as raw bytes in
+// `extensionData` and do not parse them. A caller that wants them decodes
+// `extensionData` with `decodeObjectProperties` — the name later drafts give
+// the same structure.
+
+/** Draft-15's Extension Headers: absolute types, an odd type's value at most 2^16-1 bytes, Immutable Extensions at 0xB. */
+const PROPERTY_RULES: ObjectPropertyRules = {
+  deltaTypes: false,
+  maxValueLength: 0xffff,
+  immutableType: 0x0bn,
+}
+
+/**
+ * Decode an Object's Extension Headers — the `extensionData` of a decoded
+ * Object — in wire order. Odd-typed values are views into `bytes`, not copies.
+ */
+export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]> {
+  try {
+    const r = new BufferReader(bytes)
+    const value = readObjectProperties(r, bytes.byteLength, PROPERTY_RULES)
+    return { ok: true, value, bytesRead: r.offset }
+  } catch (e) {
+    if (e instanceof DecodeError) return { ok: false, error: e }
+    throw e
+  }
+}
+
+/** Encode Extension Headers into a block to carry as an Object's `extensionData`. */
+export function encodeObjectProperties(props: readonly ObjectPropertyInit[]): Uint8Array {
+  const w = new BufferWriter(32)
+  writeObjectProperties(w, props, PROPERTY_RULES, () => new BufferWriter(32))
+  return w.finish()
+}
+
 export function encodeSubgroupStream(stream: SubgroupStream): Uint8Array {
   const w = new BufferWriter()
   const streamType = stream.headerType
@@ -232,8 +274,10 @@ function readSubgroupObject(
   const objectId = isFirst ? delta : prevObjectId + 1n + delta
 
   let extensionData = new Uint8Array(0)
+  let extensionDataByteOffset: number | undefined
   if (extensionsPresent) {
     const extLen = Number(r.readVarInt())
+    extensionDataByteOffset = base + r.offset
     extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0)
   }
 
@@ -262,6 +306,8 @@ function readSubgroupObject(
     payload,
     extensionData,
   }
+  if (extensionDataByteOffset !== undefined)
+    (obj as unknown as Record<string, unknown>).extensionDataByteOffset = extensionDataByteOffset
   if (status !== undefined) (obj as unknown as Record<string, unknown>).status = status
   return obj
 }
@@ -335,8 +381,10 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     }
 
     let extensionData: Uint8Array | undefined
+    let extensionDataByteOffset: number | undefined
     if (extensionsPresent) {
       const extLen = Number(r.readVarInt())
+      extensionDataByteOffset = r.offset
       extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0)
     }
 
@@ -360,6 +408,9 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
       payloadLength,
       payload,
     }
+    if (extensionDataByteOffset !== undefined)
+      (result as unknown as Record<string, unknown>).extensionDataByteOffset =
+        extensionDataByteOffset
 
     if (endOfGroup) (result as unknown as Record<string, unknown>).endOfGroup = true
     if (objectStatus !== undefined)
@@ -470,8 +521,10 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
   }
 
   let extensionData = new Uint8Array(0)
+  let extensionDataByteOffset: number | undefined
   if (extensionsPresent) {
     const extLen = Number(r.readVarInt())
+    extensionDataByteOffset = base + r.offset
     extensionData = extLen > 0 ? r.readBytesView(extLen) : new Uint8Array(0)
   }
 
@@ -501,6 +554,8 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
     extensionData,
     payload,
   }
+  if (extensionDataByteOffset !== undefined)
+    (obj as unknown as Record<string, unknown>).extensionDataByteOffset = extensionDataByteOffset
   if (status !== undefined) (obj as unknown as Record<string, unknown>).status = status
 
   st.prevGroupId = groupId

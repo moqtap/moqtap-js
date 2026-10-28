@@ -1,7 +1,7 @@
 ---
 title: "@moqtap/trace"
 description: Read, write, and record .moqtrace session files in TypeScript.
-version: 0.4.2
+version: 0.5.0
 ---
 
 **Read, write, and record MoQT session traces.**
@@ -164,6 +164,8 @@ traced.receive(serverSetup);
 // Record data events manually
 recorder.recordStreamOpened(3n, 1, 0);       // incoming subgroup stream
 recorder.recordObjectHeader(3n, 1n, 0n, 128, 0);
+// …or with the object's property block, as the wire carried it
+recorder.recordObjectHeader(3n, 1n, 1n, 128, 0, propertyBlock);
 recorder.recordObjectPayload(3n, 1n, 0n, 256);
 recorder.recordStreamClosed(3n, 0);
 

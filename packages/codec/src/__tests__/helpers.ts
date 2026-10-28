@@ -211,3 +211,83 @@ export function vectorParamsToMap(entries: unknown): {
   if (unknown.length > 0) named.unknown = unknown
   return { named, repeated }
 }
+
+/** A Key-Value-Pair entry as the corpus renders one. */
+interface KvpEntry {
+  type: string
+  name?: string
+  value?: unknown
+  raw_hex?: string
+}
+
+/** What `decodeObjectProperties` hands back, as far as the corpus can say. */
+interface DecodedProperty {
+  type: bigint
+  value?: bigint
+  bytes?: Uint8Array
+  properties?: readonly DecodedProperty[]
+}
+
+/**
+ * Assert that a property block decodes to the corpus's list of entries.
+ *
+ * `decode` is the draft's own `decodeObjectProperties`. The entry's `name` is
+ * not asserted: the codec names nothing, and the name is the corpus's gloss on
+ * the type rather than anything the wire carries.
+ */
+export function expectPropertyList(
+  decode: (bytes: Uint8Array) => { ok: true; value: readonly DecodedProperty[] } | { ok: false },
+  block: Uint8Array | undefined,
+  expected: unknown,
+  label: string,
+): void {
+  const result = decode(block ?? new Uint8Array(0))
+  if (!result.ok) throw new Error(`${label}: the property block does not decode`)
+  expectEntries(result.value, expected as KvpEntry[], label)
+}
+
+function expectEntries(
+  actual: readonly DecodedProperty[],
+  expected: KvpEntry[],
+  label: string,
+): void {
+  if (!Array.isArray(expected)) throw new Error(`${label} must be a list of entries`)
+  if (actual.length !== expected.length) {
+    throw new Error(`${label}: ${actual.length} properties decoded, ${expected.length} expected`)
+  }
+  expected.forEach((e, i) => {
+    const a = actual[i]!
+    const at = `${label}[${i}]`
+    const type = `0x${a.type.toString(16)}`
+    if (type !== e.type) throw new Error(`${at}.type: got ${type}, expected ${e.type}`)
+    if (e.raw_hex !== undefined) {
+      const got = a.bytes ? bytesToHex(a.bytes) : undefined
+      if (got !== e.raw_hex) throw new Error(`${at}.raw_hex: got ${got}, expected ${e.raw_hex}`)
+    } else if (Array.isArray(e.value)) {
+      expectEntries(a.properties ?? [], e.value as KvpEntry[], `${at}.value`)
+    } else if (String(a.value) !== String(e.value)) {
+      throw new Error(`${at}.value: got ${a.value}, expected ${e.value}`)
+    }
+  })
+}
+
+/**
+ * Whether a data stream's bytes are refused by an endpoint: the stream decode
+ * fails, or one of its objects carries a property block that does not decode.
+ *
+ * The stream decoders return each block as raw bytes and leave it unparsed, as
+ * a forwarder would, so a malformed block is only refused once something asks
+ * for the properties.
+ */
+export function endpointRefuses(
+  result: { ok: boolean; value?: unknown },
+  decode: (bytes: Uint8Array) => { ok: boolean },
+): boolean {
+  if (!result.ok) return true
+  const v = result.value as {
+    extensionData?: Uint8Array
+    objects?: { extensionData?: Uint8Array }[]
+  }
+  const blocks = [v.extensionData, ...(v.objects ?? []).map((o) => o.extensionData)]
+  return blocks.some((b) => b !== undefined && b.byteLength > 0 && !decode(b).ok)
+}

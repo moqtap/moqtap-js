@@ -2,6 +2,7 @@ import { type AuthRedaction, recordAuthValueSpan, redactWith } from '../../core/
 import { Draft17BufferReader as BufferReader } from '../../core/buffer-reader.js'
 import { Draft17BufferWriter as BufferWriter } from '../../core/buffer-writer.js'
 import { bytesToHex, hexToBytes } from '../../core/hex.js'
+import type { ObjectProperty, ObjectPropertyInit } from '../../core/object-properties.js'
 import type { BaseCodec, DecodeResult } from '../../core/types.js'
 import { DecodeError } from '../../core/types.js'
 import {
@@ -1155,9 +1156,11 @@ import {
   decodeDatagram,
   decodeDataStream,
   decodeFetchStream,
+  decodeObjectProperties,
   decodeSubgroupStream,
   encodeDatagram,
   encodeFetchStream,
+  encodeObjectProperties,
   encodeSubgroupStream,
 } from './data-streams.js'
 
@@ -1168,9 +1171,11 @@ export {
   decodeDatagram,
   decodeDataStream,
   decodeFetchStream,
+  decodeObjectProperties,
   decodeSubgroupStream,
   encodeDatagram,
   encodeFetchStream,
+  encodeObjectProperties,
   encodeSubgroupStream,
 }
 
@@ -1225,6 +1230,8 @@ export interface Draft17Codec extends BaseCodec<Draft17Message> {
   decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>
   decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject>
   decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>
+  decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]>
+  encodeObjectProperties(props: readonly ObjectPropertyInit[]): Uint8Array
   decodeDataStream(
     streamType: 'subgroup' | 'datagram' | 'fetch',
     bytes: Uint8Array,
@@ -1246,6 +1253,8 @@ export function createDraft17Codec(): Draft17Codec {
     decodeSubgroupStream,
     decodeDatagram,
     decodeFetchStream,
+    decodeObjectProperties,
+    encodeObjectProperties,
     decodeDataStream,
     createStreamDecoder,
     createSubgroupStreamDecoder,

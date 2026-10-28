@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { createDraft20Codec } from '../../drafts/draft20/codec.js'
 import type { DatagramObject, FetchStream, SubgroupStream } from '../../drafts/draft20/types.js'
-import { bytesToHex, hexToBytes, loadVectorDir } from '../helpers.js'
+import {
+  bytesToHex,
+  endpointRefuses,
+  expectPropertyList,
+  hexToBytes,
+  loadVectorDir,
+} from '../helpers.js'
 
 const codec = createDraft20Codec()
 
@@ -9,7 +15,7 @@ const vectorEntries = loadVectorDir('transport/draft20/codec/data-streams')
 
 /** See the note in messages.test.ts — these counts guard against silent skips. */
 const EXPECTED_FILES = 3
-const EXPECTED_VECTORS = 52
+const EXPECTED_VECTORS = 57
 
 describe('draft-20 data stream vector corpus', () => {
   it('loads every published data-stream vector file', () => {
@@ -47,7 +53,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
           it('should fail to decode', () => {
             const streamType = getStreamType(file, vector)
             const result = codec.decodeDataStream(streamType, bytes)
-            expect(result.ok).toBe(false)
+            expect(endpointRefuses(result, codec.decodeObjectProperties)).toBe(true)
           })
         } else if (vector.decoded) {
           const decoded = vector.decoded
@@ -181,7 +187,12 @@ function assertDataStreamMatch(
   }
   if (expected.object_properties !== undefined) {
     seen.add('object_properties')
-    assertProps(a.objectProperties, expected.object_properties as Record<string, unknown>)
+    expectPropertyList(
+      codec.decodeObjectProperties,
+      a.extensionData as Uint8Array | undefined,
+      expected.object_properties,
+      'object_properties',
+    )
   }
   if (expected.payload_hex !== undefined) {
     seen.add('payload_hex')
@@ -212,7 +223,12 @@ function assertDataStreamMatch(
       }
       if (eo.object_properties !== undefined) {
         seenObj.add('object_properties')
-        assertProps(ao.objectProperties, eo.object_properties as Record<string, unknown>)
+        expectPropertyList(
+          codec.decodeObjectProperties,
+          ao.extensionData as Uint8Array,
+          eo.object_properties,
+          `objects[${i}].object_properties`,
+        )
       }
       if (eo.payload_hex !== undefined) {
         seenObj.add('payload_hex')
@@ -233,18 +249,6 @@ function assertDataStreamMatch(
     Object.keys(expected).filter((k) => !seen.has(k)),
     `${streamType} vector has unasserted keys`,
   ).toEqual([])
-}
-
-function assertProps(actual: unknown, expected: Record<string, unknown>): void {
-  if (Object.keys(expected).length === 0) {
-    if (actual) expect(Object.keys(actual as Record<string, unknown>).length).toBe(0)
-    return
-  }
-  const actualProps = actual as Record<string, unknown>
-  expect(actualProps).toBeDefined()
-  for (const [k, v] of Object.entries(expected)) {
-    expect(String(actualProps[k]), `object_properties.${k}`).toBe(String(v))
-  }
 }
 
 function hexByte(value: number): string {

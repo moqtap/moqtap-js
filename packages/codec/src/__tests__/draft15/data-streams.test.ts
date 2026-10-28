@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { createDraft15Codec } from '../../drafts/draft15/codec.js'
 import type { DatagramObject, FetchStream, SubgroupStream } from '../../drafts/draft15/types.js'
-import { bytesToHex, hexToBytes, loadVectorDir } from '../helpers.js'
+import {
+  bytesToHex,
+  endpointRefuses,
+  expectPropertyList,
+  hexToBytes,
+  loadVectorDir,
+} from '../helpers.js'
 
 const codec = createDraft15Codec()
 
@@ -19,7 +25,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
           it('should fail to decode', () => {
             const streamType = getStreamType(messageType, vector)
             const result = codec.decodeDataStream(streamType, bytes)
-            expect(result.ok).toBe(false)
+            expect(endpointRefuses(result, codec.decodeObjectProperties)).toBe(true)
           })
         } else if (vector.decoded) {
           const decoded = vector.decoded
@@ -137,6 +143,14 @@ function assertDataStreamMatch(
   }
 
   // Check payload for datagrams
+  if (expected.extension_headers !== undefined) {
+    expectPropertyList(
+      codec.decodeObjectProperties,
+      a.extensionData as Uint8Array | undefined,
+      expected.extension_headers,
+      'extension_headers',
+    )
+  }
   if (expected.payload_hex !== undefined) {
     const payload = a.payload as Uint8Array
     expect(bytesToHex(payload)).toBe(expected.payload_hex)
@@ -169,6 +183,14 @@ function assertDataStreamMatch(
       }
       if (eo.publisher_priority !== undefined) {
         expect(String(ao.publisherPriority)).toBe(String(eo.publisher_priority))
+      }
+      if (eo.extension_headers !== undefined) {
+        expectPropertyList(
+          codec.decodeObjectProperties,
+          ao.extensionData as Uint8Array,
+          eo.extension_headers,
+          `objects[${i}].extension_headers`,
+        )
       }
       expect(bytesToHex(ao.payload as Uint8Array)).toBe(eo.payload_hex)
     }

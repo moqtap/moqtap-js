@@ -2,6 +2,7 @@ export const DRAFT_VERSION = 0xff00000an
 
 export type { AuthRedaction } from '../../core/auth-redaction.js'
 export { REDACTION_FILL } from '../../core/auth-redaction.js'
+export type { ObjectProperty, ObjectPropertyInit } from '../../core/object-properties.js'
 export type { Draft10Codec } from './codec.js'
 export {
   createDraft10Codec,
@@ -11,11 +12,13 @@ export {
   decodeDataStream,
   decodeFetchStream,
   decodeMessage,
+  decodeObjectProperties,
   decodeSubgroupStream,
   encodeDatagram,
   encodeDatagramStatus,
   encodeFetchStream,
   encodeMessage,
+  encodeObjectProperties,
   encodeSubgroupStream,
   redactAuthTokens,
 } from './codec.js'

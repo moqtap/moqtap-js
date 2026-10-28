@@ -104,13 +104,19 @@ export interface TraceRecorder {
   /** Record a stream-closed event. Ignored at 'control' detail level. */
   recordStreamClosed(streamId: bigint, errorCode?: number): void
 
-  /** Record an object header event. Ignored below 'headers' detail level. */
+  /**
+   * Record an object header event. Ignored below 'headers' detail level.
+   *
+   * `properties` is the Object's property block as the wire carried it; omit it
+   * when the Object had no properties field.
+   */
   recordObjectHeader(
     streamId: bigint,
     groupId: bigint,
     objectId: bigint,
     publisherPriority: number,
     objectStatus: number,
+    properties?: Uint8Array,
   ): void
 
   /** Record an object payload event. Ignored below 'headers+sizes' detail level. */
@@ -342,7 +348,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
       })
     },
 
-    recordObjectHeader(streamId, groupId, objectId, publisherPriority, objectStatus) {
+    recordObjectHeader(streamId, groupId, objectId, publisherPriority, objectStatus, properties) {
       if (detailRank < DETAIL_RANK.headers) return
       addEvent({
         type: 'object-header',
@@ -353,6 +359,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
         objectId,
         publisherPriority,
         objectStatus,
+        ...(properties !== undefined ? { properties } : {}),
       })
     },
 

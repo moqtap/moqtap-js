@@ -462,7 +462,32 @@ describe('binary .moqtrace format', () => {
         expect(e.objectId).toBe(99n)
         expect(e.publisherPriority).toBe(128)
         expect(e.objectStatus).toBe(0)
+        expect(e).not.toHaveProperty('properties')
       }
+    })
+
+    it('object-header event with a property block, empty or not', () => {
+      const block = new Uint8Array([0x0d, 0x02, 0xca, 0xfe, 0x2f, 0x02])
+      const header = {
+        type: 'object-header' as const,
+        timestamp: 4000,
+        streamId: 100n,
+        groupId: 5n,
+        publisherPriority: 128,
+        objectStatus: 0,
+      }
+      const { events } = roundTrip([
+        { ...header, seq: 3, objectId: 1n, properties: block },
+        // An empty block is a property field that carried nothing, which a
+        // subgroup stream with the PROPERTIES flag writes on every Object
+        // without properties. It must not read back as an absent field.
+        { ...header, seq: 4, objectId: 2n, properties: new Uint8Array(0) },
+      ])
+      const [withBlock, empty] = events
+      expect(withBlock?.type === 'object-header' && Array.from(withBlock.properties!)).toEqual(
+        Array.from(block),
+      )
+      expect(empty?.type === 'object-header' && empty.properties?.byteLength).toBe(0)
     })
 
     it('object-payload event with payload bytes', () => {
