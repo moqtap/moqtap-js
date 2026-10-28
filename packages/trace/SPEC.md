@@ -10,7 +10,7 @@ This document defines two layered artifacts:
 1. **The MoQT trace event model** (Part 1, normative) — the set of event types, their fields, and their semantics. This model is transport-independent; it can be serialized to a file, streamed over MoQT, shipped as JSON to a collector, or embedded in another container.
 2. **The `.moqtrace` binary file format** (Part 2, normative) — a CBOR-based container for the event model above. Streamable, segmentable, self-describing.
 
-A third artifact, the MoQT carriage convention for live trace transport, is **Appendix A (informative)**. It is transport behavior rather than file-format core and is expected to migrate to a separate moqtap protocol draft; it is included here only so early implementers have a single reference.
+A third artifact, the MoQT carriage convention for live trace transport, is **Appendix A (informative)**. It is transport behavior rather than file-format core, and Parts 1 and 2 do not depend on it.
 
 Design goals of the `.moqtrace` container:
 
@@ -36,7 +36,7 @@ The `"detail"` field (see Part 2 header) declares what was recorded. Each level 
 | `"headers+data"`  | Everything in `"headers"` + full payload bytes for each object.                                                                                  | Full session replay, debugging media corruption.      |
 | `"full"`          | Everything above + raw wire bytes for every *control* message (pre-decode), and the bytes behind an error event ([Event 6](#event-6-error) `"raw"`). See the note below on data-stream framing.                            | Wire-level debugging, compliance testing.             |
 
-Levels `"headers+data"` and `"full"`, and the `"raw"` field on Event 0 and [Event 6](#event-6-error), are **payload-bearing** — see [Privacy Considerations](#privacy-considerations). So is [Event 6](#event-6-error)'s `"raw"`, which is why it is gated at `"full"` and not at Event 6's own `control`+: an error naming a *data* stream has subgroup framing and object payload behind it, which is media, and inheriting the event's level would have put it in traces whose declared level excludes payloads entirely.
+Levels `"headers+data"` and `"full"`, and the `"raw"` field on Event 0 and [Event 6](#event-6-error), are **payload-bearing** — see [Privacy Considerations](#privacy-considerations). Event 6's `"raw"` is gated at `"full"` rather than at Event 6's own `control`+ because an error naming a *data* stream has subgroup framing and object payload behind it, which is media.
 
 **Data-stream framing is recorded as decoded fields, not bytes.** `"raw"` exists
 only on Event 0, and Event 4's `"pl"` begins after the object header, so the bytes
@@ -135,30 +135,23 @@ saves: Event 0 is one of the types [sampling](#sampling) MUST NOT drop, so a
 reader that treats a missing `"msg"` as a malformed event discards exactly the
 events the format promises to keep.
 
-Readers MUST be more tolerant than writers, because files predating this rule
-exist:
+Readers MUST be more tolerant than writers:
 
 - An **absent** `"msg"` MUST be read as an empty map, not as an error.
 - A `"msg"` that is **not a map** MUST be preserved verbatim and offered to the
   caller unchanged. It MUST NOT cause the event to be rejected. Recordings
-  written before this revision carry a text rendering of the decoded message
-  here — every `capture-*` case in the conformance corpus is such a file — and
-  they remain readable, with the field simply not addressable by key.
+  that carry a text rendering of the decoded message here exist — every
+  `capture-*` case in the conformance corpus is one — and they remain readable,
+  with the field simply not addressable by key.
 
 CBOR `null` is a value, not an absence: a writer put it there, so it falls
 under "not a map" and MUST be preserved. CBOR `undefined` (major type 7,
 simple value 23) is **not** preservable here, and writers MUST NOT emit it.
-Neither reference implementation can represent it distinctly *as a `"msg"`* —
-the TypeScript reader cannot tell it from a field the caller never set, and the
-Rust reader's CBOR library decodes it to `null` before the reader sees it — so
-a reader MAY normalise it to an empty map or to `null`, and the two will
-disagree about which. There is no file this matters for unless one is written
-deliberately; the rule exists so that nobody writes one expecting it to
-survive. It is one row of a general table — see [Shapes a CBOR library may
-normalise before you see them](#shapes-a-cbor-library-may-normalise-before-you-see-them),
-which also explains why the answer differs by *where* in a trace the value sits:
-the same `undefined` inside an unrecognised-key store is preserved by one
-implementation and not the other.
+A reader may be unable to tell it from an absent value, or its CBOR library may
+decode it to `null` first, so a reader MAY normalise it to an empty map or to
+`null`, and readers will disagree about which. See [Shapes a CBOR library may
+normalise before you see them](#shapes-a-cbor-library-may-normalise-before-you-see-them)
+for the general rule.
 
 **A tool that reads a trace and writes it back MUST preserve a non-map `"msg"`
 as it found it**, and MUST NOT replace it with an empty map to satisfy the
@@ -183,17 +176,15 @@ reader rule outranks the writer rule.
 
 A `SUBGROUP_HEADER` carries a track alias, a group, a subgroup and a publisher
 priority. A fetch header carries a request ID. A datagram header carries a track
-alias, a group, an object and a priority. Before this revision the model could
-express group, object, priority and status and nothing else — **track alias,
-subgroup ID and fetch request ID had nowhere to live**, and at `"headers"` there
-are no payload bytes to re-parse them from. A `"headers"` recording therefore
-could not answer which track a stream belonged to, which is most of what the
-level exists for.
+alias, a group, an object and a priority. Event 3 holds group, object, priority
+and status; **track alias, subgroup ID and fetch request ID** live here, and at
+`"headers"` there are no payload bytes to re-parse them from. Without them a
+`"headers"` recording cannot say which track a stream belongs to.
 
 **A writer MUST write `"fri"` on a fetch stream** (`st == 2`), where it is the
 only correlation between the stream and the FETCH that asked for it. A reader
-MUST NOT reject a fetch stream that lacks it: recordings predating this revision
-have none, and Event 1 is not a type a reader may discard on a missing optional
+MUST NOT reject a fetch stream that lacks it: recordings written before the
+key was defined have none, and Event 1 is not a type a reader may discard on a missing optional
 key. The same asymmetry as [`"msg"`](#msg-field-naming-and-shape) — writers
 conform, readers tolerate.
 
@@ -233,14 +224,11 @@ object, and a second copy would have no tiebreak.
 implementation gives Event 3's `"g"`, `"o"` and `"sid"` — not to whatever it
 gives Event 1's existing `"st"` and `"d"`.
 
-Those two groups differ today, for a good reason that does not extend here:
-`"st"` and `"d"` are small enumerations, and an implementation may reasonably
-hold them in a narrow type. The keys added above are wire identifiers with the
-same range as Event 3's. An implementer following the enclosing event's local
-convention would type Event 1's `"g"` as a JavaScript `number` while Event 3's
-is a `bigint`, and `event1.g === event3.groupId` would then evaluate `42 === 42n`
-as `false` — silently, and for every reader that made the same reasonable
-choice.
+`"st"` and `"d"` are small enumerations and may be held in a narrow type. The
+four keys above are wire identifiers with the same range as Event 3's. A reader
+that types Event 1's `"g"` as a JavaScript `number` while Event 3's is a
+`bigint` makes `event1.g === event3.groupId` evaluate `42 === 42n` as `false`,
+silently.
 
 ### Event 2: Stream Closed
 
@@ -313,74 +301,44 @@ cannot. A report saying "your SUBSCRIBE_OK did not parse" is an assertion; the
 same report carrying the bytes that did not parse is evidence, and the other
 party can run it against their own encoder without reproducing the session.
 
-Before these keys the only field able to hold bytes was Event 0's `"raw"`, and
-a recorder wanting to keep the evidence had to claim the violation was a
-control message in order to have somewhere to put it. That is a worse record
-than none: it asserts a decodable message where there was a protocol
-violation, and no reader can tell the two apart. One recorder in this project
-declined the trade and left the note behind in its source — *"the offending
-bytes stay behind: Event 6 has no field to carry them"* — which is the gap
-these keys close.
+Recording a protocol violation as an Event 0 to keep its bytes asserts a
+decodable message where there was none, and no reader can tell the two apart.
 
 #### `"ek"` — error kind
 
-An open vocabulary. This revision names `"protocol"` (the peer violated the
+An open vocabulary. Defined values are `"protocol"` (the peer violated the
 protocol), `"transport"` (the QUIC or WebTransport layer failed), and
 `"decode"` (bytes that would not parse as any message this recorder knows).
 Other values MAY be used and MAY be added without a version bump; readers MUST
 preserve a value they do not recognise and MUST NOT reject the event, as with
 [`"perspective"`](#perspective).
 
-`"ek"` is spelled in full rather than as `"kind"` because `"kind"` is already a
-top-level key on [Event 10](#event-10-subscription-derivation) with the
-vocabulary `"created"` / `"shared"`. Two vocabularies under one key at the same
-map level survive in a typed reader and break in every flat projection of a
-trace — a JSONL export, a warehouse load, a column-oriented viewer — where
-`kind` becomes one column holding both.
+`"ek"` is not spelled `"kind"` because `"kind"` is a top-level key on
+[Event 10](#event-10-subscription-derivation) with the vocabulary `"created"` /
+`"shared"`, and in a flat projection of a trace (a JSONL export, a warehouse
+load) the two vocabularies would share one column.
 
 #### `"raw"` is capped, and `"rawlen"` says whether the cap bit
 
 **A recorder MUST NOT write more than 4096 bytes in `"raw"`.** Where it holds
 more, it writes the first 4096 and records the full length in `"rawlen"`.
 
-The cap is a MUST and a fixed number rather than a SHOULD and a suggestion,
-because Event 6 is [non-droppable](#non-droppable-event-types). Every other
-high-volume field in this format is bounded by sampling; this one cannot be,
-so if it is not bounded here it is not bounded at all. A peer opening ten
-thousand streams and sending garbage on each is not a hypothetical — it is
-what a fuzzer does to a relay, and a trace of it should not be larger than the
-attack. A number a reader can test also means the corpus can hold a case
-proving the cap was applied rather than merely described; "SHOULD keep it
-small" cannot be tested by anyone.
+Event 6 is [non-droppable](#non-droppable-event-types), so sampling cannot
+bound it and this cap is the only bound: a peer sending garbage on thousands of
+streams would otherwise produce a trace larger than the attack.
 
-4096 was chosen against two known quantities. It is far above what control
-messages actually measure: the largest encoded control message across every
-draft in the shared codec vectors is 95 bytes, and each of the four real
-third-party captures in the conformance corpus is under 3 kB *in total*,
-control messages, object headers and all. And it sits well below
-`MAX_MESSAGE_LENGTH`, the 65535-byte ceiling the protocol itself puts on a
-control message from draft-11 onward — deliberately below, because `"raw"`
-exists for diagnosis and not for replay. A message can legitimately be larger
-than the cap; the cap is not a claim that it cannot. A fault that leaves no trace in the
-first 4096 bytes is a real possibility, and it is what `"rawlen"` is for: the
-reader learns that the record is partial and how much is missing, which is
-enough to go and ask for the rest.
+4096 bytes is far above the largest encoded control message in the shared codec
+vectors (95 bytes) and well below `MAX_MESSAGE_LENGTH`, the 65535-byte ceiling
+the protocol puts on a control message from draft-11 onward. `"raw"` exists for
+diagnosis, not replay. A message can legitimately be larger than the cap; then
+`"rawlen"` tells the reader that the record is partial and how much is missing.
 
 **`"rawlen"` sits at `headers+sizes`, not at `full` and not at `control`.** It
-is available in every trace where `"raw"` MUST NOT appear, which is the point
-of having it: how large a malformed message was is often enough on its own to
-separate a truncated message from a mistyped one, and it carries no content.
-
-It is nonetheless a **size**, and this format gates sizes deliberately —
-`headers+sizes` exists precisely to mean "how much, but not what". Putting
-`"rawlen"` at `control` would let a `control`-level trace carry a fact about
-data-stream volume that its own declared level excludes, because Event 6's
-`"sid"` may name a data stream: the length would then be the size of a run of
-media framing. One number is a small leak, but the latch below bounds `"raw"`
-and not `"rawlen"`, so on a repeatedly failing stream it is a *sequence* of
-sizes, which is the shape traffic analysis wants. Gating it with the other
-sizes costs a `control`-level trace one diagnostic and keeps each level's
-promise exactly what it says.
+carries no content, and how large a malformed message was is often enough to
+separate a truncated message from a mistyped one. It is a **size**, gated with
+the other sizes: Event 6's `"sid"` may name a data stream, so the length may be
+the size of a run of media framing, and because the latch below bounds `"raw"`
+and not `"rawlen"`, a repeatedly failing stream yields a *sequence* of sizes.
 
 A recorder at `headers+sizes` or above SHOULD write it whether or not it is
 also writing the bytes.
@@ -391,40 +349,28 @@ take `rawlen > len(raw)` as the definition of a truncated capture. If
 possibly truncated, since that is the one length the cap makes ambiguous.
 
 **A recorder that does not know the true length MUST omit `"rawlen"` rather
-than write the length it happens to hold.** This is the case the key is most
-easily got wrong in, and it defeats the key entirely. A recorder that stops
-*reading* at the cap — which is the sensible thing to do with a stream that
-will not parse, and what the recorder cited below does — never holds more than
-4096 bytes. Writing `rawlen` as 4096 there says `rawlen == len(raw)`, which is
-this section's own signal for **not truncated**: the field would assert
-completeness precisely when the recorder has the least idea whether the input
-was complete. Omitting it falls through to the rule above, where a `"raw"` of
-exactly the cap is treated as possibly truncated, which is the truth.
+than write the length it happens to hold.** A recorder that stops *reading*
+at the cap never holds more than 4096 bytes; writing `rawlen` as 4096 there
+says `rawlen == len(raw)`, which signals **not truncated** when the recorder
+does not know. Omitting it falls through to the rule above, where a `"raw"` of
+exactly the cap is treated as possibly truncated.
 
 Where the length *is* knowable without keeping the bytes, write it. A
-length-prefixed control message supplies it from its own length field, and a
-recorder that read that prefix and then gave up on the body knows exactly how
-much it did not keep. That is the case `"rawlen"` exists for, and it is common:
-the fault is often the body, and the prefix is what got the recorder as far as
-noticing.
+length-prefixed control message supplies it from its own length field, so a
+recorder that read the prefix and then gave up on the body knows exactly how
+much it did not keep.
 
-**The cap binds the recorder, and nothing else.** It is addressed to the party
-deciding what to say about traffic it has just observed. It is *not* addressed
-to a tool that reads an event and serializes it again: a reader meeting a
-`"raw"` longer than 4096 bytes MUST NOT reject the event, and a rewrite MUST
-NOT shorten it. That is [the reader rule outranking the writer
-rule](#versioning-and-compatibility), and this is the case it exists for.
-Re-truncating someone else's file destroys evidence in order to make it conform
-to a rule that was never addressed to the tool doing the truncating. Report the
-non-conformance if it is worth reporting; do not repair it.
+**The cap binds the recorder, and nothing else.** A reader meeting a `"raw"`
+longer than 4096 bytes MUST NOT reject the event, and a rewrite MUST NOT
+shorten it: [the reader rule outranks the writer
+rule](#versioning-and-compatibility). Report the non-conformance if it is worth
+reporting; do not repair it.
 
-The distinction has a consequence worth stating for implementers, because
-getting it wrong is easy and the result is silent. **A serializer is the wrong
-place to enforce this cap.** A serializer cannot tell a freshly recorded event
-from one that arrived by being read, so a cap applied there either truncates
-evidence on rewrite or rejects a file the reader was required to accept —
-whichever it does, it does to the wrong events. The cap belongs where the event
-is *constructed from observed bytes*.
+**A serializer is the wrong place to enforce this cap.** A serializer cannot
+tell a freshly recorded event from one that arrived by being read, so a cap
+applied there either truncates evidence on rewrite or rejects a file the reader
+was required to accept. The cap belongs where the event is *constructed from
+observed bytes*.
 
 #### One `"raw"` per flow
 
@@ -436,20 +382,9 @@ collapse to "the narrowest scope the recorder can name", and a recorder that
 can name none has one flow. Later errors on a flow that
 has already carried its bytes are still recorded; they simply carry no `"raw"`.
 
-The latch is on the field, not on the event, and the distinction is the whole
-point. Event 6 is non-droppable: suppressing the *event* would discard the
-causal record this document elsewhere forbids discarding, and would do it
-precisely when a peer is misbehaving repeatedly, which is when the record
-matters most. What actually grows without bound is the bytes, so that is what
-is bounded. The first failure on a flow is the diagnostic one in any case —
-once a stream will not parse, a recorder is no longer interpreting what
-follows, so the "bytes" of the second error are the same undifferentiated run
-as the first.
-
-This matches what a recorder in this project already does, one level up: its
-control-stream reader latches on the first undecodable run and stops reading
-that stream, capping the kept bytes at 4096. This section takes that behaviour,
-which was chosen for a panel display, and makes it the format's rule.
+The latch is on the field, not on the event: Event 6 is non-droppable, and
+what grows without bound is the bytes. Once a stream will not parse, the bytes
+behind a later error on it are the same undifferentiated run as the first.
 
 ### Event 7: Annotation
 
@@ -629,11 +564,7 @@ A single CBOR map with the following keys:
 
 [Versioning and Compatibility](#versioning-and-compatibility) requires a reader
 that writes a trace back out to preserve the unrecognised keys it read, in
-"header maps or event maps". This section says what that means for the header,
-because the header is where the rule was least obviously binding and where both
-reference implementations broke it: each read a header, dropped every key it
-did not know, and wrote out a file that looked as though it had never carried
-them.
+"header maps or event maps". This section says what that means for the header.
 
 **Three maps in the header have keys this document names**: the header map
 itself, `"segment"`, and `"sampling"`. Each MUST carry its own
@@ -661,10 +592,10 @@ segment" for "the event":
   store. This is a semantic check rather than a type check and it is the only
   one in the header, deliberately — every other key here is bounded by its type
   alone, and a reader inventing bounds this document does not state would start
-  rejecting values a future revision means to allow. The reason `"effectiveRate"`
-  earns the check is that consumers divide by it: a rate of `0.0` handed to a
-  caller reconstructing true event counts is a division by zero, and `1.5` is a
-  count larger than what was recorded.
+  rejecting values a future version means to allow. `"effectiveRate"` earns
+  the check because consumers divide by it: a rate of `0.0` is a division by
+  zero for a caller reconstructing true event counts, and `1.5` is a count
+  larger than what was recorded.
 - **A value under a CBOR tag is unusable**, tag 64 excepted. This format uses
   no tags; a writer MUST NOT emit one. Tag 64 is the exception readers already
   MUST accept for byte strings (see [Interoperability](#interoperability)), and
@@ -697,26 +628,22 @@ was handed.
 
 A reader whose representation cannot hold that map exactly MUST treat
 `"custom"` as unusable and route the whole value to the *header's* store,
-rather than hand back a version of it that lost something. Both reference
-implementations declare `"custom"` as a string-keyed map, so for them a
-`"custom"` that is not a map at all is unusable — and so is one carrying a
-non-text key, *where the reader can see that it does*; the next subsection
-explains why that qualifier is not a loophole. Losing typed access is the
-smaller harm: nothing in this document gives `"custom"` keys meaning, so there
-is nothing to lose but convenience, and the bytes survive.
+rather than hand back a version of it that lost something. For a reader that
+types `"custom"` as a string-keyed map, a `"custom"` that is not a map is
+unusable, and so is one carrying a non-text key *where the reader can see that
+it does* (see the next subsection). Nothing in this document gives `"custom"`
+keys meaning, so losing typed access costs only convenience, and the bytes
+survive.
 
-A reader whose decoder happens to hand back a shape its own declared type
-cannot describe — a map object where a string-keyed record was promised — is
-not thereby conformant. It is preserving the bytes by accident, through a type
-that lies to every caller reading the field, and the first caller to iterate
-the keys finds a shape it was told could not occur. Route the value to the
-store and keep the field's type true.
+A reader whose decoder hands back a shape its own declared type cannot
+describe — a map object where a string-keyed record was promised — is not
+thereby conformant: the first caller to iterate the keys finds a shape it was
+told could not occur. Route the value to the store and keep the field's type
+true.
 
-That generalises to a test worth applying to every key in this section:
-**can this reader write back exactly what it read?** Where it can, the value
-belongs in the field. Where it cannot, the value belongs in the store. A
-reader that answers "no" and keeps the field anyway is the defect this section
-exists to name.
+The test for every key in this section: **can this reader write back exactly
+what it read?** Where it can, the value belongs in the field. Where it cannot,
+the value belongs in the store.
 
 #### Keys in these maps are text
 
@@ -724,23 +651,15 @@ Every key this document defines — in the header map, in `"segment"`, in
 `"sampling"`, and by the nature of the field in `"custom"` — is a text string,
 and **a writer MUST NOT emit a key of any other kind.**
 
-What a reader does with one is deliberately left undefined, and nothing may
-depend on two readers agreeing about it. The reason is worth stating, because
-the obvious rule is one that cannot be implemented: **some CBOR decoders
-cannot tell.** A decoder that returns maps as language-native objects coerces
-the integer key `1` into the text key `"1"` before any code written against
-this document runs, at which point it is indistinguishable from a text `"1"`
-the same map might also carry — and the two collide. One of the two reference
-implementations decodes exactly this way. Requiring it to report the
-difference would be requiring something it cannot observe, and a specification
-that mandates the impossible teaches implementers which of its rules to skip.
+What a reader does with one is left undefined, and nothing may depend on two
+readers agreeing about it, because **some CBOR decoders cannot tell.** A
+decoder that returns maps as language-native objects coerces the integer key
+`1` into the text key `"1"` before any code written against this document runs,
+where it collides with a text `"1"` the same map might also carry.
 
-This is one instance of a general problem, not a special case: see [Shapes a
-CBOR library may normalise before you see them](#shapes-a-cbor-library-may-normalise-before-you-see-them)
-for the full list and the rule that governs all of it. A non-text key is the
-most obvious member; the text key `"__proto__"`, a duplicate key, and CBOR
-`undefined` are others, and each is invisible to at least one of the two
-reference implementations.
+See [Shapes a CBOR library may normalise before you see
+them](#shapes-a-cbor-library-may-normalise-before-you-see-them) for the full
+list of such shapes and the rule that governs them.
 
 So the requirement lands on the writer, where it can be met. What a reader
 MUST NOT do is **re-key** — turn an integer key into a text key and write that
@@ -750,14 +669,10 @@ it SHOULD do exactly that and preserve it in the store; a reader whose decoder
 has already re-keyed it before it was asked is not thereby non-conformant,
 having never had the choice.
 
-Rejecting the header is *not* the recommended answer here, which is worth
-saying because an earlier draft of this section recommended it. Failing the
-header loses every event behind it, and this subsection would then be
-prescribing, for the most capable reader, the most destructive outcome — the
-same harm the `"segment"`/`"sampling"` subsection below forbids for a value it
-merely cannot use. Preserve it and move on. This is the one place in this
-section where the two implementations are permitted to differ, and it is
-permitted only because no conformant file reaches it.
+Rejecting the header is not the recommended answer: failing the header
+loses every event behind it, the harm the `"segment"`/`"sampling"` subsection
+below forbids for a value a reader merely cannot use. Readers may differ here
+only because no conformant file reaches this case.
 
 #### `"segment"` and `"sampling"` are optional keys
 
@@ -802,8 +717,7 @@ A store entry whose key the surrounding map already writes MUST NOT be written
 a second time. A reader never produces such an entry — a key it recognised and
 used is by definition not unrecognised — but a caller assembling a header by
 hand can, and a CBOR map carrying one key twice is a map no two readers need
-agree on. The field wins and the store entry is dropped. Event serialization
-already resolves the collision this way.
+agree on. The field wins and the store entry is dropped.
 
 ### Protocol Identifier
 
@@ -902,12 +816,12 @@ If the stream ends part-way through a CBOR item, the file was truncated — a cr
 
 ## Versioning and Compatibility
 
-- **Version 2** is defined by this document. **Version 1** is defined by the previous revision.
+- **Version 2** is defined by this document. **Version 1** is the earlier version; [Changes from version 1](#changes-from-version-1) summarises how version 2 differs from it.
 - **Writers SHOULD write version 2.**
-- **Readers MUST accept both version 1 and version 2, and MUST reject any other version.** A version-1 file is exactly a non-segmented version-2 trace without the keys this revision adds, and every added key is optional. Accepting version 1 therefore costs a reader nothing and keeps every previously recorded capture readable.
+- **Readers MUST accept both version 1 and version 2, and MUST reject any other version.** A version-1 file is a non-segmented version-2 trace without the keys version 2 adds, all of which are optional.
 - Unknown keys in header maps or event maps MUST be ignored (forward-compatible). For the header specifically, see [Unrecognised keys in the header](#unrecognised-keys-in-the-header) — the header has three maps with named keys, not one, and each keeps its own.
-- **A reader that writes a trace back out MUST preserve the unrecognised keys it read**, on a recognised event type as much as on an unrecognised one, and in the header as much as in an event. "Ignore" above means read past, not discard. Skipping a key costs a reader nothing; dropping it costs every reader downstream, because the output is a valid file that looks like it never carried the key — and the tools that read and rewrite traces are exactly the ones a trace passes through on its way to someone else: a redaction pass, a filter, a re-segmentation, a download with annotations applied.
-- Optional keys MAY be added to an existing event type without a version bump — `"sid"` on event 0 was added this way. A reader must therefore treat any optional key as absent-by-default rather than assuming files of a given version all carry the same keys.
+- **A reader that writes a trace back out MUST preserve the unrecognised keys it read**, on a recognised event type as much as on an unrecognised one, and in the header as much as in an event. "Ignore" above means read past, not discard. A dropped key costs every reader downstream, because the output is a valid file that looks like it never carried the key.
+- Optional keys MAY be added to an existing event type without a version bump; Event 0's `"sid"` is one such key. A reader must therefore treat any optional key as absent-by-default rather than assuming files of a given version all carry the same keys.
 - New event types (`"e"` values) MAY be added without a version bump; readers MUST skip unknown event types rather than failing. A reader that rejects an unknown `"e"` value turns every future addition into a breaking change.
 - New `"perspective"` and `"detail"` values MAY likewise be added; see [Perspective](#perspective).
 - **A defined key whose value has an unusable type is treated as unrecognised.**
@@ -921,12 +835,10 @@ If the stream ends part-way through a CBOR item, the file was truncated — a cr
   key originally sat. CBOR maps are unordered, so this loses nothing — but a
   byte-for-byte diff against the input will show it.
 
-  This matters most where it is least expected: adding a key to a reader's
-  vocabulary must never *reduce* what that reader preserves. Before a key is
-  defined, a wrong-typed value survives as an unrecognised key; after, a reader
-  that simply type-checks and moves on drops it. Both reference implementations
-  did precisely that when Event 1's keys were added, and lost values they had
-  previously kept.
+  Adding a key to a reader's vocabulary must never *reduce* what that reader
+  preserves: before a key is defined, a wrong-typed value survives as an
+  unrecognised key, and a reader that type-checks a newly defined key and moves
+  on would drop it.
 
   Two bounds on the rule. A **required** key with an unusable type is a
   malformed event, indistinguishable from that key being absent, because there
@@ -977,22 +889,18 @@ If the stream ends part-way through a CBOR item, the file was truncated — a cr
   redaction pass, a filter or a format converter to quietly correct someone
   else's file into one that no longer says what happened. A tool that wants to
   report non-conformance should report it, not silently repair it.
-- **Keys beginning `"x-"` are reserved for private use.** No revision of this
+- **Keys beginning `"x-"` are reserved for private use.** No version of this
   specification will define one, so a tool may add its own without ever
-  colliding with a future key — and a conformance test can rely on such a key
+  colliding with a future key, and a conformance test can rely on such a key
   staying unrecognised. Every rule above applies to them unchanged: ignore them,
-  and preserve them on a rewrite. Absent this reservation there is no key an
-  implementation can be *sure* stays unknown, which matters more than it sounds:
-  a test fixture built from keys borrowed from a live proposal silently stops
-  testing anything the moment that proposal ships, and this specification did
-  exactly that to its own corpus once.
+  and preserve them on a rewrite.
 - The detail level in the header is informational — readers MUST handle missing fields gracefully regardless of declared level.
 
 ### Why version 2 exists
 
-Every field this revision adds is additive and would have been legal in a version-1 file under the rules above. **Segmentation is the exception, and it is the sole reason for the bump.** A segmented stream splices a preamble — magic bytes, version, header length, header — into the middle of what a version-1 reader believes is an uninterrupted CBOR sequence. That reader decodes the `M` of `MOQTRACE` (`0x4D`) as the start of a 13-byte CBOR byte string, consumes 13 bytes of the preamble, and desynchronizes with no way to recover. Nothing in version 1 lets it detect the boundary or resynchronize past it.
+Every field version 2 adds would have been legal in a version-1 file under the rules above. **Segmentation is the exception, and it is the sole reason for the bump.** A segmented stream splices a preamble — magic bytes, version, header length, header — into the middle of what a version-1 reader believes is an uninterrupted CBOR sequence. That reader decodes the `M` of `MOQTRACE` (`0x4D`) as the start of a 13-byte CBOR byte string, consumes 13 bytes of the preamble, and desynchronizes with no way to recover. Nothing in version 1 lets it detect the boundary or resynchronize past it.
 
-Declaring version 2 converts that silent corruption into an explicit rejection at byte 8. A source that never writes segmented traces could in principle keep writing version 1, but SHOULD NOT: one declared version per revision keeps the compatibility matrix a line rather than a grid.
+Declaring version 2 converts that silent corruption into an explicit rejection at byte 8. A source that never writes segmented traces SHOULD still write version 2.
 
 ## Interoperability
 
@@ -1012,21 +920,16 @@ The first rule is about the **value**, not about the type this document gives
 the key. `"effectiveRate"` is defined as a float and its most common value is
 `1.0` — "no rate-based dropping" — which is integral, so it is written as the
 CBOR integer `1`. Conversely a reader MUST accept a CBOR integer for a key this
-document types as a float, which is the mirror of the sentence above and was
-left implicit for one revision too long: the two reference implementations
-disagreed on exactly this value, one writing a float64 and one an integer, for
-a key whose commonest setting triggers it.
+document types as a float.
 
-Both directions are byte-level differences that preserve the number exactly.
-That is the general shape of these rules: they exist so that two encoders
-produce the same bytes for the same trace, not because either encoding loses
-anything.
+Both directions are byte-level differences that preserve the number exactly:
+the rules exist so that two encoders produce the same bytes for the same trace.
+A test suite that reads only bytes its own writer produced cannot detect a
+violation of either rule.
 
-Both rules exist because both were broken in opposite directions by the two implementations, and neither test suite could see it: each read only bytes it had written itself, so each agreed with a convention the other did not implement.
+Interoperability is checked against a shared corpus of `.moqtrace` files that both implementations read and write as part of their test suites, covering at minimum: a version-1 file, a non-segmented version-2 file, a segmented version-2 stream, a file carrying an unknown event type, a file carrying an unknown perspective, and a truncated file. An implementation that cannot round-trip the corpus is not conformant, whatever this document says.
 
-This claim is maintained by a shared corpus of `.moqtrace` files that both implementations read and write as part of their test suites, covering at minimum: a version-1 file, a non-segmented version-2 file, a segmented version-2 stream, a file carrying an unknown event type, a file carrying an unknown perspective, and a truncated file. An implementation that cannot round-trip the corpus is not conformant, whatever this document says.
-
-The corpus is [`moqtrace/` in the `test-traces` repository](https://github.com/moqtap/test-traces/tree/master/moqtrace), published as `@moqtap/test-traces`. Its `manifest.json` indexes every case with the format version, segment count, header fields, event count and event-type histogram a conformant reader must agree on, so a third implementation can use it without reading either reference implementation. Two files there carry the non-canonical encodings the rules above require readers to accept — integers as floats, and byte strings under tag 64 — because a rule with no file exercising it is a rule nobody is held to.
+The corpus is [`moqtrace/` in the `test-traces` repository](https://github.com/moqtap/test-traces/tree/master/moqtrace), published as `@moqtap/test-traces`. Its `manifest.json` indexes every case with the format version, segment count, header fields, event count and event-type histogram a conformant reader must agree on, so an implementation can use it without reading either reference implementation. Two files there carry the non-canonical encodings the rules above require readers to accept: integers as floats, and byte strings under tag 64.
 
 ### Shapes a CBOR library may normalise before you see them
 
@@ -1036,10 +939,10 @@ a decoded value before any code written against this specification runs, and in
 each case below the normalisation is invisible: the reader cannot report a
 difference it was never shown.
 
-The two reference implementations are known to do the following, and neither
-can be configured out of it without changing decoders:
+Common CBOR libraries normalise the following shapes; which ones depends on the
+library in use:
 
-| Shape in the file | What one library hands back |
+| Shape in the file | What a library may hand back |
 | ----------------- | --------------------------- |
 | An integer map key, `1` | The text key `"1"` — which then collides with a real `"1"` |
 | The text key `"__proto__"` | The text key `"__proto_"` — which then collides with a real `"__proto_"` |
@@ -1048,14 +951,11 @@ can be configured out of it without changing decoders:
 | A byte string under RFC 8746 tag 64 | A bare byte string |
 | A float carrying an integral value | An integer |
 
-† **The duplicate-key row is asymmetric, and that asymmetry is the point.**
-`ciborium` models a map as a list of pairs and hands back both entries, so part
-2 binds a Rust reader there: it can see the duplicate and must not delete
-either entry. `cbor-x` has already collapsed the pair before its caller runs,
-so part 3 applies to a JavaScript reader on the same file. A row in this table
-is not automatically excused for every implementation — read parts 2 and 3
-against the library actually in use, and expect a shape to be observable to one
-reader and invisible to the other.
+† `ciborium` models a map as a list of pairs and hands back both entries, so
+part 2 below binds a reader built on it: it can see the duplicate and must not
+delete either entry. `cbor-x` collapses the pair before its caller runs, so
+part 3 applies to a reader built on it. A row in this table does not excuse
+every implementation automatically: read parts 2 and 3 against the library actually in use.
 
 **The rule, in three parts.**
 
@@ -1065,61 +965,42 @@ reader and invisible to the other.
    be met.
 
    This binds what a writer **originates**, not what it relays. A store may
-   legitimately hold one of these shapes — the Rust reader hands back
-   `"__proto__"` and an integer map key intact — and writing that store back
-   offers exactly three options: drop the entry, rename it, or emit it as it
-   stands. The first loses a value and the second invents one, and part 2
-   forbids both. So the third is what a conformant rewrite does, and this rule
-   does not stand in its way: **a stored entry is written as it stands.**
-   Anything else would make a reader non-conformant for faithfully preserving
-   what it was given, which is the opposite of what this section is for.
+   legitimately hold one of these shapes — a reader whose decoder keeps
+   `"__proto__"` and integer map keys intact will hold them — and dropping or
+   renaming such an entry on a rewrite is forbidden by part 2: **a stored entry
+   is written as it stands.**
 
-   **Two rows are exceptions, for opposite reasons.** The last two — an
-   integral float, and a byte string under tag 64 — are exceptions because a
-   value-preserving re-encoding *exists*: rewriting them costs nothing but
-   bytes, and the paragraph after this one requires it. The duplicate-key row
-   is an exception because no such re-encoding exists at all: a map cannot
-   carry one key twice and still be a map any two readers agree on, so a
-   rewrite must drop an entry, and dropping it loses a value. That is the one
-   place this document knowingly accepts a loss, and it is set out at the end
-   of this section rather than waved at here.
+   **Three rows are exceptions.** An integral float and a byte string under
+   tag 64 have a value-preserving re-encoding, which the paragraphs below
+   require. A duplicate key has none: a rewrite must drop an entry, as set out
+   at the end of this section.
 2. **Where a reader can observe the shape, it MUST NOT substitute a different
    one.** Route it to the unrecognised-key store and preserve it, or report the
    value as unusable — but do not hand back a value the file did not carry. A
    reader that turns `undefined` into `null`, or `"__proto__"` into
    `"__proto_"`, has invented data, and it has done so in the one code path
-   whose entire purpose is preservation.
+   whose purpose is preservation.
 3. **Where a reader cannot observe it, the reader is not non-conformant, and
-   nothing may depend on the outcome.** A rule that requires reporting a
-   difference the reader was never shown is a rule no one can implement, and
-   this document does not issue one.
+   nothing may depend on the outcome.**
 
 Part 3 is not an escape hatch for the merely inconvenient. It applies only
 where the normalisation happens *below* the implementation — where the value
 reaching this specification's code is already the normalised one. Anything the
 reader can still see, part 2 governs.
 
-**The last two rows are different from the rest**, and are the exception that
-proves the rule: this document already requires readers to accept them and
-writers not to produce them (see the two normative encoding choices above).
-They are listed here because a reader that *preserves* one — a byte string
-still wrapped in tag 64, sitting in a store — is preserving a shape its own
-writer rule forbids, and would then emit it.
+**The last two rows** are shapes readers already MUST accept and writers MUST
+NOT produce (see the two normative encoding choices above). A reader that
+*preserves* one in a store would otherwise emit a shape its own writer rule
+forbids.
 
 **So the two encoding rules apply to stored values too.** When a store is
 written back, an integral float in it is written as an integer and a tag-64
-byte string as major type 2, at any depth. That is a change of encoding and not
-of value, which is exactly the line this document already draws elsewhere:
-"written back unchanged" binds the value, not its encoding. The alternative —
-verbatim bytes — cannot be implemented by a reader whose decoder already
-normalised them on the way in, so requiring it would make one implementation
-permanently non-conformant while the other did nothing useful with its
-compliance.
+byte string as major type 2, at any depth. "Written back unchanged" binds the
+value, not its encoding; verbatim bytes cannot be required of a reader whose
+decoder normalised them on the way in.
 
 One value does change under this rule: negative zero, whose sign is lost when
-`-0.0` is written as `0`. It is called out here rather than carved out, because
-a trace has no field where negative zero means anything, and an exception would
-cost more than it buys.
+`-0.0` is written as `0`. No field in a trace gives negative zero a meaning.
 
 **Duplicate keys.** A writer MUST NOT emit a map carrying the same key twice.
 Readers are not required to agree about which entry of a duplicate pair wins,
@@ -1133,36 +1014,20 @@ duplicate that came from the file itself — which is the more likely of the two
 since it needs no mistake at all, only a non-conformant peer. The rule reaches
 both: a tool that read one must not emit one, at any depth.
 
-**This is the one rule in this document that loses data, and it does so
-knowingly.** Collapsing a duplicate pair to a single entry discards the other
-entry's value. The alternative is emitting a map RFC 8949 calls invalid, which
-every downstream reader would then resolve differently — so the choice is not
-between losing a value and keeping it, but between losing it once, here, and
-losing it unpredictably at each reader thereafter. The input was already
-invalid; no rewrite of it can be lossless. Where the loss matters, report the
-duplicate rather than passing it on silently.
+**This is the one rule in this document that loses data.** Collapsing a
+duplicate pair to a single entry discards the other entry's value. Emitting the
+pair instead produces a map RFC 8949 calls invalid, which each downstream reader
+would resolve differently. Where the loss matters, report the duplicate rather
+than passing it on silently.
 
-**And the two implementations will not lose the same one.** The distinction
-worth keeping straight, because the table above makes it and this paragraph
-once contradicted it: `ciborium` keeps **both** entries and makes no choice at
-all, so the Rust *reader* is the thing that keeps the first, by the first-match
-lookup it uses for every key. `cbor-x` has kept only the last before its caller
-runs. So the same input file rewritten through each yields two files differing
-in **value**, not merely in encoding.
-
-That is a worse divergence than anything the two encoding rules address, and it
-is stated here rather than left to be discovered because it cannot be fixed:
-making one of them normative would require the other to report a difference its
-decoder discarded before any of this document's code ran. Keeping the first
-entry is the better behaviour where the choice exists, and it is what a
-first-match reader does anyway — but it is a SHOULD only the implementation
-that can still see both entries can be held to.
-
-That asymmetry is exactly why this is worth a rule. A reader handed both
-entries can *delete* one silently, which a reader handed one cannot; the
-capable implementation is the one at risk, and both reference implementations
-did lose a value here — the Rust one on its read path, for a key a field had
-already taken — until it was found by inspection rather than by any test.
+**Readers will not all lose the same entry.** `ciborium` keeps **both** entries,
+so a reader built on it chooses, and a first-match lookup keeps the first.
+`cbor-x` keeps only the last before its caller runs. The same file rewritten
+through each yields two files that differ in **value**, not merely in encoding.
+A reader that can see both entries SHOULD keep the first; a reader whose
+decoder has already discarded one cannot be held to this. A reader handed both
+entries can also delete one silently — for example the duplicate of a key a
+field has already taken — which a reader handed one entry cannot.
 
 What keeps this from mattering is the rule at the top of this paragraph: **no
 conformant writer produces a duplicate key**, so a file carrying one came from
@@ -1174,7 +1039,7 @@ on the rewrite.
 
 # Appendix A: MoQT Carriage Convention (informative)
 
-> **Scoping note.** This appendix describes how a live `.moqtrace` stream maps onto a MoQT track. It is transport behavior, not file-format behavior, and is expected to migrate into a separate **moqtap** protocol draft. It is included here only so early implementers have a single reference while the drafts stabilize. The normative Part 1 and Part 2 of this document do not depend on anything in this appendix, and no released implementation currently provides it.
+> **Scoping note.** This appendix describes how a live `.moqtrace` stream maps onto a MoQT track. It is transport behavior, not file-format behavior. The normative Part 1 and Part 2 of this document do not depend on anything in this appendix.
 
 When a `.moqtrace` stream is carried over MoQT as a track:
 
@@ -1197,8 +1062,8 @@ Implementations MAY batch multiple events into one object for efficiency at high
 # Changes from version 1
 
 - **Format version bumped to 2**, solely to make segmentation detectable. See [Why version 2 exists](#why-version-2-exists).
-- **Readers must now accept both versions.** Version 1 said readers "MUST reject files with a version they don't support", which reads as license to reject version 1 once version 2 exists. It is now explicit that a conformant reader accepts 1 and 2.
-- **Document restructured** into a normative event model (Part 1), a normative binary container (Part 2), and an informative MoQT carriage appendix. Event semantics are no longer fused with container semantics, so the model can be reused in other containers.
+- **Readers must accept both versions.**
+- **Document structure:** a normative event model (Part 1), a normative binary container (Part 2), and an informative MoQT carriage appendix.
 - **New Identifier Scoping section** distinguishing source-local `"p"`, capture-correlation `"sessionId"`, and federated `"traceId"`, with their orthogonality and presence rules.
 - **New Privacy Considerations section** flagging payload-bearing events (Event 4 `"pl"`, Event 0 `"raw"`, detail levels `"headers+data"` and `"full"`) as optional and high-risk, requiring operator opt-in and recommending default-off for general-purpose tools.
 - **New header field `"segment"`** enabling [Segmented Traces](#segmented-traces).
@@ -1207,15 +1072,15 @@ Implementations MAY batch multiple events into one object for efficiency at high
 - **New common event field `"p"`** — peer identifier, required for `"relay-tap"` so multi-peer events can be demultiplexed.
 - **New event types 8 (Peer connected), 9 (Peer disconnected) and 10 (Subscription derivation).**
 - **Event 10 carries track identity and per-hop timestamps** — `"ns"`, `"tn"`, `"tdr"`, `"tus"`, `"tuo"`, `"tdo"` — making per-hop latency attribution possible from the event alone, plus explicit update semantics for events emitted before all four timestamps are known.
-- **Event 10's trace ID is `"traceId"`, a 16-byte byte string.** An earlier revision of this proposal spelled it `"trace"` and left the type open; a text-string spelling invites per-implementation encodings, which defeats the cross-operator stitching the field exists for.
-- **Unknown event types, perspectives and detail levels must be tolerated, not rejected.** Version 1 said readers "SHOULD skip unknown event types"; neither reference implementation did, which is why the purely additive parts of this revision would have broken them anyway.
-- **Unrecognised keys must survive a read-modify-write.** Version 1 said only that unknown keys must be ignored, which both implementations read as permission to drop them — so every optional key either revision adds was safe to read past and silently destroyed by any tool that rewrote the file.
-- **The key-preservation rule now says what it means for the header**, in a section of its own. "Header maps" was plural and neither implementation read it that way: both dropped every unknown header key outright, which is the same data loss as on an event and strictly larger, since it applies to every unknown key rather than only a wrong-typed one. The header has three maps with named keys — the header itself, `"segment"` and `"sampling"` — and each keeps its own store. See [Unrecognised keys in the header](#unrecognised-keys-in-the-header).
-- **Event 6 can carry the bytes behind the error** — `"sid"`, `"ek"`, a `"rawlen"` gated at `"headers+sizes"` and a `"raw"` gated at `"full"`, with a normative 4096-byte cap and a one-per-flow latch. Version 1's error event held a code and a sentence, so a recorder that wanted to keep the offending bytes had to record the violation as a control message to have a field to put them in. See [Event 6](#event-6-error).
+- **Event 10's trace ID is `"traceId"`, a 16-byte byte string.**
+- **Unknown event types, perspectives and detail levels must be tolerated, not rejected.**
+- **Unrecognised keys must survive a read-modify-write.**
+- **Key preservation in the header**: the header map, `"segment"` and `"sampling"` each keep their own store. See [Unrecognised keys in the header](#unrecognised-keys-in-the-header).
+- **Event 6 can carry the bytes behind the error** — `"sid"`, `"ek"`, a `"rawlen"` gated at `"headers+sizes"` and a `"raw"` gated at `"full"`, with a normative 4096-byte cap and a one-per-flow latch. See [Event 6](#event-6-error).
 - Event `"n"` and `"t"` clarified as **segment-local** in segmented traces.
 - **Non-droppable event types rule** added to the Sampling section.
 - **Trace ID Propagation section** defining the role of the `MOQTAP_TRACE_ID` extension parameter.
 - **Truncated files** now have defined reader behavior: report distinctly, return what decoded.
 - **Two CBOR encoding choices are now normative** — integral values as integers, byte strings as major type 2 — with readers required to accept the other form as well. See [Interoperability](#interoperability).
 - `"payloadMasked"` advertisement strengthened from SHOULD to MUST when masking is active.
-- The header table's `"protocol"` examples (`"draft-14"`, `"rfc9999"`) contradicted the Protocol Identifier section below it; corrected to `"moq-transport-17"` / `"moq-transport-rfc9999"`.
+- `"protocol"` values follow the [Protocol Identifier](#protocol-identifier) form: `"moq-transport-17"`, `"moq-transport-rfc9999"`.
