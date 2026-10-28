@@ -7,6 +7,4 @@
 
 ### Changed
 
-- Renamed to `@moqtap/monitor-browser`. This release re-exports
-  `@moqtap/monitor-browser` 0.12.0 under every entry point and is the last
-  release under this name.
+- Renamed to `@moqtap/monitor-browser`. This release re-exports it.

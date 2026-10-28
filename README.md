@@ -9,7 +9,7 @@ JavaScript/TypeScript implementation of [MoQT (Media over QUIC Transport)](https
 | [`@moqtap/codec`](./packages/codec) | Wire-format codec and session state machine |
 | [`@moqtap/trace`](./packages/trace) | Session recorder and `.moqtrace` binary format |
 | [`@moqtap/monitor-browser`](./packages/monitor-browser) | Browser monitor — `WebTransport` hook and metered upload |
-| [`@moqtap/collector`](./packages/collector) | Renamed to `@moqtap/monitor-browser`; its last release re-exports it |
+| [`@moqtap/collector`](./packages/collector) | Renamed to `@moqtap/monitor-browser` |
 | [`@moqtap/viewer`](./packages/viewer) | The `.moqtrace` viewer as a static bundle (not on npm; released as `viewer-v*` tags) |
 
 ## Features

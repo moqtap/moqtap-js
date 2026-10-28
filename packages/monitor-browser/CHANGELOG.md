@@ -10,9 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Renamed from `@moqtap/collector`. Replace the package name in your imports;
-  the API, the stored data and the upload format are unchanged, and a page may
-  move between the two names without losing unsent data.
+- Renamed from `@moqtap/collector`.
 
 ## [0.11.0] - 2026-10-26
 
