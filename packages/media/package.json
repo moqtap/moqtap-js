@@ -1,7 +1,7 @@
 {
   "name": "@moqtap/media",
-  "version": "0.1.0",
-  "description": "Media payloads carried over MoQT made readable: ISO BMFF and CMAF boxes, Annex-B H.264/H.265 and MSF/CMSF catalogs",
+  "version": "0.2.0",
+  "description": "Media payloads carried over MoQT made readable: ISO BMFF and CMAF boxes, Annex-B H.264/H.265, MSF/CMSF catalogs and timelines, and LOC properties",
   "type": "module",
   "license": "MIT",
   "author": "moqtap",
@@ -19,6 +19,7 @@
     "cmaf",
     "cmsf",
     "msf",
+    "loc",
     "fmp4",
     "isobmff",
     "h264",
@@ -52,6 +53,24 @@
       "types": "./dist/catalog.d.ts",
       "import": "./dist/catalog.js",
       "require": "./dist/catalog.cjs"
+    },
+    "./loc": {
+      "bun": "./src/loc.ts",
+      "types": "./dist/loc.d.ts",
+      "import": "./dist/loc.js",
+      "require": "./dist/loc.cjs"
+    },
+    "./cmaf": {
+      "bun": "./src/cmaf.ts",
+      "types": "./dist/cmaf.d.ts",
+      "import": "./dist/cmaf.js",
+      "require": "./dist/cmaf.cjs"
+    },
+    "./timeline": {
+      "bun": "./src/timeline.ts",
+      "types": "./dist/timeline.d.ts",
+      "import": "./dist/timeline.js",
+      "require": "./dist/timeline.cjs"
     }
   },
   "files": [
@@ -65,7 +84,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@moqtap/test-vectors": "^0.20.0",
+    "@moqtap/test-vectors": "^0.21.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.2.7"

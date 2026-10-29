@@ -12,6 +12,24 @@
  * bytes hold.
  */
 
+import {
+  brandsAt,
+  type Child,
+  child,
+  children,
+  childrenOf,
+  fourcc,
+  fullBoxU32,
+  hex,
+  readSgpd,
+  type SampleGroupDescription,
+  topLevel,
+  u32,
+  versionFlags,
+} from './box'
+
+export type { SampleGroupDescription } from './box'
+
 // ─── Types ───────────────────────────────────────────────────────────
 
 export interface BmffBox {
@@ -63,12 +81,65 @@ export interface InitTrack {
   handler: string | null
   /**
    * The 4CC of the first sample entry in `stsd`: 'avc1', 'hvc1', 'mp4a',
-   * 'Opus', ... An encrypted track shows 'encv' or 'enca' here; its
-   * original format is in the entry's `sinf/frma`, which this does not read.
+   * 'Opus', ... An encrypted track shows 'encv' or 'enca' here.
    */
   sampleEntry: string | null
+  /** `sampleEntry`, or for 'encv' and 'enca' the original format in `sinf/frma` */
+  codec: string | null
   /** `mdhd` timescale, in units per second */
   timescale: number | null
+  /** The `moov/mvex/trex` naming this track_ID, or `null` when there is none or more than one */
+  trex: TrackExtends | null
+  /** The protection boxes of an 'encv' or 'enca' sample entry, else `null` */
+  encryption: TrackEncryption | null
+  /** The `sgpd` boxes of the track's `stbl` */
+  sampleGroups: SampleGroupDescription[]
+  /** The trak has an `edts` (edit list container) */
+  hasEditList: boolean
+}
+
+/** `trex` defaults (ISO/IEC 14496-12 8.8.3) */
+export interface TrackExtends {
+  defaultSampleDescriptionIndex: number
+  defaultSampleDuration: number
+  defaultSampleSize: number
+  defaultSampleFlags: number
+}
+
+/**
+ * The `sinf` of a protected sample entry (ISO/IEC 14496-12 8.12, ISO/IEC
+ * 23001-7). `sinf` is `false` when the sample entry holds none.
+ */
+export interface TrackEncryption {
+  sinf: boolean
+  /** `frma` data_format */
+  originalFormat: string | null
+  /** `schm` scheme_type: 'cenc', 'cbcs', ... */
+  schemeType: string | null
+  schemeVersion: number | null
+  /** `schi/tenc` */
+  tenc: TrackEncryptionBox | null
+}
+
+export interface TrackEncryptionBox {
+  version: number
+  isProtected: number
+  perSampleIvSize: number
+  /** default_KID as 32 hex digits, in byte order */
+  defaultKid: string
+  /** Version 1 and later, else `null` */
+  cryptByteBlock: number | null
+  skipByteBlock: number | null
+  /** Hex, when isProtected is 1 and perSampleIvSize is 0 */
+  constantIv: string | null
+}
+
+/** A `pssh` box (ISO/IEC 23001-7). IDs are 32 hex digits, in byte order. */
+export interface ProtectionSystemHeader {
+  systemId: string
+  /** The KIDs of a version 1 box; empty for version 0 */
+  kids: string[]
+  dataSize: number
 }
 
 /** What an init segment (CMAF header) says about itself and its tracks. */
@@ -77,22 +148,10 @@ export interface InitSegment {
   brands: Brands | null
   /** One entry per `moov/trak`, in order */
   tracks: InitTrack[]
-}
-
-// ─── Byte helpers ────────────────────────────────────────────────────
-
-function u32(data: Uint8Array, offset: number): number {
-  return (
-    ((data[offset]! << 24) |
-      (data[offset + 1]! << 16) |
-      (data[offset + 2]! << 8) |
-      data[offset + 3]!) >>>
-    0
-  )
-}
-
-function fourcc(data: Uint8Array, offset: number): string {
-  return String.fromCharCode(data[offset]!, data[offset + 1]!, data[offset + 2]!, data[offset + 3]!)
+  /** The `moov/pssh` boxes, in order */
+  pssh: ProtectionSystemHeader[]
+  /** track_IDs that more than one `trak` or more than one `trex` names */
+  ambiguousTrackIds: number[]
 }
 
 // ─── Known box types ─────────────────────────────────────────────────
@@ -241,14 +300,6 @@ export function readBrands(data: Uint8Array, box: BmffBox): Brands | null {
   return brandsAt(data, box.offset + 8, Math.min(box.offset + box.size, data.length))
 }
 
-/** Brands from a box body spanning [start, end). */
-function brandsAt(data: Uint8Array, start: number, end: number): Brands | null {
-  if (start + 8 > end) return null
-  const compatible: string[] = []
-  for (let i = start + 8; i + 4 <= end; i += 4) compatible.push(fourcc(data, i))
-  return { major: fourcc(data, start), minorVersion: u32(data, start + 4), compatible }
-}
-
 function hasCmafBrand(brands: Brands | null): boolean {
   return brands !== null && (isCmafBrand(brands.major) || brands.compatible.some(isCmafBrand))
 }
@@ -307,71 +358,6 @@ export function scanAndDetectMedia(data: Uint8Array, scanLimit = 256): PayloadMe
   return null
 }
 
-// ─── Nested boxes ────────────────────────────────────────────────────
-
-/** A child box: its type and where its payload starts and ends. */
-interface Child {
-  type: string
-  /** First byte after the header (and largesize, if any) */
-  body: number
-  /** One past the last byte, clamped to the container */
-  end: number
-}
-
-/**
- * The boxes directly inside [start, end). Unlike {@link parseBoxes} any type
- * is accepted — the container already vouches for its contents. A child that
- * claims to run past its container is clamped to it (the data was cut
- * short), and a malformed size ends the walk.
- */
-function children(data: Uint8Array, start: number, end: number): Child[] {
-  const out: Child[] = []
-  let offset = start
-  while (offset + 8 <= end) {
-    const size = u32(data, offset)
-    const type = fourcc(data, offset + 4)
-    let body = offset + 8
-    let boxEnd: number
-    if (size === 0) {
-      boxEnd = end
-    } else if (size === 1) {
-      if (offset + 16 > end) break
-      body = offset + 16
-      // A child past 4 GiB is necessarily cut short here.
-      boxEnd = u32(data, offset + 8) > 0 ? end : offset + u32(data, offset + 12)
-      if (boxEnd < body) break
-    } else if (size >= 8) {
-      boxEnd = offset + size
-    } else {
-      break
-    }
-    out.push({ type, body, end: Math.min(boxEnd, end) })
-    if (boxEnd >= end) break
-    offset = boxEnd
-  }
-  return out
-}
-
-function child(data: Uint8Array, parent: Child, type: string): Child | undefined {
-  return children(data, parent.body, parent.end).find((c) => c.type === type)
-}
-
-/** The top level of `data` as {@link Child} entries, for the walks below. */
-function topLevel(data: Uint8Array): Child[] {
-  return children(data, 0, data.length)
-}
-
-/**
- * A 32-bit FullBox field whose position depends on the box's version: at
- * `v0` bytes into the body (version/flags included) for version 0, at `v1`
- * for version 1. Null when the box is cut short before it.
- */
-function fullBoxU32(data: Uint8Array, box: Child, v0: number, v1: number): number | null {
-  if (box.body + 4 > box.end) return null
-  const at = box.body + (data[box.body] === 1 ? v1 : v0)
-  return at + 4 <= box.end ? u32(data, at) : null
-}
-
 // ─── Fragments ───────────────────────────────────────────────────────
 
 /**
@@ -397,16 +383,103 @@ export function fragmentTrackIds(data: Uint8Array): number[] {
 
 // ─── Init segments ───────────────────────────────────────────────────
 
+function readTrex(data: Uint8Array, box: Child): (TrackExtends & { trackId: number }) | null {
+  if (box.body + 24 > box.end) return null
+  return {
+    trackId: u32(data, box.body + 4),
+    defaultSampleDescriptionIndex: u32(data, box.body + 8),
+    defaultSampleDuration: u32(data, box.body + 12),
+    defaultSampleSize: u32(data, box.body + 16),
+    defaultSampleFlags: u32(data, box.body + 20),
+  }
+}
+
 /**
- * Summarise an init segment: its `ftyp` brands, and per `moov/trak` the
- * track_ID, handler, first sample entry and timescale. Returns `null` when
- * `data` has no `moov`.
+ * tenc (ISO/IEC 23001-7): reserved(1), then reserved(1) for version 0 or
+ * crypt_byte_block(4 bits) skip_byte_block(4 bits), isProtected(1),
+ * Per_Sample_IV_Size(1), KID(16), and a constant IV when isProtected is 1
+ * and the IV size is 0.
+ */
+function readTenc(data: Uint8Array, box: Child): TrackEncryptionBox | null {
+  const vf = versionFlags(data, box)
+  const at = box.body + 4
+  if (vf === null || at + 20 > box.end) return null
+  const pattern = data[at + 1]!
+  const isProtected = data[at + 2]!
+  const perSampleIvSize = data[at + 3]!
+  let constantIv: string | null = null
+  if (isProtected === 1 && perSampleIvSize === 0 && at + 21 <= box.end) {
+    const size = data[at + 20]!
+    if (at + 21 + size <= box.end) constantIv = hex(data, at + 21, at + 21 + size)
+  }
+  return {
+    version: vf.version,
+    isProtected,
+    perSampleIvSize,
+    defaultKid: hex(data, at + 4, at + 20),
+    cryptByteBlock: vf.version >= 1 ? pattern >> 4 : null,
+    skipByteBlock: vf.version >= 1 ? pattern & 0x0f : null,
+    constantIv,
+  }
+}
+
+/**
+ * The `sinf` of an 'encv' or 'enca' entry, among the child boxes after the
+ * VisualSampleEntry fields (78 bytes into the body) or the AudioSampleEntry
+ * fields (28 bytes).
+ */
+function readEncryption(data: Uint8Array, entry: Child): TrackEncryption {
+  const start = entry.body + (entry.type === 'encv' ? 78 : 28)
+  const sinf = children(data, start, entry.end).find((c) => c.type === 'sinf')
+  if (!sinf) {
+    return { sinf: false, originalFormat: null, schemeType: null, schemeVersion: null, tenc: null }
+  }
+  const frma = child(data, sinf, 'frma')
+  const schm = child(data, sinf, 'schm')
+  const schi = child(data, sinf, 'schi')
+  const tenc = schi && child(data, schi, 'tenc')
+  return {
+    sinf: true,
+    originalFormat: frma && frma.body + 4 <= frma.end ? fourcc(data, frma.body) : null,
+    schemeType: schm && schm.body + 8 <= schm.end ? fourcc(data, schm.body + 4) : null,
+    schemeVersion: schm && schm.body + 12 <= schm.end ? u32(data, schm.body + 8) : null,
+    tenc: tenc ? readTenc(data, tenc) : null,
+  }
+}
+
+/** pssh (ISO/IEC 23001-7): SystemID(16), KID_count and KIDs for version 1, DataSize(4) */
+function readPssh(data: Uint8Array, box: Child): ProtectionSystemHeader | null {
+  const vf = versionFlags(data, box)
+  let at = box.body + 4
+  if (vf === null || at + 16 > box.end) return null
+  const systemId = hex(data, at, at + 16)
+  at += 16
+  const kids: string[] = []
+  if (vf.version > 0) {
+    if (at + 4 > box.end) return null
+    const count = u32(data, at)
+    at += 4
+    for (let i = 0; i < count; i++, at += 16) {
+      if (at + 16 > box.end) return null
+      kids.push(hex(data, at, at + 16))
+    }
+  }
+  if (at + 4 > box.end) return null
+  return { systemId, kids, dataSize: u32(data, at) }
+}
+
+/**
+ * Summarise an init segment: its `ftyp` brands, its `pssh` boxes, and per
+ * `moov/trak` the track_ID, handler, sample entry and coding, timescale,
+ * `trex` defaults, protection boxes and sample group descriptions. Returns
+ * `null` when `data` has no `moov`.
  *
  * Boxes read (ISO/IEC 14496-12):
  *   - tkhd (8.3.2): v0 creation(4) modification(4) track_ID; v1 8, 8, track_ID
  *   - mdhd (8.4.2): v0 creation(4) modification(4) timescale; v1 8, 8, timescale
  *   - hdlr (8.4.3): pre_defined(4) handler_type(4)
  *   - stsd (8.5.2): entry_count(4) then sample entries, each a box
+ *   - trex (8.8.3): track_ID and the four sample defaults
  */
 export function parseInitSegment(data: Uint8Array): InitSegment | null {
   const top = topLevel(data)
@@ -416,8 +489,22 @@ export function parseInitSegment(data: Uint8Array): InitSegment | null {
   const ftyp = top.find((b) => b.type === 'ftyp')
   const brands = ftyp ? brandsAt(data, ftyp.body, ftyp.end) : null
 
+  const inMoov = children(data, moov.body, moov.end)
+  const trexById = new Map<number, TrackExtends>()
+  const ambiguous = new Set<number>()
+  for (const mvex of inMoov) {
+    if (mvex.type !== 'mvex') continue
+    for (const box of childrenOf(data, mvex, 'trex')) {
+      const trex = readTrex(data, box)
+      if (trex === null) continue
+      const { trackId, ...defaults } = trex
+      if (trexById.has(trackId)) ambiguous.add(trackId)
+      else trexById.set(trackId, defaults)
+    }
+  }
+
   const tracks: InitTrack[] = []
-  for (const trak of children(data, moov.body, moov.end)) {
+  for (const trak of inMoov) {
     if (trak.type !== 'trak') continue
     const tkhd = child(data, trak, 'tkhd')
     const mdia = child(data, trak, 'mdia')
@@ -427,19 +514,45 @@ export function parseInitSegment(data: Uint8Array): InitSegment | null {
     const stbl = minf && child(data, minf, 'stbl')
     const stsd = stbl && child(data, stbl, 'stsd')
 
-    let sampleEntry: string | null = null
-    if (stsd && stsd.body + 16 <= stsd.end) {
-      // version/flags(4) entry_count(4), then the first entry's size(4) type(4)
-      sampleEntry = fourcc(data, stsd.body + 12)
+    // version/flags(4) entry_count(4), then the first entry
+    const entry =
+      stsd && stsd.body + 16 <= stsd.end ? children(data, stsd.body + 8, stsd.end)[0] : undefined
+    const sampleEntry = entry?.type ?? null
+    const encryption =
+      entry && (entry.type === 'encv' || entry.type === 'enca') ? readEncryption(data, entry) : null
+    const trackId = tkhd ? fullBoxU32(data, tkhd, 12, 20) : null
+    const sampleGroups: SampleGroupDescription[] = []
+    for (const sgpd of stbl ? childrenOf(data, stbl, 'sgpd') : []) {
+      const read = readSgpd(data, sgpd)
+      if (read) sampleGroups.push(read)
     }
 
     tracks.push({
-      trackId: tkhd ? fullBoxU32(data, tkhd, 12, 20) : null,
+      trackId,
       handler: hdlr && hdlr.body + 12 <= hdlr.end ? fourcc(data, hdlr.body + 8) : null,
       sampleEntry,
+      codec: encryption ? encryption.originalFormat : sampleEntry,
       timescale: mdhd ? fullBoxU32(data, mdhd, 12, 20) : null,
+      trex: trackId === null || ambiguous.has(trackId) ? null : (trexById.get(trackId) ?? null),
+      encryption,
+      sampleGroups,
+      hasEditList: child(data, trak, 'edts') !== undefined,
     })
   }
 
-  return { brands, tracks }
+  const pssh: ProtectionSystemHeader[] = []
+  for (const box of inMoov) {
+    if (box.type !== 'pssh') continue
+    const read = readPssh(data, box)
+    if (read) pssh.push(read)
+  }
+
+  const seen = new Set<number>()
+  for (const t of tracks) {
+    if (t.trackId === null) continue
+    if (seen.has(t.trackId)) ambiguous.add(t.trackId)
+    seen.add(t.trackId)
+  }
+
+  return { brands, tracks, pssh, ambiguousTrackIds: [...ambiguous].sort((a, b) => a - b) }
 }

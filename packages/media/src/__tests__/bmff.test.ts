@@ -270,22 +270,47 @@ describe('fragmentTrackIds', () => {
 
 // ─── Init segments ───────────────────────────────────────────────────
 
+const NEW_FIELDS = { trex: null, encryption: null, sampleGroups: [], hasEditList: false }
+
 describe('parseInitSegment', () => {
   it('summarises brands and each track', () => {
     const data = concat(brandsBox('ftyp', 'cmfc', ['iso6', 'cmfc']), moov(VIDEO, AUDIO))
     expect(parseInitSegment(data)).toEqual({
       brands: { major: 'cmfc', minorVersion: 0, compatible: ['iso6', 'cmfc'] },
       tracks: [
-        { trackId: 1, handler: 'vide', sampleEntry: 'avc1', timescale: 90000 },
-        { trackId: 2, handler: 'soun', sampleEntry: 'mp4a', timescale: 48000 },
+        {
+          trackId: 1,
+          handler: 'vide',
+          sampleEntry: 'avc1',
+          timescale: 90000,
+          ...NEW_FIELDS,
+          codec: 'avc1',
+        },
+        {
+          trackId: 2,
+          handler: 'soun',
+          sampleEntry: 'mp4a',
+          timescale: 48000,
+          ...NEW_FIELDS,
+          codec: 'mp4a',
+        },
       ],
+      pssh: [],
+      ambiguousTrackIds: [],
     })
   })
 
   it('reads tkhd and mdhd version 1 (64-bit times)', () => {
     const data = moov({ ...VIDEO, trackId: 3, timescale: 1000, version: 1 })
     expect(parseInitSegment(data)!.tracks).toEqual([
-      { trackId: 3, handler: 'vide', sampleEntry: 'avc1', timescale: 1000 },
+      {
+        trackId: 3,
+        handler: 'vide',
+        sampleEntry: 'avc1',
+        timescale: 1000,
+        ...NEW_FIELDS,
+        codec: 'avc1',
+      },
     ])
   })
 
@@ -302,13 +327,20 @@ describe('parseInitSegment', () => {
     // A trak with only a tkhd
     const bare = box('moov', box('trak', fullBox('tkhd', 0, u32(0), u32(0), u32(4))))
     expect(parseInitSegment(bare)!.tracks).toEqual([
-      { trackId: 4, handler: null, sampleEntry: null, timescale: null },
+      { trackId: 4, handler: null, sampleEntry: null, timescale: null, ...NEW_FIELDS, codec: null },
     ])
     // The whole init segment cut off inside the tkhd, before track_ID
     const ftyp = brandsBox('ftyp', 'iso6', [])
     const cut = concat(ftyp, moov(VIDEO)).subarray(0, ftyp.length + 8 + 108 + 8 + 8 + 4 + 8)
     expect(parseInitSegment(cut)!.tracks).toEqual([
-      { trackId: null, handler: null, sampleEntry: null, timescale: null },
+      {
+        trackId: null,
+        handler: null,
+        sampleEntry: null,
+        timescale: null,
+        ...NEW_FIELDS,
+        codec: null,
+      },
     ])
   })
 

@@ -1,7 +1,7 @@
 /**
  * MSF and CMSF catalogs: draft-ietf-moq-msf-00 and -01, draft-ietf-moq-cmsf-00
  * and -01 (msf-00 5, msf-01 5, cmsf 2). Deltas: msf-00 5.2, msf-01 5.3.
- * Unknown fields are kept (msf-00 5.1, msf-01 5). gzip (msf-01 12.1) is not decompressed.
+ * Unknown fields are kept (msf-00 5.1, msf-01 5).
  */
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -86,8 +86,6 @@ export interface DeltaOperation {
 }
 
 export type ParsedCatalog =
-  /** gzip magic bytes (1f 8b): compressed per MSF_COMPRESSION, not read here */
-  | { kind: 'compressed'; draft: null; problems: CatalogProblem[] }
   /** Not UTF-8, not JSON, or not a JSON object */
   | { kind: 'invalid'; draft: CatalogDraft | null; problems: CatalogProblem[] }
   | {
@@ -157,10 +155,6 @@ function trackKey(namespace: string | null, name: string): string {
 
 function namespaceOf(track: JsonObject, catalogNamespace: string | null): string | null {
   return typeof track.namespace === 'string' ? track.namespace : catalogNamespace
-}
-
-function isGzip(bytes: Uint8Array): boolean {
-  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b
 }
 
 /** A catalog object's text, or `null` when its bytes are not UTF-8 */
@@ -535,6 +529,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
     // channelConfig (5.2.28, 5.2.29).
     const role = track.role
     const audio = role === 'audio'
+    const article = audio ? 'an' : 'a'
     if (audio || role === 'video') {
       if (track.codec === undefined) {
         warn(
@@ -542,7 +537,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
           'missing_field',
           `${path}.codec`,
           'MSF-01 5.2.18',
-          `a ${role} track names its codec`,
+          `${article} ${role} track names its codec`,
         )
       }
       if (track.bitrate === undefined) {
@@ -551,7 +546,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
           'missing_field',
           `${path}.bitrate`,
           'MSF-01 5.2.22',
-          `a ${role} track gives its bitrate`,
+          `${article} ${role} track gives its bitrate`,
         )
       }
     }
@@ -1202,7 +1197,7 @@ function isDeltaShape(root: JsonObject, base: 0 | 1): boolean {
  * comes back in `problems`, each with the section that says so.
  *
  * `kind` is the object's shape: `independent` or `delta` once it is a JSON
- * object, `invalid` before that, `compressed` for a gzip payload. An `error`
+ * object, `invalid` before that. An `error`
  * among the problems means {@link applyCatalogObject} will refuse it.
  *
  * Without `options.draft`, the draft comes from the shape. A Number or String
@@ -1218,9 +1213,6 @@ export function parseCatalog(
   options: ParseCatalogOptions = {},
 ): ParsedCatalog {
   const problems: CatalogProblem[] = []
-  if (typeof input !== 'string' && isGzip(input)) {
-    return { kind: 'compressed', draft: null, problems }
-  }
   const hint = options.draft ?? null
   const text = decodeText(input)
   if (text === null) {
@@ -1434,7 +1426,7 @@ function draftsName(draft: CatalogDraft | null, candidates: readonly CatalogDraf
 export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): CatalogUpdate {
   const problems: CatalogProblem[] = []
   const refused: CatalogUpdate = { state, applied: false, problems }
-  if (parsed.kind === 'compressed' || parsed.kind === 'invalid') return refused
+  if (parsed.kind === 'invalid') return refused
   if (parsed.problems.some((p) => p.severity === 'error')) return refused
   const parsedDraft = parsed.draft ?? parsed.candidates[0]
   if (parsedDraft === undefined) return refused
@@ -1958,14 +1950,13 @@ function spliceRedactions(text: string, credentials: boolean): string {
  * Every occurrence is redacted, at any depth: tracks, publishTracks, delta
  * operations, and anywhere else a producer used the same names.
  *
- * Returns `null` when the payload cannot be read as a catalog: compressed, not
- * UTF-8, not JSON, or JSON without a catalog's shape.
+ * Returns `null` when the payload cannot be read as a catalog: not UTF-8, not
+ * JSON, or JSON without a catalog's shape.
  */
 export function redactCatalogText(
   input: string | Uint8Array,
   options: RedactCatalogOptions = {},
 ): string | null {
-  if (typeof input !== 'string' && isGzip(input)) return null
   const json = readJson(input)
   if (json === null || !isObject(json.root)) return null
   const root = json.root

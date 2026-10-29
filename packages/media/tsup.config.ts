@@ -11,5 +11,8 @@ export default defineConfig({
     bmff: 'src/bmff.ts',
     annexb: 'src/annexb.ts',
     catalog: 'src/catalog.ts',
+    loc: 'src/loc.ts',
+    cmaf: 'src/cmaf.ts',
+    timeline: 'src/timeline.ts',
   },
 })

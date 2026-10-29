@@ -2,7 +2,10 @@
 //
 //   @moqtap/media/bmff     ISO BMFF boxes, CMAF brands, init segments
 //   @moqtap/media/annexb   H.264 / H.265 Annex-B elementary streams
+//   @moqtap/media/cmaf     CMAF object payloads under CMSF
 //   @moqtap/media/catalog  MSF and CMSF catalogs
+//   @moqtap/media/timeline MSF media and event timelines, CMSF SAP type timeline
+//   @moqtap/media/loc      LOC properties and payloads
 
 export type { AnnexBInfo } from './annexb'
 export type {
@@ -12,6 +15,11 @@ export type {
   InitTrack,
   MediaVariant,
   PayloadMediaInfo,
+  ProtectionSystemHeader,
+  SampleGroupDescription,
+  TrackEncryption,
+  TrackEncryptionBox,
+  TrackExtends,
 } from './bmff'
 export type {
   CatalogDraft,
@@ -29,3 +37,65 @@ export type {
   ParsedCatalog,
   RedactCatalogOptions,
 } from './catalog'
+export type {
+  CheckCmafObjectOptions,
+  CmafFinding,
+  CmafFindingCode,
+  CmafObject,
+  CmafTiming,
+  CmsfDraft,
+  FirstSample,
+  MalformedBox,
+  MalformedReason,
+  MovieFragment,
+  SampleFlags,
+  SampleFlagsSource,
+  SampleFlagsUnknown,
+  SampleToGroup,
+  SapReading,
+  SapUnknownReason,
+  TimeUnknown,
+  TrackFragment,
+  TrackFragmentHeader,
+  TrackRun,
+  TrackRunSample,
+} from './cmaf'
+export type {
+  AudioLevel,
+  AvcConfig,
+  DecodeLocOptions,
+  DecodeLocTrackOptions,
+  FrameMarking,
+  HevcConfig,
+  LocDecoded,
+  LocMeaning,
+  LocMeanings,
+  LocPayloadFraming,
+  LocProfile,
+  LocProfileDescription,
+  LocPropertyDefinition,
+  LocPropertyInput,
+  LocPropertyResult,
+  LocPropertyType,
+  LocResolution,
+  LocValueEncoding,
+  NalFraming,
+  TransportDraft,
+  VideoConfig,
+} from './loc'
+export type {
+  EventRecord,
+  MediaTimelineEntry,
+  MediaTimelineRecord,
+  MediaTimelineTemplate,
+  ParsedEventTimeline,
+  ParsedMediaTimeline,
+  ParsedMediaTimelineTemplate,
+  ParseTimelineOptions,
+  ReadSapTimelineOptions,
+  SapTimeline,
+  SapTimelineEntry,
+  TimelineDraft,
+  TimelineProblem,
+  TimelineProblemCategory,
+} from './timeline'

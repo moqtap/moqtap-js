@@ -43,9 +43,9 @@
     },
     "packages/media": {
       "name": "@moqtap/media",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
-        "@moqtap/test-vectors": "^0.20.0",
+        "@moqtap/test-vectors": "^0.21.0",
         "tsup": "^8.0.0",
         "typescript": "^5.5.0",
         "vitest": "^3.2.7",
@@ -426,6 +426,6 @@
 
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
-    "@moqtap/media/@moqtap/test-vectors": ["@moqtap/test-vectors@0.20.0", "", {}, "sha512-6BqD7vihZPIk7L6TKT3alKkWQDhowDc7K50enrKLwTLHMqMiK8f3OAoqtbqXfdLaJLeUx8taYLl0EQhHdf8MZg=="],
+    "@moqtap/media/@moqtap/test-vectors": ["@moqtap/test-vectors@0.21.0", "", {}, "sha512-epXVE71YaypmFvQ7OZ5mMXUO3l8t/mPjqbEWjLNIk6FlHovYFzlNd3KWR5wt/GVU/gJF8HZMYzGzegiuwlQDfQ=="],
   }
 }

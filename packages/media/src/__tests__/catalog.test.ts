@@ -119,9 +119,12 @@ describe('parseCatalog', () => {
     ])
   })
 
-  it('reports gzip as compressed without reading it', () => {
-    const parsed = parseCatalog(new Uint8Array([0x1f, 0x8b, 0x08, 0x00]))
-    expect(parsed).toEqual({ kind: 'compressed', draft: null, problems: [] })
+  it('reads gzip bytes as invalid like any payload that is not JSON', () => {
+    expect(parseCatalog(new Uint8Array([0x1f, 0x8b, 0x08, 0x00]))).toMatchObject({
+      kind: 'invalid',
+      draft: null,
+      problems: [{ severity: 'error', category: 'invalid_json' }],
+    })
   })
 
   it('never throws, whatever the payload', () => {
@@ -200,6 +203,7 @@ describe('parseCatalog', () => {
       ['tracks[0].samplerate', 'MSF-01 5.2.28'],
       ['tracks[0].channelConfig', 'MSF-01 5.2.29'],
     ])
+    expect(parsed.problems[1]?.message).toBe('an audio track gives its bitrate')
   })
 
   it('keys duplicate tracks by the catalog namespace when it is given', () => {
@@ -414,7 +418,7 @@ describe('applyCatalogObject', () => {
     expect(update.problems.map((p) => p.category)).toEqual(['invalid_value'])
   })
 
-  it('reports nothing for compressed or invalid objects and keeps the state', () => {
+  it('reports nothing for invalid objects and keeps the state', () => {
     const state = follow([base])
     for (const parsed of [parseCatalog(new Uint8Array([0x1f, 0x8b])), parseCatalog('{')]) {
       expect(applyCatalogObject(state, parsed)).toEqual({ state, applied: false, problems: [] })

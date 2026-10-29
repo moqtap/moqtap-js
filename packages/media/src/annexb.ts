@@ -8,6 +8,8 @@
  * A start code alone is not evidence: the NAL headers after it must be valid.
  */
 
+import { H264_IDR, H264_KNOWN, isH265Irap, isKnownH265 } from './nal'
+
 /** The furthest offset the first start code is looked for at */
 const SCAN_LIMIT = 64
 
@@ -66,11 +68,6 @@ function collectNals(data: Uint8Array, start: number): RawNal[] {
 
 /** Types that alone identify H.264: slices, SPS, PPS, AUD */
 const H264_STRONG = new Set([1, 5, 7, 8, 9])
-/**
- * Types Table 7-1 specifies. Reserved (17, 18, 22, 23) and unspecified (0,
- * 24-31) types mean not H.264.
- */
-const H264_KNOWN = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 19, 20, 21])
 
 function classifyH264(
   data: Uint8Array,
@@ -87,7 +84,7 @@ function classifyH264(
     const type = b & 0x1f
     if (!H264_KNOWN.has(type)) return null
     if (!types.includes(type)) types.push(type)
-    if (type === 5) keyframe = true
+    if (type === H264_IDR) keyframe = true
     if (type === 7 && sps === undefined) sps = nal.offset + 1
   }
 
@@ -115,17 +112,6 @@ function h264CodecString(data: Uint8Array, spsOffset: number): string | undefine
 
 /** VPS, SPS, PPS, AUD; slices also identify H.265 */
 const H265_STRONG = new Set([32, 33, 34, 35])
-/** IRAP types in use: BLA_W_LP (16) through CRA_NUT (21); 22-23 are reserved IRAP types (H.265 Table 7-1) */
-const H265_IRAP_MIN = 16
-const H265_IRAP_MAX = 21
-
-/**
- * Types Table 7-1 specifies: VCL 0-9 and 16-21, non-VCL 32-40. Reserved (10-15,
- * 22-31, 41-47) and unspecified (48-63) types mean not H.265.
- */
-function isKnownH265(type: number): boolean {
-  return type <= 9 || (type >= H265_IRAP_MIN && type <= H265_IRAP_MAX) || (type >= 32 && type <= 40)
-}
 
 function classifyH265(
   data: Uint8Array,
@@ -148,7 +134,7 @@ function classifyH265(
     // (nuh_layer_id > 0) gives null.
     if (tidPlus1 === 0 || layerId !== 0 || !isKnownH265(type)) return null
     if (!types.includes(type)) types.push(type)
-    const irap = type >= H265_IRAP_MIN && type <= H265_IRAP_MAX
+    const irap = isH265Irap(type)
     if (irap) keyframe = true
     if (H265_STRONG.has(type) || type <= 9 || irap) strong = true
   }
