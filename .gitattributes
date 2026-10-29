@@ -1,0 +1,3 @@
+# Text is LF in the repository and in every checkout, whatever core.autocrlf
+# says: the formatter checks LF.
+* text=auto eol=lf
