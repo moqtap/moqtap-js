@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Catalog and timeline problems carry a stable `id`, a `family`, the rule as data (`spec`:
+  draft, revision, section, keyword and quote), `also`, `effect`, `subject`, `field`,
+  `expected` and `actual`; catalog problems also `readAs`.
+- `severityOf`, `specUrl`, `specLabel`, and the wording functions `catalogProblemTitle`,
+  `catalogProblemRemedy`, `catalogProblemFound`, `catalogProblemExpected` and
+  `catalogProblemTracks`, and `timelineProblemTitle`, `timelineProblemRemedy`,
+  `timelineProblemFound` and `timelineProblemExpected`.
+- `checkCatalogObjectPlacement`: the MSF Group rules for a catalog object's Group, Subgroup
+  and Object IDs.
+- `catalog.init.other-draft-field`: a CMSF cmaf track that carries the other revision's init
+  field.
 - `@moqtap/media/frames`: per-sample frame types read from H.264 (IDR, slice types), H.265
   (NAL unit kinds, IRAP) and AV1 (frame type, shown key frames) samples, with each CMAF
   sample's span, its sample flags, and whether the flags agree with the bitstream.
@@ -16,8 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Catalog, timeline and CMAF problem messages are sentences that start with a capital letter,
-  with field names spelled as in the catalog.
+- Catalog and timeline problem messages are titles that say what is wrong with the data,
+  naming the track; CMAF problem messages are sentences that start with a capital letter.
+- A few problems cite one section where they cited two; the other is in `also`.
 
 ## [0.2.0] - 2026-10-29
 

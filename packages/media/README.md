@@ -24,7 +24,9 @@ what media they carry:
 - **Frame types**: each sample's H.264, H.265 or AV1 frame type read from its bitstream, beside
   what its sample flags claim.
 - **MSF and CMSF catalogs**: each catalog object read and checked against its draft, deltas
-  applied, tracks normalised, and credentials redacted for sharing.
+  applied, tracks normalised, and credentials redacted for sharing. Each problem names the rule
+  it breaks, with its keyword and the sentence that states it, and comes with a title, a fix and
+  a link to the draft.
 - **Timelines**: MSF media timeline records and template, MSF event timeline records, and
   the CMSF SAP type timeline.
 - **LOC**: object properties read under the LOC draft a track's property types allow, and
@@ -199,7 +201,10 @@ if (parsed.kind === 'records') {
 | `readSapTimeline(records, options?)` | The SAP type timeline entries: Location, SAP type 0 to 3, and earliest presentation time in milliseconds. |
 | `SAP_TIMELINE_EVENT_TYPE` | `"org.ietf.moq.cmsf.sap"`. |
 
-Problems have the same shape as catalog problems. An `error` leaves the record out. On a media
+Problems have the same shape as catalog problems, with ids starting `timeline.` and a
+`subject` of the record or the whole document; `timelineProblemTitle`, `timelineProblemRemedy`,
+`timelineProblemFound` and `timelineProblemExpected` word them. Without a draft, `spec` cites
+the latest draft and `also` the earlier one. An `error` leaves the record out. On a media
 timeline: a record that is not an Array, one with fewer than three items (`missing_field`) or,
 with `draft: 'msf-00'`, more than three, a wallclock time that is not a Number, a media time
 that is not a whole number of milliseconds, or a Location that is not two Group and Object IDs.
@@ -298,18 +303,58 @@ a catalog whose shape does not make it CMSF has `draft` `null`, the MSF and CMSF
 
 Each problem gives:
 
+- `id`: a stable identifier, such as `catalog.init.other-draft-field` or
+  `catalog.track.packaging.missing`. An id ending `.missing` is a required field that is absent,
+  `.type` a value of the wrong JSON type.
+- `family`: problems of one family show as one row, such as `catalog.audio.fields` for a
+  missing `samplerate` and `channelConfig`
 - `category`: the kind of rule broken, with the names `@moqtap/test-vectors` uses
   (`missing_field`, `forbidden_field`, `unknown_track`, ...), plus this package's own
-  `ambiguous_draft`
+  `ambiguous_draft` and `object_order`
 - `path`: where, such as `tracks[0].packaging` or `deltaUpdate[1].op`
-- `section`: the draft and section that state the rule, such as `MSF-01 5.2.4`
-- `severity`: `error` or `warning`
-- `message`: what is wrong, as a sentence to show, with field names spelled as in the catalog
+- `subject` and `field`: what the problem is about (the catalog, `tracks[i]` with its name, a
+  delta entry, an `initDataList` or `contentProtections` entry) and the field within it
+- `spec`: the rule as data, `{ draft, revision, section, keyword, quote }`, pinned to the
+  draft the catalog was read by; `also` holds the sections it depends on. `section` gives the
+  same as text, such as `MSF-01 5.2.4`.
+- `expected` and `actual`: what the rule asks for, and what the catalog holds (absent, a value,
+  or the field the other draft revision defines in its place)
+- `readAs`: the catalog's `version` and the drafts its rules came from
+- `severity` and `effect`: whether the object applies. An `error` (`effect` `refused`) breaks a
+  rule that binds the reader, or leaves nothing to resolve: an unsupported version, a delta that
+  removes a track that was never declared, a track without a name. A `warning` (`applied`) lets
+  the object apply.
+- `message`: the problem's title
 
-A warning breaks a rule that binds the producer, or is `ambiguous_draft`, and the object still
-applies. An error breaks a rule that binds the reader, or leaves nothing to resolve: an
-unsupported version, a delta that removes a track that was never declared, a track without a
-name. The object is refused.
+How much a problem matters comes from its rule's keyword: `severityOf(problem)` is `error` for
+MUST, MUST NOT, a required field or a JSON type, `warning` for SHOULD, SHOULD NOT and rules the
+draft states without a keyword, and `info` for `ambiguous_draft`.
+
+The words are functions over one family of problems, on one track or several, so every tool
+shows the same text:
+
+| Export | What it gives |
+| --- | --- |
+| `catalogProblemTitle(group)` | A sentence of at most 70 characters for the usual names, naming the track when there is one: `Audio track "audio" has no samplerate or channelConfig` |
+| `catalogProblemRemedy(group)` | What to change, in one line: `Add samplerate (Number) and channelConfig (String) to the track` |
+| `catalogProblemFound(group)` | What the catalog holds: `samplerate absent · channelConfig absent` |
+| `catalogProblemExpected(group)` | What the rule asks for |
+| `catalogProblemTracks(group)` | The names of the tracks the group is about |
+| `specUrl(spec)` | `https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-01#section-3.1` |
+| `specLabel(spec)` | `CMSF-01 3.1` |
+
+A CMSF catalog whose cmaf tracks carry the other revision's init field, such as a `draft-01`
+catalog with CMSF-00's track-level `initData` and no `initRef`, reports
+`catalog.init.other-draft-field` on each track, with `actual` naming the field and its size.
+A track with neither field reports `catalog.init.missing`.
+
+### Where an object was carried
+
+`checkCatalogObjectPlacement({ groupId, subgroupId, objectId, independent }, drafts)` checks a
+catalog object against the Group rules of MSF 5: Object 0 of a Group is independent and, under
+MSF-01, every later Object is a delta and every object is on Subgroup 0. `drafts` is the
+object's draft or its candidate drafts; when they disagree on these rules, nothing is checked.
+The problems never refuse the object.
 
 ### Deltas
 

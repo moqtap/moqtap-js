@@ -17,9 +17,14 @@ import {
   applyCatalogObject,
   type CatalogDraft,
   type CatalogProblem,
+  catalogProblemFound,
+  catalogProblemRemedy,
+  catalogProblemTitle,
   createCatalogState,
   type JsonObject,
   parseCatalog,
+  severityOf,
+  specLabel,
 } from '../catalog'
 
 // ─── Locating the vectors ────────────────────────────────────────────
@@ -236,6 +241,28 @@ describe('catalog vectors', () => {
       for (const vector of file.vectors) {
         for (const problem of run(vector, file.draft).problems.flat()) {
           expect(problem.message, `${file.name}#${vector.id}`).toMatch(/^[A-Z].*[^.]$/s)
+        }
+      }
+    }
+  })
+
+  it('gives every problem an id, a reference pinned to its draft, and its wording', () => {
+    for (const file of files) {
+      for (const vector of file.vectors) {
+        for (const p of run(vector, file.draft).problems.flat()) {
+          const at = `${file.name}#${vector.id}: ${p.id}`
+          expect(p.id, at).toMatch(/^catalog\.[a-zA-Z0-9.-]+$/)
+          expect(p.message, at).toBe(catalogProblemTitle([p]))
+          expect(p.message.length, at).toBeLessThanOrEqual(70)
+          expect(catalogProblemRemedy([p]), at).not.toMatch(/\n/)
+          expect(catalogProblemFound([p]), at).not.toBe('')
+          expect(p.section, at).toBe(specLabel(p.spec))
+          expect(p.readAs.drafts, at).toContain(file.draft)
+          // A CMSF rule cites CMSF; every other rule the MSF draft of the same revision.
+          expect(`${p.spec.draft}-${p.spec.revision}`, at).toMatch(
+            new RegExp(`^c?msf-${file.draft.slice(-2)}$`),
+          )
+          expect(['error', 'warning', 'info'], at).toContain(severityOf(p))
         }
       }
     }

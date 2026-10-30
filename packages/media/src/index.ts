@@ -29,6 +29,7 @@ export type {
 } from './bmff'
 export type {
   CatalogDraft,
+  CatalogObjectPlacement,
   CatalogProblem,
   CatalogProblemCategory,
   CatalogState,
@@ -109,6 +110,14 @@ export type {
   TransportDraft,
   VideoConfig,
 } from './loc'
+export type {
+  CheckId,
+  MediaProblem,
+  ProblemActual,
+  ProblemSubject,
+  SpecKeyword,
+  SpecRef,
+} from './problems'
 export type {
   EventRecord,
   MediaTimelineEntry,

@@ -4,6 +4,38 @@
  * Unknown fields are kept (msf-00 5.1, msf-01 5).
  */
 
+import {
+  type CheckId,
+  fieldRef,
+  fieldType,
+  type MediaProblem,
+  type ProblemActual,
+  type ProblemSubject,
+  problemTitle,
+  ruleRef,
+  type SpecRef,
+  specLabel,
+} from './problems'
+
+export type {
+  CheckId,
+  MediaProblem,
+  ProblemActual,
+  ProblemSubject,
+  SpecKeyword,
+  SpecRef,
+} from './problems'
+export {
+  problemExpected as catalogProblemExpected,
+  problemFound as catalogProblemFound,
+  problemRemedy as catalogProblemRemedy,
+  problemTitle as catalogProblemTitle,
+  problemTracks as catalogProblemTracks,
+  severityOf,
+  specLabel,
+  specUrl,
+} from './problems'
+
 // ─── Types ───────────────────────────────────────────────────────────
 
 /** A catalog draft, as the catalog's shape or the caller says. */
@@ -38,6 +70,9 @@ export interface JsonObject {
  *   change once published
  * - `ambiguous_draft`: no draft given, and the shape does not tell MSF from
  *   CMSF; only the rules both share are checked (cmsf 2)
+ * - `object_order`: a catalog object on the wrong Subgroup, or independent or
+ *   a delta where its Object ID says otherwise (msf 5); see
+ *   {@link checkCatalogObjectPlacement}
  */
 export type CatalogProblemCategory =
   | 'invalid_json'
@@ -54,13 +89,19 @@ export type CatalogProblemCategory =
   | 'duplicate_id'
   | 'illegal_update'
   | 'ambiguous_draft'
+  | 'object_order'
 
-export interface CatalogProblem {
+/**
+ * One problem with a catalog object. How much it matters comes from its
+ * rule's keyword: {@link severityOf}. Its words come from
+ * {@link catalogProblemTitle} and the functions beside it.
+ */
+export interface CatalogProblem extends MediaProblem {
   /**
-   * `error`: breaks a rule that binds whoever reads the catalog, or leaves
-   * nothing to resolve; the object is not applied. `warning`: breaks a rule
-   * the draft states for the catalog's producer, or (`ambiguous_draft`) says
-   * which rules were left unchecked; the object still applies.
+   * Whether the object applies: `error` breaks a rule that binds whoever
+   * reads the catalog, or leaves nothing to resolve, and the object is not
+   * applied; `warning` lets it apply. Not how much the problem matters: that
+   * is {@link severityOf}. `effect` says the same as `refused` or `applied`.
    */
   severity: 'error' | 'warning'
   category: CatalogProblemCategory
@@ -68,8 +109,9 @@ export interface CatalogProblem {
   path: string
   /** The draft and section that state the rule, e.g. `MSF-01 5.2.4` */
   section: string
-  /** What is wrong, as a sentence to show: capitalised, no closing period */
+  /** {@link catalogProblemTitle} of this problem alone: capitalised, no closing period */
   message: string
+  readAs: { version: JsonValue; drafts: CatalogDraft[] }
 }
 
 /**
@@ -141,12 +183,6 @@ function kindOf(value: JsonValue): JsonKind {
   if (value === null) return 'null'
   if (Array.isArray(value)) return 'array'
   return typeof value as JsonKind
-}
-
-/** "a String", "an Array": the drafts' JSON Type names, with an article */
-function kindName(kind: JsonKind): string {
-  const name = kind.charAt(0).toUpperCase() + kind.slice(1)
-  return kind === 'array' || kind === 'object' ? `an ${name}` : `a ${name}`
 }
 
 /** The key two tracks share exactly when they are the same track */
@@ -221,8 +257,12 @@ interface Rules {
   /** 0 for MSF-00 and CMSF-00, 1 for MSF-01 and CMSF-01 */
   base: 0 | 1
   cmsf: boolean
+  draft: CatalogDraft
   catalogNamespace: string | null
   problems: CatalogProblem[]
+  /** The object being checked, to name the tracks its problems are about */
+  root: JsonObject | null
+  readAs: CatalogProblem['readAs']
 }
 
 function draftBase(draft: CatalogDraft): 0 | 1 {
@@ -233,22 +273,18 @@ function rulesFor(
   draft: CatalogDraft,
   catalogNamespace: string | null,
   problems: CatalogProblem[],
+  root: JsonObject | null = null,
+  drafts: readonly CatalogDraft[] = [draft],
 ): Rules {
   return {
     base: draftBase(draft),
     cmsf: draft === 'cmsf-00' || draft === 'cmsf-01',
+    draft,
     catalogNamespace,
     problems,
+    root,
+    readAs: { version: root?.version ?? null, drafts: [...drafts] },
   }
-}
-
-/** The MSF section a rule is stated in: MSF-00's number or MSF-01's */
-function msf(r: Rules, s00: string, s01: string): string {
-  return r.base === 0 ? `MSF-00 ${s00}` : `MSF-01 ${s01}`
-}
-
-function msfSection(draft: CatalogDraft, s00: string, s01: string): string {
-  return draftBase(draft) === 0 ? `MSF-00 ${s00}` : `MSF-01 ${s01}`
 }
 
 /** "MSF-01", "CMSF-00" */
@@ -256,39 +292,177 @@ function draftName(draft: CatalogDraft): string {
   return draft.toUpperCase()
 }
 
-function cmsf(r: Rules, section: string): string {
-  return `CMSF-0${r.base} ${section}`
+const OPERATION_FIELDS = ['addTracks', 'removeTracks', 'cloneTracks'] as const
+
+function stringAt(value: JsonValue | undefined): string | null {
+  return typeof value === 'string' ? value : null
 }
 
-function report(
-  problems: CatalogProblem[],
+/** What a path into a catalog object is about, and the rest of the path past it */
+function subjectOf(
+  root: JsonObject | null,
+  path: string,
+): { subject: ProblemSubject; rest: string | null } {
+  const rest = (s: string | undefined): string | null => (s === undefined || s === '' ? null : s)
+  let m = /^tracks\[(\d+)\](?:\.(.*))?$/.exec(path)
+  if (m !== null) {
+    const index = Number(m[1])
+    const track = Array.isArray(root?.tracks) ? root.tracks[index] : undefined
+    const name = isObject(track) ? stringAt(track.name) : null
+    return { subject: { kind: 'track', index, name }, rest: rest(m[2]) }
+  }
+  m = /^deltaUpdate\[(\d+)\](?:\.tracks\[(\d+)\])?(?:\.(.*))?$/.exec(path)
+  if (m !== null) {
+    const op = Number(m[1])
+    const entry = Array.isArray(root?.deltaUpdate) ? root.deltaUpdate[op] : undefined
+    const kind = isObject(entry) ? entry.op : undefined
+    const operation = kind === 'add' || kind === 'remove' || kind === 'clone' ? kind : null
+    const index = m[2] === undefined ? null : Number(m[2])
+    const tracks = isObject(entry) && Array.isArray(entry.tracks) ? entry.tracks : []
+    const track = index === null ? undefined : tracks[index]
+    const name = isObject(track) ? stringAt(track.name) : null
+    return {
+      subject: { kind: 'delta', op, operation, index, name },
+      rest: index === null && m[3] === 'tracks' ? 'tracks' : rest(m[3]),
+    }
+  }
+  m = /^(addTracks|removeTracks|cloneTracks)\[(\d+)\](?:\.(.*))?$/.exec(path)
+  if (m !== null) {
+    const field = m[1] as (typeof OPERATION_FIELDS)[number]
+    const index = Number(m[2])
+    const op = Object.keys(root ?? {})
+      .filter((f) => msf00Operation(f) !== null)
+      .indexOf(field)
+    const list = root?.[field]
+    const track = Array.isArray(list) ? list[index] : undefined
+    return {
+      subject: {
+        kind: 'delta',
+        op,
+        operation: msf00Operation(field),
+        index,
+        name: isObject(track) ? stringAt(track.name) : null,
+      },
+      rest: rest(m[3]),
+    }
+  }
+  m = /^(initDataList|contentProtections)\[(\d+)\](?:\.(.*))?$/.exec(path)
+  if (m !== null) {
+    return {
+      subject: {
+        kind: 'entry',
+        list: m[1] as 'initDataList' | 'contentProtections',
+        index: Number(m[2]),
+      },
+      rest: rest(m[3]),
+    }
+  }
+  return { subject: { kind: 'root' }, rest: rest(path) }
+}
+
+/** One problem as a check states it; the rest is filled in from the path */
+interface Report {
+  id: CheckId
+  category: CatalogProblemCategory
+  path: string
+  spec: SpecRef
+  also?: SpecRef[]
+  family?: string
+  /** Default: the path past the subject */
+  field?: string | null
+  expected: string
+  /** Default: absent */
+  actual?: ProblemActual
+  values?: Record<string, JsonValue>
+  subject?: ProblemSubject
+}
+
+function makeProblem(
   severity: CatalogProblem['severity'],
-  category: CatalogProblemCategory,
-  path: string,
-  section: string,
-  message: string,
-): void {
-  problems.push({ severity, category, path, section, message })
+  rep: Report,
+  root: JsonObject | null,
+  readAs: CatalogProblem['readAs'],
+): CatalogProblem {
+  const at = subjectOf(root, rep.path)
+  const p: CatalogProblem = {
+    severity,
+    category: rep.category,
+    path: rep.path,
+    section: specLabel(rep.spec),
+    message: '',
+    id: rep.id,
+    family: rep.family ?? rep.id,
+    spec: rep.spec,
+    also: rep.also ?? [],
+    effect: severity === 'error' ? 'refused' : 'applied',
+    subject: rep.subject ?? at.subject,
+    field: rep.field !== undefined ? rep.field : at.rest,
+    expected: rep.expected,
+    actual: rep.actual ?? { kind: 'absent' },
+    values: rep.values ?? {},
+    readAs,
+  }
+  p.message = problemTitle([p])
+  return p
 }
 
-function error(
-  r: Rules,
-  category: CatalogProblemCategory,
-  path: string,
-  section: string,
-  message: string,
-): void {
-  report(r.problems, 'error', category, path, section, message)
+function error(r: Rules, rep: Report): void {
+  r.problems.push(makeProblem('error', rep, r.root, r.readAs))
 }
 
-function warn(
+function warn(r: Rules, rep: Report): void {
+  r.problems.push(makeProblem('warning', rep, r.root, r.readAs))
+}
+
+/** The `.missing` problem of a required field */
+function missing(
   r: Rules,
-  category: CatalogProblemCategory,
+  scope: string,
   path: string,
-  section: string,
-  message: string,
-): void {
-  report(r.problems, 'warning', category, path, section, message)
+  field: string,
+  options: {
+    spec?: SpecRef
+    family?: string
+    id?: CheckId
+    values?: Record<string, JsonValue>
+  } = {},
+): Report {
+  const type = fieldType(field, r.draft)
+  const spec = options.spec ?? fieldRef(field, r.draft, 'REQUIRED')
+  if (spec === null) throw new Error(`no definition of ${field}`)
+  return {
+    id: options.id ?? (`${scope}.${field}.missing` as CheckId),
+    category: 'missing_field',
+    path,
+    spec,
+    ...(options.family === undefined ? {} : { family: options.family }),
+    expected: type === null ? `${field} present` : `${field}: ${type}`,
+    values: { ...(type === null ? {} : { type }), ...options.values },
+  }
+}
+
+/** The `.type` problem of a value of the wrong JSON type */
+function wrongType(
+  r: Rules,
+  scope: string,
+  path: string,
+  field: string,
+  value: JsonValue,
+  options: { spec?: SpecRef; type?: string; idField?: string } = {},
+): Report {
+  const type = options.type ?? fieldType(field, r.draft) ?? 'String'
+  const spec = options.spec ?? fieldRef(field, r.draft, 'TYPE')
+  if (spec === null) throw new Error(`no definition of ${field}`)
+  return {
+    id: `${scope}.${options.idField ?? field}.type` as CheckId,
+    category: 'invalid_value',
+    path,
+    spec,
+    family: 'catalog.type',
+    expected: `JSON ${type}`,
+    actual: { kind: 'value', value },
+    values: { type },
+  }
 }
 
 /**
@@ -362,14 +536,6 @@ function trackFieldKind(r: Rules, field: string): JsonKind | undefined {
   }
 }
 
-/** The section that defines a track field, for problem citations */
-function trackFieldSection(r: Rules, field: string): string {
-  if (field === 'maxGrpSapStartingType') return cmsf(r, '3.5.2.1')
-  if (field === 'maxObjSapStartingType') return cmsf(r, '3.5.2.2')
-  if (field === 'contentProtectionRefIDs') return cmsf(r, '4.1.2')
-  return msf(r, '5.1', '5.2')
-}
-
 /** Allowed packaging values (msf-00 Table 3, msf-01 Table 4, cmsf 3.5.1 Table 1) */
 function packagingAllowed(r: Rules, value: string): boolean {
   switch (value) {
@@ -387,6 +553,18 @@ function packagingAllowed(r: Rules, value: string): boolean {
   }
 }
 
+/** The init field of the other CMSF revision: initData for -01, initRef for -00 */
+function otherInitField(r: Rules, track: JsonObject): ProblemActual {
+  if (r.base === 1 && track.initData !== undefined) {
+    const bytes = typeof track.initData === 'string' ? decodeBase64(track.initData) : null
+    return { kind: 'other-field', field: 'initData', bytes: bytes === null ? null : bytes.length }
+  }
+  if (r.base === 0 && track.initRef !== undefined) {
+    return { kind: 'other-field', field: 'initRef', bytes: null }
+  }
+  return { kind: 'absent' }
+}
+
 /**
  * Check one track object. `clone` marks the track a clone operation produced,
  * where the parent fields were allowed. Returns false when the track cannot
@@ -394,145 +572,133 @@ function packagingAllowed(r: Rules, value: string): boolean {
  */
 function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): boolean {
   if (!isObject(track)) {
-    error(r, 'invalid_value', path, msf(r, '5.1.9', '5.2.1'), 'A track must be a JSON Object')
+    error(r, {
+      id: 'catalog.track.object',
+      category: 'invalid_value',
+      path,
+      spec: ruleRef('trackObject', r.draft),
+      field: null,
+      expected: 'JSON Object',
+      actual: { kind: 'value', value: track },
+    })
     return false
   }
+  const S = 'catalog.track'
   let keyed = true
   if (track.name === undefined) {
-    error(r, 'missing_field', `${path}.name`, msf(r, '5.1.11', '5.2.3'), 'A track needs a name')
+    error(r, missing(r, S, `${path}.name`, 'name', { family: 'catalog.track.fields' }))
     keyed = false
   } else if (typeof track.name !== 'string') {
-    error(
-      r,
-      'invalid_value',
-      `${path}.name`,
-      msf(r, '5.1.11', '5.2.3'),
-      'The name field must be a String',
-    )
+    error(r, wrongType(r, S, `${path}.name`, 'name', track.name))
     keyed = false
   }
   if (track.namespace !== undefined && typeof track.namespace !== 'string') {
-    error(
-      r,
-      'invalid_value',
-      `${path}.namespace`,
-      msf(r, '5.1.10', '5.2.2'),
-      'The namespace field must be a String',
-    )
+    error(r, wrongType(r, S, `${path}.namespace`, 'namespace', track.namespace))
     keyed = false
   }
 
   for (const [field, value] of Object.entries(track)) {
     const kind = trackFieldKind(r, field)
     if (kind !== undefined && kindOf(value) !== kind) {
-      warn(
-        r,
-        'invalid_value',
-        `${path}.${field}`,
-        trackFieldSection(r, field),
-        `The ${field} field must be ${kindName(kind)}`,
-      )
+      warn(r, wrongType(r, S, `${path}.${field}`, field, value))
     }
   }
 
   const { packaging, isLive, eventType } = track
   if (packaging === undefined) {
-    warn(
-      r,
-      'missing_field',
-      `${path}.packaging`,
-      msf(r, '5.1.12', '5.2.4'),
-      'The packaging field is required',
-    )
+    warn(r, missing(r, S, `${path}.packaging`, 'packaging', { family: 'catalog.track.fields' }))
   } else if (typeof packaging === 'string' && !packagingAllowed(r, packaging)) {
-    warn(
-      r,
-      'invalid_value',
-      `${path}.packaging`,
-      r.cmsf ? cmsf(r, '3.5.1') : msf(r, '5.1.12', '5.2.4'),
-      `The packaging "${packaging}" is not a value the draft allows`,
-    )
+    warn(r, {
+      id: 'catalog.track.packaging.value',
+      category: 'invalid_value',
+      path: `${path}.packaging`,
+      spec: ruleRef('packagingAllowed', r.draft),
+      expected: `a packaging value ${draftName(r.draft)} lists`,
+      actual: { kind: 'value', value: packaging },
+      values: { packaging },
+    })
   }
   if (isLive === undefined) {
-    warn(
-      r,
-      'missing_field',
-      `${path}.isLive`,
-      msf(r, '5.1.15', '5.2.7'),
-      'The isLive field is required',
-    )
+    warn(r, missing(r, S, `${path}.isLive`, 'isLive', { family: 'catalog.track.fields' }))
   }
 
   // eventType: required with eventtimeline packaging, and only allowed there
   if (packaging === 'eventtimeline' && eventType === undefined) {
     warn(
       r,
-      'missing_field',
-      `${path}.eventType`,
-      msf(r, '5.1.13', '5.2.5'),
-      'An eventtimeline track needs an eventType',
+      missing(r, S, `${path}.eventType`, 'eventType', {
+        spec: ruleRef('eventTypeRequired', r.draft),
+        family: 'catalog.track.fields',
+      }),
     )
   } else if (
     typeof packaging === 'string' &&
     packaging !== 'eventtimeline' &&
     eventType !== undefined
   ) {
-    warn(
-      r,
-      'forbidden_field',
-      `${path}.eventType`,
-      msf(r, '5.1.13', '5.2.5'),
-      'The eventType field MUST NOT be used unless packaging is "eventtimeline"',
-    )
+    warn(r, {
+      id: 'catalog.track.eventType.forbidden',
+      category: 'forbidden_field',
+      path: `${path}.eventType`,
+      spec: ruleRef('eventTypeForbidden', r.draft),
+      expected: 'no eventType unless packaging is "eventtimeline"',
+      actual: { kind: 'value', value: eventType },
+      values: { packaging },
+    })
   }
 
   if (r.base === 0 && track.targetLatency !== undefined && isLive === false) {
-    warn(
-      r,
-      'forbidden_field',
-      `${path}.targetLatency`,
-      'MSF-00 5.1.16',
-      'The targetLatency field MUST NOT be included if isLive is FALSE',
-    )
+    warn(r, {
+      id: 'catalog.track.targetLatency.forbidden',
+      category: 'forbidden_field',
+      path: `${path}.targetLatency`,
+      spec: ruleRef('targetLatencyNotLive', r.draft),
+      expected: 'no targetLatency while isLive is false',
+      actual: { kind: 'value', value: track.targetLatency },
+    })
   }
   // MSF-01 ignores targetLatency when not live (5.2.8), and makes
   // targetLatency and buffers exclusive (5.2.8, 5.2.9).
   if (r.base === 1 && track.targetLatency !== undefined && track.buffers !== undefined) {
-    warn(
-      r,
-      'forbidden_field',
-      `${path}.buffers`,
-      'MSF-01 5.2.9',
-      'The buffers field MUST NOT be present with targetLatency',
-    )
+    warn(r, {
+      id: 'catalog.track.buffers.forbidden',
+      category: 'forbidden_field',
+      path: `${path}.buffers`,
+      spec: ruleRef('buffersWithLatency', r.draft),
+      expected: 'buffers or targetLatency, not both',
+      actual: { kind: 'value', value: track.buffers },
+    })
   }
   if (track.trackDuration !== undefined && isLive === true) {
-    warn(
-      r,
-      'forbidden_field',
-      `${path}.trackDuration`,
-      msf(r, '5.1.37', '5.2.35'),
-      'The trackDuration field MUST NOT be included while isLive is true',
-    )
+    warn(r, {
+      id: 'catalog.track.trackDuration.forbidden',
+      category: 'forbidden_field',
+      path: `${path}.trackDuration`,
+      spec: ruleRef('trackDurationLive', r.draft),
+      expected: 'no trackDuration while isLive is true',
+      actual: { kind: 'value', value: track.trackDuration },
+    })
   }
   if (!clone) {
     if (track.parentName !== undefined) {
-      warn(
-        r,
-        'forbidden_field',
-        `${path}.parentName`,
-        msf(r, '5.1.36', '5.2.33'),
-        'The parentName field belongs only inside a clone operation',
-      )
+      warn(r, {
+        id: 'catalog.track.parentName.forbidden',
+        category: 'forbidden_field',
+        path: `${path}.parentName`,
+        spec: ruleRef('parentName', r.draft),
+        expected: 'parentName only inside a clone operation',
+        actual: { kind: 'value', value: track.parentName },
+      })
     }
     if (r.base === 1 && track.parentNamespace !== undefined) {
-      warn(
-        r,
-        'forbidden_field',
-        `${path}.parentNamespace`,
-        'MSF-01 5.2.34',
-        'The parentNamespace field belongs only inside a clone operation',
-      )
+      warn(r, {
+        id: 'catalog.track.parentNamespace.forbidden',
+        category: 'forbidden_field',
+        path: `${path}.parentNamespace`,
+        spec: ruleRef('parentNamespace', r.draft),
+        expected: 'parentNamespace only inside a clone operation',
+        actual: { kind: 'value', value: track.parentNamespace },
+      })
     }
   }
 
@@ -542,25 +708,18 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
     // channelConfig (5.2.28, 5.2.29).
     const role = track.role
     const audio = role === 'audio'
-    const article = audio ? 'An' : 'A'
     if (audio || role === 'video') {
-      if (track.codec === undefined) {
-        warn(
-          r,
-          'missing_field',
-          `${path}.codec`,
-          'MSF-01 5.2.18',
-          `${article} ${role} track names its codec`,
-        )
-      }
-      if (track.bitrate === undefined) {
-        warn(
-          r,
-          'missing_field',
-          `${path}.bitrate`,
-          'MSF-01 5.2.22',
-          `${article} ${role} track gives its bitrate`,
-        )
+      for (const field of ['codec', 'bitrate'] as const) {
+        if (track[field] === undefined) {
+          warn(
+            r,
+            missing(r, S, `${path}.${field}`, field, {
+              spec: ruleRef(field, r.draft),
+              family: 'catalog.media.fields',
+              values: { role },
+            }),
+          )
+        }
       }
     }
     if (audio) {
@@ -568,10 +727,11 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
         if (track[field] === undefined) {
           warn(
             r,
-            'missing_field',
-            `${path}.${field}`,
-            field === 'samplerate' ? 'MSF-01 5.2.28' : 'MSF-01 5.2.29',
-            `An audio track carries ${field}`,
+            missing(r, 'catalog.audio', `${path}.${field}`, field, {
+              spec: ruleRef(field, r.draft),
+              family: 'catalog.audio.fields',
+              values: { role },
+            }),
           )
         }
       }
@@ -579,22 +739,22 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
     if (track.encryptionScheme !== undefined && track.cipherSuite === undefined) {
       warn(
         r,
-        'missing_field',
-        `${path}.cipherSuite`,
-        'MSF-01 5.2.39',
-        'The cipherSuite field MUST be present when encryptionScheme is',
+        missing(r, S, `${path}.cipherSuite`, 'cipherSuite', {
+          spec: ruleRef('cipherSuite', r.draft),
+        }),
       )
     }
   }
 
   if (r.base === 0 && typeof track.initData === 'string' && decodeBase64(track.initData) === null) {
-    warn(
-      r,
-      'invalid_value',
-      `${path}.initData`,
-      r.cmsf ? cmsf(r, '3.1') : 'MSF-00 5.1.20',
-      'The initData field is not Base64',
-    )
+    warn(r, {
+      id: 'catalog.track.initData.base64',
+      category: 'invalid_value',
+      path: `${path}.initData`,
+      spec: ruleRef('initDataBase64', r.draft),
+      expected: 'Base64 (RFC 4648), padded',
+      actual: { kind: 'value', value: track.initData },
+    })
   }
 
   if (r.cmsf) {
@@ -603,44 +763,59 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       // an initDataList entry the track names by initRef (3.1).
       const field = r.base === 0 ? 'initData' : 'initRef'
       if (track[field] === undefined) {
-        warn(
-          r,
-          'missing_field',
-          `${path}.${field}`,
-          cmsf(r, '3.1'),
-          `A cmaf track's header is given ${r.base === 0 ? 'in initData' : 'by initRef'}`,
-        )
+        const actual = otherInitField(r, track)
+        const other = actual.kind === 'other-field'
+        warn(r, {
+          id: other ? 'catalog.init.other-draft-field' : 'catalog.init.missing',
+          category: 'missing_field',
+          path: `${path}.${field}`,
+          spec: ruleRef('cmsfInit', r.draft),
+          also:
+            r.base === 1
+              ? [fieldRef('initDataList', r.draft, 'TYPE')!, fieldRef('initRef', r.draft, 'TYPE')!]
+              : [fieldRef('initData', r.draft, 'TYPE')!],
+          expected:
+            r.base === 1
+              ? 'initDataList entry {id, type "inline", data}; the track\'s initRef = that id'
+              : 'initData: the CMAF header as Base64',
+          actual,
+        })
       }
     }
     // Each Group "MUST begin with an Object containing a stream access point
     // (SAP) type 1 or 2" (3.4), so the most a Group starts with is 1 or 2.
     const maxGrp = track.maxGrpSapStartingType
     if (typeof maxGrp === 'number' && maxGrp !== 1 && maxGrp !== 2) {
-      warn(
-        r,
-        'invalid_value',
-        `${path}.maxGrpSapStartingType`,
-        cmsf(r, '3.4, 3.5.2.1'),
-        'Groups start with SAP type 1 or 2',
-      )
+      warn(r, {
+        id: 'catalog.track.maxGrpSapStartingType.value',
+        category: 'invalid_value',
+        path: `${path}.maxGrpSapStartingType`,
+        spec: ruleRef('maxGrpSap', r.draft),
+        also: [ruleRef('maxGrpSapField', r.draft)],
+        expected: '1 or 2',
+        actual: { kind: 'value', value: maxGrp },
+        values: { value: maxGrp },
+      })
     }
     if (eventType === SAP_EVENT_TYPE && packaging !== 'eventtimeline') {
-      warn(
-        r,
-        'invalid_value',
-        `${path}.packaging`,
-        cmsf(r, '3.6.1'),
-        'The SAP Type timeline track MUST have packaging "eventtimeline"',
-      )
+      warn(r, {
+        id: 'catalog.track.sapTimeline.packaging',
+        category: 'invalid_value',
+        path: `${path}.packaging`,
+        spec: ruleRef('sapTimelineCatalog', r.draft),
+        expected: 'packaging "eventtimeline"',
+        actual: packaging === undefined ? { kind: 'absent' } : { kind: 'value', value: packaging },
+      })
     }
     if (r.base === 1 && track.contentProtections !== undefined) {
-      warn(
-        r,
-        'forbidden_field',
-        `${path}.contentProtections`,
-        'CMSF-01 4.1.1',
-        'Content protection MUST NOT be duplicated at the track level',
-      )
+      warn(r, {
+        id: 'catalog.track.contentProtections.forbidden',
+        category: 'forbidden_field',
+        path: `${path}.contentProtections`,
+        spec: ruleRef('contentProtectionsAtTrack', r.draft),
+        expected: 'content protection only at the root, named by contentProtectionRefIDs',
+        actual: { kind: 'value', value: track.contentProtections },
+      })
     }
   }
   return keyed
@@ -653,13 +828,15 @@ function checkDuplicates(r: Rules, tracks: JsonValue[], path: string): void {
     if (!isObject(track) || typeof track.name !== 'string') return
     const key = trackKey(namespaceOf(track, r.catalogNamespace), track.name)
     if (seen.has(key)) {
-      warn(
-        r,
-        'duplicate_track',
-        `${path}[${i}]`,
-        msf(r, '5.1.11', '5.2.3'),
-        `Track names MUST be unique per namespace: "${track.name}" again`,
-      )
+      warn(r, {
+        id: 'catalog.track.duplicate',
+        category: 'duplicate_track',
+        path: `${path}[${i}]`,
+        spec: ruleRef('uniqueNames', r.draft),
+        field: 'name',
+        expected: 'a name unique within its namespace',
+        actual: { kind: 'value', value: track.name },
+      })
     }
     seen.add(key)
   })
@@ -670,98 +847,123 @@ function checkInitDataList(r: Rules, root: JsonObject): void {
   const list = root.initDataList
   if (list === undefined) return
   if (!Array.isArray(list)) {
-    warn(
-      r,
-      'invalid_value',
-      'initDataList',
-      'MSF-01 5.1.7',
-      'The initDataList field must be an Array',
-    )
+    warn(r, wrongType(r, 'catalog.root', 'initDataList', 'initDataList', list))
     return
   }
   // Member order is the document's: JSON.parse keeps the order of string keys.
   const keys = Object.keys(root)
   const tracksAt = keys.indexOf('tracks')
   if (tracksAt >= 0 && keys.indexOf('initDataList') < tracksAt) {
-    warn(
-      r,
-      'misplaced_field',
-      'initDataList',
-      'MSF-01 5.1.7',
-      'The initDataList field MUST be located after the tracks array',
-    )
+    warn(r, {
+      id: 'catalog.root.initDataList.misplaced',
+      category: 'misplaced_field',
+      path: 'initDataList',
+      spec: ruleRef('initDataListAfterTracks', r.draft),
+      expected: 'initDataList after tracks',
+      actual: { kind: 'value', value: 'before tracks' },
+    })
   }
+  const S = 'catalog.initDataList'
+  const entryRule = ruleRef('initDataList', r.draft)
   const ids = new Set<string>()
   list.forEach((entry, i) => {
     const path = `initDataList[${i}]`
     if (!isObject(entry)) {
-      warn(r, 'invalid_value', path, 'MSF-01 5.1.7', 'An initDataList entry must be an Object')
+      warn(r, {
+        id: 'catalog.initDataList.entry.object',
+        category: 'invalid_value',
+        path,
+        spec: entryRule,
+        field: null,
+        expected: 'JSON Object {id, type, data}',
+        actual: { kind: 'value', value: entry },
+      })
       return
     }
     for (const field of ['id', 'type', 'data'] as const) {
       const value = entry[field]
       if (value === undefined) {
-        warn(
-          r,
-          'missing_field',
-          `${path}.${field}`,
-          'MSF-01 5.1.7',
-          `An initDataList entry needs ${field}`,
-        )
+        warn(r, {
+          id: `${S}.${field}.missing`,
+          category: 'missing_field',
+          path: `${path}.${field}`,
+          spec: entryRule,
+          family: 'catalog.initDataList.fields',
+          expected: `${field}: String`,
+          values: { type: 'String' },
+        })
       } else if (typeof value !== 'string') {
         warn(
           r,
-          'invalid_value',
-          `${path}.${field}`,
-          'MSF-01 5.1.7',
-          `The ${field} field must be a String`,
+          wrongType(r, S, `${path}.${field}`, field, value, { spec: entryRule, type: 'String' }),
         )
       }
     }
     if (typeof entry.id === 'string') {
       if (ids.has(entry.id)) {
-        warn(
-          r,
-          'duplicate_id',
-          `${path}.id`,
-          r.cmsf ? 'CMSF-01 3.1' : 'MSF-01 5.1.7',
-          `The initDataList id "${entry.id}" is not unique`,
-        )
+        warn(r, {
+          id: 'catalog.initDataList.id.duplicate',
+          category: 'duplicate_id',
+          path: `${path}.id`,
+          spec: ruleRef('initDataListId', r.draft),
+          expected: 'an id unique within the catalog',
+          actual: { kind: 'value', value: entry.id },
+          values: { id: entry.id },
+        })
       }
       ids.add(entry.id)
     }
     if (typeof entry.type === 'string' && entry.type !== 'inline') {
-      warn(
-        r,
-        'invalid_value',
-        `${path}.type`,
-        'MSF-01 5.1.7',
-        `The type "${entry.type}" is not "inline", the only type defined`,
-      )
+      warn(r, {
+        id: 'catalog.initDataList.type.value',
+        category: 'invalid_value',
+        path: `${path}.type`,
+        spec: ruleRef('initDataListType', r.draft),
+        expected: 'type "inline"',
+        actual: { kind: 'value', value: entry.type },
+        values: { type: entry.type },
+      })
     } else if (
       entry.type === 'inline' &&
       typeof entry.data === 'string' &&
       decodeBase64(entry.data) === null
     ) {
-      warn(r, 'invalid_value', `${path}.data`, 'MSF-01 5.1.7', 'Inline data is not Base64')
+      warn(r, {
+        id: 'catalog.initDataList.data.base64',
+        category: 'invalid_value',
+        path: `${path}.data`,
+        spec: ruleRef('initDataListInline', r.draft),
+        expected: 'Base64 (RFC 4648), padded',
+        actual: { kind: 'value', value: entry.data },
+      })
     }
   })
 }
 
+const CP = 'catalog.contentProtections'
+
 /** An object holding a url: laURL, certURL (cmsf-01 4.1.1.4.2, 4.1.1.4.3) */
-function checkUrlObject(r: Rules, value: JsonValue, path: string, section: string): void {
+function checkUrlObject(
+  r: Rules,
+  value: JsonValue,
+  path: string,
+  field: 'laURL' | 'certURL',
+): void {
+  const spec = ruleRef(field === 'laURL' ? 'laUrl' : 'certUrl', r.draft)
   if (!isObject(value)) {
-    warn(
-      r,
-      'invalid_value',
-      path,
-      section,
-      `The ${path.slice(path.lastIndexOf('.') + 1)} field must be an Object`,
-    )
+    warn(r, wrongType(r, CP, path, field, value))
   } else if (value.url === undefined) {
-    warn(r, 'missing_field', `${path}.url`, section, 'The url field is required')
+    warn(r, {
+      id: `${CP}.url.missing`,
+      category: 'missing_field',
+      path: `${path}.url`,
+      spec,
+      family: `${CP}.fields`,
+      expected: 'url: String',
+      values: { type: 'String' },
+    })
   } else if (typeof value.url !== 'string') {
-    warn(r, 'invalid_value', `${path}.url`, section, 'The url field must be a String')
+    warn(r, wrongType(r, CP, `${path}.url`, 'url', value.url, { spec, type: 'String' }))
   }
 }
 
@@ -770,145 +972,114 @@ function checkContentProtections(r: Rules, root: JsonObject): void {
   const list = root.contentProtections
   if (list === undefined) return
   if (!Array.isArray(list)) {
-    warn(
-      r,
-      'invalid_value',
-      'contentProtections',
-      'CMSF-01 4.1.1',
-      'The contentProtections field must be an Array',
-    )
+    warn(r, wrongType(r, 'catalog.root', 'contentProtections', 'contentProtections', list))
     return
   }
+  const required = (path: string, field: string): Report =>
+    missing(r, CP, path, field, { family: `${CP}.fields` })
   const refIds = new Set<string>()
   list.forEach((entry, i) => {
     const path = `contentProtections[${i}]`
     if (!isObject(entry)) {
-      warn(
-        r,
-        'invalid_value',
+      warn(r, {
+        id: 'catalog.contentProtections.entry.object',
+        category: 'invalid_value',
         path,
-        'CMSF-01 4.1.1',
-        'A contentProtections entry must be an Object',
-      )
+        spec: ruleRef('contentProtectionEntry', r.draft),
+        field: null,
+        expected: 'JSON Object',
+        actual: { kind: 'value', value: entry },
+      })
       return
     }
     const { refID, defaultKID, scheme, drmSystem } = entry
     if (refID === undefined) {
-      warn(r, 'missing_field', `${path}.refID`, 'CMSF-01 4.1.1.1', 'The refID field is required')
+      warn(r, required(`${path}.refID`, 'refID'))
     } else if (typeof refID !== 'string') {
-      warn(
-        r,
-        'invalid_value',
-        `${path}.refID`,
-        'CMSF-01 4.1.1.1',
-        'The refID field must be a String',
-      )
+      warn(r, wrongType(r, CP, `${path}.refID`, 'refID', refID))
     } else {
       if (refIds.has(refID)) {
-        warn(
-          r,
-          'duplicate_id',
-          `${path}.refID`,
-          'CMSF-01 4.1.1.1',
-          `The refID "${refID}" is not unique`,
-        )
+        warn(r, {
+          id: 'catalog.contentProtections.refID.duplicate',
+          category: 'duplicate_id',
+          path: `${path}.refID`,
+          spec: ruleRef('refIdUnique', r.draft),
+          expected: 'a refID unique within contentProtections',
+          actual: { kind: 'value', value: refID },
+          values: { refID },
+        })
       }
       refIds.add(refID)
     }
     if (defaultKID === undefined) {
-      warn(
-        r,
-        'missing_field',
-        `${path}.defaultKID`,
-        'CMSF-01 4.1.1.2',
-        'The defaultKID field is required',
-      )
+      warn(r, required(`${path}.defaultKID`, 'defaultKID'))
     } else if (!Array.isArray(defaultKID)) {
-      warn(
-        r,
-        'invalid_value',
-        `${path}.defaultKID`,
-        'CMSF-01 4.1.1.2',
-        'The defaultKID field must be an Array',
-      )
+      warn(r, wrongType(r, CP, `${path}.defaultKID`, 'defaultKID', defaultKID))
     } else {
       defaultKID.forEach((kid, k) => {
         if (typeof kid !== 'string' || !UUID.test(kid)) {
-          warn(
-            r,
-            'invalid_value',
-            `${path}.defaultKID[${k}]`,
-            'CMSF-01 4.1.1.2',
-            'A default KID must be a UUID string, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
-          )
+          warn(r, {
+            id: 'catalog.contentProtections.defaultKID.value',
+            category: 'invalid_value',
+            path: `${path}.defaultKID[${k}]`,
+            spec: ruleRef('defaultKid', r.draft),
+            expected: 'a UUID string, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+            actual: { kind: 'value', value: kid },
+          })
         }
       })
     }
     if (scheme === undefined) {
-      warn(r, 'missing_field', `${path}.scheme`, 'CMSF-01 4.1.1.3', 'The scheme field is required')
+      warn(r, required(`${path}.scheme`, 'scheme'))
     } else if (scheme !== 'cenc' && scheme !== 'cbcs') {
-      warn(
-        r,
-        'invalid_value',
-        `${path}.scheme`,
-        'CMSF-01 4.1.1.3',
-        'The scheme field must be "cenc" or "cbcs"',
-      )
+      warn(r, {
+        id: 'catalog.contentProtections.scheme.value',
+        category: 'invalid_value',
+        path: `${path}.scheme`,
+        spec: ruleRef('scheme', r.draft),
+        expected: '"cenc" or "cbcs"',
+        actual: { kind: 'value', value: scheme },
+        values: { scheme },
+      })
     }
     if (drmSystem === undefined) {
-      warn(
-        r,
-        'missing_field',
-        `${path}.drmSystem`,
-        'CMSF-01 4.1.1.4',
-        'The drmSystem field is required',
-      )
+      warn(r, required(`${path}.drmSystem`, 'drmSystem'))
       return
     }
     if (!isObject(drmSystem)) {
-      warn(
-        r,
-        'invalid_value',
-        `${path}.drmSystem`,
-        'CMSF-01 4.1.1.4',
-        'The drmSystem field must be an Object',
-      )
+      warn(r, wrongType(r, CP, `${path}.drmSystem`, 'drmSystem', drmSystem))
       return
     }
     const drm = `${path}.drmSystem`
     const systemID = drmSystem.systemID
     if (systemID === undefined) {
-      warn(
-        r,
-        'missing_field',
-        `${drm}.systemID`,
-        'CMSF-01 4.1.1.4.1',
-        'The systemID field is required',
-      )
+      warn(r, required(`${drm}.systemID`, 'systemID'))
     } else if (typeof systemID !== 'string' || !UUID.test(systemID)) {
-      warn(
-        r,
-        'invalid_value',
-        `${drm}.systemID`,
-        'CMSF-01 4.1.1.4.1',
-        'The systemID field must be a UUID string',
-      )
+      warn(r, {
+        id: 'catalog.contentProtections.systemID.value',
+        category: 'invalid_value',
+        path: `${drm}.systemID`,
+        spec: ruleRef('systemId', r.draft),
+        expected: 'a UUID string',
+        actual: { kind: 'value', value: systemID },
+      })
     }
     if (drmSystem.laURL !== undefined) {
-      checkUrlObject(r, drmSystem.laURL, `${drm}.laURL`, 'CMSF-01 4.1.1.4.2')
+      checkUrlObject(r, drmSystem.laURL, `${drm}.laURL`, 'laURL')
     }
     if (drmSystem.certURL !== undefined) {
-      checkUrlObject(r, drmSystem.certURL, `${drm}.certURL`, 'CMSF-01 4.1.1.4.3')
+      checkUrlObject(r, drmSystem.certURL, `${drm}.certURL`, 'certURL')
     }
     const pssh = drmSystem.pssh
     if (pssh !== undefined && (typeof pssh !== 'string' || decodeBase64(pssh) === null)) {
-      warn(
-        r,
-        'invalid_value',
-        `${drm}.pssh`,
-        'CMSF-01 4.1.1.4.5',
-        'The pssh field must be a Base64 PSSH box',
-      )
+      warn(r, {
+        id: 'catalog.contentProtections.pssh.value',
+        category: 'invalid_value',
+        path: `${drm}.pssh`,
+        spec: ruleRef('pssh', r.draft),
+        expected: 'a Base64 PSSH box',
+        actual: { kind: 'value', value: pssh },
+      })
     }
   })
 }
@@ -939,22 +1110,20 @@ function checkReferences(r: Rules, document: JsonObject, tracks: [JsonObject, st
   for (const [track, path] of tracks) {
     if (typeof track.initRef === 'string') {
       const entry = inits.get(track.initRef)
-      if (entry === undefined) {
-        warn(
-          r,
-          'unknown_reference',
-          `${path}.initRef`,
-          'MSF-01 5.2.13',
-          `The initRef "${track.initRef}" names no initDataList entry`,
-        )
-      } else if (entry === null) {
-        warn(
-          r,
-          'duplicate_id',
-          `${path}.initRef`,
-          'MSF-01 5.1.7',
-          `The initRef "${track.initRef}" names more than one initDataList entry`,
-        )
+      if (entry === undefined || entry === null) {
+        warn(r, {
+          id:
+            entry === undefined
+              ? 'catalog.track.initRef.unknown'
+              : 'catalog.track.initRef.ambiguous',
+          category: entry === undefined ? 'unknown_reference' : 'duplicate_id',
+          path: `${path}.initRef`,
+          spec:
+            entry === undefined ? ruleRef('initRef', r.draft) : ruleRef('initDataListId', r.draft),
+          expected: 'the id of exactly one initDataList entry',
+          actual: { kind: 'value', value: track.initRef },
+          values: { ref: track.initRef },
+        })
       }
     }
     const refs = track.contentProtectionRefIDs
@@ -962,23 +1131,33 @@ function checkReferences(r: Rules, document: JsonObject, tracks: [JsonObject, st
     refs.forEach((ref, k) => {
       const at = `${path}.contentProtectionRefIDs[${k}]`
       if (typeof ref !== 'string') {
-        warn(r, 'invalid_value', at, 'CMSF-01 4.1.2', 'A reference ID must be a String')
-      } else if (protections.get(ref) === undefined) {
         warn(
           r,
-          'unknown_reference',
-          at,
-          'CMSF-01 4.1.2',
-          `The reference "${ref}" names no contentProtections entry`,
+          wrongType(r, 'catalog.track', at, `contentProtectionRefIDs[${k}]`, ref, {
+            spec: ruleRef('contentProtectionRefs', r.draft),
+            type: 'String',
+            idField: 'contentProtectionRefIDs',
+          }),
         )
-      } else if (protections.get(ref) === null) {
-        warn(
-          r,
-          'duplicate_id',
-          at,
-          'CMSF-01 4.1.1.1',
-          `The reference "${ref}" names more than one contentProtections entry`,
-        )
+        return
+      }
+      const entry = protections.get(ref)
+      if (entry === undefined || entry === null) {
+        warn(r, {
+          id:
+            entry === undefined
+              ? 'catalog.track.contentProtectionRef.unknown'
+              : 'catalog.track.contentProtectionRef.ambiguous',
+          category: entry === undefined ? 'unknown_reference' : 'duplicate_id',
+          path: at,
+          spec:
+            entry === undefined
+              ? ruleRef('contentProtectionRefs', r.draft)
+              : ruleRef('refIdUnique', r.draft),
+          expected: 'the refID of exactly one contentProtections entry',
+          actual: { kind: 'value', value: ref },
+          values: { ref },
+        })
       }
     })
   }
@@ -988,46 +1167,31 @@ function checkReferences(r: Rules, document: JsonObject, tracks: [JsonObject, st
 function checkVersion(r: Rules, root: JsonObject): boolean {
   const version = root.version
   if (version === undefined) {
-    error(r, 'missing_field', 'version', msf(r, '5.1.1', '5.1.1'), 'The version field is required')
+    error(r, missing(r, 'catalog.root', 'version', 'version'))
     return false
   }
-  if (r.base === 0) {
-    if (typeof version !== 'number') {
-      error(
-        r,
-        'invalid_value',
-        'version',
-        'MSF-00 5.1.1',
-        'The version field must be a Number in MSF-00',
-      )
-      return false
-    }
-    // MSF-00 describes version 1, and CMSF-00's example writes 1.
-    if (version !== 1) {
-      error(r, 'unsupported_version', 'version', 'MSF-00 5.1.1', `The version ${version} is not 1`)
-      return false
-    }
-    return true
-  }
-  if (typeof version !== 'string') {
-    error(
-      r,
-      'invalid_value',
-      'version',
-      'MSF-01 5.1.1',
-      'The version field must be a String in MSF-01',
-    )
+  if (r.base === 0 && typeof version !== 'number') {
+    error(r, wrongType(r, 'catalog.root', 'version', 'version', version))
     return false
   }
-  // 5.1.1 asks for "draft-01", but every MSF-01 and CMSF-01 example writes "1".
-  if (version !== 'draft-01' && version !== '1') {
-    error(
-      r,
-      'unsupported_version',
-      'version',
-      'MSF-01 5.1.1',
-      `The version "${version}" is not "draft-01" (or "1", as MSF-01's examples write it)`,
-    )
+  if (r.base === 1 && typeof version !== 'string') {
+    error(r, wrongType(r, 'catalog.root', 'version', 'version', version))
+    return false
+  }
+  // MSF-00 describes version 1, and CMSF-00's example writes 1. MSF-01 5.1.1
+  // asks for "draft-01", but every MSF-01 and CMSF-01 example writes "1".
+  const ok = r.base === 0 ? version === 1 : version === 'draft-01' || version === '1'
+  if (!ok) {
+    error(r, {
+      id: 'catalog.root.version.unsupported',
+      category: 'unsupported_version',
+      path: 'version',
+      spec: ruleRef('versionUnsupported', r.draft),
+      expected:
+        r.base === 0 ? 'version 1' : 'version "draft-01" (or "1", as the examples write it)',
+      actual: { kind: 'value', value: version },
+      values: { version, supported: r.base === 0 ? '1' : '"draft-01"' },
+    })
     return false
   }
   return true
@@ -1047,17 +1211,12 @@ function checkIndependent(r: Rules, root: JsonObject): void {
   // "A subscriber MUST NOT attempt to parse a catalog version which it does
   // not understand" (5.1.1): nothing past the version is read.
   if (!checkVersion(r, root)) return
+  const R = 'catalog.root'
   const tracks = root.tracks
   if (tracks === undefined) {
-    error(r, 'missing_field', 'tracks', msf(r, '5.1.8', '5.1.4'), 'The tracks field is required')
+    error(r, missing(r, R, 'tracks', 'tracks'))
   } else if (!Array.isArray(tracks)) {
-    error(
-      r,
-      'invalid_value',
-      'tracks',
-      msf(r, '5.1.8', '5.1.4'),
-      'The tracks field must be an Array',
-    )
+    error(r, wrongType(r, R, 'tracks', 'tracks', tracks))
   } else {
     tracks.forEach((track, i) => {
       checkTrack(r, track, `tracks[${i}]`)
@@ -1066,42 +1225,25 @@ function checkIndependent(r: Rules, root: JsonObject): void {
   }
 
   if (root.generatedAt !== undefined && typeof root.generatedAt !== 'number') {
-    warn(
-      r,
-      'invalid_value',
-      'generatedAt',
-      msf(r, '5.1.6', '5.1.2'),
-      'The generatedAt field must be a Number',
-    )
+    warn(r, wrongType(r, R, 'generatedAt', 'generatedAt', root.generatedAt))
   }
   if (root.isComplete !== undefined) {
     if (typeof root.isComplete !== 'boolean') {
-      warn(
-        r,
-        'invalid_value',
-        'isComplete',
-        msf(r, '5.1.7', '5.1.3'),
-        'The isComplete field must be a Boolean',
-      )
+      warn(r, wrongType(r, R, 'isComplete', 'isComplete', root.isComplete))
     } else if (!root.isComplete) {
-      warn(
-        r,
-        'forbidden_field',
-        'isComplete',
-        msf(r, '5.1.7', '5.1.3'),
-        'The isComplete field MUST NOT be included if it is FALSE',
-      )
+      warn(r, {
+        id: 'catalog.root.isComplete.false',
+        category: 'forbidden_field',
+        path: 'isComplete',
+        spec: ruleRef('isCompleteFalse', r.draft),
+        expected: 'isComplete absent, or true',
+        actual: { kind: 'value', value: false },
+      })
     }
   }
   if (r.base === 1) {
     if (root.publishTracks !== undefined && !Array.isArray(root.publishTracks)) {
-      warn(
-        r,
-        'invalid_value',
-        'publishTracks',
-        'MSF-01 5.1.5',
-        'The publishTracks field must be an Array',
-      )
+      warn(r, wrongType(r, R, 'publishTracks', 'publishTracks', root.publishTracks))
     }
     checkInitDataList(r, root)
   }
@@ -1111,64 +1253,57 @@ function checkIndependent(r: Rules, root: JsonObject): void {
 
 /** A remove entry: a name, perhaps a namespace, nothing else (msf-00 5.1.4, msf-01 5.1.6) */
 function checkRemoveEntry(r: Rules, entry: JsonObject, path: string): void {
-  const section = msf(r, '5.1.4', '5.1.6')
+  const spec = ruleRef('removeEntry', r.draft)
+  const S = 'catalog.delta.remove'
   if (entry.name === undefined) {
-    error(r, 'missing_field', `${path}.name`, section, 'A removed track needs a name')
+    error(r, missing(r, S, `${path}.name`, 'name', { spec }))
   } else if (typeof entry.name !== 'string') {
-    error(r, 'invalid_value', `${path}.name`, section, 'The name field must be a String')
+    error(r, wrongType(r, S, `${path}.name`, 'name', entry.name))
   }
   if (entry.namespace !== undefined && typeof entry.namespace !== 'string') {
-    error(r, 'invalid_value', `${path}.namespace`, section, 'The namespace field must be a String')
+    error(r, wrongType(r, S, `${path}.namespace`, 'namespace', entry.namespace))
   }
   for (const field of Object.keys(entry)) {
     if (field !== 'name' && field !== 'namespace') {
-      warn(
-        r,
-        'forbidden_field',
-        `${path}.${field}`,
-        section,
-        'A remove entry MUST NOT hold fields besides name and namespace',
-      )
+      warn(r, {
+        id: 'catalog.delta.remove.field.forbidden',
+        category: 'forbidden_field',
+        path: `${path}.${field}`,
+        spec,
+        expected: 'name and, perhaps, namespace; no other field',
+        actual: { kind: 'value', value: entry[field]! },
+      })
     }
   }
 }
 
 /** A clone entry, before it meets its parent (msf-00 5.1.5, msf-01 5.1.6) */
 function checkCloneEntry(r: Rules, entry: JsonObject, path: string): void {
-  const section = msf(r, '5.1.5', '5.1.6')
+  const S = 'catalog.delta.clone'
   if (entry.parentName === undefined) {
-    error(r, 'missing_field', `${path}.parentName`, section, 'A clone needs a parentName')
-  } else if (typeof entry.parentName !== 'string') {
     error(
       r,
-      'invalid_value',
-      `${path}.parentName`,
-      section,
-      'The parentName field must be a String',
+      missing(r, S, `${path}.parentName`, 'parentName', { spec: ruleRef('cloneEntry', r.draft) }),
     )
+  } else if (typeof entry.parentName !== 'string') {
+    error(r, wrongType(r, S, `${path}.parentName`, 'parentName', entry.parentName))
   }
   if (
     r.base === 1 &&
     entry.parentNamespace !== undefined &&
     typeof entry.parentNamespace !== 'string'
   ) {
-    error(
-      r,
-      'invalid_value',
-      `${path}.parentNamespace`,
-      section,
-      'The parentNamespace field must be a String',
-    )
+    error(r, wrongType(r, S, `${path}.parentNamespace`, 'parentNamespace', entry.parentNamespace))
   }
   // The clone's name "MUST be new" (msf-00 5.2, msf-01 5.1.6); without one it
   // would be its parent's.
   if (entry.name === undefined) {
-    error(r, 'missing_field', `${path}.name`, section, 'A clone needs a name of its own')
+    error(r, missing(r, S, `${path}.name`, 'name', { spec: ruleRef('cloneName', r.draft) }))
   } else if (typeof entry.name !== 'string') {
-    error(r, 'invalid_value', `${path}.name`, section, 'The name field must be a String')
+    error(r, wrongType(r, S, `${path}.name`, 'name', entry.name))
   }
   if (entry.namespace !== undefined && typeof entry.namespace !== 'string') {
-    error(r, 'invalid_value', `${path}.namespace`, section, 'The namespace field must be a String')
+    error(r, wrongType(r, S, `${path}.namespace`, 'namespace', entry.namespace))
   }
 }
 
@@ -1178,13 +1313,15 @@ function operationTracks(r: Rules, list: JsonValue[], path: string): JsonObject[
   list.forEach((entry, i) => {
     if (isObject(entry)) tracks.push(entry)
     else
-      error(
-        r,
-        'invalid_value',
-        `${path}[${i}]`,
-        msf(r, '5.1.9', '5.2.1'),
-        'A track must be a JSON Object',
-      )
+      error(r, {
+        id: 'catalog.track.object',
+        category: 'invalid_value',
+        path: `${path}[${i}]`,
+        spec: ruleRef('trackObject', r.draft),
+        field: null,
+        expected: 'JSON Object',
+        actual: { kind: 'value', value: entry },
+      })
   })
   return tracks
 }
@@ -1199,32 +1336,36 @@ function msf00Operation(field: string): DeltaOperation['op'] | null {
 
 /** A delta's operations, in order, by its draft's shape */
 function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
-  const section = msf(r, '5.2', '5.3')
+  const D = 'catalog.delta'
   for (const field of ['tracks', 'version'] as const) {
     if (root[field] !== undefined) {
-      error(
-        r,
-        'delta_not_allowed_field',
-        field,
-        section,
-        `A delta update MUST NOT contain ${field}`,
-      )
+      error(r, {
+        id: `${D}.${field}.forbidden`,
+        category: 'delta_not_allowed_field',
+        path: field,
+        spec: ruleRef('deltaForbidden', r.draft),
+        family: 'catalog.delta.forbidden',
+        expected: 'no tracks and no version in a delta update',
+        actual: { kind: 'value', value: root[field]! },
+      })
     }
   }
   const operations: DeltaOperation[] = []
   const deltaUpdate = root.deltaUpdate as JsonValue
 
   if (r.base === 0) {
-    if (deltaUpdate !== true) {
-      error(
-        r,
-        'invalid_value',
-        'deltaUpdate',
-        'MSF-00 5.1.2',
-        Array.isArray(deltaUpdate)
-          ? 'The deltaUpdate field must be a Boolean in MSF-00'
-          : 'A delta update sets deltaUpdate to true',
-      )
+    if (Array.isArray(deltaUpdate)) {
+      error(r, wrongType(r, D, 'deltaUpdate', 'deltaUpdate', deltaUpdate))
+    } else if (deltaUpdate !== true) {
+      error(r, {
+        id: 'catalog.delta.deltaUpdate.value',
+        category: 'invalid_value',
+        path: 'deltaUpdate',
+        spec: ruleRef('deltaFlag', r.draft),
+        expected: 'deltaUpdate: true',
+        actual:
+          deltaUpdate === undefined ? { kind: 'absent' } : { kind: 'value', value: deltaUpdate },
+      })
     }
     // "The Add, Delete and Clone operations are applied sequentially in the
     // order they are declared in the document" (5.2).
@@ -1235,66 +1376,76 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
       if (Array.isArray(list)) {
         operations.push({ op, tracks: operationTracks(r, list, field), path: field })
       } else {
-        error(
-          r,
-          'invalid_value',
-          field,
-          'MSF-00 5.1.3-5.1.5',
-          `The ${field} field must be an Array`,
-        )
+        error(r, wrongType(r, D, field, field, list))
       }
     }
     if (!Object.keys(root).some((field) => msf00Operation(field) !== null)) {
-      error(
-        r,
-        'missing_field',
-        'addTracks',
-        'MSF-00 5.2',
-        'A delta update MUST contain at least one of addTracks, removeTracks or cloneTracks',
-      )
+      error(r, {
+        id: 'catalog.delta.operations.missing',
+        category: 'missing_field',
+        path: 'addTracks',
+        spec: ruleRef('deltaOperations', r.draft),
+        field: null,
+        expected: 'addTracks, removeTracks or cloneTracks',
+      })
     }
   } else if (!Array.isArray(deltaUpdate)) {
-    error(
-      r,
-      'invalid_value',
-      'deltaUpdate',
-      'MSF-01 5.1.6',
-      'The deltaUpdate field must be an Array in MSF-01',
-    )
+    error(r, wrongType(r, D, 'deltaUpdate', 'deltaUpdate', deltaUpdate))
   } else if (deltaUpdate.length === 0) {
-    error(r, 'invalid_value', 'deltaUpdate', 'MSF-01 5.3', 'A delta update needs an operation')
+    error(r, {
+      id: 'catalog.delta.operations.empty',
+      category: 'invalid_value',
+      path: 'deltaUpdate',
+      spec: ruleRef('deltaOperations', r.draft),
+      expected: 'at least one operation',
+      actual: { kind: 'value', value: [] },
+    })
   } else {
+    const O = 'catalog.delta.operation'
+    const opRule = ruleRef('operationFields', r.draft)
     deltaUpdate.forEach((entry, i) => {
       const path = `deltaUpdate[${i}]`
       if (!isObject(entry)) {
-        error(r, 'invalid_value', path, 'MSF-01 5.1.6', 'An operation must be an Object')
+        error(r, {
+          id: 'catalog.delta.operation.object',
+          category: 'invalid_value',
+          path,
+          spec: opRule,
+          field: null,
+          expected: 'JSON Object {op, tracks}',
+          actual: { kind: 'value', value: entry },
+          values: { op: i },
+        })
         return
       }
       const { op, tracks } = entry
       let ok = true
       if (op === undefined) {
-        error(r, 'missing_field', `${path}.op`, 'MSF-01 5.1.6', 'An operation needs op')
+        error(r, {
+          ...missing(r, O, `${path}.op`, 'op', { spec: opRule }),
+          expected: 'op: String',
+          values: { type: 'String' },
+        })
         ok = false
       } else if (op !== 'add' && op !== 'remove' && op !== 'clone') {
-        error(
-          r,
-          'invalid_value',
-          `${path}.op`,
-          'MSF-01 5.1.6',
-          `The op ${JSON.stringify(op)} is not add, remove or clone`,
-        )
+        error(r, {
+          id: 'catalog.delta.operation.op.value',
+          category: 'invalid_value',
+          path: `${path}.op`,
+          spec: ruleRef('operationTypes', r.draft),
+          expected: 'op "add", "remove" or "clone"',
+          actual: { kind: 'value', value: op },
+          values: { op: i, value: op },
+        })
         ok = false
       }
       if (tracks === undefined) {
-        error(r, 'missing_field', `${path}.tracks`, 'MSF-01 5.1.6', 'An operation needs tracks')
+        error(r, missing(r, O, `${path}.tracks`, 'tracks', { spec: opRule }))
         ok = false
       } else if (!Array.isArray(tracks)) {
         error(
           r,
-          'invalid_value',
-          `${path}.tracks`,
-          'MSF-01 5.1.6',
-          'The tracks field must be an Array',
+          wrongType(r, O, `${path}.tracks`, 'tracks', tracks, { spec: opRule, type: 'Array' }),
         )
         ok = false
       }
@@ -1318,13 +1469,7 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
     })
   }
   if (root.generatedAt !== undefined && typeof root.generatedAt !== 'number') {
-    warn(
-      r,
-      'invalid_value',
-      'generatedAt',
-      msf(r, '5.1.6', '5.1.2'),
-      'The generatedAt field must be a Number',
-    )
+    warn(r, wrongType(r, 'catalog.root', 'generatedAt', 'generatedAt', root.generatedAt))
   }
   return operations
 }
@@ -1384,9 +1529,20 @@ export function parseCatalog(
 ): ParsedCatalog {
   const problems: CatalogProblem[] = []
   const hint = options.draft ?? null
+  // Before the draft is known, the latest one's rules are cited.
+  const early = rulesFor(hint ?? 'msf-01', null, problems, null, hint === null ? [] : [hint])
+  const json = ruleRef('json', early.draft)
   const text = decodeText(input)
   if (text === null) {
-    report(problems, 'error', 'invalid_json', '', 'RFC 8259 8.1', 'The payload is not UTF-8')
+    error(early, {
+      id: 'catalog.json.utf8',
+      category: 'invalid_json',
+      path: '',
+      spec: json,
+      field: null,
+      expected: 'UTF-8 JSON text (RFC 8259 8.1)',
+      actual: { kind: 'value', value: 'bytes that are not UTF-8' },
+    })
     return { kind: 'invalid', draft: hint, problems }
   }
   let root: JsonValue
@@ -1394,12 +1550,27 @@ export function parseCatalog(
     root = JSON.parse(text) as JsonValue
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e)
-    report(problems, 'error', 'invalid_json', '', 'RFC 8259', `The payload is not JSON: ${detail}`)
+    error(early, {
+      id: 'catalog.json.syntax',
+      category: 'invalid_json',
+      path: '',
+      spec: json,
+      field: null,
+      expected: 'JSON text (RFC 8259)',
+      actual: { kind: 'value', value: detail },
+    })
     return { kind: 'invalid', draft: hint, problems }
   }
   if (!isObject(root)) {
-    const section = hint === null ? 'MSF-00 5.1, MSF-01 5' : msfSection(hint, '5.1', '5')
-    report(problems, 'error', 'invalid_value', '', section, 'A catalog must be a JSON Object')
+    error(early, {
+      id: 'catalog.root.object',
+      category: 'invalid_value',
+      path: '',
+      spec: json,
+      field: null,
+      expected: 'JSON Object',
+      actual: { kind: 'value', value: root },
+    })
     return { kind: 'invalid', draft: hint, problems }
   }
 
@@ -1417,28 +1588,29 @@ export function parseCatalog(
   const rulesDraft = draft ?? candidates[0]
   if (rulesDraft === undefined) {
     // No version and no delta fields: nothing says which rules apply.
-    report(
-      problems,
-      'error',
-      'missing_field',
-      'version',
-      'MSF-00 5.1.1, MSF-01 5.1.1',
-      'The version field is required',
-    )
+    const r = rulesFor('msf-01', null, problems, root, [])
+    error(r, {
+      ...missing(r, 'catalog.root', 'version', 'version'),
+      also: [fieldRef('version', 'msf-00', 'REQUIRED')!],
+      expected: 'version: String ("draft-01") or Number (1, MSF-00)',
+    })
     return { kind: 'independent', draft, candidates, document: root, problems }
   }
+  const r = rulesFor(rulesDraft, options.catalogNamespace ?? null, problems, root, candidates)
   if (draft === null) {
-    report(
-      problems,
-      'warning',
-      'ambiguous_draft',
-      '',
-      `CMSF-0${draftBase(rulesDraft)} 2`,
-      `The catalog may be ${candidates.map(draftName).join(' or ')}; only the rules both share are checked`,
-    )
+    const drafts = candidates.map(draftName).join(' or ')
+    warn(r, {
+      id: 'catalog.draft.ambiguous',
+      category: 'ambiguous_draft',
+      path: '',
+      spec: ruleRef('ambiguous', `cmsf-0${r.base}`),
+      field: null,
+      expected: 'a cmaf track or contentProtections, which only CMSF defines',
+      actual: { kind: 'absent' },
+      values: { drafts },
+    })
   }
 
-  const r = rulesFor(rulesDraft, options.catalogNamespace ?? null, problems)
   if (isDeltaShape(root, r.base)) {
     const operations = checkDelta(r, root)
     return { kind: 'delta', draft, candidates, document: root, operations, problems }
@@ -1527,22 +1699,27 @@ function checkUpdateRules(
     if (typeof track.name !== 'string') continue
     const key = trackKey(namespaceOf(track, r.catalogNamespace), track.name)
     if (r.base === 1 && track.isLive === true && state.endedTracks.includes(key)) {
-      warn(
-        r,
-        'illegal_update',
-        `${path}.isLive`,
-        'MSF-01 5.2.7',
-        `The track "${track.name}" was declared with isLive false, and true MUST never follow false`,
-      )
+      warn(r, {
+        id: 'catalog.track.isLive.revived',
+        category: 'illegal_update',
+        path: `${path}.isLive`,
+        spec: ruleRef('isLiveAgain', r.draft),
+        expected: 'isLive false, as declared before',
+        actual: { kind: 'value', value: true },
+        subject: subjectOf(r.root, path).subject,
+      })
     }
     if (state.isComplete && !previous.has(key)) {
-      warn(
-        r,
-        'illegal_update',
+      warn(r, {
+        id: 'catalog.track.added-after-complete',
+        category: 'illegal_update',
         path,
-        msf(r, '5.1.7', '5.1.3'),
-        `The track "${track.name}" is new after isComplete, which commits that no tracks will be added`,
-      )
+        spec: ruleRef('isCompleteNoNewTracks', r.draft),
+        field: null,
+        expected: 'no new tracks once isComplete is set',
+        actual: { kind: 'value', value: track.name },
+        subject: subjectOf(r.root, path).subject,
+      })
     }
   }
 }
@@ -1603,16 +1780,26 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
   const ns = state.catalogNamespace
 
   if (parsed.kind === 'independent') {
-    const r = rulesFor(parsedDraft, ns, problems)
     const root = parsed.document
+    const r = rulesFor(
+      parsedDraft,
+      ns,
+      problems,
+      root,
+      parsed.draft ? [parsed.draft] : parsed.candidates,
+    )
     if (state.isComplete && root.isComplete !== true) {
-      warn(
-        r,
-        'illegal_update',
-        'isComplete',
-        msf(r, '5.1.7', '5.1.3'),
-        'The isComplete field MUST NOT be removed from a catalog once it has been added',
-      )
+      warn(r, {
+        id: 'catalog.root.isComplete.removed',
+        category: 'illegal_update',
+        path: 'isComplete',
+        spec: ruleRef('isCompleteRemoved', r.draft),
+        expected: 'isComplete: true, as set before',
+        actual:
+          root.isComplete === undefined
+            ? { kind: 'absent' }
+            : { kind: 'value', value: root.isComplete },
+      })
     }
     checkUpdateRules(
       r,
@@ -1637,8 +1824,16 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
   // A delta. The catalog in force decides the rules: a delta without a cmaf
   // track looks like plain MSF but applies to a CMSF catalog as CMSF.
   if (state.document === null) {
-    const r = rulesFor(parsedDraft, ns, problems)
-    error(r, 'delta_without_base', '', msf(r, '5', '5'), 'A delta needs a catalog to apply to')
+    const r = rulesFor(parsedDraft, ns, problems, parsed.document, parsed.candidates)
+    error(r, {
+      id: 'catalog.delta.base.missing',
+      category: 'delta_without_base',
+      path: '',
+      spec: ruleRef('deltaBase', r.draft),
+      field: null,
+      expected: 'an independent catalog earlier in the track',
+      actual: { kind: 'absent' },
+    })
     return refused
   }
   let draft = state.draft
@@ -1647,16 +1842,20 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
     draft = parsed.draft
     candidates = [draft]
   }
-  const r = rulesFor(draft ?? candidates[0]!, ns, problems)
-  const section = msf(r, '5.2', '5.3')
+  const r = rulesFor(draft ?? candidates[0]!, ns, problems, parsed.document, candidates)
   if (draftBase(parsedDraft) !== r.base) {
-    error(
-      r,
-      'invalid_value',
-      'deltaUpdate',
-      msf(r, '5.1.2', '5.1.6'),
-      `A ${draftsName(parsed.draft, parsed.candidates)} delta cannot apply to a ${draftsName(draft, candidates)} catalog`,
-    )
+    error(r, {
+      id: 'catalog.delta.draft.mismatch',
+      category: 'invalid_value',
+      path: 'deltaUpdate',
+      spec: fieldRef('deltaUpdate', r.draft, 'TYPE')!,
+      expected: `a delta of ${draftsName(draft, candidates)}`,
+      actual: { kind: 'value', value: parsed.document.deltaUpdate ?? null },
+      values: {
+        delta: draftsName(parsed.draft, parsed.candidates),
+        catalog: draftsName(draft, candidates),
+      },
+    })
     return refused
   }
 
@@ -1669,25 +1868,52 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
     return at
   }
   /** The one declared track `key` names, or -1 after reporting none or several */
-  const declaredAt = (key: string, label: string, path: string): number => {
+  const declaredAt = (key: string, name: string, parent: boolean, path: string): number => {
     const at = matches(key)
     if (at.length === 1) return at[0]!
-    if (at.length === 0) error(r, 'unknown_track', path, section, `${label} is not declared`)
-    else {
-      error(
-        r,
-        'duplicate_track',
+    const field = parent ? 'parentName' : 'name'
+    if (at.length === 0) {
+      error(r, {
+        id: 'catalog.delta.track.unknown',
+        category: 'unknown_track',
         path,
-        msf(r, '5.1.11', '5.2.3'),
-        `${label} names ${at.length} declared tracks`,
-      )
+        spec: ruleRef('removeDeclared', r.draft),
+        field,
+        expected: 'a track the catalog declares',
+        actual: { kind: 'value', value: name },
+        values: parent ? { parent: name } : { name },
+      })
+    } else {
+      error(r, {
+        id: 'catalog.delta.track.ambiguous',
+        category: 'duplicate_track',
+        path,
+        spec: ruleRef('uniqueNames', r.draft),
+        field,
+        expected: 'exactly one declared track',
+        actual: { kind: 'value', value: name },
+        values: { name, count: at.length },
+      })
     }
     return -1
+  }
+  const exists = (path: string, name: JsonValue | undefined): void => {
+    error(r, {
+      id: 'catalog.delta.track.exists',
+      category: 'duplicate_track',
+      path,
+      spec: ruleRef('fixedTrack', r.draft),
+      field: 'name',
+      expected: 'a track name not yet declared',
+      actual: { kind: 'value', value: name ?? null },
+      values: { name: name ?? null },
+    })
   }
   const declared: [JsonObject, string][] = []
   // On a CMSF catalog, recheck added tracks under CMSF rules: parseCatalog
   // read a delta without a cmaf track by MSF rules.
-  const addRules = r.cmsf && parsed.draft !== draft ? rulesFor(draft!, ns, []) : null
+  const addRules =
+    r.cmsf && parsed.draft !== draft ? rulesFor(draft!, ns, [], parsed.document, candidates) : null
 
   for (const op of parsed.operations) {
     op.tracks.forEach((entry, i) => {
@@ -1696,13 +1922,7 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
       // without a string parentName), so these casts hold.
       if (op.op === 'add') {
         if (matches(trackKey(namespaceOf(entry, ns), entry.name as string)).length > 0) {
-          error(
-            r,
-            'duplicate_track',
-            path,
-            section,
-            `The track "${entry.name}" is already declared`,
-          )
+          exists(path, entry.name)
           return
         }
         if (addRules !== null) checkTrack(addRules, entry, path)
@@ -1710,24 +1930,18 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
         declared.push([entry, path])
       } else if (op.op === 'remove') {
         const key = trackKey(namespaceOf(entry, ns), entry.name as string)
-        const at = declaredAt(key, `The track "${entry.name}"`, path)
+        const at = declaredAt(key, entry.name as string, false, path)
         if (at >= 0) tracks.splice(at, 1)
       } else {
         const parentNs = typeof entry.parentNamespace === 'string' ? entry.parentNamespace : ns
         const key = trackKey(parentNs, entry.parentName as string)
-        const at = declaredAt(key, `The parent "${entry.parentName}"`, path)
+        const at = declaredAt(key, entry.parentName as string, true, path)
         if (at < 0) return
         // The parent's fields, the clone's own over them (msf-00 5.2, msf-01 5.1.6);
         // parentName and parentNamespace belong to the operation (msf-00 5.1.36, msf-01 5.2.33, 5.2.34).
         const { parentName: _name, parentNamespace: _ns, ...clone } = { ...tracks[at]!, ...entry }
         if (matches(trackKey(namespaceOf(clone, ns), clone.name as string)).length > 0) {
-          error(
-            r,
-            'duplicate_track',
-            path,
-            section,
-            `The track "${clone.name}" is already declared`,
-          )
+          exists(path, clone.name)
           return
         }
         checkTrack(r, clone, path, true)
@@ -1762,6 +1976,74 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
     applied: true,
     problems,
   }
+}
+
+/** Where a catalog object was carried, and whether it is independent */
+export interface CatalogObjectPlacement {
+  groupId: number
+  subgroupId: number
+  objectId: number
+  /** `parseCatalog` read it as an independent catalog; a delta otherwise */
+  independent: boolean
+}
+
+/**
+ * The Group rules for one catalog object (msf-00 5, msf-01 5): Object 0 of a
+ * Group is independent; under MSF-01 every later Object is a delta, and every
+ * catalog object is on Subgroup 0. `drafts` is the object's draft, or its
+ * candidate drafts while it is open; when they disagree on these rules,
+ * nothing is checked. The problems never refuse the object.
+ */
+export function checkCatalogObjectPlacement(
+  o: CatalogObjectPlacement,
+  drafts: CatalogDraft | readonly CatalogDraft[],
+): CatalogProblem[] {
+  const list: readonly CatalogDraft[] = typeof drafts === 'string' ? [drafts] : drafts
+  const bases = new Set(list.map(draftBase))
+  if (bases.size !== 1) return []
+  const r = rulesFor(list[0]!, null, [], null, list)
+  const subject: ProblemSubject = { kind: 'object' }
+  const values = { group: o.groupId, subgroup: o.subgroupId, object: o.objectId }
+  if (!o.independent && o.objectId === 0) {
+    warn(r, {
+      id: 'catalog.object.first-delta',
+      category: 'object_order',
+      path: '',
+      spec: ruleRef('firstIndependent', r.draft),
+      field: null,
+      expected: 'Object 0 of a group holds an independent catalog',
+      actual: { kind: 'value', value: 'delta' },
+      values,
+      subject,
+    })
+  }
+  if (r.base === 1 && o.independent && o.objectId > 0) {
+    warn(r, {
+      id: 'catalog.object.later-independent',
+      category: 'object_order',
+      path: '',
+      spec: ruleRef('laterDelta', r.draft),
+      field: null,
+      expected: 'Objects after the first in a group hold deltas',
+      actual: { kind: 'value', value: 'independent' },
+      values,
+      subject,
+    })
+  }
+  if (r.base === 1 && o.subgroupId !== 0) {
+    warn(r, {
+      id: 'catalog.object.subgroup',
+      category: 'object_order',
+      path: '',
+      spec: ruleRef('subgroupZero', r.draft),
+      field: 'subgroup',
+      expected: 'Subgroup ID 0',
+      actual: { kind: 'value', value: o.subgroupId },
+      values,
+      subject,
+    })
+  }
+  return r.problems
 }
 
 // ─── Normalised view ─────────────────────────────────────────────────

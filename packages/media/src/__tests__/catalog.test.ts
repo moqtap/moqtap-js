@@ -90,18 +90,20 @@ describe('parseCatalog', () => {
       version: '1',
       tracks: [{ name: 'v', packaging: 'loc', isLive: true, maxGrpSapStartingType: 3 }],
     })
-    expect(parseCatalog(text).problems).toEqual([
+    expect(parseCatalog(text).problems).toMatchObject([
       {
         severity: 'warning',
         category: 'ambiguous_draft',
         path: '',
         section: 'CMSF-01 2',
-        message: 'The catalog may be MSF-01 or CMSF-01; only the rules both share are checked',
+        message: 'Catalog may be MSF-01 or CMSF-01; only shared rules are checked',
+        id: 'catalog.draft.ambiguous',
+        readAs: { version: '1', drafts: ['msf-01', 'cmsf-01'] },
       },
     ])
     expect(parseCatalog(text, { draft: 'msf-01' }).problems).toEqual([])
     expect(parseCatalog(text, { draft: 'cmsf-01' }).problems.map((p) => p.section)).toEqual([
-      'CMSF-01 3.4, 3.5.2.1',
+      'CMSF-01 3.4',
     ])
   })
 
@@ -159,7 +161,24 @@ describe('parseCatalog', () => {
         category: 'missing_field',
         path: 'tracks[0].packaging',
         section: 'MSF-01 5.2.4',
-        message: 'The packaging field is required',
+        message: 'Track "v" has no packaging',
+        id: 'catalog.track.packaging.missing',
+        family: 'catalog.track.fields',
+        spec: {
+          draft: 'msf',
+          revision: '01',
+          section: '5.2.4',
+          keyword: 'REQUIRED',
+          quote: 'Required: Yes JSON Type: String',
+        },
+        also: [],
+        effect: 'applied',
+        subject: { kind: 'track', index: 0, name: 'v' },
+        field: 'packaging',
+        expected: 'packaging: String',
+        actual: { kind: 'absent' },
+        values: { type: 'String' },
+        readAs: { version: 'draft-01', drafts: ['msf-01'] },
       },
     ])
   })
@@ -204,10 +223,10 @@ describe('parseCatalog', () => {
       ['tracks[0].channelConfig', 'MSF-01 5.2.29'],
     ])
     expect(parsed.problems.map((p) => p.message)).toEqual([
-      'An audio track names its codec',
-      'An audio track gives its bitrate',
-      'An audio track carries samplerate',
-      'An audio track carries channelConfig',
+      'Audio track "a" has no codec',
+      'Audio track "a" has no bitrate',
+      'Audio track "a" has no samplerate',
+      'Audio track "a" has no channelConfig',
     ])
   })
 
@@ -217,8 +236,8 @@ describe('parseCatalog', () => {
       parseCatalog(JSON.stringify({ version: draft === 'cmsf-00' ? 1 : '1', tracks: [track] }), {
         draft,
       }).problems.find((p) => p.category === 'missing_field')?.message
-    expect(message('cmsf-00')).toBe("A cmaf track's header is given in initData")
-    expect(message('cmsf-01')).toBe("A cmaf track's header is given by initRef")
+    expect(message('cmsf-00')).toBe('CMAF track "v" gives no header in initRef or initData')
+    expect(message('cmsf-01')).toBe('CMAF track "v" gives no header in initRef or initData')
   })
 
   it('keys duplicate tracks by the catalog namespace when it is given', () => {
@@ -402,7 +421,7 @@ describe('applyCatalogObject', () => {
     expect(update.applied).toBe(true)
     // The MSF-00 problem is not reported again.
     expect(update.problems.map((p) => [p.path, p.section])).toEqual([
-      ['addTracks[0].maxGrpSapStartingType', 'CMSF-00 3.4, 3.5.2.1'],
+      ['addTracks[0].maxGrpSapStartingType', 'CMSF-00 3.4'],
       ['addTracks[0].packaging', 'CMSF-00 3.6.1'],
     ])
   })

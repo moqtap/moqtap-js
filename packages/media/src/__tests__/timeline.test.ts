@@ -105,9 +105,12 @@ describe('parseMediaTimeline', () => {
       category: 'invalid_value',
       path: '',
       section: 'MSF-00 7.1',
-      message: 'A media timeline is an array of records',
+      message: 'Media timeline is not an array of records',
+      id: 'timeline.media.array',
+      spec: { draft: 'msf', revision: '00', section: '7.1', keyword: 'TYPE' },
+      effect: 'refused',
     }
-    expect(parseMediaTimeline('{}', { draft: 'msf-00' })).toEqual({
+    expect(parseMediaTimeline('{}', { draft: 'msf-00' })).toMatchObject({
       kind: 'invalid',
       problems: [notArray],
     })
@@ -143,7 +146,7 @@ describe('parseMediaTimelineTemplate', () => {
 
   it('is null when the value is not six values', () => {
     for (const value of [null, {}, [0, 2002, [0, 0], [1, 0], 0, 0, 0]]) {
-      expect(parseMediaTimelineTemplate(value)).toEqual({
+      expect(parseMediaTimelineTemplate(value)).toMatchObject({
         template: null,
         problems: [
           {
@@ -151,18 +154,20 @@ describe('parseMediaTimelineTemplate', () => {
             category: 'invalid_value',
             path: '',
             section: 'MSF-01 7.4.1',
-            message: 'A media timeline template is an Array of six values',
+            message: 'Media timeline template is not an Array of six values',
+            id: 'timeline.template.type',
           },
         ],
       })
     }
-    expect(parseMediaTimelineTemplate([0, 2002, [0, 0], [1, 0], 0]).problems).toEqual([
+    expect(parseMediaTimelineTemplate([0, 2002, [0, 0], [1, 0], 0]).problems).toMatchObject([
       {
         severity: 'error',
         category: 'missing_field',
         path: '[5]',
         section: 'MSF-01 7.4.1',
-        message: 'A media timeline template has six mandatory values',
+        message: 'Media timeline template has fewer than six values',
+        spec: { keyword: 'MUST' },
       },
     ])
   })
@@ -177,7 +182,7 @@ describe('parseMediaTimelineTemplate', () => {
     const parsed = parseMediaTimelineTemplate([0, 21.333, [0, 0], [1, 0], 0, 0.5])
     expect(parsed.template).toMatchObject({ deltaMediaTime: 21.333, deltaWallclock: 0.5 })
     expect(parsed.problems).toEqual([])
-    expect(parseMediaTimelineTemplate([0.5, 2002, [0, 0], [1, 0], 0, 0])).toEqual({
+    expect(parseMediaTimelineTemplate([0.5, 2002, [0, 0], [1, 0], 0, 0])).toMatchObject({
       template: null,
       problems: [
         {
@@ -185,7 +190,9 @@ describe('parseMediaTimelineTemplate', () => {
           category: 'invalid_value',
           path: '[0]',
           section: 'MSF-01 7.4.1',
-          message: 'The startMediaTime value is a whole number of milliseconds',
+          message: 'Template value startMediaTime is not whole milliseconds',
+          subject: { kind: 'root' },
+          field: 'startMediaTime',
         },
       ],
     })
@@ -304,7 +311,7 @@ describe('parseEventTimeline', () => {
 
   it('leaves out a media PTS that is not whole milliseconds', () => {
     const parsed = parseEventTimeline('[{"m": 33.3, "data": 1}]', { draft: 'msf-01' })
-    expect(parsed).toEqual({
+    expect(parsed).toMatchObject({
       kind: 'records',
       records: [],
       problems: [
@@ -313,7 +320,8 @@ describe('parseEventTimeline', () => {
           category: 'invalid_value',
           path: '[0].m',
           section: 'MSF-01 8.1, 7.1.1',
-          message: 'The media PTS 33.3 is not a whole number of milliseconds',
+          message: 'Event record 0 has media PTS 33.3, not whole milliseconds',
+          spec: { draft: 'msf', revision: '01', section: '7.1.1', keyword: 'MUST' },
         },
       ],
     })
@@ -325,13 +333,15 @@ describe('parseEventTimeline', () => {
 
   it('warns when records mix index reference types', () => {
     const parsed = parseEventTimeline('[{"t": 1, "data": 1}, {"m": 1, "data": 1}]')
-    expect(parsed.problems).toEqual([
+    expect(parsed.problems).toMatchObject([
       {
         severity: 'warning',
         category: 'mixed_index',
         path: '',
         section: 'MSF-00 8.1, MSF-01 8.1',
-        message: 'Records SHOULD use one index reference type; these use t, m',
+        message: 'Event records mix index references t, m',
+        spec: { draft: 'msf', revision: '01', section: '8.1', keyword: 'SHOULD' },
+        also: [{ draft: 'msf', revision: '00', section: '8.1', keyword: 'SHOULD' }],
       },
     ])
   })
@@ -408,13 +418,13 @@ describe('readSapTimeline', () => {
       severity: 'error',
       category: 'invalid_value',
       path: '[0].data[0]',
-      message: 'The first Object of Group 3 has SAP type 3; it MUST be 1 or 2',
+      message: 'Group 3 starts with SAP type 3, not 1 or 2',
     }
-    expect(readSapTimeline(recs, { draft: 'cmsf-01' })).toEqual({
+    expect(readSapTimeline(recs, { draft: 'cmsf-01' })).toMatchObject({
       entries: [{ group: 3, object: 1, sapType: 0, ept: 133, at: 1 }],
       problems: [{ ...problem, section: 'CMSF-01 3.6.1, MSF-01 6.2' }],
     })
-    expect(readSapTimeline(recs, { draft: 'cmsf-00' }).problems).toEqual([
+    expect(readSapTimeline(recs, { draft: 'cmsf-00' }).problems).toMatchObject([
       { ...problem, section: 'CMSF-00 3.6.1, draft-ietf-moq-transport-10 9.1.1' },
     ])
     expect(readSapTimeline(recs).problems).toMatchObject([problem])
@@ -427,13 +437,15 @@ describe('readSapTimeline', () => {
       ),
     )
     expect(timeline.entries).toHaveLength(3)
-    expect(timeline.problems).toEqual([
+    expect(timeline.problems).toMatchObject([
       {
         severity: 'warning',
         category: 'conflicting_records',
         path: '[2]',
         section: 'CMSF-00 3.6.1, CMSF-01 3.6.1',
-        message: 'Location [0,0] is also given as [1,0] at [0]',
+        message: 'Location [0,0] has SAP records that disagree',
+        subject: { kind: 'record', index: 2 },
+        expected: '[1,0], as record 0 gives it',
       },
     ])
   })

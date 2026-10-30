@@ -5,6 +5,34 @@
  */
 
 import type { JsonValue } from './catalog'
+import {
+  type CheckId,
+  type MediaProblem,
+  type ProblemActual,
+  type ProblemSubject,
+  problemTitle,
+  type SpecRef,
+  type TimelineRuleName,
+  timelineRuleRef,
+} from './problems'
+
+export type {
+  CheckId,
+  MediaProblem,
+  ProblemActual,
+  ProblemSubject,
+  SpecKeyword,
+  SpecRef,
+} from './problems'
+export {
+  problemExpected as timelineProblemExpected,
+  problemFound as timelineProblemFound,
+  problemRemedy as timelineProblemRemedy,
+  problemTitle as timelineProblemTitle,
+  severityOf,
+  specLabel,
+  specUrl,
+} from './problems'
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -41,11 +69,18 @@ export type TimelineProblemCategory =
   | 'mixed_index'
   | 'conflicting_records'
 
-export interface TimelineProblem {
+/**
+ * One problem with a timeline payload. How much it matters comes from its
+ * rule's keyword: `severityOf`. Its words come from {@link timelineProblemTitle}
+ * and the functions beside it. Without a draft, `spec` cites the latest
+ * draft and `also` the earlier one.
+ */
+export interface TimelineProblem extends MediaProblem {
   /**
-   * `error`: the record (or document) cannot be read, or breaks a rule the
-   * draft states for its values, and is left out.
-   * `warning`: breaks a rule the draft states for the publisher; the record is kept.
+   * Whether the record is kept: `error` when the record (or document) cannot
+   * be read, or breaks a rule the draft states for its values, and is left
+   * out; `warning` when it is kept. `effect` says the same as `refused` or
+   * `applied`.
    */
   severity: 'error' | 'warning'
   category: TimelineProblemCategory
@@ -53,7 +88,7 @@ export interface TimelineProblem {
   path: string
   /** The draft and section that state the rule, e.g. `MSF-01 8.1` */
   section: string
-  /** What is wrong, as a sentence to show: capitalised, no closing period */
+  /** {@link timelineProblemTitle} of this problem alone: capitalised, no closing period */
   message: string
 }
 
@@ -137,6 +172,66 @@ const FIRST_OBJECT_SECTION = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
+type RuleDraft = 'msf-00' | 'msf-01' | 'cmsf-00' | 'cmsf-01'
+
+/** The rule as `draft` states it; without one, the latest draft's, and the earlier one's in `also` */
+function specFor(
+  rule: TimelineRuleName,
+  draft: RuleDraft | undefined,
+  family: 'msf' | 'cmsf',
+): { spec: SpecRef; also: SpecRef[] } {
+  if (draft !== undefined) return { spec: timelineRuleRef(rule, draft), also: [] }
+  const spec = timelineRuleRef(rule, `${family}-01`)
+  const older = timelineRuleRef(rule, `${family}-00`)
+  return { spec, also: older.revision === '00' ? [older] : [] }
+}
+
+interface TimelineReport {
+  id: CheckId
+  category: TimelineProblemCategory
+  path: string
+  section: string
+  rule: TimelineRuleName
+  field?: string | null
+  expected: string
+  actual?: ProblemActual
+  values?: Record<string, JsonValue>
+  subject?: ProblemSubject
+}
+
+function timelineProblem(
+  severity: TimelineProblem['severity'],
+  rep: TimelineReport,
+  draft: RuleDraft | undefined,
+  family: 'msf' | 'cmsf',
+): TimelineProblem {
+  const at = /^\[(\d+)\]/.exec(rep.path)
+  const subject: ProblemSubject =
+    at === null ? { kind: 'root' } : { kind: 'record', index: Number(at[1]) }
+  const p: TimelineProblem = {
+    severity,
+    category: rep.category,
+    path: rep.path,
+    section: rep.section,
+    message: '',
+    id: rep.id,
+    family: rep.id,
+    ...specFor(rep.rule, draft, family),
+    effect: severity === 'error' ? 'refused' : 'applied',
+    subject: rep.subject ?? subject,
+    field: rep.field ?? null,
+    expected: rep.expected,
+    actual: rep.actual ?? { kind: 'absent' },
+    values: rep.values ?? {},
+  }
+  p.message = problemTitle([p])
+  return p
+}
+
+function actualOf(value: JsonValue | undefined): ProblemActual {
+  return value === undefined ? { kind: 'absent' } : { kind: 'value', value }
+}
+
 function decodeText(input: string | Uint8Array): string | null {
   if (typeof input === 'string') return input
   try {
@@ -167,28 +262,51 @@ function citeDrafts(draft: TimelineDraft | undefined, cite: (d: TimelineDraft) =
 }
 
 /** The JSON document of a timeline payload, or `null` with the problem that stops it */
-function readDocument(input: string | Uint8Array, problems: TimelineProblem[]): JsonValue | null {
+function readDocument(
+  input: string | Uint8Array,
+  problems: TimelineProblem[],
+  rule: 'mediaJson' | 'eventJson',
+  draft: TimelineDraft | undefined,
+): JsonValue | null {
   const text = decodeText(input)
   if (text === null) {
-    problems.push({
-      severity: 'error',
-      category: 'invalid_json',
-      path: '',
-      section: 'RFC 8259 8.1',
-      message: 'The payload is not UTF-8',
-    })
+    problems.push(
+      timelineProblem(
+        'error',
+        {
+          id: 'timeline.json.utf8',
+          category: 'invalid_json',
+          path: '',
+          section: 'RFC 8259 8.1',
+          rule,
+          expected: 'UTF-8 JSON text (RFC 8259 8.1)',
+          actual: { kind: 'value', value: 'bytes that are not UTF-8' },
+        },
+        draft,
+        'msf',
+      ),
+    )
     return null
   }
   try {
     return JSON.parse(text) as JsonValue
   } catch (e) {
-    problems.push({
-      severity: 'error',
-      category: 'invalid_json',
-      path: '',
-      section: 'RFC 8259',
-      message: `The payload is not JSON: ${e instanceof Error ? e.message : String(e)}`,
-    })
+    problems.push(
+      timelineProblem(
+        'error',
+        {
+          id: 'timeline.json.syntax',
+          category: 'invalid_json',
+          path: '',
+          section: 'RFC 8259',
+          rule,
+          expected: 'JSON text (RFC 8259)',
+          actual: { kind: 'value', value: e instanceof Error ? e.message : String(e) },
+        },
+        draft,
+        'msf',
+      ),
+    )
     return null
   }
 }
@@ -206,25 +324,26 @@ export function parseMediaTimeline(
   options: ParseTimelineOptions = {},
 ): ParsedMediaTimeline {
   const problems: TimelineProblem[] = []
-  const doc = readDocument(input, problems)
+  const draft = options.draft
+  const doc = readDocument(input, problems, 'mediaJson', draft)
   if (doc === null) return { kind: 'invalid', problems }
-  const section = citeDrafts(options.draft, (d) => `${d.toUpperCase()} ${MEDIA_TIME_SECTION[d]}`)
-  const report = (
-    path: string,
-    message: string,
-    category: TimelineProblemCategory = 'invalid_value',
-  ) => problems.push({ severity: 'error', category, path, section, message })
+  const section = citeDrafts(draft, (d) => `${d.toUpperCase()} ${MEDIA_TIME_SECTION[d]}`)
+  const report = (rep: Partial<TimelineReport> & Omit<TimelineReport, 'section' | 'category'>) =>
+    problems.push(
+      timelineProblem('error', { category: 'invalid_value', section, ...rep }, draft, 'msf'),
+    )
 
   if (!Array.isArray(doc)) {
     // MSF-00 7.1 states the array; MSF-01 7.1 also names a template format
     // for the document, which 7.4.1 defines only as a catalog field.
-    if (options.draft !== 'msf-00') return { kind: 'unread', problems }
-    problems.push({
-      severity: 'error',
-      category: 'invalid_value',
+    if (draft !== 'msf-00') return { kind: 'unread', problems }
+    report({
+      id: 'timeline.media.array',
       path: '',
       section: 'MSF-00 7.1',
-      message: 'A media timeline is an array of records',
+      rule: 'mediaArray',
+      expected: 'a JSON Array of records',
+      actual: { kind: 'value', value: doc },
     })
     return { kind: 'invalid', problems }
   }
@@ -232,38 +351,79 @@ export function parseMediaTimeline(
   const records: MediaTimelineRecord[] = []
   doc.forEach((record, at) => {
     const path = `[${at}]`
+    const notRecord = () =>
+      report({
+        id: 'timeline.media.record.type',
+        path,
+        rule: 'mediaRecord',
+        expected: '[mediaTime, [group, object], wallclock]',
+        actual: { kind: 'value', value: record },
+      })
     if (!Array.isArray(record)) {
-      report(path, 'A record is an Array of three items')
+      notRecord()
       return
     }
     if (record.length > 3) {
       // MSF-01 7.1 lets a document combine the explicit and template formats
       // without giving the combined form.
-      if (options.draft === 'msf-00') report(path, 'A record is an Array of three items')
+      if (draft === 'msf-00') notRecord()
       return
     }
     if (record.length < 3) {
-      report(`${path}[${record.length}]`, 'A record has three required items', 'missing_field')
+      report({
+        id: 'timeline.media.record.missing',
+        category: 'missing_field',
+        path: `${path}[${record.length}]`,
+        rule: 'mediaRecordItems',
+        expected: 'three items',
+        actual: { kind: 'value', value: record },
+      })
       return
     }
     const [mediaTime, location, wallclock] = record
     let ok = true
     if (typeof mediaTime !== 'number') {
-      report(`${path}[0]`, 'The media presentation time is a JSON Number')
+      report({
+        id: 'timeline.media.mediaTime.type',
+        path: `${path}[0]`,
+        rule: 'mediaTimeType',
+        field: 'mediaTime',
+        expected: 'JSON Number',
+        actual: actualOf(mediaTime),
+      })
       ok = false
     } else if (!Number.isInteger(mediaTime)) {
-      report(
-        `${path}[0]`,
-        `The media presentation time ${mediaTime} is not a whole number of milliseconds`,
-      )
+      report({
+        id: 'timeline.media.mediaTime.integer',
+        path: `${path}[0]`,
+        rule: 'mediaTimeValue',
+        field: 'mediaTime',
+        expected: 'whole milliseconds',
+        actual: actualOf(mediaTime),
+        values: { value: mediaTime },
+      })
       ok = false
     }
     if (!isLocation(location)) {
-      report(`${path}[1]`, 'A Location is an Array of a Group ID and an Object ID')
+      report({
+        id: 'timeline.media.location.type',
+        path: `${path}[1]`,
+        rule: 'location',
+        field: 'location',
+        expected: '[Group ID, Object ID]',
+        actual: actualOf(location),
+      })
       ok = false
     }
     if (typeof wallclock !== 'number') {
-      report(`${path}[2]`, 'The wallclock time is a JSON Number')
+      report({
+        id: 'timeline.media.wallclock.type',
+        path: `${path}[2]`,
+        rule: 'wallclock',
+        field: 'wallclock',
+        expected: 'JSON Number',
+        actual: actualOf(wallclock),
+      })
       ok = false
     }
     if (!ok) return
@@ -285,22 +445,36 @@ export function parseMediaTimeline(
  */
 export function parseMediaTimelineTemplate(value: JsonValue): ParsedMediaTimelineTemplate {
   const problems: TimelineProblem[] = []
-  const report = (
-    path: string,
-    message: string,
-    category: TimelineProblemCategory = 'invalid_value',
-  ) => problems.push({ severity: 'error', category, path, section: 'MSF-01 7.4.1', message })
+  const report = (rep: Partial<TimelineReport> & Omit<TimelineReport, 'section' | 'category'>) =>
+    problems.push(
+      timelineProblem(
+        'error',
+        { category: 'invalid_value', section: 'MSF-01 7.4.1', ...rep },
+        'msf-01',
+        'msf',
+      ),
+    )
 
   if (!Array.isArray(value) || value.length > 6) {
-    report('', 'A media timeline template is an Array of six values')
+    report({
+      id: 'timeline.template.type',
+      path: '',
+      rule: 'template',
+      expected: 'a JSON Array of six values',
+      actual: { kind: 'value', value },
+    })
     return { template: null, problems }
   }
   if (value.length < 6) {
-    report(
-      `[${value.length}]`,
-      'A media timeline template has six mandatory values',
-      'missing_field',
-    )
+    report({
+      id: 'timeline.template.missing',
+      subject: { kind: 'root' },
+      category: 'missing_field',
+      path: `[${value.length}]`,
+      rule: 'templateValues',
+      expected: 'six values',
+      actual: { kind: 'value', value },
+    })
     return { template: null, problems }
   }
   const [
@@ -311,28 +485,38 @@ export function parseMediaTimelineTemplate(value: JsonValue): ParsedMediaTimelin
     startWallclock,
     deltaWallclock,
   ] = value
-  const checks: [boolean, string][] = [
+  const checks: [boolean, string, string][] = [
     [
       typeof startMediaTime === 'number' && Number.isInteger(startMediaTime),
-      'The startMediaTime value is a whole number of milliseconds',
+      'startMediaTime',
+      'whole milliseconds',
     ],
-    [typeof deltaMediaTime === 'number', 'The deltaMediaTime value is a JSON Number'],
-    [
-      isLocation(startLocation),
-      'The startLocation value is an Array of a Group ID and an Object ID',
-    ],
+    [typeof deltaMediaTime === 'number', 'deltaMediaTime', 'a JSON Number'],
+    [isLocation(startLocation), 'startLocation', '[Group ID, Object ID]'],
     [
       Array.isArray(deltaLocation) &&
         deltaLocation.length === 2 &&
         typeof deltaLocation[0] === 'number' &&
         typeof deltaLocation[1] === 'number',
-      'The deltaLocation value is an Array of two Numbers',
+      'deltaLocation',
+      'an Array of two Numbers',
     ],
-    [typeof startWallclock === 'number', 'The startWallclock value is a JSON Number'],
-    [typeof deltaWallclock === 'number', 'The deltaWallclock value is a JSON Number'],
+    [typeof startWallclock === 'number', 'startWallclock', 'a JSON Number'],
+    [typeof deltaWallclock === 'number', 'deltaWallclock', 'a JSON Number'],
   ]
-  checks.forEach(([ok, message], i) => {
-    if (!ok) report(`[${i}]`, message)
+  checks.forEach(([ok, name, expected], i) => {
+    if (!ok) {
+      report({
+        id: 'timeline.template.value.type',
+        path: `[${i}]`,
+        rule: 'template',
+        field: name,
+        expected: `${name}: ${expected}`,
+        actual: actualOf(value[i]),
+        values: { what: expected },
+        subject: { kind: 'root' },
+      })
+    }
   })
   if (problems.length > 0) return { template: null, problems }
   const start = startLocation as [number, number]
@@ -386,18 +570,26 @@ export function parseEventTimeline(
   options: ParseTimelineOptions = {},
 ): ParsedEventTimeline {
   const problems: TimelineProblem[] = []
-  const doc = readDocument(input, problems)
+  const draft = options.draft
+  const doc = readDocument(input, problems, 'eventJson', draft)
   if (doc === null) return { kind: 'invalid', problems }
-  const section = options.draft ? `${options.draft.toUpperCase()} 8.1` : 'MSF-00 8.1, MSF-01 8.1'
+  const section = draft ? `${draft.toUpperCase()} 8.1` : 'MSF-00 8.1, MSF-01 8.1'
   const report = (
     severity: TimelineProblem['severity'],
-    category: TimelineProblemCategory,
-    path: string,
-    message: string,
-  ) => problems.push({ severity, category, path, section, message })
+    rep: Partial<TimelineReport> & Omit<TimelineReport, 'section' | 'category'>,
+  ) =>
+    problems.push(
+      timelineProblem(severity, { category: 'invalid_value', section, ...rep }, draft, 'msf'),
+    )
 
   if (!Array.isArray(doc)) {
-    report('error', 'invalid_value', '', 'An event timeline is an array of records')
+    report('error', {
+      id: 'timeline.event.array',
+      path: '',
+      rule: 'eventArray',
+      expected: 'a JSON Array of records',
+      actual: { kind: 'value', value: doc },
+    })
     return { kind: 'invalid', problems }
   }
 
@@ -405,25 +597,48 @@ export function parseEventTimeline(
   doc.forEach((record, at) => {
     const path = `[${at}]`
     if (!isObject(record)) {
-      report('error', 'invalid_value', path, 'A record is a JSON Object')
+      report('error', {
+        id: 'timeline.event.record.object',
+        path,
+        rule: 'eventRecord',
+        expected: 'JSON Object',
+        actual: { kind: 'value', value: record },
+      })
       return
     }
     const keys = INDEX_KEYS.filter((k) => record[k] !== undefined)
     let ok = true
     if (keys.length === 0) {
-      report('error', 'invalid_index', path, "A record needs an index reference: 't', 'l' or 'm'")
+      report('error', {
+        id: 'timeline.event.index.missing',
+        category: 'invalid_index',
+        path,
+        rule: 'eventIndex',
+        expected: "one index reference: 't', 'l' or 'm'",
+        actual: { kind: 'absent' },
+      })
       ok = false
     } else if (keys.length > 1) {
-      report(
-        'error',
-        'invalid_index',
+      report('error', {
+        id: 'timeline.event.index.multiple',
+        category: 'invalid_index',
         path,
-        `Only one index reference per record, not ${keys.join(', ')}`,
-      )
+        rule: 'eventOneIndex',
+        expected: 'one index reference',
+        actual: { kind: 'value', value: keys.join(', ') },
+        values: { indexes: keys.join(', ') },
+      })
       ok = false
     }
     if (record.data === undefined) {
-      report('error', 'missing_field', `${path}.data`, "A record needs 'data'")
+      report('error', {
+        id: 'timeline.event.data.missing',
+        category: 'missing_field',
+        path: `${path}.data`,
+        rule: 'eventData',
+        field: 'data',
+        expected: 'data present',
+      })
       ok = false
     }
     if (!ok) return
@@ -432,36 +647,41 @@ export function parseEventTimeline(
     const data = record.data!
     if (key === 'l') {
       if (!isLocation(value)) {
-        report(
-          'error',
-          'invalid_value',
-          `${path}.l`,
-          'A Location is an Array of a Group ID and an Object ID',
-        )
+        report('error', {
+          id: 'timeline.event.location.type',
+          path: `${path}.l`,
+          rule: 'eventValues',
+          field: 'l',
+          expected: '[Group ID, Object ID]',
+          actual: actualOf(value),
+        })
         return
       }
       records.push({ index: 'l', group: value[0], object: value[1], data, at })
       return
     }
     if (typeof value !== 'number') {
-      report(
-        'error',
-        'invalid_value',
-        `${path}.${key}`,
-        `The index reference '${key}' is a JSON Number`,
-      )
+      report('error', {
+        id: 'timeline.event.time.type',
+        path: `${path}.${key}`,
+        rule: 'eventValues',
+        field: key,
+        expected: 'JSON Number',
+        actual: actualOf(value),
+        values: { index: key },
+      })
       return
     }
     if (key === 'm' && !Number.isInteger(value)) {
-      problems.push({
-        severity: 'error',
-        category: 'invalid_value',
+      report('error', {
+        id: 'timeline.event.mediaTime.integer',
         path: `${path}.m`,
-        section: citeDrafts(
-          options.draft,
-          (d) => `${d.toUpperCase()} 8.1, ${MEDIA_TIME_SECTION[d]}`,
-        ),
-        message: `The media PTS ${value} is not a whole number of milliseconds`,
+        section: citeDrafts(draft, (d) => `${d.toUpperCase()} 8.1, ${MEDIA_TIME_SECTION[d]}`),
+        rule: 'mediaTimeValue',
+        field: 'm',
+        expected: 'whole milliseconds',
+        actual: actualOf(value),
+        values: { value },
       })
       return
     }
@@ -474,12 +694,15 @@ export function parseEventTimeline(
 
   const used = [...new Set(records.map((r) => r.index))]
   if (used.length > 1) {
-    report(
-      'warning',
-      'mixed_index',
-      '',
-      `Records SHOULD use one index reference type; these use ${used.join(', ')}`,
-    )
+    report('warning', {
+      id: 'timeline.event.index.mixed',
+      category: 'mixed_index',
+      path: '',
+      rule: 'eventSameIndex',
+      expected: 'one index reference type for every record',
+      actual: { kind: 'value', value: used.join(', ') },
+      values: { indexes: used.join(', ') },
+    })
   }
   return { kind: 'records', records, problems }
 }
@@ -498,38 +721,54 @@ export function readSapTimeline(
   options: ReadSapTimelineOptions = {},
 ): SapTimeline {
   const problems: TimelineProblem[] = []
-  const section = options.draft
-    ? `${options.draft.toUpperCase()} 3.6.1`
-    : 'CMSF-00 3.6.1, CMSF-01 3.6.1'
+  const draft = options.draft
+  const section = draft ? `${draft.toUpperCase()} 3.6.1` : 'CMSF-00 3.6.1, CMSF-01 3.6.1'
   const report = (
     severity: TimelineProblem['severity'],
-    category: TimelineProblemCategory,
-    path: string,
-    message: string,
-    s = section,
-  ) => problems.push({ severity, category, path, section: s, message })
+    rep: Partial<TimelineReport> & Omit<TimelineReport, 'section' | 'category'>,
+  ) =>
+    problems.push(
+      timelineProblem(severity, { category: 'invalid_value', section, ...rep }, draft, 'cmsf'),
+    )
 
   const entries: SapTimelineEntry[] = []
   const byLocation = new Map<string, SapTimelineEntry>()
   for (const record of records) {
     const path = `[${record.at}]`
     if (record.index !== 'l') {
-      report('error', 'invalid_index', path, "A SAP timeline record's index reference is 'l'")
+      report('error', {
+        id: 'timeline.sap.index',
+        category: 'invalid_index',
+        path,
+        rule: 'sapIndex',
+        expected: "index reference 'l'",
+        actual: { kind: 'value', value: record.index },
+      })
       continue
     }
     const d = record.data
     if (!Array.isArray(d) || d.length !== 2 || !Number.isInteger(d[0]) || !Number.isInteger(d[1])) {
-      report(
-        'error',
-        'invalid_value',
-        `${path}.data`,
-        "The record's data is an Array of two integers",
-      )
+      report('error', {
+        id: 'timeline.sap.data.type',
+        path: `${path}.data`,
+        rule: 'sapData',
+        field: 'data',
+        expected: '[SAP type, EPT], two integers',
+        actual: { kind: 'value', value: d },
+      })
       continue
     }
     const sapType = d[0] as number
     if (sapType < 0 || sapType > 3) {
-      report('error', 'invalid_value', `${path}.data[0]`, `SAP type ${sapType} is not 0, 1, 2 or 3`)
+      report('error', {
+        id: 'timeline.sap.type.value',
+        path: `${path}.data[0]`,
+        rule: 'sapType',
+        field: 'data[0]',
+        expected: 'SAP type 0, 1, 2 or 3',
+        actual: { kind: 'value', value: sapType },
+        values: { sapType },
+      })
       continue
     }
     const entry: SapTimelineEntry = {
@@ -540,15 +779,18 @@ export function readSapTimeline(
       at: record.at,
     }
     if (entry.object === 0 && sapType !== 1 && sapType !== 2) {
-      report(
-        'error',
-        'invalid_value',
-        `${path}.data[0]`,
-        `The first Object of Group ${entry.group} has SAP type ${sapType}; it MUST be 1 or 2`,
-        options.draft
-          ? FIRST_OBJECT_SECTION[options.draft]
+      report('error', {
+        id: 'timeline.sap.first-object',
+        path: `${path}.data[0]`,
+        section: draft
+          ? FIRST_OBJECT_SECTION[draft]
           : `${FIRST_OBJECT_SECTION['cmsf-00']}; ${FIRST_OBJECT_SECTION['cmsf-01']}`,
-      )
+        rule: 'sapFirst',
+        field: 'data[0]',
+        expected: 'SAP type 1 or 2 for the first Object of a Group',
+        actual: { kind: 'value', value: sapType },
+        values: { group: entry.group, sapType },
+      })
       continue
     }
     const key = `${entry.group}/${entry.object}`
@@ -556,12 +798,16 @@ export function readSapTimeline(
     if (earlier === undefined) {
       byLocation.set(key, entry)
     } else if (earlier.sapType !== entry.sapType || earlier.ept !== entry.ept) {
-      report(
-        'warning',
-        'conflicting_records',
+      report('warning', {
+        id: 'timeline.sap.conflict',
+        category: 'conflicting_records',
         path,
-        `Location [${entry.group},${entry.object}] is also given as [${earlier.sapType},${earlier.ept}] at [${earlier.at}]`,
-      )
+        rule: 'sapConflict',
+        field: 'data',
+        expected: `[${earlier.sapType},${earlier.ept}], as record ${earlier.at} gives it`,
+        actual: { kind: 'value', value: [entry.sapType, entry.ept] },
+        values: { location: `[${entry.group},${entry.object}]`, earlier: earlier.at },
+      })
     }
     entries.push(entry)
   }
