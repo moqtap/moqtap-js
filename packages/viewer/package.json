@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@moqtap/inspect": "workspace:*",
-    "@moqtap/test-traces": "^0.1.1",
+    "@moqtap/test-traces": "^0.1.3",
     "@moqtap/trace": "workspace:*",
     "lucide-static": "1.50.0",
     "typescript": "^5.5.0",

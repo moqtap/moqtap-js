@@ -643,6 +643,95 @@ export const v2ErrorWithRaw: Trace = {
   ],
 }
 
+/**
+ * Event 1 carrying the stream header's bytes under `"hdr"`.
+ *
+ * One stream of each type, as `v2-headers-level-flow` has, each with the bytes
+ * a draft-18 peer put on the wire: a `SUBGROUP_HEADER`, a fetch header, and a
+ * datagram's bytes before its payload. The last stream's `"ta"` disagrees with
+ * its own bytes (8 on the wire, 9 in the field). A reader keeps the event; the
+ * bytes are the evidence.
+ */
+export const v2StreamHeaderBytes: Trace = {
+  header: {
+    protocol: 'moq-transport-18',
+    perspective: 'observer',
+    detail: 'headers',
+    startTime: START_TIME,
+    sessionId: 'v2-stream-header-bytes',
+  },
+  events: [
+    {
+      // Type 0x14 (subgroup ID present), alias 9, group 7, subgroup 2, priority 0x80.
+      type: 'stream-opened',
+      seq: 0,
+      timestamp: 100,
+      streamId: 7n,
+      direction: 1,
+      streamType: 0,
+      trackAlias: 9n,
+      subgroupId: 2n,
+      headerRaw: new Uint8Array([0x14, 0x09, 0x07, 0x02, 0x80]),
+    },
+    {
+      type: 'object-header',
+      seq: 1,
+      timestamp: 150,
+      streamId: 7n,
+      groupId: 7n,
+      objectId: 0n,
+      publisherPriority: 128,
+      objectStatus: 0,
+    },
+    {
+      // FETCH_HEADER: type 0x05, request ID 42.
+      type: 'stream-opened',
+      seq: 2,
+      timestamp: 200,
+      streamId: 11n,
+      direction: 1,
+      streamType: 2,
+      fetchRequestId: 42n,
+      headerRaw: new Uint8Array([0x05, 0x2a]),
+    },
+    {
+      // Datagram type 0x00, alias 9, group 2^32 (draft-18's five-byte varint),
+      // object 3, priority 0x80. Stream 0 by convention.
+      type: 'stream-opened',
+      seq: 3,
+      timestamp: 300,
+      streamId: 0n,
+      direction: 1,
+      streamType: 1,
+      trackAlias: 9n,
+      groupId: 4294967296n,
+      headerRaw: new Uint8Array([0x00, 0x09, 0xf1, 0x00, 0x00, 0x00, 0x00, 0x03, 0x80]),
+    },
+    {
+      type: 'object-header',
+      seq: 4,
+      timestamp: 300,
+      streamId: 0n,
+      groupId: 4294967296n,
+      objectId: 3n,
+      publisherPriority: 128,
+      objectStatus: 0,
+    },
+    {
+      // The bytes say alias 8; the field says 9.
+      type: 'stream-opened',
+      seq: 5,
+      timestamp: 400,
+      streamId: 15n,
+      direction: 1,
+      streamType: 0,
+      trackAlias: 9n,
+      subgroupId: 3n,
+      headerRaw: new Uint8Array([0x14, 0x08, 0x07, 0x03, 0x80]),
+    },
+  ],
+}
+
 /** Every single-segment case both implementations author, by directory name. */
 export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v1-basic': v1Basic,
@@ -654,6 +743,7 @@ export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v2-headers-level-flow': v2HeadersLevelFlow,
   'v2-header-extra': v2HeaderExtra,
   'v2-error-with-raw': v2ErrorWithRaw,
+  'v2-stream-header-bytes': v2StreamHeaderBytes,
 }
 
 /** Cases whose file is a segmented stream rather than a single trace. */

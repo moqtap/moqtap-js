@@ -75,7 +75,7 @@
       },
       "devDependencies": {
         "@moqtap/codec": "workspace:*",
-        "@moqtap/test-traces": "^0.1.1",
+        "@moqtap/test-traces": "^0.1.3",
         "tsup": "^8.0.0",
         "typescript": "^5.5.0",
         "vitest": "^3.2.7",
@@ -89,7 +89,7 @@
       "version": "0.4.0",
       "devDependencies": {
         "@moqtap/inspect": "workspace:*",
-        "@moqtap/test-traces": "^0.1.1",
+        "@moqtap/test-traces": "^0.1.3",
         "@moqtap/trace": "workspace:*",
         "lucide-static": "1.50.0",
         "typescript": "^5.5.0",
@@ -198,7 +198,7 @@
 
     "@moqtap/monitor-browser": ["@moqtap/monitor-browser@workspace:packages/monitor-browser"],
 
-    "@moqtap/test-traces": ["@moqtap/test-traces@0.1.1", "", {}, "sha512-KA7EX98xtwdCntENa0H9sansK+PlnFuI2/W76umTlZwBK+Aq4rNL2bagp1cAqzs5C+yl9UybZPhxSCT1sGo3TA=="],
+    "@moqtap/test-traces": ["@moqtap/test-traces@0.1.3", "", {}, "sha512-K0KNIHAlKB6EN1107PIKNM4u3FFGa2R2iK7lorBhJcl8IkScJT2HkKRbm9QqUwhTTZ2q2pRUlkyK6QEuRw+ShA=="],
 
     "@moqtap/test-vectors": ["@moqtap/test-vectors@0.19.0", "", {}, "sha512-hLKYC/C/ck/eMrv703BlAtx9lQIFyedfU9V5udGxwTATPVoz3SSZm1S42TguERJ7X0ipoafmV+rnrdGAYoG+3Q=="],
 
