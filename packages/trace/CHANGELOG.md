@@ -12,6 +12,8 @@ in it describes 0.3.0 — the last version anyone can install.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-30
+
 ### Added
 
 - Event 1 (`stream-opened`) gains an optional `"hdr"` key, read and written as
