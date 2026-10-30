@@ -31,19 +31,20 @@ The `"detail"` field (see Part 2 header) declares what was recorded. Each level 
 | Detail Level      | What's Recorded                                                                                                                                  | Typical Use Case                                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
 | `"control"`       | Control messages only (setup, subscribe, publish, goaway, etc.). No data stream events, no object payloads.                                      | Lightweight protocol flow analysis. DevTools default. |
-| `"headers"`       | Control messages + data stream headers (subgroup/fetch/datagram headers, object metadata: group, object ID, priority, status). No payload bytes. | Delivery pattern analysis, timing.                    |
+| `"headers"`       | Control messages + data stream headers (subgroup/fetch/datagram headers and their bytes, object metadata: group, object ID, priority, status). No payload bytes. | Delivery pattern analysis, timing.                    |
 | `"headers+sizes"` | Everything in `"headers"` + payload byte lengths for each object, and the size of the bytes behind an error ([Event 6](#event-6-error) `"rawlen"`).                                                                                | Bandwidth analysis without storing media.             |
 | `"headers+data"`  | Everything in `"headers"` + full payload bytes for each object.                                                                                  | Full session replay, debugging media corruption.      |
 | `"full"`          | Everything above + raw wire bytes for every *control* message (pre-decode), and the bytes behind an error event ([Event 6](#event-6-error) `"raw"`). See the note below on data-stream framing.                            | Wire-level debugging, compliance testing.             |
 
 Levels `"headers+data"` and `"full"`, and the `"raw"` field on Event 0 and [Event 6](#event-6-error), are **payload-bearing** — see [Privacy Considerations](#privacy-considerations). Event 6's `"raw"` is gated at `"full"` rather than at Event 6's own `control`+ because an error naming a *data* stream has subgroup framing and object payload behind it, which is media.
 
-**Data-stream framing is recorded as decoded fields, not bytes.** `"raw"` exists
-only on Event 0, and Event 4's `"pl"` begins after the object header, so the bytes
-of a `SUBGROUP_HEADER`, a fetch header or a datagram header are recorded at no
-level, including `"full"`; see [Event 1](#event-1-stream-opened). The exception is
-an object's property block, recorded as bytes in
-[Event 3's `"props"`](#event-3-object-header).
+**Data-stream framing is recorded as decoded fields, with two byte-level
+exceptions.** A stream's header (a `SUBGROUP_HEADER`, a fetch header or a
+datagram header) is recorded as bytes in [Event 1's `"hdr"`](#hdr--the-header-bytes),
+and an object's property block in
+[Event 3's `"props"`](#event-3-object-header). Event 4's `"pl"` begins after the
+object header, so the rest of each object's framing is recorded at no level,
+including `"full"`.
 
 At any detail level, the recorder MAY be configured to **mask payloads** — replacing payload bytes with zeroes before writing. This preserves payload sizes for bandwidth analysis while stripping media content. Sources MUST advertise masking via `"payloadMasked": true` in the header's `"custom"` map when active.
 
@@ -171,6 +172,7 @@ reader rule outranks the writer rule.
 | `"sg"`  | integer | `headers`+   | Subgroup ID. Optional; only meaningful when `st == 0`.   |
 | `"fri"` | integer | `headers`+   | Fetch request ID. Optional; only meaningful when `st == 2`. |
 | `"g"`   | integer | `headers`+   | Group ID. Optional; only meaningful when `st == 1`.       |
+| `"hdr"` | byte string | `headers`+ | The stream's header as the wire carried it. **Optional.** See [below](#hdr--the-header-bytes). |
 
 #### Why these four keys exist
 
@@ -178,8 +180,9 @@ A `SUBGROUP_HEADER` carries a track alias, a group, a subgroup and a publisher
 priority. A fetch header carries a request ID. A datagram header carries a track
 alias, a group, an object and a priority. Event 3 holds group, object, priority
 and status; **track alias, subgroup ID and fetch request ID** live here, and at
-`"headers"` there are no payload bytes to re-parse them from. Without them a
-`"headers"` recording cannot say which track a stream belongs to.
+`"headers"` there are no payload bytes to re-parse them from, and `"hdr"` is
+optional. Without them a `"headers"` recording cannot say which track a stream
+belongs to.
 
 **A writer MUST write `"fri"` on a fetch stream** (`st == 2`), where it is the
 only correlation between the stream and the FETCH that asked for it. A reader
@@ -217,6 +220,24 @@ carries the same group by construction, so a copy here would be a second field
 with no independent source. `"pp"` is deliberately **not** added for the same
 reason — Event 3's `"pp"` is the stream header's publisher priority copied per
 object, and a second copy would have no tiebreak.
+
+#### `"hdr"` — the header bytes
+
+- **Bytes.** For a subgroup or fetch stream, the MoQT stream header from its
+  first byte (the stream type) through its last field, before the first object.
+  For a datagram, the datagram's bytes before the object payload (all of it, for
+  a datagram with no payload). Transport framing is not part of it: a
+  WebTransport stream's signal value and session ID come before the stream type
+  and MUST NOT be included.
+- **`"headers"`+, not `"full"`.** The bytes encode only what Event 1 and Event 3
+  already record at `"headers"` (stream type, track alias, group, subgroup,
+  object ID, priority, request ID, a datagram's property block), so they carry
+  no content and no credentials that level does not already carry.
+- **The bytes are the evidence.** The keys above are what the recorder read from
+  them. Where the two disagree, the recorder misread the header; a reader MAY
+  re-parse `"hdr"` with the codec for the session's draft and prefer the result,
+  and MUST NOT reject the event.
+- **Optional.** A writer that does not hold the bytes omits the key.
 
 #### Integer keys decode to the same type as their Event 3 counterparts
 

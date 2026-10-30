@@ -80,6 +80,21 @@ export interface ErrorDetails {
   readonly rawLength?: number | null
 }
 
+/**
+ * What a recorder parsed from a data stream's header, and the header's bytes.
+ *
+ * Each key is optional. `subgroupId`, `fetchRequestId` and `groupId` are kept
+ * only on the stream type that carries them (subgroup, fetch and datagram).
+ */
+export interface StreamHeaderDetails {
+  readonly trackAlias?: bigint
+  readonly subgroupId?: bigint
+  readonly fetchRequestId?: bigint
+  readonly groupId?: bigint
+  /** The header bytes, from the stream type through the last header field. */
+  readonly headerRaw?: Uint8Array
+}
+
 export interface TraceRecorder {
   /** Wrap a SessionState to auto-record control messages and state changes. */
   wrapSession<M extends { type: string }, T extends string>(
@@ -98,8 +113,16 @@ export interface TraceRecorder {
    */
   record(event: TraceEvent): void
 
-  /** Record a stream-opened event. Ignored at 'control' detail level. */
-  recordStreamOpened(streamId: bigint, direction: 0 | 1, streamType: 0 | 1 | 2): void
+  /**
+   * Record a stream-opened event. Ignored at 'control' detail level.
+   * `header` carries what the stream's header said, and its bytes.
+   */
+  recordStreamOpened(
+    streamId: bigint,
+    direction: 0 | 1,
+    streamType: 0 | 1 | 2,
+    header?: StreamHeaderDetails,
+  ): void
 
   /** Record a stream-closed event. Ignored at 'control' detail level. */
   recordStreamClosed(streamId: bigint, errorCode?: number): void
@@ -323,7 +346,7 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
 
     record: addEvent,
 
-    recordStreamOpened(streamId, direction, streamType) {
+    recordStreamOpened(streamId, direction, streamType, header) {
       if (detailRank < DETAIL_RANK.headers) return
       addEvent({
         type: 'stream-opened',
@@ -332,6 +355,15 @@ export function createRecorder(options: RecorderOptions): TraceRecorder {
         streamId,
         direction,
         streamType,
+        ...(header?.trackAlias != null ? { trackAlias: header.trackAlias } : {}),
+        ...(streamType === 0 && header?.subgroupId != null
+          ? { subgroupId: header.subgroupId }
+          : {}),
+        ...(streamType === 2 && header?.fetchRequestId != null
+          ? { fetchRequestId: header.fetchRequestId }
+          : {}),
+        ...(streamType === 1 && header?.groupId != null ? { groupId: header.groupId } : {}),
+        ...(header?.headerRaw != null ? { headerRaw: header.headerRaw } : {}),
       })
     },
 

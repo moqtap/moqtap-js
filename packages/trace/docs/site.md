@@ -163,6 +163,8 @@ traced.receive(serverSetup);
 
 // Record data events manually
 recorder.recordStreamOpened(3n, 1, 0);       // incoming subgroup stream
+// …or with what its header said, and the header's bytes
+recorder.recordStreamOpened(7n, 1, 0, { trackAlias: 2n, subgroupId: 0n, headerRaw: headerBytes });
 recorder.recordObjectHeader(3n, 1n, 0n, 128, 0);
 // …or with the object's property block, as the wire carried it
 recorder.recordObjectHeader(3n, 1n, 1n, 128, 0, propertyBlock);
@@ -187,6 +189,8 @@ const bytes = writeMoqtrace(trace);
 `createRecorder` requires `protocol`, `perspective` and `detail`, and throws on a detail level it does not know. Optional settings: `transport`, `source`, `endpoint`, `sessionId`, `maxEvents`, `messageTypeId`, `clock` (microseconds for event timestamps) and `extra` (header keys of your own, written to the header; use an `x-` prefix).
 
 `recordError(errorCode, reason, details?)` takes `streamId`, `errorKind` (`'protocol'`, `'transport'`, `'decode'` or any other string), `raw` and `rawLength`. Pass all the bytes you hold in `raw`: the recorder keeps the first `MAX_ERROR_RAW_BYTES` (4096) and writes the full length as `rawLength`. Bytes are kept for the first error on each stream, and for the first error with no stream; later errors are recorded without them. Pass `rawLength: null` when the true length is unknown.
+
+`recordStreamOpened(streamId, direction, streamType, header?)` takes `trackAlias`, `subgroupId` (subgroup streams), `fetchRequestId` (fetch streams), `groupId` (datagrams) and `headerRaw`, the header's bytes from the stream type through its last field. A field on the wrong stream type is not recorded.
 
 `record(event)` adds an event you built yourself, with no detail-level filtering. `finalize()` stops recording and returns the trace; `recording` says whether the recorder still accepts events.
 
@@ -263,7 +267,7 @@ Events use a discriminated union on the `type` field:
 | Type | Description |
 |------|-------------|
 | `control` | Control message sent or received |
-| `stream-opened` | QUIC stream opened; optional `trackAlias`, `subgroupId`, `fetchRequestId`, `groupId` |
+| `stream-opened` | QUIC stream opened; optional `trackAlias`, `subgroupId`, `fetchRequestId`, `groupId`, `headerRaw` |
 | `stream-closed` | QUIC stream closed |
 | `object-header` | Object metadata parsed from data stream |
 | `object-payload` | Object payload size, and bytes at `headers+data` and above |

@@ -48,6 +48,29 @@ describe('traceToJSON', () => {
     expect(json).toContain('"0xff"')
   })
 
+  it('renders stream header bytes as hex', () => {
+    const trace: Trace = {
+      header: {
+        protocol: 'moq-transport-22',
+        perspective: 'client',
+        detail: 'headers',
+        startTime: 0,
+      },
+      events: [
+        {
+          type: 'stream-opened',
+          seq: 0,
+          timestamp: 0,
+          streamId: 2n,
+          direction: 1,
+          streamType: 0,
+          headerRaw: new Uint8Array([0x14, 0x02]),
+        },
+      ],
+    }
+    expect(JSON.parse(traceToJSON(trace)).events[0].headerRaw).toBe('1402')
+  })
+
   it('converts Uint8Array to hex string', () => {
     const trace: Trace = {
       header: {

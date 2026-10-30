@@ -10,6 +10,16 @@ This file starts at 0.4.0. Earlier releases are in the git history. Versions
 published; their contents are folded into the 0.4.0 below, so every "before"
 in it describes 0.3.0 — the last version anyone can install.
 
+## [Unreleased]
+
+### Added
+
+- Event 1 (`stream-opened`) gains an optional `"hdr"` key, read and written as
+  `headerRaw`: the stream's header bytes, recorded at the `headers` level. See
+  SPEC.md, Event 1.
+- `recordStreamOpened` takes an optional fourth argument with the header's
+  fields and bytes.
+
 ## [0.5.0] - 2026-10-28
 
 ### Added

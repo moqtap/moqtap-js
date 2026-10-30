@@ -250,10 +250,9 @@ export interface StreamOpenedEvent extends BaseEvent {
   /**
    * Track alias the stream carries. Written whenever the recorder knows it.
    *
-   * The stream header carries the alias and no detail level records that
-   * header's bytes, so before this field a `'headers'` recording could not say
-   * which track a stream belonged to — which is most of what the level exists
-   * to answer, and there was nothing left to re-parse it from.
+   * The stream header carries the alias, so before this field a `'headers'`
+   * recording could not say which track a stream belonged to — which is most
+   * of what the level exists to answer.
    *
    * `bigint`, and so are the three fields below, unlike this event's
    * `direction` and `streamType`. Those two are small enumerations that a
@@ -304,6 +303,16 @@ export interface StreamOpenedEvent extends BaseEvent {
    * convenience for a reader that has not yet seen an object.
    */
   readonly groupId?: bigint
+  /**
+   * The stream's MoQT header as the wire carried it: from the stream type
+   * through the last header field, before the first object. For a datagram,
+   * the bytes before its payload. Recorded from `'headers'` up.
+   *
+   * The evidence the fields above were read from. Where they disagree, the
+   * recorder misread the bytes; re-parse these with the codec for the
+   * session's draft.
+   */
+  readonly headerRaw?: Uint8Array
 }
 
 export interface StreamClosedEvent extends BaseEvent {

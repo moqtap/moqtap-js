@@ -423,6 +423,64 @@ describe('binary .moqtrace format', () => {
       }
     })
 
+    it('stream-opened event with its header bytes', () => {
+      // SUBGROUP_HEADER type 0x14, alias 2, group 5, subgroup 1, priority 0x80.
+      const hdr = new Uint8Array([0x14, 0x02, 0x05, 0x01, 0x40, 0x80])
+      const { events } = roundTrip([
+        {
+          type: 'stream-opened',
+          seq: 1,
+          timestamp: 2000,
+          streamId: 42n,
+          direction: 1,
+          streamType: 0,
+          trackAlias: 2n,
+          subgroupId: 1n,
+          headerRaw: hdr,
+        },
+      ])
+      const e = events[0]!
+      if (e.type !== 'stream-opened') throw new Error('unreachable')
+      expect(Array.from(e.headerRaw!)).toEqual(Array.from(hdr))
+      expect(e.extra).toBeUndefined()
+    })
+
+    it('stream-opened event without header bytes reads none back', () => {
+      const { events } = roundTrip([
+        {
+          type: 'stream-opened',
+          seq: 1,
+          timestamp: 2000,
+          streamId: 42n,
+          direction: 1,
+          streamType: 2,
+        },
+      ])
+      expect(events[0]).not.toHaveProperty('headerRaw')
+    })
+
+    it('reads "hdr" from a hand-written event map, and an old one without it', () => {
+      const hdr = new Uint8Array([0x05, 0x07])
+      const withHdr = readMoqtrace(
+        fileWithEventMap({ n: 0, t: 0, e: 1, sid: 2, d: 1, st: 2, fri: 7, hdr }),
+      ).events[0]
+      expect(withHdr?.type === 'stream-opened' && Array.from(withHdr.headerRaw!)).toEqual([5, 7])
+      const old = readMoqtrace(
+        fileWithEventMap({ n: 0, t: 0, e: 1, sid: 2, d: 1, st: 0, ta: 3, sg: 0 }),
+      ).events[0]
+      expect(old?.type).toBe('stream-opened')
+      expect(old).not.toHaveProperty('headerRaw')
+      expect(old?.extra).toBeUndefined()
+    })
+
+    it('keeps a "hdr" that is not a byte string in extra', () => {
+      const event = readMoqtrace(
+        fileWithEventMap({ n: 0, t: 0, e: 1, sid: 2, d: 1, st: 0, hdr: 'oops' }),
+      ).events[0]
+      expect(event).not.toHaveProperty('headerRaw')
+      expect(event?.extra).toEqual({ hdr: 'oops' })
+    })
+
     it('stream-closed event', () => {
       const { events } = roundTrip([
         {

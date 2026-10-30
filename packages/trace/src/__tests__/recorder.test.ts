@@ -191,6 +191,39 @@ describe('TraceRecorder', () => {
     expect(without).not.toHaveProperty('properties')
   })
 
+  it('records a stream header and its bytes at headers level', () => {
+    const hdr = new Uint8Array([0x14, 0x02, 0x05, 0x01, 0x40, 0x80])
+    const header = {
+      trackAlias: 2n,
+      subgroupId: 1n,
+      fetchRequestId: 9n,
+      groupId: 5n,
+      headerRaw: hdr,
+    }
+    const recorder = createRecorder({
+      detail: 'headers',
+      protocol: 'moq-transport-22',
+      perspective: 'client',
+      clock: () => 0,
+    })
+    recorder.recordStreamOpened(4n, 1, 0, header)
+    recorder.recordStreamOpened(8n, 1, 2, { fetchRequestId: 9n, subgroupId: 1n })
+    recorder.recordStreamOpened(12n, 1, 0)
+
+    const [subgroup, fetch, bare] = readMoqtrace(writeMoqtrace(recorder.finalize())).events
+    // Fields outside the stream type's scope are not written.
+    expect(subgroup).toMatchObject({ trackAlias: 2n, subgroupId: 1n, headerRaw: hdr })
+    expect(subgroup).not.toHaveProperty('fetchRequestId')
+    expect(subgroup).not.toHaveProperty('groupId')
+    expect(fetch).toMatchObject({ fetchRequestId: 9n })
+    expect(fetch).not.toHaveProperty('subgroupId')
+    expect(bare).not.toHaveProperty('headerRaw')
+
+    const control = createRecorder({ detail: 'control', protocol: 'p', perspective: 'client' })
+    control.recordStreamOpened(4n, 1, 0, header)
+    expect(control.finalize().events).toHaveLength(0)
+  })
+
   it('detail level filters payload events below headers+sizes', () => {
     const recorder = createRecorder({
       detail: 'headers',

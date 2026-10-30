@@ -529,6 +529,7 @@ function eventToCbor(event: TraceEvent): Record<string, unknown> {
       if (event.subgroupId != null) base.sg = event.subgroupId
       if (event.fetchRequestId != null) base.fri = event.fetchRequestId
       if (event.groupId != null) base.g = event.groupId
+      if (event.headerRaw != null) base.hdr = event.headerRaw
       break
     }
     case 'stream-closed': {
@@ -964,6 +965,7 @@ function decodeEvent(src: Decoding): TraceEvent {
         ...optional(src, 'sg', 'subgroupId', asUint),
         ...optional(src, 'fri', 'fetchRequestId', asUint),
         ...optional(src, 'g', 'groupId', asUint),
+        ...optional(src, 'hdr', 'headerRaw', asByteString),
       }
 
     case 'stream-closed':

@@ -75,17 +75,19 @@ recording needs; `maxEvents` bounds the event buffer.
 Beyond `wrapSession`, the recorder takes events the session layer cannot see:
 `recordStreamOpened`, `recordStreamClosed`, `recordObjectHeader`,
 `recordObjectPayload`, `recordError` and `annotate`. `finalize()` returns the
-trace and stops recording.
+trace and stops recording. `recordStreamOpened` takes an optional fourth argument
+with what the stream's header said (`trackAlias`, `subgroupId`, `fetchRequestId`,
+`groupId`) and the header's bytes (`headerRaw`), recorded from `headers` up.
 
 ## Detail levels
 
-| Level           | What is recorded                       |
-| --------------- | -------------------------------------- |
-| `control`       | Control messages only                  |
-| `headers`       | + data stream and object headers       |
-| `headers+sizes` | + payload byte lengths                 |
-| `headers+data`  | + full payload bytes                   |
-| `full`          | + raw wire bytes, pre-decode           |
+| Level           | What is recorded                                          |
+| --------------- | --------------------------------------------------------- |
+| `control`       | Control messages only                                     |
+| `headers`       | + data stream and object headers, and stream header bytes |
+| `headers+sizes` | + payload byte lengths                                    |
+| `headers+data`  | + full payload bytes                                      |
+| `full`          | + raw wire bytes, pre-decode                              |
 
 Errors and annotations are recorded at every level. `headers+data` and `full`,
 and the `raw` field on any event, carry user content, so capturing them should
