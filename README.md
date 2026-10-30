@@ -10,7 +10,7 @@ JavaScript/TypeScript implementation of [MoQT (Media over QUIC Transport)](https
 | [`@moqtap/trace`](./packages/trace) | Session recorder and `.moqtrace` binary format |
 | [`@moqtap/monitor-browser`](./packages/monitor-browser) | Browser monitor — `WebTransport` hook and metered upload |
 | [`@moqtap/collector`](./packages/collector) | Renamed to `@moqtap/monitor-browser` |
-| [`@moqtap/media`](./packages/media) | Media payloads: ISO BMFF and CMAF boxes, Annex-B H.264/H.265, MSF/CMSF catalogs, CMAF objects, MSF/CMSF timelines, LOC |
+| [`@moqtap/media`](./packages/media) | Media payloads: ISO BMFF and CMAF boxes, Annex-B H.264/H.265, MSF/CMSF catalogs, CMAF objects, MSF/CMSF timelines, LOC, frame types |
 | [`@moqtap/viewer`](./packages/viewer) | The `.moqtrace` viewer as a static bundle (not on npm; released as `viewer-v*` tags) |
 
 ## Features

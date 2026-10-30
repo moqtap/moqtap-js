@@ -30,7 +30,7 @@
     },
     "packages/inspect": {
       "name": "@moqtap/inspect",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "devDependencies": {
         "@moqtap/codec": "workspace:*",
         "tsup": "^8.0.0",
@@ -43,7 +43,7 @@
     },
     "packages/media": {
       "name": "@moqtap/media",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "devDependencies": {
         "@moqtap/test-vectors": "^0.21.0",
         "tsup": "^8.0.0",

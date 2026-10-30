@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/inspect",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MoQT control messages made readable: setup versions as drafts, printable fields, implementation names, and track aliases joined to their names",
   "type": "module",
   "license": "MIT",

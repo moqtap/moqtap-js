@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/media",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Media payloads carried over MoQT made readable: ISO BMFF and CMAF boxes, Annex-B H.264/H.265, MSF/CMSF catalogs and timelines, and LOC properties",
   "type": "module",
   "license": "MIT",
