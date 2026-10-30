@@ -84,6 +84,8 @@ problemTitle(found[0], { draft: 22, pendingMs: 5000 })
 | `problemSeverity(kind)`                  | `error` for an error response or undecodable bytes, `warning` for the rest              |
 | `codeLabel(code, name, draft)`           | `TRACK_DOES_NOT_EXIST (0x4)`, or `0x4, unknown for draft-14`                            |
 | `requestIdOf(name, fields)`              | The request id a message carries, in decimal                                            |
+| `messageSpec(draft, name)`               | The section of that draft defining the message, with its defining sentence, or `null`   |
+| `specUrl(spec)`                          | The datatracker link to that section of the pinned draft revision                       |
 
 A value that needs both a shown form and the recorded one is a `Displayed`
 record (`{ $shown, text, raw }`), so the result survives `postMessage` and
@@ -114,6 +116,14 @@ requests that went the other way on the same connection.
 | `request-limit-reached` | A request used the last id the peer's MAX_REQUEST_ID allowed       |
 | `goaway`                | GOAWAY, with the URI it names                                      |
 | `undecodable`           | Bytes that did not decode                                          |
+
+Each problem carries a stable `id` (`session.` and its kind) and, when the
+draft is known and defines the message the problem is about (the error
+message, GOAWAY, REQUESTS_BLOCKED or SUBSCRIBES_BLOCKED, or for a reached limit
+the MAX_REQUEST_ID or MAX_SUBSCRIBE_ID message),
+`spec`: `{ draft: 'moqt', revision, section, keyword, quote }`. `specUrl(spec)`
+links that section of the pinned draft revision on datatracker;
+`messageSpec(draft, name)` looks one up directly.
 
 `problemTitle` and `problemDetail` take the same `draft` and `pendingMs`,
 the recording end as `perspective` (`client` or `server`) to say which end

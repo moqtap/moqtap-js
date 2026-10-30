@@ -161,6 +161,13 @@ event's time.
 | `goaway` | GOAWAY, with the URI it names |
 | `undecodable` | Bytes that did not decode |
 
+Each problem carries a stable `id` (`session.` and its kind). When the draft is known and
+defines the message the problem is about (the error message, GOAWAY, REQUESTS_BLOCKED or
+SUBSCRIBES_BLOCKED, or for a reached limit the MAX_REQUEST_ID or MAX_SUBSCRIBE_ID message), it
+also carries `spec`: the draft, revision, section and the
+sentence that defines the message. `specUrl(spec)` links that section of the pinned revision on
+datatracker, and `messageSpec(draft, name)` looks one up directly.
+
 `problemTitle` and `problemDetail` put a problem into words. They take the same `draft` and
 `pendingMs`, plus `perspective` (`client` or `server`, the end that recorded the session) to say
 which end sent a GOAWAY, and `trackOf(event)` to name a request's track. `problemSeverity(kind)`

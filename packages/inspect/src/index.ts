@@ -27,11 +27,14 @@ export type {
   InspectEvent,
   PairOptions,
   Problem,
+  ProblemId,
   ProblemOptions,
   RequestPair,
   UndecodableEvent,
 } from './requests.js'
 export { pairRequests, problems, requestIdOf } from './requests.js'
+export type { SpecRef } from './specs.js'
+export { messageSpec, specUrl } from './specs.js'
 export type {
   TrackEvent,
   TrackFields,

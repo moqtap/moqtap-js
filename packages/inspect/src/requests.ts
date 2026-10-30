@@ -20,6 +20,7 @@
 
 import { bytesAsText, isDisplayed } from './display.js'
 import { errorName } from './errors.js'
+import { messageSpec, type SpecRef } from './specs.js'
 
 /** Which way a message went: `tx` or `0` sent by the recorder, `rx` or `1` received. */
 export type EventDirection = 'tx' | 'rx' | 0 | 1
@@ -79,10 +80,25 @@ export interface ProblemOptions extends PairOptions {
   readonly endMs?: number | undefined
 }
 
+/** A problem's stable identifier: `session.` and its kind. */
+export type ProblemId =
+  | 'session.error'
+  | 'session.pending'
+  | 'session.requests-blocked'
+  | 'session.request-limit-reached'
+  | 'session.goaway'
+  | 'session.undecodable'
+
 interface ProblemBase<T> {
+  readonly id: ProblemId
   /** When the problem began; `null` when the event carries no time. */
   readonly atMs: number | null
   readonly event: T
+  /**
+   * The section of the session's draft that defines the message the problem
+   * is about. Absent when the draft is not known or defines no such message.
+   */
+  readonly spec?: SpecRef
 }
 
 export type Problem<T> =
@@ -420,6 +436,10 @@ export function problems<T extends InspectEvent>(
   const { pendingMs, draft } = options
   const { pairs, answering } = pair(events, draft)
   const kinds = classifier(events, draft)
+  const withSpec = (message: string): { spec?: SpecRef } => {
+    const spec = messageSpec(draft, message)
+    return spec === null ? {} : { spec }
+  }
 
   const found: { order: number; problem: Problem<T> }[] = []
   let clock = Number.NEGATIVE_INFINITY
@@ -439,7 +459,13 @@ export function problems<T extends InspectEvent>(
     const atMs = event.atMs ?? null
 
     if (event.kind === 'undecodable') {
-      add({ kind: 'undecodable', atMs, event, reason: event.reason ?? null })
+      add({
+        id: 'session.undecodable',
+        kind: 'undecodable',
+        atMs,
+        event,
+        reason: event.reason ?? null,
+      })
       continue
     }
     const name = lowerName(event)
@@ -451,7 +477,9 @@ export function problems<T extends InspectEvent>(
     if (name.endsWith('_error')) {
       const code = integer(first(fields, ['error_code', 'errorCode']))
       add({
+        id: 'session.error',
         kind: 'error',
+        ...withSpec(name),
         atMs,
         event,
         message: name.toUpperCase(),
@@ -476,7 +504,9 @@ export function problems<T extends InspectEvent>(
         seen.count += 1
       } else {
         const problem = {
+          id: 'session.requests-blocked' as const,
           kind: 'requests-blocked' as const,
+          ...withSpec(name),
           atMs,
           event,
           maximumRequestId: maximum === null ? null : maximum.toString(),
@@ -487,7 +517,14 @@ export function problems<T extends InspectEvent>(
       }
     } else if (name === 'goaway') {
       const uri = text(first(fields, ['new_session_uri', 'newSessionUri']))
-      add({ kind: 'goaway', atMs, event, newSessionUri: uri === null || uri === '' ? null : uri })
+      add({
+        id: 'session.goaway',
+        kind: 'goaway',
+        ...withSpec(name),
+        atMs,
+        event,
+        newSessionUri: uri === null || uri === '' ? null : uri,
+      })
     } else if (LIMIT_NAMES.has(name) || SETUPS.has(name)) {
       const limit = SETUPS.has(name)
         ? setupLimit(fields)
@@ -505,7 +542,11 @@ export function problems<T extends InspectEvent>(
         if (next >= limit && !reached.has(key)) {
           reached.add(key)
           add({
+            id: 'session.request-limit-reached',
             kind: 'request-limit-reached',
+            ...(withSpec('max_request_id').spec !== undefined
+              ? withSpec('max_request_id')
+              : withSpec('max_subscribe_id')),
             atMs,
             event,
             requestId: id.id.toString(),
@@ -530,6 +571,7 @@ export function problems<T extends InspectEvent>(
     found.push({
       order: sent + pendingMs,
       problem: {
+        id: 'session.pending',
         kind: 'pending',
         atMs: sent + pendingMs,
         event: entry.request,

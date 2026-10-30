@@ -5,6 +5,7 @@ import { createDraft22Codec } from '@moqtap/codec/draft22'
 import { describe, expect, it } from 'vitest'
 import { displayFields } from '../display.js'
 import { type ControlEvent, type InspectEvent, pairRequests, problems } from '../requests.js'
+import { messageSpec } from '../specs.js'
 
 /** A message as the codec reads it off the wire, so fields are spelled as decoded. */
 function decoded<M extends { type: string }>(
@@ -165,7 +166,9 @@ describe('problems', () => {
     )
     expect(problems([sub, err], { pendingMs: 5000, draft: 14 })).toEqual([
       {
+        id: 'session.error',
         kind: 'error',
+        spec: messageSpec(14, 'SUBSCRIBE_ERROR'),
         atMs: 10,
         event: err,
         message: 'SUBSCRIBE_ERROR',
@@ -190,8 +193,23 @@ describe('problems', () => {
       'goaway',
     ])
     expect(problems([sub, last], { pendingMs: 5000, draft: 14, endMs: 7000 })).toEqual([
-      { kind: 'goaway', atMs: 4000, event: last, newSessionUri: null },
-      { kind: 'pending', atMs: 6000, event: sub, requestId: '0', response: null, waitedMs: 6000 },
+      {
+        id: 'session.goaway',
+        kind: 'goaway',
+        spec: messageSpec(14, 'goaway'),
+        atMs: 4000,
+        event: last,
+        newSessionUri: null,
+      },
+      {
+        id: 'session.pending',
+        kind: 'pending',
+        atMs: 6000,
+        event: sub,
+        requestId: '0',
+        response: null,
+        waitedMs: 6000,
+      },
     ])
   })
 
@@ -203,7 +221,15 @@ describe('problems', () => {
       { direction: 'rx', streamId: 4, atMs: 900 },
     )
     expect(problems([sub, ok], { pendingMs: 500, draft: 17 })).toEqual([
-      { kind: 'pending', atMs: 500, event: sub, requestId: null, response: ok, waitedMs: 900 },
+      {
+        id: 'session.pending',
+        kind: 'pending',
+        atMs: 500,
+        event: sub,
+        requestId: null,
+        response: ok,
+        waitedMs: 900,
+      },
     ])
     expect(problems([sub, ok], { pendingMs: 1000, draft: 17 })).toEqual([])
   })
@@ -216,7 +242,15 @@ describe('problems', () => {
       })
     const events = [blocked(), blocked(), blocked()]
     expect(problems(events, { pendingMs: 5000, draft: 14 })).toEqual([
-      { kind: 'requests-blocked', atMs: null, event: events[0], maximumRequestId: '10', count: 3 },
+      {
+        id: 'session.requests-blocked',
+        kind: 'requests-blocked',
+        spec: messageSpec(14, 'REQUESTS_BLOCKED'),
+        atMs: null,
+        event: events[0],
+        maximumRequestId: '10',
+        count: 3,
+      },
     ])
   })
 
@@ -240,7 +274,15 @@ describe('problems', () => {
     const third = control('subscribe', { request_id: 4n }, { direction: 'tx', atMs: 30 })
     const found = problems([setup, ...subs, raised, third], { pendingMs: 5000, draft: 14 })
     expect(found).toEqual([
-      { kind: 'request-limit-reached', atMs: 11, event: subs[1], requestId: '2', limit: '4' },
+      {
+        id: 'session.request-limit-reached',
+        kind: 'request-limit-reached',
+        spec: messageSpec(14, 'MAX_REQUEST_ID'),
+        atMs: 11,
+        event: subs[1],
+        requestId: '2',
+        limit: '4',
+      },
     ])
   })
 
@@ -255,8 +297,21 @@ describe('problems', () => {
     const undecodable: InspectEvent = { kind: 'undecodable', reason: 'bad varint', atMs: 2 }
     const goaway = control('GOAWAY', { new_session_uri: 'https://relay.example/b' }, { atMs: 1 })
     expect(problems([goaway, undecodable], { pendingMs: 5000, draft: 22 })).toEqual([
-      { kind: 'goaway', atMs: 1, event: goaway, newSessionUri: 'https://relay.example/b' },
-      { kind: 'undecodable', atMs: 2, event: undecodable, reason: 'bad varint' },
+      {
+        id: 'session.goaway',
+        kind: 'goaway',
+        spec: messageSpec(22, 'GOAWAY'),
+        atMs: 1,
+        event: goaway,
+        newSessionUri: 'https://relay.example/b',
+      },
+      {
+        id: 'session.undecodable',
+        kind: 'undecodable',
+        atMs: 2,
+        event: undecodable,
+        reason: 'bad varint',
+      },
     ])
   })
 
