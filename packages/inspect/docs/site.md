@@ -1,7 +1,7 @@
 ---
 title: "@moqtap/inspect"
 description: Make decoded MoQT control messages readable. Track names, error code names, request pairing and session problems for drafts 07–22.
-version: 0.2.0
+version: 0.3.0
 ---
 
 **Make decoded MoQT control messages readable.**
@@ -215,6 +215,8 @@ Durations are buckets on the collector's ladder: bucket `i` holds `[2^i, 2^(i+1)
 | `problemSeverity(kind)` | `error` for an error response or undecodable bytes, `warning` for the rest |
 | `codeLabel(code, name, draft)` | `TRACK_DOES_NOT_EXIST (0x4)`, or `0x4, unknown for draft-14` |
 | `requestIdOf(name, fields)` | The request ID a message carries, in decimal |
+| `messageSpec(draft, name)` | The section of that draft defining the message, with its defining sentence, or `null` |
+| `specUrl(spec)` | The datatracker link to that section of the pinned draft revision |
 | `isDisplayed(value)` | Whether a value is a `Displayed` record |
 | `bytesAsText(bytes)` | Printable ASCII as text, or `null` |
 | `messageKind(name, fields?)` | A message's name in the codec's spelling (`client_setup`) |
