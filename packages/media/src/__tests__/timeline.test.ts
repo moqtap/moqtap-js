@@ -105,7 +105,7 @@ describe('parseMediaTimeline', () => {
       category: 'invalid_value',
       path: '',
       section: 'MSF-00 7.1',
-      message: 'a media timeline is an array of records',
+      message: 'A media timeline is an array of records',
     }
     expect(parseMediaTimeline('{}', { draft: 'msf-00' })).toEqual({
       kind: 'invalid',
@@ -151,7 +151,7 @@ describe('parseMediaTimelineTemplate', () => {
             category: 'invalid_value',
             path: '',
             section: 'MSF-01 7.4.1',
-            message: 'a media timeline template is an Array of six values',
+            message: 'A media timeline template is an Array of six values',
           },
         ],
       })
@@ -162,7 +162,7 @@ describe('parseMediaTimelineTemplate', () => {
         category: 'missing_field',
         path: '[5]',
         section: 'MSF-01 7.4.1',
-        message: 'a media timeline template has six mandatory values',
+        message: 'A media timeline template has six mandatory values',
       },
     ])
   })
@@ -185,7 +185,7 @@ describe('parseMediaTimelineTemplate', () => {
           category: 'invalid_value',
           path: '[0]',
           section: 'MSF-01 7.4.1',
-          message: 'startMediaTime is a whole number of milliseconds',
+          message: 'The startMediaTime value is a whole number of milliseconds',
         },
       ],
     })
@@ -313,7 +313,7 @@ describe('parseEventTimeline', () => {
           category: 'invalid_value',
           path: '[0].m',
           section: 'MSF-01 8.1, 7.1.1',
-          message: 'media PTS 33.3 is not a whole number of milliseconds',
+          message: 'The media PTS 33.3 is not a whole number of milliseconds',
         },
       ],
     })
@@ -331,7 +331,7 @@ describe('parseEventTimeline', () => {
         category: 'mixed_index',
         path: '',
         section: 'MSF-00 8.1, MSF-01 8.1',
-        message: 'records SHOULD use one index reference type; these use t, m',
+        message: 'Records SHOULD use one index reference type; these use t, m',
       },
     ])
   })
@@ -408,7 +408,7 @@ describe('readSapTimeline', () => {
       severity: 'error',
       category: 'invalid_value',
       path: '[0].data[0]',
-      message: 'the first Object of Group 3 has SAP type 3; it MUST be 1 or 2',
+      message: 'The first Object of Group 3 has SAP type 3; it MUST be 1 or 2',
     }
     expect(readSapTimeline(recs, { draft: 'cmsf-01' })).toEqual({
       entries: [{ group: 3, object: 1, sapType: 0, ept: 133, at: 1 }],

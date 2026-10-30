@@ -951,6 +951,7 @@ export interface CmafFinding {
   section: string
   /** Where: `moof[0]`, `moof[1].traf[0]`, `@1234` for a byte offset, `''` for the whole object */
   path: string
+  /** What is wrong, as a sentence to show: capitalised, no closing period */
   message: string
 }
 
@@ -990,10 +991,10 @@ const SAP_REASON_TEXT: Record<SapUnknownReason, string> = {
 }
 
 const MALFORMED_TEXT: Record<MalformedReason, string> = {
-  'size-below-header': 'a box size smaller than its header',
+  'size-below-header': 'has a size smaller than its header',
   'past-container': 'runs past its container',
   'fields-past-end': 'ends before its fields',
-  'partial-header': 'bytes too few for a box header',
+  'partial-header': 'has too few bytes for its header',
 }
 
 /** Why a {@link SapReading} has no SAP type, in words. */
@@ -1032,23 +1033,25 @@ export function checkCmafObject(
       section: 'ISO/IEC 14496-12',
       path: `@${m.offset}`,
       message:
-        m.type === null ? MALFORMED_TEXT[m.reason] : `'${m.type}' ${MALFORMED_TEXT[m.reason]}`,
+        m.type === null
+          ? `A box ${MALFORMED_TEXT[m.reason]}`
+          : `The '${m.type}' box ${MALFORMED_TEXT[m.reason]}`,
     })
   }
 
   const readToEnd = !object.truncated && object.unreadBytes === 0
   if (readToEnd && !object.movieFragments.some((m) => m.mdatFollows)) {
-    push('violation', 'no-moof-mdat', '3.3', '', 'no moof is followed by an mdat')
+    push('violation', 'no-moof-mdat', '3.3', '', 'No moof is followed by an mdat')
   }
   object.movieFragments.forEach((moof, i) => {
     if (moof.truncated) return
-    if (!moof.hasMfhd) push('violation', 'no-mfhd', '3.3', `moof[${i}]`, 'the moof has no mfhd')
+    if (!moof.hasMfhd) push('violation', 'no-mfhd', '3.3', `moof[${i}]`, 'The moof has no mfhd')
     if (moof.trackFragments.length === 0) {
-      push('violation', 'no-traf', '3.3', `moof[${i}]`, 'the moof has no traf')
+      push('violation', 'no-traf', '3.3', `moof[${i}]`, 'The moof has no traf')
     }
     moof.trackFragments.forEach((t, j) => {
       if (t.header !== null) return
-      push('violation', 'no-tfhd', '3.3', `moof[${i}].traf[${j}]`, 'the traf has no tfhd')
+      push('violation', 'no-tfhd', '3.3', `moof[${i}].traf[${j}]`, 'The traf has no tfhd')
     })
   })
 
@@ -1058,7 +1061,7 @@ export function checkCmafObject(
       'multiple-tracks',
       '3.3',
       '',
-      `the object carries track_IDs ${object.trackIds.join(', ')}; an object carries a single track`,
+      `The object carries track_IDs ${object.trackIds.join(', ')}; an object carries a single track`,
     )
   }
   if (init) {
@@ -1070,7 +1073,7 @@ export function checkCmafObject(
         'track-id-not-in-init',
         '3.3',
         '',
-        `track_ID ${id} matches no trak of the CMAF header`,
+        `The track_ID ${id} matches no trak of the CMAF header`,
       )
     }
   } else if (object.trackIds.length > 0) {
@@ -1079,7 +1082,7 @@ export function checkCmafObject(
       'track-id-unchecked',
       '3.3',
       '',
-      'no CMAF header to match the track_ID against',
+      'There is no CMAF header to match the track_ID against',
     )
   }
 
@@ -1092,7 +1095,7 @@ export function checkCmafObject(
           'group-start-sap-type',
           ['3.4', '3.6.1'],
           '',
-          `the Group's first Object begins with SAP type ${sap.sapType}, not 1 or 2`,
+          `The Group's first Object begins with SAP type ${sap.sapType}, not 1 or 2`,
         )
       }
     } else if (sap.candidates.length === 0 || sap.candidates.some((t) => t !== 1 && t !== 2)) {
@@ -1101,7 +1104,7 @@ export function checkCmafObject(
         'group-start-sap-not-signalled',
         ['3.4', '3.6.1'],
         '',
-        `the SAP type the Group starts with is not signalled: ${describeSapReason(sap.reason)}`,
+        `The SAP type the Group starts with is not signalled: ${describeSapReason(sap.reason)}`,
       )
     }
   }

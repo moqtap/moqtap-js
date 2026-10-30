@@ -53,6 +53,7 @@ export interface TimelineProblem {
   path: string
   /** The draft and section that state the rule, e.g. `MSF-01 8.1` */
   section: string
+  /** What is wrong, as a sentence to show: capitalised, no closing period */
   message: string
 }
 
@@ -174,7 +175,7 @@ function readDocument(input: string | Uint8Array, problems: TimelineProblem[]): 
       category: 'invalid_json',
       path: '',
       section: 'RFC 8259 8.1',
-      message: 'the payload is not UTF-8',
+      message: 'The payload is not UTF-8',
     })
     return null
   }
@@ -186,7 +187,7 @@ function readDocument(input: string | Uint8Array, problems: TimelineProblem[]): 
       category: 'invalid_json',
       path: '',
       section: 'RFC 8259',
-      message: `not JSON: ${e instanceof Error ? e.message : String(e)}`,
+      message: `The payload is not JSON: ${e instanceof Error ? e.message : String(e)}`,
     })
     return null
   }
@@ -223,7 +224,7 @@ export function parseMediaTimeline(
       category: 'invalid_value',
       path: '',
       section: 'MSF-00 7.1',
-      message: 'a media timeline is an array of records',
+      message: 'A media timeline is an array of records',
     })
     return { kind: 'invalid', problems }
   }
@@ -232,37 +233,37 @@ export function parseMediaTimeline(
   doc.forEach((record, at) => {
     const path = `[${at}]`
     if (!Array.isArray(record)) {
-      report(path, 'a record is an Array of three items')
+      report(path, 'A record is an Array of three items')
       return
     }
     if (record.length > 3) {
       // MSF-01 7.1 lets a document combine the explicit and template formats
       // without giving the combined form.
-      if (options.draft === 'msf-00') report(path, 'a record is an Array of three items')
+      if (options.draft === 'msf-00') report(path, 'A record is an Array of three items')
       return
     }
     if (record.length < 3) {
-      report(`${path}[${record.length}]`, 'a record has three required items', 'missing_field')
+      report(`${path}[${record.length}]`, 'A record has three required items', 'missing_field')
       return
     }
     const [mediaTime, location, wallclock] = record
     let ok = true
     if (typeof mediaTime !== 'number') {
-      report(`${path}[0]`, 'the media presentation time is a JSON Number')
+      report(`${path}[0]`, 'The media presentation time is a JSON Number')
       ok = false
     } else if (!Number.isInteger(mediaTime)) {
       report(
         `${path}[0]`,
-        `media presentation time ${mediaTime} is not a whole number of milliseconds`,
+        `The media presentation time ${mediaTime} is not a whole number of milliseconds`,
       )
       ok = false
     }
     if (!isLocation(location)) {
-      report(`${path}[1]`, 'a Location is an Array of a Group ID and an Object ID')
+      report(`${path}[1]`, 'A Location is an Array of a Group ID and an Object ID')
       ok = false
     }
     if (typeof wallclock !== 'number') {
-      report(`${path}[2]`, 'the wallclock time is a JSON Number')
+      report(`${path}[2]`, 'The wallclock time is a JSON Number')
       ok = false
     }
     if (!ok) return
@@ -291,13 +292,13 @@ export function parseMediaTimelineTemplate(value: JsonValue): ParsedMediaTimelin
   ) => problems.push({ severity: 'error', category, path, section: 'MSF-01 7.4.1', message })
 
   if (!Array.isArray(value) || value.length > 6) {
-    report('', 'a media timeline template is an Array of six values')
+    report('', 'A media timeline template is an Array of six values')
     return { template: null, problems }
   }
   if (value.length < 6) {
     report(
       `[${value.length}]`,
-      'a media timeline template has six mandatory values',
+      'A media timeline template has six mandatory values',
       'missing_field',
     )
     return { template: null, problems }
@@ -313,19 +314,22 @@ export function parseMediaTimelineTemplate(value: JsonValue): ParsedMediaTimelin
   const checks: [boolean, string][] = [
     [
       typeof startMediaTime === 'number' && Number.isInteger(startMediaTime),
-      'startMediaTime is a whole number of milliseconds',
+      'The startMediaTime value is a whole number of milliseconds',
     ],
-    [typeof deltaMediaTime === 'number', 'deltaMediaTime is a JSON Number'],
-    [isLocation(startLocation), 'startLocation is an Array of a Group ID and an Object ID'],
+    [typeof deltaMediaTime === 'number', 'The deltaMediaTime value is a JSON Number'],
+    [
+      isLocation(startLocation),
+      'The startLocation value is an Array of a Group ID and an Object ID',
+    ],
     [
       Array.isArray(deltaLocation) &&
         deltaLocation.length === 2 &&
         typeof deltaLocation[0] === 'number' &&
         typeof deltaLocation[1] === 'number',
-      'deltaLocation is an Array of two Numbers',
+      'The deltaLocation value is an Array of two Numbers',
     ],
-    [typeof startWallclock === 'number', 'startWallclock is a JSON Number'],
-    [typeof deltaWallclock === 'number', 'deltaWallclock is a JSON Number'],
+    [typeof startWallclock === 'number', 'The startWallclock value is a JSON Number'],
+    [typeof deltaWallclock === 'number', 'The deltaWallclock value is a JSON Number'],
   ]
   checks.forEach(([ok, message], i) => {
     if (!ok) report(`[${i}]`, message)
@@ -393,7 +397,7 @@ export function parseEventTimeline(
   ) => problems.push({ severity, category, path, section, message })
 
   if (!Array.isArray(doc)) {
-    report('error', 'invalid_value', '', 'an event timeline is an array of records')
+    report('error', 'invalid_value', '', 'An event timeline is an array of records')
     return { kind: 'invalid', problems }
   }
 
@@ -401,25 +405,25 @@ export function parseEventTimeline(
   doc.forEach((record, at) => {
     const path = `[${at}]`
     if (!isObject(record)) {
-      report('error', 'invalid_value', path, 'a record is a JSON Object')
+      report('error', 'invalid_value', path, 'A record is a JSON Object')
       return
     }
     const keys = INDEX_KEYS.filter((k) => record[k] !== undefined)
     let ok = true
     if (keys.length === 0) {
-      report('error', 'invalid_index', path, "a record needs an index reference: 't', 'l' or 'm'")
+      report('error', 'invalid_index', path, "A record needs an index reference: 't', 'l' or 'm'")
       ok = false
     } else if (keys.length > 1) {
       report(
         'error',
         'invalid_index',
         path,
-        `only one index reference per record, not ${keys.join(', ')}`,
+        `Only one index reference per record, not ${keys.join(', ')}`,
       )
       ok = false
     }
     if (record.data === undefined) {
-      report('error', 'missing_field', `${path}.data`, "a record needs 'data'")
+      report('error', 'missing_field', `${path}.data`, "A record needs 'data'")
       ok = false
     }
     if (!ok) return
@@ -432,7 +436,7 @@ export function parseEventTimeline(
           'error',
           'invalid_value',
           `${path}.l`,
-          'a Location is an Array of a Group ID and an Object ID',
+          'A Location is an Array of a Group ID and an Object ID',
         )
         return
       }
@@ -440,7 +444,12 @@ export function parseEventTimeline(
       return
     }
     if (typeof value !== 'number') {
-      report('error', 'invalid_value', `${path}.${key}`, `'${key}' is a JSON Number`)
+      report(
+        'error',
+        'invalid_value',
+        `${path}.${key}`,
+        `The index reference '${key}' is a JSON Number`,
+      )
       return
     }
     if (key === 'm' && !Number.isInteger(value)) {
@@ -452,7 +461,7 @@ export function parseEventTimeline(
           options.draft,
           (d) => `${d.toUpperCase()} 8.1, ${MEDIA_TIME_SECTION[d]}`,
         ),
-        message: `media PTS ${value} is not a whole number of milliseconds`,
+        message: `The media PTS ${value} is not a whole number of milliseconds`,
       })
       return
     }
@@ -469,7 +478,7 @@ export function parseEventTimeline(
       'warning',
       'mixed_index',
       '',
-      `records SHOULD use one index reference type; these use ${used.join(', ')}`,
+      `Records SHOULD use one index reference type; these use ${used.join(', ')}`,
     )
   }
   return { kind: 'records', records, problems }
@@ -505,12 +514,17 @@ export function readSapTimeline(
   for (const record of records) {
     const path = `[${record.at}]`
     if (record.index !== 'l') {
-      report('error', 'invalid_index', path, "a SAP timeline record's index reference is 'l'")
+      report('error', 'invalid_index', path, "A SAP timeline record's index reference is 'l'")
       continue
     }
     const d = record.data
     if (!Array.isArray(d) || d.length !== 2 || !Number.isInteger(d[0]) || !Number.isInteger(d[1])) {
-      report('error', 'invalid_value', `${path}.data`, 'data is an Array of two integers')
+      report(
+        'error',
+        'invalid_value',
+        `${path}.data`,
+        "The record's data is an Array of two integers",
+      )
       continue
     }
     const sapType = d[0] as number
@@ -530,7 +544,7 @@ export function readSapTimeline(
         'error',
         'invalid_value',
         `${path}.data[0]`,
-        `the first Object of Group ${entry.group} has SAP type ${sapType}; it MUST be 1 or 2`,
+        `The first Object of Group ${entry.group} has SAP type ${sapType}; it MUST be 1 or 2`,
         options.draft
           ? FIRST_OBJECT_SECTION[options.draft]
           : `${FIRST_OBJECT_SECTION['cmsf-00']}; ${FIRST_OBJECT_SECTION['cmsf-01']}`,

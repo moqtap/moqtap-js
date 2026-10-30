@@ -231,6 +231,16 @@ describe('catalog vectors', () => {
     for (const key of NEEDS_DRAFT) expect(ids).toContain(key)
   })
 
+  it('words every problem as a sentence', () => {
+    for (const file of files) {
+      for (const vector of file.vectors) {
+        for (const problem of run(vector, file.draft).problems.flat()) {
+          expect(problem.message, `${file.name}#${vector.id}`).toMatch(/^[A-Z].*[^.]$/s)
+        }
+      }
+    }
+  })
+
   for (const file of files) {
     describe(file.name, () => {
       for (const vector of file.vectors) {

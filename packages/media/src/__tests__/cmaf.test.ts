@@ -609,7 +609,7 @@ describe('checkCmafObject', () => {
         code: 'multiple-tracks',
         section: 'CMSF-00 3.3, CMSF-01 3.3',
         path: '',
-        message: 'the object carries track_IDs 1, 2; an object carries a single track',
+        message: 'The object carries track_IDs 1, 2; an object carries a single track',
       },
     ])
   })
@@ -647,7 +647,7 @@ describe('checkCmafObject', () => {
     expect(finding).toMatchObject({
       section: 'CMSF-01 3.4, CMSF-01 3.6.1',
       message:
-        "the SAP type the Group starts with is not signalled: its first sample is not a sync sample and is in no 'sap ', 'rap ' or 'roll' sample group",
+        "The SAP type the Group starts with is not signalled: its first sample is not a sync sample and is in no 'sap ', 'rap ' or 'roll' sample group",
     })
   })
 

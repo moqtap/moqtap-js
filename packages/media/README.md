@@ -288,6 +288,7 @@ Each problem gives:
 - `path`: where, such as `tracks[0].packaging` or `deltaUpdate[1].op`
 - `section`: the draft and section that state the rule, such as `MSF-01 5.2.4`
 - `severity`: `error` or `warning`
+- `message`: what is wrong, as a sentence to show, with field names spelled as in the catalog
 
 A warning breaks a rule that binds the producer, or is `ambiguous_draft`, and the object still
 applies. An error breaks a rule that binds the reader, or leaves nothing to resolve: an

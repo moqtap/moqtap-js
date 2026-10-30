@@ -96,7 +96,7 @@ describe('parseCatalog', () => {
         category: 'ambiguous_draft',
         path: '',
         section: 'CMSF-01 2',
-        message: 'the catalog may be MSF-01 or CMSF-01; only the rules both share are checked',
+        message: 'The catalog may be MSF-01 or CMSF-01; only the rules both share are checked',
       },
     ])
     expect(parseCatalog(text, { draft: 'msf-01' }).problems).toEqual([])
@@ -159,7 +159,7 @@ describe('parseCatalog', () => {
         category: 'missing_field',
         path: 'tracks[0].packaging',
         section: 'MSF-01 5.2.4',
-        message: 'packaging is Required: Yes',
+        message: 'The packaging field is required',
       },
     ])
   })
@@ -203,7 +203,22 @@ describe('parseCatalog', () => {
       ['tracks[0].samplerate', 'MSF-01 5.2.28'],
       ['tracks[0].channelConfig', 'MSF-01 5.2.29'],
     ])
-    expect(parsed.problems[1]?.message).toBe('an audio track gives its bitrate')
+    expect(parsed.problems.map((p) => p.message)).toEqual([
+      'An audio track names its codec',
+      'An audio track gives its bitrate',
+      'An audio track carries samplerate',
+      'An audio track carries channelConfig',
+    ])
+  })
+
+  it('words a missing CMAF header as a sentence naming the field', () => {
+    const track = { name: 'v', packaging: 'cmaf', isLive: true }
+    const message = (draft: 'cmsf-00' | 'cmsf-01') =>
+      parseCatalog(JSON.stringify({ version: draft === 'cmsf-00' ? 1 : '1', tracks: [track] }), {
+        draft,
+      }).problems.find((p) => p.category === 'missing_field')?.message
+    expect(message('cmsf-00')).toBe("A cmaf track's header is given in initData")
+    expect(message('cmsf-01')).toBe("A cmaf track's header is given by initRef")
   })
 
   it('keys duplicate tracks by the catalog namespace when it is given', () => {

@@ -68,6 +68,7 @@ export interface CatalogProblem {
   path: string
   /** The draft and section that state the rule, e.g. `MSF-01 5.2.4` */
   section: string
+  /** What is wrong, as a sentence to show: capitalised, no closing period */
   message: string
 }
 
@@ -393,15 +394,21 @@ function packagingAllowed(r: Rules, value: string): boolean {
  */
 function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): boolean {
   if (!isObject(track)) {
-    error(r, 'invalid_value', path, msf(r, '5.1.9', '5.2.1'), 'a track must be a JSON Object')
+    error(r, 'invalid_value', path, msf(r, '5.1.9', '5.2.1'), 'A track must be a JSON Object')
     return false
   }
   let keyed = true
   if (track.name === undefined) {
-    error(r, 'missing_field', `${path}.name`, msf(r, '5.1.11', '5.2.3'), 'a track needs a name')
+    error(r, 'missing_field', `${path}.name`, msf(r, '5.1.11', '5.2.3'), 'A track needs a name')
     keyed = false
   } else if (typeof track.name !== 'string') {
-    error(r, 'invalid_value', `${path}.name`, msf(r, '5.1.11', '5.2.3'), 'name must be a String')
+    error(
+      r,
+      'invalid_value',
+      `${path}.name`,
+      msf(r, '5.1.11', '5.2.3'),
+      'The name field must be a String',
+    )
     keyed = false
   }
   if (track.namespace !== undefined && typeof track.namespace !== 'string') {
@@ -410,7 +417,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'invalid_value',
       `${path}.namespace`,
       msf(r, '5.1.10', '5.2.2'),
-      'namespace must be a String',
+      'The namespace field must be a String',
     )
     keyed = false
   }
@@ -423,7 +430,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
         'invalid_value',
         `${path}.${field}`,
         trackFieldSection(r, field),
-        `${field} must be ${kindName(kind)}`,
+        `The ${field} field must be ${kindName(kind)}`,
       )
     }
   }
@@ -435,7 +442,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'missing_field',
       `${path}.packaging`,
       msf(r, '5.1.12', '5.2.4'),
-      'packaging is Required: Yes',
+      'The packaging field is required',
     )
   } else if (typeof packaging === 'string' && !packagingAllowed(r, packaging)) {
     warn(
@@ -443,11 +450,17 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'invalid_value',
       `${path}.packaging`,
       r.cmsf ? cmsf(r, '3.5.1') : msf(r, '5.1.12', '5.2.4'),
-      `packaging "${packaging}" is not a value the draft allows`,
+      `The packaging "${packaging}" is not a value the draft allows`,
     )
   }
   if (isLive === undefined) {
-    warn(r, 'missing_field', `${path}.isLive`, msf(r, '5.1.15', '5.2.7'), 'isLive is Required: Yes')
+    warn(
+      r,
+      'missing_field',
+      `${path}.isLive`,
+      msf(r, '5.1.15', '5.2.7'),
+      'The isLive field is required',
+    )
   }
 
   // eventType: required with eventtimeline packaging, and only allowed there
@@ -457,7 +470,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'missing_field',
       `${path}.eventType`,
       msf(r, '5.1.13', '5.2.5'),
-      'an eventtimeline track needs an eventType',
+      'An eventtimeline track needs an eventType',
     )
   } else if (
     typeof packaging === 'string' &&
@@ -469,7 +482,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'forbidden_field',
       `${path}.eventType`,
       msf(r, '5.1.13', '5.2.5'),
-      'eventType MUST NOT be used unless packaging is "eventtimeline"',
+      'The eventType field MUST NOT be used unless packaging is "eventtimeline"',
     )
   }
 
@@ -479,7 +492,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'forbidden_field',
       `${path}.targetLatency`,
       'MSF-00 5.1.16',
-      'targetLatency MUST NOT be included if isLive is FALSE',
+      'The targetLatency field MUST NOT be included if isLive is FALSE',
     )
   }
   // MSF-01 ignores targetLatency when not live (5.2.8), and makes
@@ -490,7 +503,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'forbidden_field',
       `${path}.buffers`,
       'MSF-01 5.2.9',
-      'buffers MUST NOT be present with targetLatency',
+      'The buffers field MUST NOT be present with targetLatency',
     )
   }
   if (track.trackDuration !== undefined && isLive === true) {
@@ -499,7 +512,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'forbidden_field',
       `${path}.trackDuration`,
       msf(r, '5.1.37', '5.2.35'),
-      'trackDuration MUST NOT be included while isLive is true',
+      'The trackDuration field MUST NOT be included while isLive is true',
     )
   }
   if (!clone) {
@@ -509,7 +522,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
         'forbidden_field',
         `${path}.parentName`,
         msf(r, '5.1.36', '5.2.33'),
-        'parentName belongs only inside a clone operation',
+        'The parentName field belongs only inside a clone operation',
       )
     }
     if (r.base === 1 && track.parentNamespace !== undefined) {
@@ -518,7 +531,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
         'forbidden_field',
         `${path}.parentNamespace`,
         'MSF-01 5.2.34',
-        'parentNamespace belongs only inside a clone operation',
+        'The parentNamespace field belongs only inside a clone operation',
       )
     }
   }
@@ -529,7 +542,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
     // channelConfig (5.2.28, 5.2.29).
     const role = track.role
     const audio = role === 'audio'
-    const article = audio ? 'an' : 'a'
+    const article = audio ? 'An' : 'A'
     if (audio || role === 'video') {
       if (track.codec === undefined) {
         warn(
@@ -558,7 +571,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
             'missing_field',
             `${path}.${field}`,
             field === 'samplerate' ? 'MSF-01 5.2.28' : 'MSF-01 5.2.29',
-            `an audio track carries ${field}`,
+            `An audio track carries ${field}`,
           )
         }
       }
@@ -569,7 +582,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
         'missing_field',
         `${path}.cipherSuite`,
         'MSF-01 5.2.39',
-        'cipherSuite MUST be present when encryptionScheme is',
+        'The cipherSuite field MUST be present when encryptionScheme is',
       )
     }
   }
@@ -580,7 +593,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
       'invalid_value',
       `${path}.initData`,
       r.cmsf ? cmsf(r, '3.1') : 'MSF-00 5.1.20',
-      'initData is not Base64',
+      'The initData field is not Base64',
     )
   }
 
@@ -595,7 +608,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
           'missing_field',
           `${path}.${field}`,
           cmsf(r, '3.1'),
-          `a cmaf track's header is given ${r.base === 0 ? 'in initData' : 'by initRef'}`,
+          `A cmaf track's header is given ${r.base === 0 ? 'in initData' : 'by initRef'}`,
         )
       }
     }
@@ -617,7 +630,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
         'invalid_value',
         `${path}.packaging`,
         cmsf(r, '3.6.1'),
-        'the SAP Type timeline track MUST have packaging "eventtimeline"',
+        'The SAP Type timeline track MUST have packaging "eventtimeline"',
       )
     }
     if (r.base === 1 && track.contentProtections !== undefined) {
@@ -626,7 +639,7 @@ function checkTrack(r: Rules, track: JsonValue, path: string, clone = false): bo
         'forbidden_field',
         `${path}.contentProtections`,
         'CMSF-01 4.1.1',
-        'content protection MUST NOT be duplicated at the track level',
+        'Content protection MUST NOT be duplicated at the track level',
       )
     }
   }
@@ -645,7 +658,7 @@ function checkDuplicates(r: Rules, tracks: JsonValue[], path: string): void {
         'duplicate_track',
         `${path}[${i}]`,
         msf(r, '5.1.11', '5.2.3'),
-        `track names MUST be unique per namespace: "${track.name}" again`,
+        `Track names MUST be unique per namespace: "${track.name}" again`,
       )
     }
     seen.add(key)
@@ -657,7 +670,13 @@ function checkInitDataList(r: Rules, root: JsonObject): void {
   const list = root.initDataList
   if (list === undefined) return
   if (!Array.isArray(list)) {
-    warn(r, 'invalid_value', 'initDataList', 'MSF-01 5.1.7', 'initDataList must be an Array')
+    warn(
+      r,
+      'invalid_value',
+      'initDataList',
+      'MSF-01 5.1.7',
+      'The initDataList field must be an Array',
+    )
     return
   }
   // Member order is the document's: JSON.parse keeps the order of string keys.
@@ -669,22 +688,34 @@ function checkInitDataList(r: Rules, root: JsonObject): void {
       'misplaced_field',
       'initDataList',
       'MSF-01 5.1.7',
-      'initDataList MUST be located after the tracks array',
+      'The initDataList field MUST be located after the tracks array',
     )
   }
   const ids = new Set<string>()
   list.forEach((entry, i) => {
     const path = `initDataList[${i}]`
     if (!isObject(entry)) {
-      warn(r, 'invalid_value', path, 'MSF-01 5.1.7', 'an initDataList entry must be an Object')
+      warn(r, 'invalid_value', path, 'MSF-01 5.1.7', 'An initDataList entry must be an Object')
       return
     }
     for (const field of ['id', 'type', 'data'] as const) {
       const value = entry[field]
       if (value === undefined) {
-        warn(r, 'missing_field', `${path}.${field}`, 'MSF-01 5.1.7', `an entry needs ${field}`)
+        warn(
+          r,
+          'missing_field',
+          `${path}.${field}`,
+          'MSF-01 5.1.7',
+          `An initDataList entry needs ${field}`,
+        )
       } else if (typeof value !== 'string') {
-        warn(r, 'invalid_value', `${path}.${field}`, 'MSF-01 5.1.7', `${field} must be a String`)
+        warn(
+          r,
+          'invalid_value',
+          `${path}.${field}`,
+          'MSF-01 5.1.7',
+          `The ${field} field must be a String`,
+        )
       }
     }
     if (typeof entry.id === 'string') {
@@ -694,7 +725,7 @@ function checkInitDataList(r: Rules, root: JsonObject): void {
           'duplicate_id',
           `${path}.id`,
           r.cmsf ? 'CMSF-01 3.1' : 'MSF-01 5.1.7',
-          `initDataList id "${entry.id}" is not unique`,
+          `The initDataList id "${entry.id}" is not unique`,
         )
       }
       ids.add(entry.id)
@@ -705,14 +736,14 @@ function checkInitDataList(r: Rules, root: JsonObject): void {
         'invalid_value',
         `${path}.type`,
         'MSF-01 5.1.7',
-        `type "${entry.type}": the only type defined is "inline"`,
+        `The type "${entry.type}" is not "inline", the only type defined`,
       )
     } else if (
       entry.type === 'inline' &&
       typeof entry.data === 'string' &&
       decodeBase64(entry.data) === null
     ) {
-      warn(r, 'invalid_value', `${path}.data`, 'MSF-01 5.1.7', 'inline data is not Base64')
+      warn(r, 'invalid_value', `${path}.data`, 'MSF-01 5.1.7', 'Inline data is not Base64')
     }
   })
 }
@@ -720,11 +751,17 @@ function checkInitDataList(r: Rules, root: JsonObject): void {
 /** An object holding a url: laURL, certURL (cmsf-01 4.1.1.4.2, 4.1.1.4.3) */
 function checkUrlObject(r: Rules, value: JsonValue, path: string, section: string): void {
   if (!isObject(value)) {
-    warn(r, 'invalid_value', path, section, 'must be an Object')
+    warn(
+      r,
+      'invalid_value',
+      path,
+      section,
+      `The ${path.slice(path.lastIndexOf('.') + 1)} field must be an Object`,
+    )
   } else if (value.url === undefined) {
-    warn(r, 'missing_field', `${path}.url`, section, 'url is Required')
+    warn(r, 'missing_field', `${path}.url`, section, 'The url field is required')
   } else if (typeof value.url !== 'string') {
-    warn(r, 'invalid_value', `${path}.url`, section, 'url must be a String')
+    warn(r, 'invalid_value', `${path}.url`, section, 'The url field must be a String')
   }
 }
 
@@ -733,21 +770,39 @@ function checkContentProtections(r: Rules, root: JsonObject): void {
   const list = root.contentProtections
   if (list === undefined) return
   if (!Array.isArray(list)) {
-    warn(r, 'invalid_value', 'contentProtections', 'CMSF-01 4.1.1', 'must be an Array')
+    warn(
+      r,
+      'invalid_value',
+      'contentProtections',
+      'CMSF-01 4.1.1',
+      'The contentProtections field must be an Array',
+    )
     return
   }
   const refIds = new Set<string>()
   list.forEach((entry, i) => {
     const path = `contentProtections[${i}]`
     if (!isObject(entry)) {
-      warn(r, 'invalid_value', path, 'CMSF-01 4.1.1', 'an entry must be an Object')
+      warn(
+        r,
+        'invalid_value',
+        path,
+        'CMSF-01 4.1.1',
+        'A contentProtections entry must be an Object',
+      )
       return
     }
     const { refID, defaultKID, scheme, drmSystem } = entry
     if (refID === undefined) {
-      warn(r, 'missing_field', `${path}.refID`, 'CMSF-01 4.1.1.1', 'refID is Required')
+      warn(r, 'missing_field', `${path}.refID`, 'CMSF-01 4.1.1.1', 'The refID field is required')
     } else if (typeof refID !== 'string') {
-      warn(r, 'invalid_value', `${path}.refID`, 'CMSF-01 4.1.1.1', 'refID must be a String')
+      warn(
+        r,
+        'invalid_value',
+        `${path}.refID`,
+        'CMSF-01 4.1.1.1',
+        'The refID field must be a String',
+      )
     } else {
       if (refIds.has(refID)) {
         warn(
@@ -755,15 +810,27 @@ function checkContentProtections(r: Rules, root: JsonObject): void {
           'duplicate_id',
           `${path}.refID`,
           'CMSF-01 4.1.1.1',
-          `refID "${refID}" is not unique`,
+          `The refID "${refID}" is not unique`,
         )
       }
       refIds.add(refID)
     }
     if (defaultKID === undefined) {
-      warn(r, 'missing_field', `${path}.defaultKID`, 'CMSF-01 4.1.1.2', 'defaultKID is Required')
+      warn(
+        r,
+        'missing_field',
+        `${path}.defaultKID`,
+        'CMSF-01 4.1.1.2',
+        'The defaultKID field is required',
+      )
     } else if (!Array.isArray(defaultKID)) {
-      warn(r, 'invalid_value', `${path}.defaultKID`, 'CMSF-01 4.1.1.2', 'must be an Array')
+      warn(
+        r,
+        'invalid_value',
+        `${path}.defaultKID`,
+        'CMSF-01 4.1.1.2',
+        'The defaultKID field must be an Array',
+      )
     } else {
       defaultKID.forEach((kid, k) => {
         if (typeof kid !== 'string' || !UUID.test(kid)) {
@@ -772,30 +839,60 @@ function checkContentProtections(r: Rules, root: JsonObject): void {
             'invalid_value',
             `${path}.defaultKID[${k}]`,
             'CMSF-01 4.1.1.2',
-            'a default KID is a UUID string, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+            'A default KID must be a UUID string, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
           )
         }
       })
     }
     if (scheme === undefined) {
-      warn(r, 'missing_field', `${path}.scheme`, 'CMSF-01 4.1.1.3', 'scheme is Required')
+      warn(r, 'missing_field', `${path}.scheme`, 'CMSF-01 4.1.1.3', 'The scheme field is required')
     } else if (scheme !== 'cenc' && scheme !== 'cbcs') {
-      warn(r, 'invalid_value', `${path}.scheme`, 'CMSF-01 4.1.1.3', 'scheme is "cenc" or "cbcs"')
+      warn(
+        r,
+        'invalid_value',
+        `${path}.scheme`,
+        'CMSF-01 4.1.1.3',
+        'The scheme field must be "cenc" or "cbcs"',
+      )
     }
     if (drmSystem === undefined) {
-      warn(r, 'missing_field', `${path}.drmSystem`, 'CMSF-01 4.1.1.4', 'drmSystem is Required')
+      warn(
+        r,
+        'missing_field',
+        `${path}.drmSystem`,
+        'CMSF-01 4.1.1.4',
+        'The drmSystem field is required',
+      )
       return
     }
     if (!isObject(drmSystem)) {
-      warn(r, 'invalid_value', `${path}.drmSystem`, 'CMSF-01 4.1.1.4', 'must be an Object')
+      warn(
+        r,
+        'invalid_value',
+        `${path}.drmSystem`,
+        'CMSF-01 4.1.1.4',
+        'The drmSystem field must be an Object',
+      )
       return
     }
     const drm = `${path}.drmSystem`
     const systemID = drmSystem.systemID
     if (systemID === undefined) {
-      warn(r, 'missing_field', `${drm}.systemID`, 'CMSF-01 4.1.1.4.1', 'systemID is Required')
+      warn(
+        r,
+        'missing_field',
+        `${drm}.systemID`,
+        'CMSF-01 4.1.1.4.1',
+        'The systemID field is required',
+      )
     } else if (typeof systemID !== 'string' || !UUID.test(systemID)) {
-      warn(r, 'invalid_value', `${drm}.systemID`, 'CMSF-01 4.1.1.4.1', 'systemID is a UUID string')
+      warn(
+        r,
+        'invalid_value',
+        `${drm}.systemID`,
+        'CMSF-01 4.1.1.4.1',
+        'The systemID field must be a UUID string',
+      )
     }
     if (drmSystem.laURL !== undefined) {
       checkUrlObject(r, drmSystem.laURL, `${drm}.laURL`, 'CMSF-01 4.1.1.4.2')
@@ -805,7 +902,13 @@ function checkContentProtections(r: Rules, root: JsonObject): void {
     }
     const pssh = drmSystem.pssh
     if (pssh !== undefined && (typeof pssh !== 'string' || decodeBase64(pssh) === null)) {
-      warn(r, 'invalid_value', `${drm}.pssh`, 'CMSF-01 4.1.1.4.5', 'pssh is a Base64 PSSH box')
+      warn(
+        r,
+        'invalid_value',
+        `${drm}.pssh`,
+        'CMSF-01 4.1.1.4.5',
+        'The pssh field must be a Base64 PSSH box',
+      )
     }
   })
 }
@@ -842,7 +945,7 @@ function checkReferences(r: Rules, document: JsonObject, tracks: [JsonObject, st
           'unknown_reference',
           `${path}.initRef`,
           'MSF-01 5.2.13',
-          `initRef "${track.initRef}" names no initDataList entry`,
+          `The initRef "${track.initRef}" names no initDataList entry`,
         )
       } else if (entry === null) {
         warn(
@@ -850,7 +953,7 @@ function checkReferences(r: Rules, document: JsonObject, tracks: [JsonObject, st
           'duplicate_id',
           `${path}.initRef`,
           'MSF-01 5.1.7',
-          `initRef "${track.initRef}" names more than one initDataList entry`,
+          `The initRef "${track.initRef}" names more than one initDataList entry`,
         )
       }
     }
@@ -859,14 +962,14 @@ function checkReferences(r: Rules, document: JsonObject, tracks: [JsonObject, st
     refs.forEach((ref, k) => {
       const at = `${path}.contentProtectionRefIDs[${k}]`
       if (typeof ref !== 'string') {
-        warn(r, 'invalid_value', at, 'CMSF-01 4.1.2', 'a reference ID is a String')
+        warn(r, 'invalid_value', at, 'CMSF-01 4.1.2', 'A reference ID must be a String')
       } else if (protections.get(ref) === undefined) {
         warn(
           r,
           'unknown_reference',
           at,
           'CMSF-01 4.1.2',
-          `"${ref}" names no contentProtections entry`,
+          `The reference "${ref}" names no contentProtections entry`,
         )
       } else if (protections.get(ref) === null) {
         warn(
@@ -874,7 +977,7 @@ function checkReferences(r: Rules, document: JsonObject, tracks: [JsonObject, st
           'duplicate_id',
           at,
           'CMSF-01 4.1.1.1',
-          `"${ref}" names more than one contentProtections entry`,
+          `The reference "${ref}" names more than one contentProtections entry`,
         )
       }
     })
@@ -885,23 +988,35 @@ function checkReferences(r: Rules, document: JsonObject, tracks: [JsonObject, st
 function checkVersion(r: Rules, root: JsonObject): boolean {
   const version = root.version
   if (version === undefined) {
-    error(r, 'missing_field', 'version', msf(r, '5.1.1', '5.1.1'), 'version is Required: Yes')
+    error(r, 'missing_field', 'version', msf(r, '5.1.1', '5.1.1'), 'The version field is required')
     return false
   }
   if (r.base === 0) {
     if (typeof version !== 'number') {
-      error(r, 'invalid_value', 'version', 'MSF-00 5.1.1', 'version must be a Number in MSF-00')
+      error(
+        r,
+        'invalid_value',
+        'version',
+        'MSF-00 5.1.1',
+        'The version field must be a Number in MSF-00',
+      )
       return false
     }
     // MSF-00 describes version 1, and CMSF-00's example writes 1.
     if (version !== 1) {
-      error(r, 'unsupported_version', 'version', 'MSF-00 5.1.1', `version ${version} is not 1`)
+      error(r, 'unsupported_version', 'version', 'MSF-00 5.1.1', `The version ${version} is not 1`)
       return false
     }
     return true
   }
   if (typeof version !== 'string') {
-    error(r, 'invalid_value', 'version', 'MSF-01 5.1.1', 'version must be a String in MSF-01')
+    error(
+      r,
+      'invalid_value',
+      'version',
+      'MSF-01 5.1.1',
+      'The version field must be a String in MSF-01',
+    )
     return false
   }
   // 5.1.1 asks for "draft-01", but every MSF-01 and CMSF-01 example writes "1".
@@ -911,7 +1026,7 @@ function checkVersion(r: Rules, root: JsonObject): boolean {
       'unsupported_version',
       'version',
       'MSF-01 5.1.1',
-      `version "${version}" is not "draft-01" (or "1", as MSF-01's examples write it)`,
+      `The version "${version}" is not "draft-01" (or "1", as MSF-01's examples write it)`,
     )
     return false
   }
@@ -934,9 +1049,15 @@ function checkIndependent(r: Rules, root: JsonObject): void {
   if (!checkVersion(r, root)) return
   const tracks = root.tracks
   if (tracks === undefined) {
-    error(r, 'missing_field', 'tracks', msf(r, '5.1.8', '5.1.4'), 'tracks is Required: Yes')
+    error(r, 'missing_field', 'tracks', msf(r, '5.1.8', '5.1.4'), 'The tracks field is required')
   } else if (!Array.isArray(tracks)) {
-    error(r, 'invalid_value', 'tracks', msf(r, '5.1.8', '5.1.4'), 'tracks must be an Array')
+    error(
+      r,
+      'invalid_value',
+      'tracks',
+      msf(r, '5.1.8', '5.1.4'),
+      'The tracks field must be an Array',
+    )
   } else {
     tracks.forEach((track, i) => {
       checkTrack(r, track, `tracks[${i}]`)
@@ -945,24 +1066,42 @@ function checkIndependent(r: Rules, root: JsonObject): void {
   }
 
   if (root.generatedAt !== undefined && typeof root.generatedAt !== 'number') {
-    warn(r, 'invalid_value', 'generatedAt', msf(r, '5.1.6', '5.1.2'), 'must be a Number')
+    warn(
+      r,
+      'invalid_value',
+      'generatedAt',
+      msf(r, '5.1.6', '5.1.2'),
+      'The generatedAt field must be a Number',
+    )
   }
   if (root.isComplete !== undefined) {
     if (typeof root.isComplete !== 'boolean') {
-      warn(r, 'invalid_value', 'isComplete', msf(r, '5.1.7', '5.1.3'), 'must be a Boolean')
+      warn(
+        r,
+        'invalid_value',
+        'isComplete',
+        msf(r, '5.1.7', '5.1.3'),
+        'The isComplete field must be a Boolean',
+      )
     } else if (!root.isComplete) {
       warn(
         r,
         'forbidden_field',
         'isComplete',
         msf(r, '5.1.7', '5.1.3'),
-        'isComplete MUST NOT be included if it is FALSE',
+        'The isComplete field MUST NOT be included if it is FALSE',
       )
     }
   }
   if (r.base === 1) {
     if (root.publishTracks !== undefined && !Array.isArray(root.publishTracks)) {
-      warn(r, 'invalid_value', 'publishTracks', 'MSF-01 5.1.5', 'must be an Array')
+      warn(
+        r,
+        'invalid_value',
+        'publishTracks',
+        'MSF-01 5.1.5',
+        'The publishTracks field must be an Array',
+      )
     }
     checkInitDataList(r, root)
   }
@@ -974,12 +1113,12 @@ function checkIndependent(r: Rules, root: JsonObject): void {
 function checkRemoveEntry(r: Rules, entry: JsonObject, path: string): void {
   const section = msf(r, '5.1.4', '5.1.6')
   if (entry.name === undefined) {
-    error(r, 'missing_field', `${path}.name`, section, 'a removed track is named by name')
+    error(r, 'missing_field', `${path}.name`, section, 'A removed track needs a name')
   } else if (typeof entry.name !== 'string') {
-    error(r, 'invalid_value', `${path}.name`, section, 'name must be a String')
+    error(r, 'invalid_value', `${path}.name`, section, 'The name field must be a String')
   }
   if (entry.namespace !== undefined && typeof entry.namespace !== 'string') {
-    error(r, 'invalid_value', `${path}.namespace`, section, 'namespace must be a String')
+    error(r, 'invalid_value', `${path}.namespace`, section, 'The namespace field must be a String')
   }
   for (const field of Object.keys(entry)) {
     if (field !== 'name' && field !== 'namespace') {
@@ -988,7 +1127,7 @@ function checkRemoveEntry(r: Rules, entry: JsonObject, path: string): void {
         'forbidden_field',
         `${path}.${field}`,
         section,
-        'a remove entry MUST NOT hold fields besides name and namespace',
+        'A remove entry MUST NOT hold fields besides name and namespace',
       )
     }
   }
@@ -998,9 +1137,15 @@ function checkRemoveEntry(r: Rules, entry: JsonObject, path: string): void {
 function checkCloneEntry(r: Rules, entry: JsonObject, path: string): void {
   const section = msf(r, '5.1.5', '5.1.6')
   if (entry.parentName === undefined) {
-    error(r, 'missing_field', `${path}.parentName`, section, 'a clone names its parent')
+    error(r, 'missing_field', `${path}.parentName`, section, 'A clone needs a parentName')
   } else if (typeof entry.parentName !== 'string') {
-    error(r, 'invalid_value', `${path}.parentName`, section, 'parentName must be a String')
+    error(
+      r,
+      'invalid_value',
+      `${path}.parentName`,
+      section,
+      'The parentName field must be a String',
+    )
   }
   if (
     r.base === 1 &&
@@ -1012,18 +1157,18 @@ function checkCloneEntry(r: Rules, entry: JsonObject, path: string): void {
       'invalid_value',
       `${path}.parentNamespace`,
       section,
-      'parentNamespace must be a String',
+      'The parentNamespace field must be a String',
     )
   }
   // The clone's name "MUST be new" (msf-00 5.2, msf-01 5.1.6); without one it
   // would be its parent's.
   if (entry.name === undefined) {
-    error(r, 'missing_field', `${path}.name`, section, 'a clone needs a name of its own')
+    error(r, 'missing_field', `${path}.name`, section, 'A clone needs a name of its own')
   } else if (typeof entry.name !== 'string') {
-    error(r, 'invalid_value', `${path}.name`, section, 'name must be a String')
+    error(r, 'invalid_value', `${path}.name`, section, 'The name field must be a String')
   }
   if (entry.namespace !== undefined && typeof entry.namespace !== 'string') {
-    error(r, 'invalid_value', `${path}.namespace`, section, 'namespace must be a String')
+    error(r, 'invalid_value', `${path}.namespace`, section, 'The namespace field must be a String')
   }
 }
 
@@ -1032,7 +1177,14 @@ function operationTracks(r: Rules, list: JsonValue[], path: string): JsonObject[
   const tracks: JsonObject[] = []
   list.forEach((entry, i) => {
     if (isObject(entry)) tracks.push(entry)
-    else error(r, 'invalid_value', `${path}[${i}]`, msf(r, '5.1.9', '5.2.1'), 'must be an Object')
+    else
+      error(
+        r,
+        'invalid_value',
+        `${path}[${i}]`,
+        msf(r, '5.1.9', '5.2.1'),
+        'A track must be a JSON Object',
+      )
   })
   return tracks
 }
@@ -1055,7 +1207,7 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
         'delta_not_allowed_field',
         field,
         section,
-        `a delta update MUST NOT contain ${field}`,
+        `A delta update MUST NOT contain ${field}`,
       )
     }
   }
@@ -1070,8 +1222,8 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
         'deltaUpdate',
         'MSF-00 5.1.2',
         Array.isArray(deltaUpdate)
-          ? 'deltaUpdate must be a Boolean in MSF-00'
-          : 'a delta update sets deltaUpdate to true',
+          ? 'The deltaUpdate field must be a Boolean in MSF-00'
+          : 'A delta update sets deltaUpdate to true',
       )
     }
     // "The Add, Delete and Clone operations are applied sequentially in the
@@ -1083,7 +1235,13 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
       if (Array.isArray(list)) {
         operations.push({ op, tracks: operationTracks(r, list, field), path: field })
       } else {
-        error(r, 'invalid_value', field, 'MSF-00 5.1.3-5.1.5', `${field} must be an Array`)
+        error(
+          r,
+          'invalid_value',
+          field,
+          'MSF-00 5.1.3-5.1.5',
+          `The ${field} field must be an Array`,
+        )
       }
     }
     if (!Object.keys(root).some((field) => msf00Operation(field) !== null)) {
@@ -1092,7 +1250,7 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
         'missing_field',
         'addTracks',
         'MSF-00 5.2',
-        'a delta update MUST contain at least one of addTracks, removeTracks or cloneTracks',
+        'A delta update MUST contain at least one of addTracks, removeTracks or cloneTracks',
       )
     }
   } else if (!Array.isArray(deltaUpdate)) {
@@ -1101,21 +1259,21 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
       'invalid_value',
       'deltaUpdate',
       'MSF-01 5.1.6',
-      'deltaUpdate must be an Array in MSF-01',
+      'The deltaUpdate field must be an Array in MSF-01',
     )
   } else if (deltaUpdate.length === 0) {
-    error(r, 'invalid_value', 'deltaUpdate', 'MSF-01 5.3', 'a delta update needs an operation')
+    error(r, 'invalid_value', 'deltaUpdate', 'MSF-01 5.3', 'A delta update needs an operation')
   } else {
     deltaUpdate.forEach((entry, i) => {
       const path = `deltaUpdate[${i}]`
       if (!isObject(entry)) {
-        error(r, 'invalid_value', path, 'MSF-01 5.1.6', 'an operation must be an Object')
+        error(r, 'invalid_value', path, 'MSF-01 5.1.6', 'An operation must be an Object')
         return
       }
       const { op, tracks } = entry
       let ok = true
       if (op === undefined) {
-        error(r, 'missing_field', `${path}.op`, 'MSF-01 5.1.6', 'an operation needs op')
+        error(r, 'missing_field', `${path}.op`, 'MSF-01 5.1.6', 'An operation needs op')
         ok = false
       } else if (op !== 'add' && op !== 'remove' && op !== 'clone') {
         error(
@@ -1123,15 +1281,21 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
           'invalid_value',
           `${path}.op`,
           'MSF-01 5.1.6',
-          `op ${JSON.stringify(op)} is not add, remove or clone`,
+          `The op ${JSON.stringify(op)} is not add, remove or clone`,
         )
         ok = false
       }
       if (tracks === undefined) {
-        error(r, 'missing_field', `${path}.tracks`, 'MSF-01 5.1.6', 'an operation needs tracks')
+        error(r, 'missing_field', `${path}.tracks`, 'MSF-01 5.1.6', 'An operation needs tracks')
         ok = false
       } else if (!Array.isArray(tracks)) {
-        error(r, 'invalid_value', `${path}.tracks`, 'MSF-01 5.1.6', 'tracks must be an Array')
+        error(
+          r,
+          'invalid_value',
+          `${path}.tracks`,
+          'MSF-01 5.1.6',
+          'The tracks field must be an Array',
+        )
         ok = false
       }
       if (ok) {
@@ -1154,7 +1318,13 @@ function checkDelta(r: Rules, root: JsonObject): DeltaOperation[] {
     })
   }
   if (root.generatedAt !== undefined && typeof root.generatedAt !== 'number') {
-    warn(r, 'invalid_value', 'generatedAt', msf(r, '5.1.6', '5.1.2'), 'must be a Number')
+    warn(
+      r,
+      'invalid_value',
+      'generatedAt',
+      msf(r, '5.1.6', '5.1.2'),
+      'The generatedAt field must be a Number',
+    )
   }
   return operations
 }
@@ -1216,7 +1386,7 @@ export function parseCatalog(
   const hint = options.draft ?? null
   const text = decodeText(input)
   if (text === null) {
-    report(problems, 'error', 'invalid_json', '', 'RFC 8259 8.1', 'the payload is not UTF-8')
+    report(problems, 'error', 'invalid_json', '', 'RFC 8259 8.1', 'The payload is not UTF-8')
     return { kind: 'invalid', draft: hint, problems }
   }
   let root: JsonValue
@@ -1224,12 +1394,12 @@ export function parseCatalog(
     root = JSON.parse(text) as JsonValue
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e)
-    report(problems, 'error', 'invalid_json', '', 'RFC 8259', `not JSON: ${detail}`)
+    report(problems, 'error', 'invalid_json', '', 'RFC 8259', `The payload is not JSON: ${detail}`)
     return { kind: 'invalid', draft: hint, problems }
   }
   if (!isObject(root)) {
     const section = hint === null ? 'MSF-00 5.1, MSF-01 5' : msfSection(hint, '5.1', '5')
-    report(problems, 'error', 'invalid_value', '', section, 'a catalog is a JSON Object')
+    report(problems, 'error', 'invalid_value', '', section, 'A catalog must be a JSON Object')
     return { kind: 'invalid', draft: hint, problems }
   }
 
@@ -1253,7 +1423,7 @@ export function parseCatalog(
       'missing_field',
       'version',
       'MSF-00 5.1.1, MSF-01 5.1.1',
-      'version is Required: Yes',
+      'The version field is required',
     )
     return { kind: 'independent', draft, candidates, document: root, problems }
   }
@@ -1264,7 +1434,7 @@ export function parseCatalog(
       'ambiguous_draft',
       '',
       `CMSF-0${draftBase(rulesDraft)} 2`,
-      `the catalog may be ${candidates.map(draftName).join(' or ')}; only the rules both share are checked`,
+      `The catalog may be ${candidates.map(draftName).join(' or ')}; only the rules both share are checked`,
     )
   }
 
@@ -1362,7 +1532,7 @@ function checkUpdateRules(
         'illegal_update',
         `${path}.isLive`,
         'MSF-01 5.2.7',
-        `"${track.name}" was declared with isLive false, and true MUST never follow false`,
+        `The track "${track.name}" was declared with isLive false, and true MUST never follow false`,
       )
     }
     if (state.isComplete && !previous.has(key)) {
@@ -1371,7 +1541,7 @@ function checkUpdateRules(
         'illegal_update',
         path,
         msf(r, '5.1.7', '5.1.3'),
-        `"${track.name}" is new after isComplete, which commits that no tracks will be added`,
+        `The track "${track.name}" is new after isComplete, which commits that no tracks will be added`,
       )
     }
   }
@@ -1441,7 +1611,7 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
         'illegal_update',
         'isComplete',
         msf(r, '5.1.7', '5.1.3'),
-        'isComplete MUST NOT be removed from a catalog once it has been added',
+        'The isComplete field MUST NOT be removed from a catalog once it has been added',
       )
     }
     checkUpdateRules(
@@ -1468,7 +1638,7 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
   // track looks like plain MSF but applies to a CMSF catalog as CMSF.
   if (state.document === null) {
     const r = rulesFor(parsedDraft, ns, problems)
-    error(r, 'delta_without_base', '', msf(r, '5', '5'), 'a delta needs a catalog to apply to')
+    error(r, 'delta_without_base', '', msf(r, '5', '5'), 'A delta needs a catalog to apply to')
     return refused
   }
   let draft = state.draft
@@ -1485,7 +1655,7 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
       'invalid_value',
       'deltaUpdate',
       msf(r, '5.1.2', '5.1.6'),
-      `a ${draftsName(parsed.draft, parsed.candidates)} delta cannot apply to a ${draftsName(draft, candidates)} catalog`,
+      `A ${draftsName(parsed.draft, parsed.candidates)} delta cannot apply to a ${draftsName(draft, candidates)} catalog`,
     )
     return refused
   }
@@ -1526,7 +1696,13 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
       // without a string parentName), so these casts hold.
       if (op.op === 'add') {
         if (matches(trackKey(namespaceOf(entry, ns), entry.name as string)).length > 0) {
-          error(r, 'duplicate_track', path, section, `"${entry.name}" is already declared`)
+          error(
+            r,
+            'duplicate_track',
+            path,
+            section,
+            `The track "${entry.name}" is already declared`,
+          )
           return
         }
         if (addRules !== null) checkTrack(addRules, entry, path)
@@ -1534,18 +1710,24 @@ export function applyCatalogObject(state: CatalogState, parsed: ParsedCatalog): 
         declared.push([entry, path])
       } else if (op.op === 'remove') {
         const key = trackKey(namespaceOf(entry, ns), entry.name as string)
-        const at = declaredAt(key, `"${entry.name}"`, path)
+        const at = declaredAt(key, `The track "${entry.name}"`, path)
         if (at >= 0) tracks.splice(at, 1)
       } else {
         const parentNs = typeof entry.parentNamespace === 'string' ? entry.parentNamespace : ns
         const key = trackKey(parentNs, entry.parentName as string)
-        const at = declaredAt(key, `parent "${entry.parentName}"`, path)
+        const at = declaredAt(key, `The parent "${entry.parentName}"`, path)
         if (at < 0) return
         // The parent's fields, the clone's own over them (msf-00 5.2, msf-01 5.1.6);
         // parentName and parentNamespace belong to the operation (msf-00 5.1.36, msf-01 5.2.33, 5.2.34).
         const { parentName: _name, parentNamespace: _ns, ...clone } = { ...tracks[at]!, ...entry }
         if (matches(trackKey(namespaceOf(clone, ns), clone.name as string)).length > 0) {
-          error(r, 'duplicate_track', path, section, `"${clone.name}" is already declared`)
+          error(
+            r,
+            'duplicate_track',
+            path,
+            section,
+            `The track "${clone.name}" is already declared`,
+          )
           return
         }
         checkTrack(r, clone, path, true)
