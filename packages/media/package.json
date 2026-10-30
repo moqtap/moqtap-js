@@ -71,6 +71,12 @@
       "types": "./dist/timeline.d.ts",
       "import": "./dist/timeline.js",
       "require": "./dist/timeline.cjs"
+    },
+    "./frames": {
+      "bun": "./src/frames.ts",
+      "types": "./dist/frames.d.ts",
+      "import": "./dist/frames.js",
+      "require": "./dist/frames.cjs"
     }
   },
   "files": [

@@ -27,8 +27,16 @@ import {
   u32,
   versionFlags,
 } from './box'
+import { readCodecConfigBox, type VideoCodecConfig } from './codecconfig'
 
 export type { SampleGroupDescription } from './box'
+export type {
+  Av1CodecConfig,
+  Av1SequenceHeader,
+  AvcCodecConfig,
+  HevcCodecConfig,
+  VideoCodecConfig,
+} from './codecconfig'
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -96,6 +104,11 @@ export interface InitTrack {
   sampleGroups: SampleGroupDescription[]
   /** The trak has an `edts` (edit list container) */
   hasEditList: boolean
+  /**
+   * The `avcC`, `hvcC` or `av1C` of a 'vide' track's first sample entry, or
+   * `null` when it has none or the record does not parse
+   */
+  codecConfig: VideoCodecConfig | null
 }
 
 /** `trex` defaults (ISO/IEC 14496-12 8.8.3) */
@@ -447,6 +460,11 @@ function readEncryption(data: Uint8Array, entry: Child): TrackEncryption {
   }
 }
 
+/** The decoder configuration box after the VisualSampleEntry fields (78 bytes into the body) */
+function readVisualCodecConfig(data: Uint8Array, entry: Child): VideoCodecConfig | null {
+  return readCodecConfigBox(data, children(data, entry.body + 78, entry.end))
+}
+
 /** pssh (ISO/IEC 23001-7): SystemID(16), KID_count and KIDs for version 1, DataSize(4) */
 function readPssh(data: Uint8Array, box: Child): ProtectionSystemHeader | null {
   const vf = versionFlags(data, box)
@@ -480,6 +498,7 @@ function readPssh(data: Uint8Array, box: Child): ProtectionSystemHeader | null {
  *   - hdlr (8.4.3): pre_defined(4) handler_type(4)
  *   - stsd (8.5.2): entry_count(4) then sample entries, each a box
  *   - trex (8.8.3): track_ID and the four sample defaults
+ *   - avcC, hvcC, av1C in a 'vide' sample entry (ISO/IEC 14496-15, AV1-ISOBMFF)
  */
 export function parseInitSegment(data: Uint8Array): InitSegment | null {
   const top = topLevel(data)
@@ -527,9 +546,10 @@ export function parseInitSegment(data: Uint8Array): InitSegment | null {
       if (read) sampleGroups.push(read)
     }
 
+    const handler = hdlr && hdlr.body + 12 <= hdlr.end ? fourcc(data, hdlr.body + 8) : null
     tracks.push({
       trackId,
-      handler: hdlr && hdlr.body + 12 <= hdlr.end ? fourcc(data, hdlr.body + 8) : null,
+      handler,
       sampleEntry,
       codec: encryption ? encryption.originalFormat : sampleEntry,
       timescale: mdhd ? fullBoxU32(data, mdhd, 12, 20) : null,
@@ -537,6 +557,7 @@ export function parseInitSegment(data: Uint8Array): InitSegment | null {
       encryption,
       sampleGroups,
       hasEditList: child(data, trak, 'edts') !== undefined,
+      codecConfig: entry && handler === 'vide' ? readVisualCodecConfig(data, entry) : null,
     })
   }
 

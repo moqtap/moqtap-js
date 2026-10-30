@@ -13,13 +13,16 @@ what media they carry:
   prefix.
 - **CMAF or plain fMP4**: CMAF when a `styp` or `ftyp` names a CMAF brand.
 - **Init segments**: the brands, the `pssh` boxes, and per track the track ID, handler, sample
-  entry and codec, timescale, `trex` defaults, protection boxes and sample group descriptions.
+  entry and codec, timescale, `trex` defaults, protection boxes, sample group descriptions and,
+  for video, the avcC, hvcC or av1C.
 - **Fragments**: the track ID each `moof/traf/tfhd` names, to check against the init
   segment as CMSF requires.
 - **CMAF objects**: what one object of a CMSF track carries: its chunks, its first sample's
   flags and SAP type, its earliest presentation time, and the CMSF rules for an object.
 - **Annex-B streams**: H.264 and H.265 by their NAL units, with keyframes and the H.264
   codec string.
+- **Frame types**: each sample's H.264, H.265 or AV1 frame type read from its bitstream, beside
+  what its sample flags claim.
 - **MSF and CMSF catalogs**: each catalog object read and checked against its draft, deltas
   applied, tracks normalised, and credentials redacted for sharing.
 - **Timelines**: MSF media timeline records and template, MSF event timeline records, and
@@ -40,7 +43,8 @@ npm install @moqtap/media
 
 ## Quick start
 
-Each area is its own subpath, so importing one never pulls in another.
+Each area is its own subpath, so importing one pulls in only what it needs; `frames` reads CMAF
+objects through `cmaf`.
 
 ```typescript
 import { detectMediaInfo, fragmentTrackIds, parseInitSegment } from '@moqtap/media/bmff'
@@ -215,6 +219,18 @@ than 1 or 2, is an error. Warnings keep the record:
 
 A media timeline document that is not an Array is an `invalid_value` error under MSF-00 7.1.
 Under MSF-01, or without a draft, it is `unread`, with no problem.
+
+## Frame types: `@moqtap/media/frames`
+
+`readSampleFrames(payload, init)` lists every sample of a CMAF object with its byte span, its
+sample flags, and what its bitstream says: H.264 IDR and slice types, H.265 NAL unit kinds and
+IRAP, AV1 frame types and shown key frames. The codec configuration comes from the init
+segment's avcC, hvcC or av1C, which `parseInitSegment` gives as `codecConfig` on each video
+track. `agrees` is `false` when the sync flag and the bitstream's random access point disagree,
+and `null` when either is unknown. `readFrameType(sample, config)` reads one access unit or
+temporal unit, with length prefixes, Annex-B start codes or an AV1 sequence header. Audio tracks
+get no frame types. Values the data does not state are `null`, and framing problems are listed as
+issue codes.
 
 ## Annex-B: `@moqtap/media/annexb`
 

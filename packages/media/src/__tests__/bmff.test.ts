@@ -270,7 +270,13 @@ describe('fragmentTrackIds', () => {
 
 // ─── Init segments ───────────────────────────────────────────────────
 
-const NEW_FIELDS = { trex: null, encryption: null, sampleGroups: [], hasEditList: false }
+const NEW_FIELDS = {
+  trex: null,
+  encryption: null,
+  sampleGroups: [],
+  hasEditList: false,
+  codecConfig: null,
+}
 
 describe('parseInitSegment', () => {
   it('summarises brands and each track', () => {

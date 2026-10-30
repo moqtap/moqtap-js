@@ -14,5 +14,6 @@ export default defineConfig({
     loc: 'src/loc.ts',
     cmaf: 'src/cmaf.ts',
     timeline: 'src/timeline.ts',
+    frames: 'src/frames.ts',
   },
 })

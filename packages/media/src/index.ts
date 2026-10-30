@@ -6,11 +6,16 @@
 //   @moqtap/media/catalog  MSF and CMSF catalogs
 //   @moqtap/media/timeline MSF media and event timelines, CMSF SAP type timeline
 //   @moqtap/media/loc      LOC properties and payloads
+//   @moqtap/media/frames   Frame types from H.264, H.265 and AV1 samples
 
 export type { AnnexBInfo } from './annexb'
 export type {
+  Av1CodecConfig,
+  Av1SequenceHeader,
+  AvcCodecConfig,
   BmffBox,
   Brands,
+  HevcCodecConfig,
   InitSegment,
   InitTrack,
   MediaVariant,
@@ -20,6 +25,7 @@ export type {
   TrackEncryption,
   TrackEncryptionBox,
   TrackExtends,
+  VideoCodecConfig,
 } from './bmff'
 export type {
   CatalogDraft,
@@ -60,6 +66,26 @@ export type {
   TrackRun,
   TrackRunSample,
 } from './cmaf'
+export type {
+  Av1FrameHeader,
+  Av1FrameReading,
+  Av1FrameType,
+  Av1Obu,
+  FrameConfig,
+  FrameIssue,
+  FramesAbsent,
+  FrameTypeReading,
+  H264FrameReading,
+  H264NalUnit,
+  H264SliceType,
+  H265FrameReading,
+  H265NalKind,
+  H265NalUnit,
+  ReadSampleFramesOptions,
+  SampleFrame,
+  SampleFrames,
+  SampleSpan,
+} from './frames'
 export type {
   AudioLevel,
   AvcConfig,

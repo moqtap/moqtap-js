@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `@moqtap/media/frames`: per-sample frame types read from H.264 (IDR, slice types), H.265
+  (NAL unit kinds, IRAP) and AV1 (frame type, shown key frames) samples, with each CMAF
+  sample's span, its sample flags, and whether the flags agree with the bitstream.
+- `InitTrack.codecConfig`: the avcC, hvcC or av1C of a video track.
+
 ### Changed
 
 - Catalog, timeline and CMAF problem messages are sentences that start with a capital letter,
