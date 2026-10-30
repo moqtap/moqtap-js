@@ -360,3 +360,66 @@ describe('TrackKeys — exchange latency', () => {
     expect(Object.values(key).join('|')).not.toContain('a-track-name')
   })
 })
+
+describe('TrackKeys — the request behind a bucket', () => {
+  it('links a subscription to the SUBSCRIBE that asked for it, through the stream', () => {
+    // draft-20's SUBSCRIBE_OK carries no request id: the stream ties it back.
+    const keys = new TrackKeys()
+    keys.applyControl(msg(subscribeBytes(6n)), 'tx', 5, 10)
+    keys.applyControl(msg(subscribeOkBytes(9n)), 'rx', 5, 30)
+    expect(keys.requestFor(keys.aliasKey('rx', 9n) as BucketKey)).toEqual({ d: 'tx', v: '6' })
+  })
+
+  it('links a subscriber-chosen alias to its SUBSCRIBE, through draft-11', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(sub11(3n, 2n), 'tx', 0, 1)
+    expect(keys.requestFor(keys.aliasKey('rx', 2n) as BucketKey)).toEqual({ d: 'tx', v: '3' })
+  })
+
+  it('links a published track to the PUBLISH, sent by the side the objects come from', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(msg(publishBytes(4n, 5n)), 'rx', 1, 1)
+    expect(keys.requestFor(keys.aliasKey('rx', 5n) as BucketKey)).toEqual({ d: 'rx', v: '4' })
+    keys.applyControl(msg(publishBytes(8n, 6n)), 'tx', 3, 1)
+    expect(keys.requestFor(keys.aliasKey('tx', 6n) as BucketKey)).toEqual({ d: 'tx', v: '8' })
+  })
+
+  it('links a send track to the peer that subscribed to it', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(msg(subscribeBytes(2n)), 'rx', 7, 1)
+    keys.applyControl(msg(subscribeOkBytes(3n)), 'tx', 7, 2)
+    expect(keys.requestFor(keys.aliasKey('tx', 3n) as BucketKey)).toEqual({ d: 'rx', v: '2' })
+  })
+
+  it('links a fetch bucket to the request its stream names', () => {
+    const keys = new TrackKeys()
+    expect(keys.requestFor(keys.fetchKey('rx', 12n) as BucketKey)).toEqual({ d: 'tx', v: '12' })
+  })
+
+  it('has no link for an alias no observed request bound, until one binds it', () => {
+    const keys = new TrackKeys()
+    const key = keys.aliasKey('rx', 5n) as BucketKey
+    expect(keys.requestFor(key)).toBeUndefined()
+    keys.applyControl(msg(publishBytes(4n, 5n)), 'rx', 1, 1)
+    expect(keys.aliasKey('rx', 5n)).toBe(key)
+    expect(keys.requestFor(key)).toEqual({ d: 'rx', v: '4' })
+  })
+
+  it('keeps the old bucket on its own request across a rebind', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(msg(publishBytes(0n, 5n)), 'rx', 1, 1)
+    const first = keys.aliasKey('rx', 5n) as BucketKey
+    keys.closeStream(1)
+    keys.applyControl(msg(publishBytes(2n, 5n)), 'rx', 2, 2)
+    const second = keys.aliasKey('rx', 5n) as BucketKey
+    expect(keys.requestFor(first)).toEqual({ d: 'rx', v: '0' })
+    expect(keys.requestFor(second)).toEqual({ d: 'rx', v: '2' })
+  })
+
+  it('has no link for an alias two live requests share', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(msg(publishBytes(0n, 5n)), 'rx', 1, 1)
+    keys.applyControl(msg(publishBytes(2n, 5n)), 'rx', 2, 2)
+    expect(keys.requestFor(keys.aliasKey('rx', 5n) as BucketKey)).toBeUndefined()
+  })
+})

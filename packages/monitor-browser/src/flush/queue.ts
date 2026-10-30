@@ -10,7 +10,7 @@ import {
   splitFrames,
   writePreamble,
 } from '../envelope/index.js'
-import type { BatchRecord, ClockSource, DetailLevel } from '../types.js'
+import type { BatchClock, BatchRecord, ClockSource, DetailLevel } from '../types.js'
 import { FrameBuffer, type FrameBufferOptions } from './frame-buffer.js'
 import type { Chunk } from './idb.js'
 
@@ -46,6 +46,8 @@ export interface FlushQueueOptions extends FrameBufferOptions {
   readonly clock?: ClockSource
   /** The level a record was produced at, for `BatchRecord.lvl`. Default `baseline`. */
   readonly level?: () => DetailLevel
+  /** The clock against ingest's, for `BatchRecord.clock`, read once per seal. */
+  readonly serverClock?: () => BatchClock | undefined
 }
 
 /** What a seal stamps on the batch frame besides the key. */
@@ -79,6 +81,7 @@ export class FlushQueue extends FrameBuffer {
   private readonly _instanceId: string
   private readonly _clock: ClockSource
   private readonly _level: () => DetailLevel
+  private readonly _serverClock: (() => BatchClock | undefined) | undefined
 
   private _seq = 0
 
@@ -88,6 +91,7 @@ export class FlushQueue extends FrameBuffer {
     this._instanceId = opts.instanceId
     this._clock = opts.clock ?? platformClock
     this._level = opts.level ?? (() => 'baseline')
+    this._serverClock = opts.serverClock
   }
 
   /** The number the next seal with frames will take. Bodies so far are `0 … nextSeq - 1`. */
@@ -212,9 +216,11 @@ export class FlushQueue extends FrameBuffer {
       wall: this._clock.wall(),
       dropped: o.dropped ?? 0,
     } as const
-    // Present only when set, so an ordinary body carries no bytes for either.
+    const clock = this._serverClock?.()
+    // Present only when set, so an ordinary body carries no bytes for them.
     return {
       ...base,
+      ...(clock !== undefined ? { clock } : {}),
       ...(o.final === true ? { final: true as const } : {}),
       ...(o.lost !== undefined && o.lost.length > 0 ? { lost: [...o.lost] } : {}),
     }

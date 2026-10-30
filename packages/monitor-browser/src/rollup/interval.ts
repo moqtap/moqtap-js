@@ -28,9 +28,11 @@ import {
   type ObjectSample,
   type ParseFailureReason,
   type RecordSink,
+  type RequestLinkWire,
   type RollupRecord,
   type RollupTrackWire,
 } from '../types.js'
+import { ArrivalBudget, GroupArrivals } from './arrivals.js'
 import { TrackBucket, type TrackBucketOptions } from './bucket.js'
 import type { CustomMetrics } from './custom-metrics.js'
 import { flattenHistogram, Histogram } from './histogram.js'
@@ -90,6 +92,8 @@ export interface RollupEngineOptions extends TrackBucketOptions {
    * connection has an engine of its own. Default `''`: no connection.
    */
   readonly conn?: string
+  /** The request a bucket is bound to, for its `rq`. Absent: no track carries one. */
+  readonly requestOf?: (k: BucketKey) => RequestLinkWire | undefined
   readonly idleEvictIntervals?: number
   readonly suspendToleranceMs?: number
 }
@@ -123,6 +127,9 @@ export class RollupEngine implements CountingSink, MedianSource {
 
   private readonly opts: RollupEngineOptions
   private readonly bucketOpts: TrackBucketOptions
+  private readonly arrivals: ArrivalBudget
+  /** Each receive track's reported groups, so a bucket evicted while idle does not report them twice. */
+  private readonly reported = new WeakMap<BucketKey, GroupArrivals>()
   private readonly origin: Mono
   private readonly conn: string
   private readonly idleEvictMs: number
@@ -151,6 +158,7 @@ export class RollupEngine implements CountingSink, MedianSource {
 
   constructor(opts: RollupEngineOptions) {
     this.opts = opts
+    this.arrivals = ArrivalBudget.forInterval(opts.intervalMs)
     this.bucketOpts = {
       origin: opts.originMono ?? 0,
       ...(opts.medianWindow !== undefined ? { medianWindow: opts.medianWindow } : {}),
@@ -340,7 +348,7 @@ export class RollupEngine implements CountingSink, MedianSource {
     const start = this.startMono
     const tracks: RollupTrackWire[] = []
     for (const [ks, b] of this.buckets) {
-      if (b.activity > 0) tracks.push(b.drain())
+      if (b.activity > 0) tracks.push(b.drain(start, this.opts.requestOf?.(b.key)))
       else if (nowMono - b.lastActivityMono > this.idleEvictMs) {
         this.buckets.delete(ks)
         this.gen++
@@ -354,6 +362,9 @@ export class RollupEngine implements CountingSink, MedianSource {
     }
     flattenHistogram('wt.writerReadyMs', this.writerReady, session)
     this.writerReady.reset()
+    arrivalCounters(this.arrivals, session)
+    this.arrivals.dropped = 0
+    this.arrivals.late = 0
 
     const custom = this.opts.custom?.drain() ?? []
     const suspended = this.detectSuspend(nowMono)
@@ -394,11 +405,14 @@ export class RollupEngine implements CountingSink, MedianSource {
    */
   snapshot(nowMono: Mono): RollupRecord | null {
     const tracks: RollupTrackWire[] = []
-    for (const b of this.buckets.values()) if (b.activity > 0) tracks.push(b.peek())
+    for (const b of this.buckets.values()) {
+      if (b.activity > 0) tracks.push(b.peek(this.startMono, this.opts.requestOf?.(b.key)))
+    }
     const session: Record<string, number> = { ...this.session }
     for (const [kind, h] of this.controlLatency)
       flattenHistogram(`ctl.${kind}.latencyMs`, h, session)
     flattenHistogram('wt.writerReadyMs', this.writerReady, session)
+    arrivalCounters(this.arrivals, session)
     if (tracks.length === 0 && !hasAnyKey(session)) return null
     return {
       t: 'rollup',
@@ -437,11 +451,22 @@ export class RollupEngine implements CountingSink, MedianSource {
         this.bump('buckets.refused', 1)
         return undefined
       }
-      b = new TrackBucket(k, this.bucketOpts)
+      b = new TrackBucket(k, this.bucketOpts, this.reportedFor(k))
       this.buckets.set(ks, b)
     }
     this.keyCache.set(k, { bucket: b, gen: this.gen })
     return b
+  }
+
+  /** A receive track delivered by subscription or publish reports `ga`. */
+  private reportedFor(k: BucketKey): GroupArrivals | undefined {
+    if (k.dir !== 'rx' || k.kind !== 'alias') return undefined
+    let a = this.reported.get(k)
+    if (a === undefined) {
+      a = new GroupArrivals(this.arrivals)
+      this.reported.set(k, a)
+    }
+    return a
   }
 
   /** Lookup that never creates — the trigger asks about tracks, it does not open them. */
@@ -492,6 +517,12 @@ export class RollupEngine implements CountingSink, MedianSource {
  * stamp would attribute bytes that would have been sent anyway.
  */
 const BASELINE: DetailLevel = 'baseline'
+
+/** `ga.dropped`: in-sample groups past the track limit at the largest `k`. `ga.late`: in-sample groups older than the remembered window. */
+function arrivalCounters(a: ArrivalBudget, session: Record<string, number>): void {
+  if (a.dropped > 0) session['ga.dropped'] = (session['ga.dropped'] ?? 0) + a.dropped
+  if (a.late > 0) session['ga.late'] = (session['ga.late'] ?? 0) + a.late
+}
 
 function hasAnyKey(o: Record<string, number>): boolean {
   for (const _ in o) return true

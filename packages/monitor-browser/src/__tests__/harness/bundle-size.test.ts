@@ -94,11 +94,11 @@ const FORBIDDEN_CODEC_IMPORTS = ['encodeMessage', 'encodeSubgroupStream', 'encod
  */
 const CEILING_GZ = {
   /** `.`: every draft, every feature. */
-  root: 74_500,
+  root: 75_500,
   /** `./draftNN`: one draft, every feature. */
-  draft: 57_500,
+  draft: 58_500,
   /** `./draftNN/thin`: one draft, no optional feature. */
-  thin: 44_500,
+  thin: 45_500,
   /** `compose({ features: [workers] })`: a page whose transports live in its workers. */
   linked: 21_000,
   /**
@@ -108,11 +108,11 @@ const CEILING_GZ = {
   es2019: 28_000,
   es2020: 27_000,
   /** `./worker`: every draft and the flight recorder. */
-  worker: 53_000,
+  worker: 54_000,
   /** `./draftNN/worker`. */
-  draftWorker: 36_000,
+  draftWorker: 37_000,
   /** `./draftNN/thin/worker`. */
-  thinWorker: 31_500,
+  thinWorker: 32_500,
 } as const
 
 /**

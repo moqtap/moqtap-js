@@ -52,6 +52,7 @@ import type {
   ExchangeKind,
   Mono,
   PendingRequest,
+  RequestLinkWire,
   TrackKeyResolver,
   TrackLiveness,
 } from '../types.js'
@@ -90,11 +91,13 @@ const CLOSING_TYPES: ReadonlySet<string> = new Set([
   'fetch_cancel',
 ])
 
-/** One alias binding. Six fields, and not one of them is a string from the wire. */
+/** One alias binding. Not one of its fields is a string from the wire. */
 interface AliasBinding {
   epoch: number
   /** The request that bound it, when one was observed. */
   requestId: bigint | undefined
+  /** The side that sent that request. */
+  requestDir: Direction
   /** The bidi stream that request was made on, or -1 for an implicit binding. */
   streamId: number
   /** False once the binding's request ended: the next different id rebinds. */
@@ -132,6 +135,8 @@ export class TrackKeys implements TrackKeyResolver {
   private readonly pending = new Map<number, { req: PendingRequest; answered: boolean }>()
   /** Reverse index so a stream close retires its bindings in O(1). */
   private readonly byStream = new Map<number, AliasBinding[]>()
+  /** Each bound key's request, kept by the key so a rebind leaves the old bucket's in place. */
+  private readonly requests = new WeakMap<BucketKey, RequestLinkWire>()
   /** Distinct refused ids, bounded by {@link max}. See {@link bucketsRefused}. */
   private readonly refusedIds = new Set<string>()
   private readonly refusalCap: number
@@ -236,8 +241,11 @@ export class TrackKeys implements TrackKeyResolver {
       // message that carries an alias travels with them, except a SUBSCRIBE
       // that carries one (through draft-11, where the subscriber chooses the
       // alias): it goes to the publisher, and the objects come back.
-      const dataDir: Direction = type === 'subscribe' ? (dir === 'tx' ? 'rx' : 'tx') : dir
-      this.bind(dataDir, alias, rid ?? this.pending.get(streamId)?.req.requestId, streamId)
+      const dataDir: Direction = type === 'subscribe' ? flip(dir) : dir
+      // A publisher sends PUBLISH; every other alias carrier answers or is a SUBSCRIBE.
+      const requestDir: Direction = type === 'publish' ? dataDir : flip(dataDir)
+      const requestId = rid ?? this.pending.get(streamId)?.req.requestId
+      this.bind(dataDir, alias, requestId, requestDir, streamId)
     }
 
     if (typeof type === 'string' && CLOSING_TYPES.has(type)) {
@@ -320,6 +328,24 @@ export class TrackKeys implements TrackKeyResolver {
     return b.requestId === undefined ? 'unbound' : 'ended'
   }
 
+  /**
+   * The request behind a bucket, as `rq`: the side that sent it and its id.
+   * A fetch bucket's request is the one its stream names, sent by the
+   * receiving side. Undefined when no observed request binds the bucket, or
+   * two live requests share its alias.
+   */
+  requestFor(key: BucketKey): RequestLinkWire | undefined {
+    if (key.kind === 'fetch') {
+      let rq = this.requests.get(key)
+      if (rq === undefined) {
+        rq = Object.freeze({ d: flip(key.dir), v: key.id.toString() })
+        this.requests.set(key, rq)
+      }
+      return rq
+    }
+    return this.sharedFor(key) ? undefined : this.requests.get(key)
+  }
+
   /** Two live requests bound this bucket's alias at once (draft-20 §5.1). */
   sharedFor(key: BucketKey): boolean {
     if (key.kind !== 'alias') return false
@@ -365,11 +391,17 @@ export class TrackKeys implements TrackKeyResolver {
     return ms >= 0 ? { kind: 'setup', latencyMs: ms } : undefined
   }
 
-  private bind(dir: Direction, alias: bigint, requestId: bigint | undefined, streamId: number) {
+  private bind(
+    dir: Direction,
+    alias: bigint,
+    requestId: bigint | undefined,
+    requestDir: Direction,
+    streamId: number,
+  ) {
     const m = dir === 'tx' ? this.aliasTx : this.aliasRx
     const b = m.get(alias)
     if (b === undefined) {
-      this.openAlias(m, dir, alias, requestId, streamId)
+      this.openAlias(m, dir, alias, requestId, streamId, requestDir)
       return
     }
     this.index(streamId, b)
@@ -382,8 +414,10 @@ export class TrackKeys implements TrackKeyResolver {
     }
     if (b.requestId === undefined) {
       b.requestId = requestId
+      b.requestDir = requestDir
       b.streamId = streamId
       b.live = true
+      this.noteRequest(b)
       return
     }
     if (b.live) {
@@ -398,6 +432,7 @@ export class TrackKeys implements TrackKeyResolver {
     // has closed. One bucket out, one in: the epoch bump does not consume cap.
     b.epoch++
     b.requestId = requestId
+    b.requestDir = requestDir
     b.streamId = streamId
     b.live = true
     b.shared = false
@@ -405,6 +440,12 @@ export class TrackKeys implements TrackKeyResolver {
       b.key === null
         ? null
         : Object.freeze({ dir, kind: 'alias' as BucketKind, id: alias, epoch: b.epoch })
+    this.noteRequest(b)
+  }
+
+  private noteRequest(b: AliasBinding): void {
+    if (b.key === null || b.requestId === undefined) return
+    this.requests.set(b.key, Object.freeze({ d: b.requestDir, v: b.requestId.toString() }))
   }
 
   /** Returns `undefined` when the bucket cap refused the alias. */
@@ -414,6 +455,7 @@ export class TrackKeys implements TrackKeyResolver {
     alias: bigint,
     requestId: bigint | undefined,
     streamId: number,
+    requestDir: Direction = 'tx',
   ): AliasBinding | undefined {
     if (this.live >= this.max) {
       this.refuse(dir, 'alias', alias)
@@ -422,6 +464,7 @@ export class TrackKeys implements TrackKeyResolver {
     const b: AliasBinding = {
       epoch: 0,
       requestId,
+      requestDir,
       streamId,
       // An alias first seen on the data plane is bound by nobody we observed —
       // objects legitimately precede the control message that establishes the
@@ -436,6 +479,7 @@ export class TrackKeys implements TrackKeyResolver {
     m.set(alias, b)
     this.live++
     this.index(streamId, b)
+    this.noteRequest(b)
     return b
   }
 
@@ -475,4 +519,8 @@ export class TrackKeys implements TrackKeyResolver {
     }
     return null
   }
+}
+
+function flip(d: Direction): Direction {
+  return d === 'tx' ? 'rx' : 'tx'
 }

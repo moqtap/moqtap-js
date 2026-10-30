@@ -112,9 +112,8 @@ export function startFaultServer(
       stats.answered += 1
       const t2 = Date.now()
       res.writeHead(status, {
-        // Metrics the four-timestamp handshake: `t2` receive, `t3` send. The
-        // collector's `ClockSync` keeps the lowest-RTT sample. Omitting these
-        // would silently exercise the `Date`-header fallback instead.
+        // The four-timestamp exchange: `t2` receive, `t3` send. Without
+        // them no exchange enters the monitor's clock window.
         'x-moqtap-recv-ms': String(t2),
         'x-moqtap-send-ms': String(Date.now()),
         'content-length': '0',

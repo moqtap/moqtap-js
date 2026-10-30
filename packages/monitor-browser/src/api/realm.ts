@@ -568,6 +568,7 @@ export class RealmObserver {
     }
     const config = this._o.config
     const offered = offeredOf(s.options?.protocols ?? [], draftOfOffered)
+    const keys = new TrackKeys({ maxBuckets: config.metrics.maxTracks })
     const rollup = new RollupEngine({
       intervalMs: config.metrics.intervalMs,
       maxBuckets: config.metrics.maxTracks,
@@ -575,6 +576,7 @@ export class RealmObserver {
       sink: this._sink,
       originMono: this._origin,
       conn: s.id,
+      requestOf: (k) => keys.requestFor(k),
     })
     const c: Connection = {
       id: s.id,
@@ -584,7 +586,7 @@ export class RealmObserver {
       contentId: this._contentId,
       rollup,
       sink: this._connectionSink(() => c, rollup),
-      keys: new TrackKeys({ maxBuckets: config.metrics.maxTracks }),
+      keys,
       dispatcher: null,
       adapter: undefined,
       draft: null,

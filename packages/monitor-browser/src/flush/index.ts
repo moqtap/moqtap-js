@@ -76,7 +76,7 @@
  */
 
 export { BEACON_MAX_BYTES, type SendTailOptions, sendTail } from './beacon.js'
-export { ClockSync } from './clock-sync.js'
+export { CLOCK_TICK_MS, CLOCK_WINDOW_MS, ClockSync, DRIFT } from './clock-sync.js'
 export { type Deadline, deadlineSignal, NO_DEADLINE, sleepUntil } from './deadline.js'
 export {
   DIRECTIVE_ELEVATE_MAX_LEVEL,

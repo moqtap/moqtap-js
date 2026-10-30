@@ -755,7 +755,8 @@
     "test:browsers": "vitest run --config vitest.browsers.config.ts",
     "size": "bun run scripts/size.ts",
     "smoke": "bun run scripts/smoke.ts",
-    "codes": "bun run scripts/error-codes.ts"
+    "codes": "bun run scripts/error-codes.ts",
+    "fixtures": "bun run scripts/sync-fixtures.ts"
   },
   "dependencies": {
     "@moqtap/codec": ">=0.13.4"

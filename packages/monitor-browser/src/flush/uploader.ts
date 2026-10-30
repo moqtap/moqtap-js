@@ -12,9 +12,8 @@ import type { Chunk } from './idb.js'
  * Safari-only bug reports we cannot reproduce. Batches are already ~32 KB or
  * 60 s, so batch granularity paces congestion without streaming.
  *
- * Also runs the four-timestamp clock handshake — the only place that reads a
- * response, which `sendBeacon` cannot, so the offset is pinned here and
- * inherited by the beacon.
+ * Also runs the four-timestamp clock exchange: this is the only place that
+ * reads a response, which `sendBeacon` cannot.
  */
 
 /** The header carrying the edge's receive time (`t2`), in wall milliseconds. */
@@ -34,24 +33,18 @@ export interface UploaderOptions {
    */
   readonly timeoutMs?: number
   readonly fetchImpl?: typeof fetch
-  /** Wall clock for `t1`/`t4`. Monotonic time is not comparable to the server's. */
+  /** Wall clock for `t1`/`t4`, and monotonic time at `t4` for the clock window. */
   readonly clock?: ClockSource
   readonly sleep?: (ms: number) => Promise<void>
   readonly backoffMs?: (attempt: number) => number
-  /** Share one across sessions to keep refining the offset. Default: private. */
+  /** Where exchanges are folded in, for the batch record's `clock`. Default: private. */
   readonly clockSync?: ClockSync
-  /**
-   * How many exchanges to sample before pinning. Sampling starts on the first
-   * upload of a session; the sample with the lowest round-trip delay wins.
-   */
-  readonly clockSamples?: number
   readonly headers?: Readonly<Record<string, string>>
   readonly onInternalError?: (err: unknown) => void
 }
 
 const DEFAULT_MAX_ATTEMPTS = 5
 const DEFAULT_TIMEOUT_MS = 10_000
-const DEFAULT_CLOCK_SAMPLES = 3
 const MAX_BACKOFF_MS = 30_000
 
 /**
@@ -89,7 +82,6 @@ export class Uploader {
   private readonly _sleep: (ms: number, signal?: AbortSignal) => Promise<void>
   private readonly _backoff: (attempt: number) => number
   private readonly _sync: ClockSync
-  private readonly _clockSamples: number
   private readonly _headers: Readonly<Record<string, string>>
   private readonly _onError: ((err: unknown) => void) | undefined
   private _terminalDrops = 0
@@ -107,19 +99,13 @@ export class Uploader {
     this._sleep = o.sleep ?? sleepUntil
     this._backoff = o.backoffMs ?? defaultBackoff
     this._sync = o.clockSync ?? new ClockSync()
-    this._clockSamples = o.clockSamples ?? DEFAULT_CLOCK_SAMPLES
     this._headers = o.headers ?? {}
     this._onError = o.onInternalError
   }
 
-  /** The pinned offset. The beacon path inherits it and never samples. */
-  get clockOffsetMs(): number | undefined {
-    return this._sync.offsetMs
-  }
-
-  /** Round trip of the sample the offset came from — the offset's uncertainty. */
-  get clockRttMs(): number | undefined {
-    return this._sync.bestRttMs
+  /** The exchanges so far. */
+  get clockSync(): ClockSync {
+    return this._sync
   }
 
   /** Chunks refused with a terminal status and dropped rather than retried. */
@@ -197,9 +183,10 @@ export class Uploader {
         deadline.clear()
       }
       const t4 = this._clock.wall()
+      const mono = this._clock.now()
       lastStatus = res.status
+      const serverWallMs = this._note(res, t1, t4, mono)
       if (res.ok) {
-        const serverWallMs = this._note(res, t1, t4)
         const directive = this._directive(res)
         return {
           ok: true,
@@ -249,32 +236,22 @@ export class Uploader {
     })
   }
 
-  /** Fold this exchange into the clock estimate, and report the server's wall clock. */
-  private _note(res: Response, t1: number, t4: number): number | undefined {
-    let t2: number | undefined
-    let t3: number | undefined
+  /**
+   * Fold this exchange into the clock window when ingest stamped both times,
+   * and return ingest's send time, else the one-second `Date` header.
+   */
+  private _note(res: Response, t1: number, t4: number, mono: number): number | undefined {
     try {
-      t2 = numberFrom(res.headers.get(RECV_HEADER))
-      t3 = numberFrom(res.headers.get(SEND_HEADER))
-      if (t2 === undefined || t3 === undefined) {
-        // Fall back to the `Date` header, which every HTTP server sends. It is
-        // one timestamp for both ends of the server's turnaround and has
-        // one-second resolution, so it is a poor sample — which is exactly why
-        // the lowest-RTT sample wins rather than the mean.
-        const date = res.headers.get('date')
-        const parsed = date === null ? Number.NaN : Date.parse(date)
-        if (Number.isFinite(parsed)) {
-          t2 = t2 ?? parsed
-          t3 = t3 ?? parsed
-        }
-      }
+      const t2 = numberFrom(res.headers.get(RECV_HEADER))
+      const t3 = numberFrom(res.headers.get(SEND_HEADER))
+      if (t2 !== undefined && t3 !== undefined) this._sync.sample(t1, t2, t3, t4, mono)
+      if (t3 !== undefined) return t3
+      const parsed = Date.parse(res.headers.get('date') ?? '')
+      return Number.isFinite(parsed) ? parsed : undefined
     } catch (err) {
       this._onError?.(err)
       return undefined
     }
-    if (t2 === undefined || t3 === undefined) return undefined
-    if (this._sync.samples < this._clockSamples) this._sync.sample(t1, t2, t3, t4)
-    return t3
   }
 
   /** Ingest's directive, if it sent one the collector can read. */

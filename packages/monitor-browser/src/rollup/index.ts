@@ -12,6 +12,13 @@
  */
 
 export {
+  ArrivalBudget,
+  GA_MAX_K,
+  GA_SEEN_WINDOW,
+  GA_TARGET_GROUPS_PER_SEC,
+  GroupArrivals,
+} from './arrivals.js'
+export {
   DUPLICATE_WINDOW,
   MAX_GAP_RUN,
   MEDIAN_MIN_SAMPLES,

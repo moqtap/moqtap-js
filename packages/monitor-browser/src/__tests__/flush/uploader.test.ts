@@ -1,6 +1,6 @@
 /**
  * Delivery — one `fetch()` path with no streaming bodies, the `sendBeacon`
- * tail, and the four-timestamp clock handshake.
+ * tail, and the four-timestamp clock exchange.
  *
  * What these pin down:
  *
@@ -11,8 +11,8 @@
  *    hostile response, a thrown `sendBeacon` — all of it comes back as a value.
  *  - **A 4xx is terminal and counted**, except the three codes that carry a
  *    retry by definition; retrying a body ingest refuses forever is a spin.
- *  - **The offset is pinned from the lowest round trip**, not the mean, because
- *    queueing delay is one-sided and unbounded above.
+ *  - **Every exchange with ingest's two times enters the clock window**;
+ *    `clock-sync.test.ts` covers which sample a body carries.
  *  - **`Idempotency-Key` travels in the header AND the first frame.** The header
  *    lets ingest dedupe without decompressing; the frame is what survives the
  *    beacon path, which can set no headers at all.
@@ -21,7 +21,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Chunk } from '../../flush/index.js'
 import {
-  ClockSync,
   DIRECTIVE_HEADER,
   parseDirective,
   RECV_HEADER,
@@ -83,10 +82,17 @@ const ok = (headers: Record<string, string> = {}): Response =>
 const status = (code: number, headers: Record<string, string> = {}): Response =>
   new Response(null, { status: code, headers })
 
-const wallClock = (values: number[]): ClockSource => ({
-  now: () => 0,
-  wall: () => values.shift() ?? 0,
-})
+/** Wall times from `values`, with monotonic time moving with them. */
+const lockstep = (values: number[]): ClockSource => {
+  let last = 0
+  return {
+    now: () => last,
+    wall: () => {
+      last = values.shift() ?? last
+      return last
+    },
+  }
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -229,64 +235,48 @@ describe('Uploader.send, failure', () => {
 
 /* ── the clock handshake ────────────────────────────────────── */
 
-describe('Uploader, the clock handshake', () => {
-  it('pins the offset from the lowest round trip, not from the mean', async () => {
+describe('Uploader, the clock exchange', () => {
+  it('folds every exchange in, and the window gives the one with the smallest bound', async () => {
     const f = scripted([
       ok({ [RECV_HEADER]: '1200', [SEND_HEADER]: '1210' }),
       ok({ [RECV_HEADER]: '2050', [SEND_HEADER]: '2055' }),
       ok({ [RECV_HEADER]: '3500', [SEND_HEADER]: '3510' }),
     ])
-    const u = uploaderWith(f.impl, {
-      clock: wallClock([1_000, 1_400, 2_000, 2_100, 3_000, 4_000]),
-      clockSamples: 3,
-    })
+    const u = uploaderWith(f.impl, { clock: lockstep([1_000, 1_400, 2_000, 2_100, 3_000, 4_000]) })
 
     await u.send(chunk(0))
-    expect(u.clockOffsetMs).toBe(5)
     await u.send(chunk(1))
-    // rtt 95 beats rtt 390, so this sample wins.
-    expect(u.clockOffsetMs).toBe(2.5)
-    expect(u.clockRttMs).toBe(95)
     await u.send(chunk(2))
-    // rtt 990 loses; the pinned offset does not move.
-    expect(u.clockOffsetMs).toBe(2.5)
+    // Round trips 390, 95 and 990 ms: the 95 ms one, 1.9 s old at the seal.
+    expect(u.clockSync.best(4_000, 4_000)).toEqual({ o: 2.5, r: 95, n: 3, a: 1.9 })
   })
 
-  it('stops sampling once it has enough, and still reports the server clock', async () => {
+  it('folds in an exchange whose answer was not a success', async () => {
     const f = scripted([
-      ok({ [RECV_HEADER]: '1200', [SEND_HEADER]: '1210' }),
-      ok({ [RECV_HEADER]: '5001', [SEND_HEADER]: '5002' }),
+      status(503, { [RECV_HEADER]: '1200', [SEND_HEADER]: '1210' }),
+      ok({ [RECV_HEADER]: '2050', [SEND_HEADER]: '2055' }),
     ])
-    const u = uploaderWith(f.impl, {
-      clock: wallClock([1_000, 1_400, 5_000, 5_003]),
-      clockSamples: 1,
-    })
-
-    await u.send(chunk(0))
-    expect(u.clockOffsetMs).toBe(5)
-    const second = await u.send(chunk(1))
-    // A better sample arrives, but sampling is closed: the offset holds.
-    expect(u.clockOffsetMs).toBe(5)
-    expect(second.serverWallMs).toBe(5_002)
+    const u = uploaderWith(f.impl, { clock: lockstep([1_000, 1_400, 2_000, 2_100]) })
+    expect(await u.send(chunk())).toMatchObject({ ok: true })
+    expect(u.clockSync.samples).toBe(2)
   })
 
-  it('falls back to the Date header when the edge sends no timestamps of its own', async () => {
+  it('reports the server clock from the Date header, which never enters the window', async () => {
     const serverWall = Date.parse('Sat, 05 Sep 2026 12:00:00 GMT')
     const f = scripted([ok({ date: 'Sat, 05 Sep 2026 12:00:00 GMT' })])
-    const u = uploaderWith(f.impl, { clock: wallClock([serverWall - 50, serverWall + 50]) })
+    const u = uploaderWith(f.impl, { clock: lockstep([serverWall - 50, serverWall + 50]) })
 
     const out = await u.send(chunk())
     expect(out.serverWallMs).toBe(serverWall)
-    expect(u.clockOffsetMs).toBe(0)
-    expect(u.clockRttMs).toBe(100)
+    expect(u.clockSync.samples).toBe(0)
   })
 
-  it('reports no offset when the response carries no usable timestamp', async () => {
-    const f = scripted([ok()])
-    const u = uploaderWith(f.impl)
+  it('reports no clock when the response carries no usable timestamp', async () => {
+    const f = scripted([ok({ [RECV_HEADER]: '1200' })])
+    const u = uploaderWith(f.impl, { clock: lockstep([1_000, 1_400]) })
     const out = await u.send(chunk())
     expect(out.serverWallMs).toBeUndefined()
-    expect(u.clockOffsetMs).toBeUndefined()
+    expect(u.clockSync.best(1_400, 1_400)).toBeUndefined()
   })
 })
 
@@ -366,36 +356,6 @@ describe('parseDirective', () => {
     const reason = String.fromCodePoint(0x1f600).repeat(300)
     const d = parseDirective(JSON.stringify({ elevate: { level: 'headers', until: 1, reason } }))
     expect(d?.elevate?.reason).toBe(String.fromCodePoint(0x1f600).repeat(200))
-  })
-})
-
-describe('ClockSync', () => {
-  it('computes the four-timestamp offset and delay', () => {
-    const s = new ClockSync()
-    s.sample(1_000, 1_200, 1_210, 1_400)
-    expect(s.offsetMs).toBe(5)
-    expect(s.bestRttMs).toBe(390)
-    expect(s.samples).toBe(1)
-  })
-
-  it('keeps the lowest-delay sample, because queueing delay is one-sided', () => {
-    const s = new ClockSync()
-    s.sample(0, 500, 510, 1_000)
-    s.sample(0, 40, 45, 100)
-    s.sample(0, 900, 910, 2_000)
-    expect(s.bestRttMs).toBe(95)
-    expect(s.offsetMs).toBe(-7.5)
-    expect(s.samples).toBe(3)
-  })
-
-  it('ignores an impossible exchange rather than pinning a fiction', () => {
-    const s = new ClockSync()
-    // Negative round trip: one of the two clocks stepped mid-exchange.
-    s.sample(0, 0, 100, 50)
-    s.sample(Number.NaN, 1, 2, 3)
-    s.sample(0, 1, 2, Number.POSITIVE_INFINITY)
-    expect(s.offsetMs).toBeUndefined()
-    expect(s.samples).toBe(0)
   })
 })
 

@@ -1,0 +1,598 @@
+{
+  "note": "Expected ga, rq and clock fields for these inputs, and what they read as. Generated; do not hand-edit.",
+  "cases": [
+    {
+      "name": "contiguous",
+      "note": "Contiguous groups from object 0, fractional times, a start that rounds up.",
+      "intervalMs": 10000,
+      "origin": 1000.25,
+      "start": 6000.8,
+      "k": 0,
+      "objects": [
+        {
+          "g": "10",
+          "o": "0",
+          "at": 6033.4
+        },
+        {
+          "g": "10",
+          "o": "1",
+          "at": 6050.1
+        },
+        {
+          "g": "11",
+          "o": "0",
+          "at": 6066.6
+        },
+        {
+          "g": "12",
+          "o": "0",
+          "at": 6100.49
+        },
+        {
+          "g": "13",
+          "o": "0",
+          "at": 6133.51
+        }
+      ],
+      "ga": {
+        "g": "10",
+        "at": [32, 33, 34, 33]
+      },
+      "read": {
+        "k": 0,
+        "badSample": 0,
+        "arrivals": [
+          {
+            "group": "10",
+            "object": "0",
+            "sinceStartMs": 32
+          },
+          {
+            "group": "11",
+            "object": "0",
+            "sinceStartMs": 65
+          },
+          {
+            "group": "12",
+            "object": "0",
+            "sinceStartMs": 99
+          },
+          {
+            "group": "13",
+            "object": "0",
+            "sinceStartMs": 132
+          }
+        ]
+      }
+    },
+    {
+      "name": "gaps-objects-order",
+      "note": "Gaps in the ids, a group first seen at object 2, one group arriving before a lower one, a later subgroup of a reported group.",
+      "intervalMs": 10000,
+      "origin": 0,
+      "start": 20000,
+      "k": 0,
+      "objects": [
+        {
+          "g": "3",
+          "o": "0",
+          "at": 20010
+        },
+        {
+          "g": "6",
+          "o": "0",
+          "at": 20040.7
+        },
+        {
+          "g": "5",
+          "o": "2",
+          "at": 20055.2
+        },
+        {
+          "g": "3",
+          "o": "4",
+          "at": 20060
+        },
+        {
+          "g": "9",
+          "o": "0",
+          "at": 20090
+        }
+      ],
+      "ga": {
+        "g": "3",
+        "dg": [0, 2, 1, 3],
+        "at": [10, 45, -14, 49],
+        "ob": [[1, "2"]]
+      },
+      "read": {
+        "k": 0,
+        "badSample": 0,
+        "arrivals": [
+          {
+            "group": "3",
+            "object": "0",
+            "sinceStartMs": 10
+          },
+          {
+            "group": "5",
+            "object": "2",
+            "sinceStartMs": 55
+          },
+          {
+            "group": "6",
+            "object": "0",
+            "sinceStartMs": 41
+          },
+          {
+            "group": "9",
+            "object": "0",
+            "sinceStartMs": 90
+          }
+        ]
+      }
+    },
+    {
+      "name": "sampled",
+      "note": "Forty contiguous groups in a 1 s interval: ten fit, so k = 2.",
+      "intervalMs": 1000,
+      "origin": 0,
+      "start": 0,
+      "k": 2,
+      "objects": [
+        {
+          "g": "1",
+          "o": "0",
+          "at": 20
+        },
+        {
+          "g": "2",
+          "o": "0",
+          "at": 44.5
+        },
+        {
+          "g": "3",
+          "o": "0",
+          "at": 69
+        },
+        {
+          "g": "4",
+          "o": "0",
+          "at": 93.5
+        },
+        {
+          "g": "5",
+          "o": "0",
+          "at": 118
+        },
+        {
+          "g": "6",
+          "o": "0",
+          "at": 142.5
+        },
+        {
+          "g": "7",
+          "o": "0",
+          "at": 167
+        },
+        {
+          "g": "8",
+          "o": "0",
+          "at": 191.5
+        },
+        {
+          "g": "9",
+          "o": "0",
+          "at": 216
+        },
+        {
+          "g": "10",
+          "o": "0",
+          "at": 240.5
+        },
+        {
+          "g": "11",
+          "o": "0",
+          "at": 265
+        },
+        {
+          "g": "12",
+          "o": "0",
+          "at": 289.5
+        },
+        {
+          "g": "13",
+          "o": "0",
+          "at": 314
+        },
+        {
+          "g": "14",
+          "o": "0",
+          "at": 338.5
+        },
+        {
+          "g": "15",
+          "o": "0",
+          "at": 363
+        },
+        {
+          "g": "16",
+          "o": "0",
+          "at": 387.5
+        },
+        {
+          "g": "17",
+          "o": "0",
+          "at": 412
+        },
+        {
+          "g": "18",
+          "o": "0",
+          "at": 436.5
+        },
+        {
+          "g": "19",
+          "o": "0",
+          "at": 461
+        },
+        {
+          "g": "20",
+          "o": "0",
+          "at": 485.5
+        },
+        {
+          "g": "21",
+          "o": "0",
+          "at": 510
+        },
+        {
+          "g": "22",
+          "o": "0",
+          "at": 534.5
+        },
+        {
+          "g": "23",
+          "o": "0",
+          "at": 559
+        },
+        {
+          "g": "24",
+          "o": "0",
+          "at": 583.5
+        },
+        {
+          "g": "25",
+          "o": "0",
+          "at": 608
+        },
+        {
+          "g": "26",
+          "o": "0",
+          "at": 632.5
+        },
+        {
+          "g": "27",
+          "o": "0",
+          "at": 657
+        },
+        {
+          "g": "28",
+          "o": "0",
+          "at": 681.5
+        },
+        {
+          "g": "29",
+          "o": "0",
+          "at": 706
+        },
+        {
+          "g": "30",
+          "o": "0",
+          "at": 730.5
+        },
+        {
+          "g": "31",
+          "o": "0",
+          "at": 755
+        },
+        {
+          "g": "32",
+          "o": "0",
+          "at": 779.5
+        },
+        {
+          "g": "33",
+          "o": "0",
+          "at": 804
+        },
+        {
+          "g": "34",
+          "o": "0",
+          "at": 828.5
+        },
+        {
+          "g": "35",
+          "o": "0",
+          "at": 853
+        },
+        {
+          "g": "36",
+          "o": "0",
+          "at": 877.5
+        },
+        {
+          "g": "37",
+          "o": "0",
+          "at": 902
+        },
+        {
+          "g": "38",
+          "o": "0",
+          "at": 926.5
+        },
+        {
+          "g": "39",
+          "o": "0",
+          "at": 951
+        },
+        {
+          "g": "40",
+          "o": "0",
+          "at": 975.5
+        }
+      ],
+      "ga": {
+        "g": "4",
+        "dg": [0, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+        "at": [94, 98, 98, 98, 98, 98, 98, 98, 98, 98],
+        "k": 2
+      },
+      "read": {
+        "k": 2,
+        "badSample": 0,
+        "arrivals": [
+          {
+            "group": "4",
+            "object": "0",
+            "sinceStartMs": 94
+          },
+          {
+            "group": "8",
+            "object": "0",
+            "sinceStartMs": 192
+          },
+          {
+            "group": "12",
+            "object": "0",
+            "sinceStartMs": 290
+          },
+          {
+            "group": "16",
+            "object": "0",
+            "sinceStartMs": 388
+          },
+          {
+            "group": "20",
+            "object": "0",
+            "sinceStartMs": 486
+          },
+          {
+            "group": "24",
+            "object": "0",
+            "sinceStartMs": 584
+          },
+          {
+            "group": "28",
+            "object": "0",
+            "sinceStartMs": 682
+          },
+          {
+            "group": "32",
+            "object": "0",
+            "sinceStartMs": 780
+          },
+          {
+            "group": "36",
+            "object": "0",
+            "sinceStartMs": 878
+          },
+          {
+            "group": "40",
+            "object": "0",
+            "sinceStartMs": 976
+          }
+        ]
+      }
+    },
+    {
+      "name": "large-ids",
+      "note": "Group ids past 2^53 and an object id past 2^53.",
+      "intervalMs": 10000,
+      "origin": 0,
+      "start": 0,
+      "k": 0,
+      "objects": [
+        {
+          "g": "9007199254740993",
+          "o": "0",
+          "at": 5
+        },
+        {
+          "g": "9007199254740995",
+          "o": "1152921504606846976",
+          "at": 9
+        }
+      ],
+      "ga": {
+        "g": "9007199254740993",
+        "dg": [0, 2],
+        "at": [5, 4],
+        "ob": [[1, "1152921504606846976"]]
+      },
+      "read": {
+        "k": 0,
+        "badSample": 0,
+        "arrivals": [
+          {
+            "group": "9007199254740993",
+            "object": "0",
+            "sinceStartMs": 5
+          },
+          {
+            "group": "9007199254740995",
+            "object": "1152921504606846976",
+            "sinceStartMs": 9
+          }
+        ]
+      }
+    }
+  ],
+  "rq": [
+    {
+      "wire": {
+        "d": "tx",
+        "v": "0"
+      },
+      "read": {
+        "dir": "tx",
+        "id": "0"
+      }
+    },
+    {
+      "wire": {
+        "d": "rx",
+        "v": "7"
+      },
+      "read": {
+        "dir": "rx",
+        "id": "7"
+      }
+    },
+    {
+      "wire": {
+        "d": "tx",
+        "v": "4611686018427387903"
+      },
+      "read": {
+        "dir": "tx",
+        "id": "4611686018427387903"
+      }
+    }
+  ],
+  "clocks": [
+    {
+      "name": "one-exchange",
+      "note": "Device 5 s behind, 20 ms each way, 2 ms at ingest, sealed 30.5 s later.",
+      "exchanges": [
+        {
+          "t1": 1761696001000,
+          "t2": 1761696006020,
+          "t3": 1761696006022,
+          "t4": 1761696001042,
+          "mono": 1042
+        }
+      ],
+      "seal": {
+        "wall": 1761696031542,
+        "mono": 31542
+      },
+      "clock": {
+        "o": 5000,
+        "r": 40,
+        "n": 1,
+        "a": 30.5
+      },
+      "read": {
+        "o": 5000,
+        "r": 40,
+        "n": 1,
+        "a": 30.5
+      }
+    },
+    {
+      "name": "smallest-bound",
+      "note": "A 9 ms round trip, then a 29 ms one nine minutes later: 4.5 + 54 ms against 14.5 ms, so the newer one.",
+      "exchanges": [
+        {
+          "t1": 1761696000000,
+          "t2": 1761695999963,
+          "t3": 1761695999964,
+          "t4": 1761696000010,
+          "mono": 10
+        },
+        {
+          "t1": 1761696539980,
+          "t2": 1761696539953,
+          "t3": 1761696539954,
+          "t4": 1761696540010,
+          "mono": 540010
+        }
+      ],
+      "seal": {
+        "wall": 1761696540010,
+        "mono": 540010
+      },
+      "clock": {
+        "o": -41.5,
+        "r": 29,
+        "n": 2,
+        "a": 0
+      },
+      "read": {
+        "o": -41.5,
+        "r": 29,
+        "n": 2,
+        "a": 0
+      }
+    },
+    {
+      "name": "age-rounding",
+      "note": "Fractional monotonic times: the age rounds to 0.001 s.",
+      "exchanges": [
+        {
+          "t1": 1761696002000,
+          "t2": 1761696001969,
+          "t3": 1761696001970,
+          "t4": 1761696002003,
+          "mono": 2003.123456
+        }
+      ],
+      "seal": {
+        "wall": 1761696062004,
+        "mono": 62003.9876
+      },
+      "clock": {
+        "o": -32,
+        "r": 2,
+        "n": 1,
+        "a": 60.001
+      },
+      "read": {
+        "o": -32,
+        "r": 2,
+        "n": 1,
+        "a": 60.001
+      }
+    },
+    {
+      "name": "wall-step",
+      "note": "The wall clock steps 2 s ahead of monotonic time after the exchange: the window empties.",
+      "exchanges": [
+        {
+          "t1": 1761696000000,
+          "t2": 1761696000005,
+          "t3": 1761696000005,
+          "t4": 1761696000010,
+          "mono": 10
+        }
+      ],
+      "seal": {
+        "wall": 1761696002020,
+        "mono": 20
+      },
+      "clock": null,
+      "read": null
+    }
+  ]
+}

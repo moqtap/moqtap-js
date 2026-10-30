@@ -40,9 +40,10 @@ const vitals = init({
 
 That is a complete baseline session: control messages plus an interval
 rollup, reporting per-track object rate, bitrate, group cadence, group gaps,
-duplicates, out-of-order arrivals, stall duration and control-exchange
-latencies. The session begins when the page constructs its first
-`WebTransport`; until then nothing is recorded or sent.
+duplicates, out-of-order arrivals, stall duration, control-exchange latencies
+and the first-object arrival time of a sample of groups. The session begins
+when the page constructs its first `WebTransport`; until then nothing is
+recorded or sent.
 
 ## Content Security Policy
 
@@ -238,12 +239,12 @@ test fixture. It deletes every stored upload as well.
 Drafts 07 through 22. Your bundle holds the drafts and features you import and
 nothing else. Pick the entry that matches your player:
 
-| Import                             | Drafts | Features  | Gzipped      |
-| ---------------------------------- | ------ | --------- | ------------ |
-| `@moqtap/monitor-browser`                | all    | all       | 72.3 KB      |
-| `@moqtap/monitor-browser/draftNN`        | one    | all       | 52.7–55.2 KB |
-| `@moqtap/monitor-browser/draftNN/thin`   | one    | none      | 40.1–42.7 KB |
-| `compose({ features: [workers] })` | none   | `workers` | 19.6 KB      |
+| Import                                 | Drafts | Features  | Gzipped      |
+| -------------------------------------- | ------ | --------- | ------------ |
+| `@moqtap/monitor-browser`              | all    | all       | 73.6 KB      |
+| `@moqtap/monitor-browser/draftNN`      | one    | all       | 54.4–56.9 KB |
+| `@moqtap/monitor-browser/draftNN/thin` | one    | none      | 41.9–44.3 KB |
+| `compose({ features: [workers] })`     | none   | `workers` | 19.9 KB      |
 
 ```typescript
 import { init } from '@moqtap/monitor-browser/draft14'
@@ -370,11 +371,11 @@ its own release.
 The worker entries export `initWorker` alone, without the page's uploader,
 storage and session:
 
-| Import                                  | Drafts | Flight recorder | Gzipped      |
-| --------------------------------------- | ------ | --------------- | ------------ |
-| `@moqtap/monitor-browser/worker`              | all    | yes             | 51.2 KB      |
-| `@moqtap/monitor-browser/draftNN/worker`      | one    | yes             | 32.0–34.5 KB |
-| `@moqtap/monitor-browser/draftNN/thin/worker` | one    | no              | 27.6–30.1 KB |
+| Import                                        | Drafts | Flight recorder | Gzipped      |
+| --------------------------------------------- | ------ | --------------- | ------------ |
+| `@moqtap/monitor-browser/worker`              | all    | yes             | 52.4 KB      |
+| `@moqtap/monitor-browser/draftNN/worker`      | one    | yes             | 33.4–35.9 KB |
+| `@moqtap/monitor-browser/draftNN/thin/worker` | one    | no              | 29.0–31.5 KB |
 
 When every connection lives in the worker, pair one of these with a page that
 imports no draft, as in [Compose your own](#compose-your-own). Like every

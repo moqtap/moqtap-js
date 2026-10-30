@@ -27,6 +27,7 @@ import {
   type Chunk,
   type ChunkDestination,
   type ChunkStore,
+  type ClockSync,
   compress,
   DIRECTIVE_ELEVATE_MAX_LEVEL,
   DIRECTIVE_ELEVATE_MAX_SPAN_MS,
@@ -103,6 +104,8 @@ export interface MessageTarget {
 /** Ports the runtime needs and does not create, so the suite can supply its own. */
 export interface RuntimePorts {
   readonly clock?: ClockSource
+  /** The page's upload clock exchanges, kept across its sessions. */
+  readonly clockSync?: ClockSync
   /** `performance.timeOrigin`: the page's clock origin, against which a worker's is rebased. */
   readonly timeOrigin?: number
   readonly fetchImpl?: typeof fetch
@@ -377,6 +380,7 @@ export class CollectorRuntime {
       instanceId: this.instanceId,
       clock: relClock,
       level: () => this._escalation.level,
+      serverClock: () => this._uploader.clockSync.best(this._clock.wall(), this._clock.now()),
       maxPendingBytes: () => this._cap(),
       onInternalError: this._onError,
     })
@@ -509,6 +513,8 @@ export class CollectorRuntime {
       // `fetch` has no timeout, so without this one blackholed request is
       // pending for the life of the page, and the outbox behind it with it.
       timeoutMs: config.upload.timeoutMs,
+      clock: this._clock,
+      ...(ports.clockSync !== undefined ? { clockSync: ports.clockSync } : {}),
       ...(ports.fetchImpl !== undefined ? { fetchImpl: ports.fetchImpl } : {}),
       onInternalError: this._onError,
     })
@@ -839,6 +845,7 @@ export class CollectorRuntime {
       startTs: undefined,
       custom: this._custom ?? undefined,
       reported: this._reported,
+      clockSync: this._uploader.clockSync,
       ...ports,
     })
     // The session's tags so far, `setContext()`'s included, go on with it.

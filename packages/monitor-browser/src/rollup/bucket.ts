@@ -26,9 +26,11 @@ import type {
   HistogramWire,
   Mono,
   ObjectSample,
+  RequestLinkWire,
   RollupTrackWire,
 } from '../types.js'
 import { bucketKeyWire } from '../types.js'
+import type { GroupArrivals } from './arrivals.js'
 import { Histogram } from './histogram.js'
 
 /**
@@ -272,9 +274,12 @@ export class TrackBucket {
   private readonly dupGroups = new Float64Array(DUPLICATE_WINDOW)
   private readonly dupObjects = new Float64Array(DUPLICATE_WINDOW)
   private readonly dupUsed = new Uint8Array(DUPLICATE_WINDOW)
+  private readonly arrivals: GroupArrivals | undefined
 
-  constructor(key: BucketKey, opts: TrackBucketOptions = {}) {
+  /** With `arrivals`, the track reports first-object arrival per group into it. */
+  constructor(key: BucketKey, opts: TrackBucketOptions = {}, arrivals?: GroupArrivals) {
     this.key = key
+    this.arrivals = arrivals
     this.medianWindow = new SlidingMedian(opts.medianWindow ?? MEDIAN_WINDOW)
     this.medianMinSamples = opts.medianMinSamples ?? MEDIAN_MIN_SAMPLES
     this.stallMultiple = opts.stallMultiple ?? STALL_MULTIPLE
@@ -412,6 +417,7 @@ export class TrackBucket {
     this.lastActivity = at
     if (this.firstSeen === undefined) this.firstSeen = at
     this.lastSeen = at
+    this.arrivals?.onObject(s.groupId, s.objectId, at)
 
     // `obj.sizeBytes` is the media object's size. Header bytes
     // are counted separately rather than folded in: the header is the
@@ -516,9 +522,15 @@ export class TrackBucket {
    * `key.v` is a decimal **string**: the id is a bigint (aliases and request
    * ids are vi64), `JSON.stringify` throws on a bigint, and a `number` silently
    * loses precision past 2^53.
+   *
+   * `start` is the interval's start, and `rq` the request bound to the key.
+   * Arrivals on a track bound to no request yet are not reported: they are
+   * forgotten, for the request that binds it to report.
    */
-  drain(): RollupTrackWire {
-    const row = this.peek()
+  drain(start: Mono = this.origin, rq?: RequestLinkWire): RollupTrackWire {
+    const row = this.row(start, rq, true)
+    if (this.unbound(rq)) this.arrivals?.forget()
+    else this.arrivals?.reset()
     for (const kind of TRACK_HISTOGRAMS) this.hist[kind].reset()
     this.objects = 0
     this.payloadBytes = 0
@@ -539,7 +551,17 @@ export class TrackBucket {
   }
 
   /** The interval row so far, leaving the interval open. */
-  peek(): RollupTrackWire {
+  peek(start: Mono = this.origin, rq?: RequestLinkWire): RollupTrackWire {
+    return this.row(start, rq, false)
+  }
+
+  /** No request binds the track. A shared alias is bound, by two requests. */
+  private unbound(rq: RequestLinkWire | undefined): boolean {
+    return rq === undefined && !this.sharedAlias
+  }
+
+  private row(start: Mono, rq: RequestLinkWire | undefined, closing: boolean): RollupTrackWire {
+    const ga = this.unbound(rq) ? undefined : this.arrivals?.field(start, this.origin, closing)
     const hist: Partial<Record<HistogramKind, HistogramWire>> = {}
     for (const kind of TRACK_HISTOGRAMS) {
       const w = this.hist[kind].encode()
@@ -572,6 +594,8 @@ export class TrackBucket {
         : {}),
       ...(this.gapRangesDropped > 0 ? { gapRangesDropped: this.gapRangesDropped } : {}),
       ...(this.resets !== undefined ? { resets: Object.fromEntries(this.resets) } : {}),
+      ...(rq !== undefined && !this.sharedAlias ? { rq } : {}),
+      ...(ga !== undefined ? { ga } : {}),
       hist,
     }
   }

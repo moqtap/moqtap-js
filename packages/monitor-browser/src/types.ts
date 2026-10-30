@@ -1234,6 +1234,23 @@ export interface BatchRecord extends RecordBase {
   readonly lost?: readonly number[]
   /** Records dropped on the device so far, cumulative: buffer caps and sampling. */
   readonly dropped: number
+  /** The device's clock against ingest's when the body was sealed. Absent when no recent `fetch()` upload got ingest's timestamped reply. */
+  readonly clock?: BatchClock
+}
+
+/**
+ * The device's wall clock against ingest's, from the upload exchanges of the
+ * last ten minutes. A time on ingest's clock is `wall + o`.
+ */
+export interface BatchClock {
+  /** Offset, ingest minus device, ms. */
+  readonly o: number
+  /** Round trip of the exchange `o` came from, ms. */
+  readonly r: number
+  /** Exchanges in the window. */
+  readonly n: number
+  /** Age of the exchange `o` came from when the body was sealed, s. */
+  readonly a: number
 }
 
 /** Sent once per instance, in its first body. */
@@ -1405,7 +1422,45 @@ export interface RollupTrackWire {
    * on a send track. At most 32 codes; the rest are counted under `other`.
    */
   readonly resets?: Readonly<Record<string, number>>
+  /**
+   * The request this bucket's objects are delivered for: the side that sent
+   * it and its id, as a decimal string. Absent when no observed request binds
+   * the bucket, or when two live requests share its alias.
+   */
+  readonly rq?: RequestLinkWire
+  /**
+   * First-object arrival of each group whose first object arrived this
+   * interval, on a receive track delivered by subscription or publish. Absent
+   * when there was none.
+   */
+  readonly ga?: GroupArrivalsWire
   readonly hist: Partial<Record<HistogramKind, HistogramWire>>
+}
+
+/** See {@link RollupTrackWire.rq}. */
+export interface RequestLinkWire {
+  readonly d: Direction
+  readonly v: string
+}
+
+/**
+ * See {@link RollupTrackWire.ga}. Groups are listed by ascending id, each
+ * reported once per request.
+ */
+export interface GroupArrivalsWire {
+  /** The first group id, decimal. */
+  readonly g: string
+  /** Present when the ids are not contiguous: one delta per group, the first 0. */
+  readonly dg?: readonly number[]
+  /**
+   * Arrival in ms: the first after the rollup's `startMono`, each later one
+   * after the one before it, both rounded to 1 ms before they are subtracted.
+   */
+  readonly at: readonly number[]
+  /** `[index, object id]` for each group whose first arrival was not object 0. */
+  readonly ob?: readonly (readonly [index: number, object: string])[]
+  /** Only groups with `id mod 2^k == 0` are listed. Absent means 0. */
+  readonly k?: number
 }
 
 /**

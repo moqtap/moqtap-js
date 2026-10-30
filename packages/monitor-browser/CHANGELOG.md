@@ -6,6 +6,17 @@ until 0.11.0, will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Rollup tracks carry `rq`, the request they are delivered for, and receive
+  tracks carry `ga`, the first-object arrival of a sample of groups, at most
+  ten a second a track. New session counters: `ga.dropped`, `ga.late`.
+- The batch record carries `clock` `{o, r, n, a}`, the device's clock against
+  ingest's. Absent when no recent `fetch()` upload got
+  ingest's timestamped reply.
+
 ## [0.12.0] - 2026-10-28
 
 ### Changed
