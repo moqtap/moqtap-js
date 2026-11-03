@@ -232,6 +232,18 @@
       "types": "./dist/draft22-session.d.ts",
       "import": "./dist/draft22-session.js",
       "require": "./dist/draft22-session.cjs"
+    },
+    "./draft23": {
+      "bun": "./src/drafts/draft23/index.ts",
+      "types": "./dist/draft23.d.ts",
+      "import": "./dist/draft23.js",
+      "require": "./dist/draft23.cjs"
+    },
+    "./draft23/session": {
+      "bun": "./src/drafts/draft23/session.ts",
+      "types": "./dist/draft23-session.d.ts",
+      "import": "./dist/draft23-session.js",
+      "require": "./dist/draft23-session.cjs"
     }
   },
   "files": [
@@ -245,7 +257,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@moqtap/test-vectors": "^0.19.0",
+    "@moqtap/test-vectors": "^0.23.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.2.7"

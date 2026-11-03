@@ -158,8 +158,9 @@ export function normalizeParams(params: Record<string, unknown>): Record<string,
 /**
  * The parameter names this codec decodes into a list rather than a single value.
  *
- * Two definitions permit a repeat: AUTHORIZATION_TOKEN on drafts 11 and later,
- * and the five Range Filters on drafts 19 and later.
+ * Three definitions permit a repeat: AUTHORIZATION_TOKEN on drafts 11 and
+ * later, the five Range Filters on drafts 19 and later, and the
+ * UNSUPPORTED_PROPERTY Error Detail on draft-23.
  */
 const REPEATABLE_PARAMS = new Set([
   'authorization_token',
@@ -168,9 +169,13 @@ const REPEATABLE_PARAMS = new Set([
   'priority_filter',
   'object_property_filter',
   'track_property_filter',
+  'unsupported_property',
 ])
 
-export function vectorParamsToMap(entries: unknown): {
+export function vectorParamsToMap(
+  entries: unknown,
+  encodeEvenValue?: (value: bigint) => string,
+): {
   named: Record<string, unknown>
   repeated: string[]
 } {
@@ -184,7 +189,19 @@ export function vectorParamsToMap(entries: unknown): {
     if (name === undefined) {
       // An entry with no name is a type the draft assigns nothing. This codec
       // keeps those in an `unknown` array, with the length the old shape spelled
-      // out and this one leaves to the bytes.
+      // out and this one leaves to the bytes. An even type's entry gives its
+      // value instead, which the codec keeps as the varint's bytes; the caller
+      // says how its draft writes one.
+      if ('value' in raw && raw.raw_hex === undefined) {
+        if (encodeEvenValue === undefined) {
+          throw new Error(
+            `unnamed entry ${String(raw.type)} gives a value, and no encoder was given`,
+          )
+        }
+        const hex = encodeEvenValue(BigInt(raw.value as string))
+        unknown.push({ id: raw.type as string, length: String(hex.length / 2), raw_hex: hex })
+        continue
+      }
       const rawHex = (raw.raw_hex as string | undefined) ?? ''
       unknown.push({
         id: raw.type as string,

@@ -54,6 +54,10 @@ import {
   createSubgroupStreamDecoder as createDecoder22,
   decodeSubgroupStream as decodeOneShot22,
 } from '../drafts/draft22/index.js'
+import {
+  createSubgroupStreamDecoder as createDecoder23,
+  decodeSubgroupStream as decodeOneShot23,
+} from '../drafts/draft23/index.js'
 import { bytesToHex, hexToBytes } from './helpers.js'
 
 interface StreamingDraft {
@@ -134,6 +138,12 @@ const STREAMING_DRAFTS: readonly StreamingDraft[] = [
     draft: '22',
     createDecoder: createDecoder22,
     decodeOneShot: decodeOneShot22,
+    twoByteStatus: '8000',
+  },
+  {
+    draft: '23',
+    createDecoder: createDecoder23,
+    decodeOneShot: decodeOneShot23,
     twoByteStatus: '8000',
   },
 ]

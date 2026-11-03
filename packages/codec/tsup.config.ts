@@ -40,5 +40,7 @@ export default defineConfig({
     'draft21-session': 'src/drafts/draft21/session.ts',
     draft22: 'src/drafts/draft22/index.ts',
     'draft22-session': 'src/drafts/draft22/session.ts',
+    draft23: 'src/drafts/draft23/index.ts',
+    'draft23-session': 'src/drafts/draft23/session.ts',
   },
 })

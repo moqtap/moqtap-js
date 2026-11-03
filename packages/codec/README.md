@@ -4,7 +4,7 @@ MoQT (Media over QUIC Transport) wire-format codec and session state machine for
 JavaScript and TypeScript. Stateless encode and decode of every control message
 and data stream, plus an FSM that validates message ordering per draft.
 
-Drafts 07 through 22, zero runtime dependencies, full TypeScript types with
+Drafts 07 through 23, zero runtime dependencies, full TypeScript types with
 discriminated unions. Runs in Node.js, Bun, and browsers.
 
 ## Install
@@ -19,9 +19,9 @@ MoQT is pre-RFC, so a draft version is always explicit. Draft-scoped imports
 give the tightest types and pull in only that draft:
 
 ```typescript
-import { createDraft22Codec } from '@moqtap/codec/draft22'
+import { createDraft23Codec } from '@moqtap/codec/draft23'
 
-const codec = createDraft22Codec()
+const codec = createDraft23Codec()
 
 const bytes = codec.encodeMessage({
   type: 'setup',
@@ -42,7 +42,7 @@ runtime:
 ```typescript
 import { createCodec } from '@moqtap/codec'
 
-const codec = createCodec({ draft: '22' }) // '07' through '22'
+const codec = createCodec({ draft: '23' }) // '07' through '23'
 ```
 
 ## Exports
@@ -51,8 +51,8 @@ const codec = createCodec({ draft: '22' }) // '07' through '22'
 | ------------------------------------- | ------------------------------------------------------------- |
 | `@moqtap/codec`                       | `createCodec({ draft })`, cross-draft accessors, shared types  |
 | `@moqtap/codec/session`               | `createSessionState({ codec: { draft }, role })`               |
-| `@moqtap/codec/draft{07..22}`         | One draft's codec, message types and constants                 |
-| `@moqtap/codec/draft{07..22}/session` | One draft's session state machine                              |
+| `@moqtap/codec/draft{07..23}`         | One draft's codec, message types and constants                 |
+| `@moqtap/codec/draft{07..23}/session` | One draft's session state machine                              |
 
 Each draft module exports `createDraft{NN}Codec()`, `DRAFT_VERSION`, and that
 draft's message types.
@@ -67,7 +67,7 @@ number is sent at all — so the entries above `'14'` are derived identifiers, n
 values a peer ever puts on the wire. Report the protocol string instead:
 
 ```typescript
-import { PROTOCOL_STRING } from '@moqtap/codec/draft22' // 'moqt-22'
+import { PROTOCOL_STRING } from '@moqtap/codec/draft23' // 'moqt-23'
 ```
 
 ## Reading across drafts
@@ -97,9 +97,9 @@ is `undefined` because the publisher chooses the alias in SUBSCRIBE_OK.
 Validates protocol message sequences without transport coupling:
 
 ```typescript
-import { createDraft22SessionState } from '@moqtap/codec/draft22/session'
+import { createDraft23SessionState } from '@moqtap/codec/draft23/session'
 
-const session = createDraft22SessionState('client')
+const session = createDraft23SessionState('client')
 
 const result = session.receive(incomingMessage)
 if (!result.ok) {

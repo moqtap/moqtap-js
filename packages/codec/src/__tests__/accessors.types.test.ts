@@ -33,6 +33,7 @@ const codecs = [
   createCodec({ draft: '20' }),
   createCodec({ draft: '21' }),
   createCodec({ draft: '22' }),
+  createCodec({ draft: '23' }),
 ] as const
 
 describe('accessor types', () => {

@@ -15,7 +15,7 @@ version: 0.14.0
 1. **Codec** — stateless encode/decode of all control messages and data streams
 2. **Session FSM** — protocol state machine that validates message ordering, tracks subscriptions, publishes and fetches, and emits side effects
 
-Supports **drafts 07 through 22** of MoQ Transport. Zero runtime dependencies. Works in Node.js, Bun, Deno, and browsers.
+Supports **drafts 07 through 23** of MoQ Transport. Zero runtime dependencies. Works in Node.js, Bun, Deno, and browsers.
 
 ## Installation
 
@@ -30,7 +30,7 @@ MoQT is not yet an RFC, so the draft is always explicit:
 ```typescript
 import { createCodec } from '@moqtap/codec';
 
-const codec = createCodec({ draft: '22' }); // '07' through '22'
+const codec = createCodec({ draft: '23' }); // '07' through '23'
 
 // Encode a message to wire bytes
 const bytes = codec.encodeMessage({
@@ -58,20 +58,20 @@ Message fields use snake_case, as in the draft text. Each draft has its own mess
 |---|---|
 | `@moqtap/codec` | `createCodec({ draft })`, `DRAFT_VERSIONS`, cross-draft accessors, shared types |
 | `@moqtap/codec/session` | `createSessionState({ codec: { draft }, role })` |
-| `@moqtap/codec/draft07` … `/draft22` | One draft's codec, message types, constants and error-code registries |
-| `@moqtap/codec/draft07/session` … `/draft22/session` | One draft's session state machine |
+| `@moqtap/codec/draft07` … `/draft23` | One draft's codec, message types, constants and error-code registries |
+| `@moqtap/codec/draft07/session` … `/draft23/session` | One draft's session state machine |
 
 A draft entry point gives the tightest types and pulls in only that draft:
 
 ```typescript
-// Draft-22
+// Draft-23
 import {
-  createDraft22Codec,
+  createDraft23Codec,
   encodeMessage,
   decodeMessage,
   createStreamDecoder,
-  PROTOCOL_STRING, // 'moqt-22'
-} from '@moqtap/codec/draft22';
+  PROTOCOL_STRING, // 'moqt-23'
+} from '@moqtap/codec/draft23';
 
 // Draft-14
 import {
@@ -87,7 +87,7 @@ Every draft entry point exports `createDraft{NN}Codec()`, `encodeMessage`, `deco
 
 ## Draft versions
 
-Through draft-14 the version is negotiated in CLIENT_SETUP and SERVER_SETUP, and `0xff0000NN` travels on the wire. Those are `DRAFT_VERSIONS['07']` through `DRAFT_VERSIONS['14']`. From draft-15 the version is negotiated by ALPN or `WT-Available-Protocols` as the string `moqt-NN`, and no version number is sent. The entries above `'14'` are identifiers only, not values a peer sends. Drafts 20 to 22 export the protocol string as `PROTOCOL_STRING`.
+Through draft-14 the version is negotiated in CLIENT_SETUP and SERVER_SETUP, and `0xff0000NN` travels on the wire. Those are `DRAFT_VERSIONS['07']` through `DRAFT_VERSIONS['14']`. From draft-15 the version is negotiated by ALPN or `WT-Available-Protocols` as the string `moqt-NN`, and no version number is sent. The entries above `'14'` are identifiers only, not values a peer sends. Drafts 20 to 23 export the protocol string as `PROTOCOL_STRING`.
 
 ## Codec API
 
@@ -104,6 +104,12 @@ const result = codec.decodeMessage(bytes); // { ok: true, value, bytesRead } or 
 const decoder = codec.createStreamDecoder();
 // TransformStream<Uint8Array, Draft14Message>
 ```
+
+On draft-23 the Message Length is a varint, and a message may be as long as the receiver's MAX_CONTROL_MESSAGE_SIZE (Setup Option 0x09, 65535 by default). `encodeMessage`, `decodeMessage` and `createStreamDecoder` take an optional `{ maxControlMessageSize }`. When given, a longer message is refused. SETUP is always held to 65535, and when the option is omitted no other message is. Pass your own advertised value when decoding and the peer's when encoding. The draft-23 session state machine reports both as `localMaxControlMessageSize` and `peerMaxControlMessageSize`.
+
+On draft-23 a failed decode also carries `error.closeCode`, the session termination code the draft names for the failure (for example `SessionTerminationCode.MalformedMessage`, `0x300n`). It is absent when the frame is only incomplete, and when the code depends on the receiver's role: pass `{ role: 'client' }` or `{ role: 'server' }` to `decodeMessage` or `createStreamDecoder` to have a SETUP Authorization Token refusal named as well. A subgroup or fetch stream decoder that is closed in the middle of an Object fails with `TruncatedObject` (`0x203n`).
+
+A draft-23 REQUEST_OK does not say which request it answers, so the decoder accepts any parameter that some REQUEST_OK may carry. `checkRequestOk(kind, message)` applies the list for one response, such as `'publish_ok'` or `'fetch_ok'`, and `checkRequestUpdate(target, message, fromSubscriber)` does the same for REQUEST_UPDATE. Each returns `{ closeCode, reason }` or `null`. The session state machine applies both when it knows the request stream.
 
 ### Data streams
 
@@ -147,6 +153,8 @@ const extensionData = codec.encodeObjectProperties([{ type: 0x3cn, value: 2n }])
 
 The list keeps wire order, repeated types, odd-typed values and unknown types. A block malformed by the draft's rules, such as a property running past the block or a value longer than the draft allows, is a decode error.
 
+On draft-23, `malformedTrackReason(stream)` checks the Object Properties of a decoded subgroup stream, datagram or fetch stream for the conditions that make a Track malformed: a Property block that cannot be parsed, Immutable Properties nested in Immutable Properties, a Track-only or Mandatory Track Property (0x4000-0x7FFF, grease excepted) on an Object, a repeated Property, a Prior Group ID Gap or Prior Object ID Gap larger than the Group or Object ID, or two Objects of one Group with different Prior Group ID Gaps. `malformedTrackPropertiesReason(message.track_properties)` does the same for the Track Properties of a SUBSCRIBE_OK, PUBLISH or REQUEST_OK: a repeated Property, an Object-only Property (0x3C, 0x3E), or Immutable Properties that cannot be parsed. The decoder keeps a repeated Track Property after the first in `unknown`. Both return the reason or `null`. A malformed Track is not a decode error.
+
 ### VarInt
 
 `@moqtap/codec/draft07` exports the variable-length integer helpers:
@@ -181,7 +189,7 @@ Each returns `undefined` when the message does not carry the field. `requestIdOf
 `redactAuthTokens(bytes)` returns a control frame with every authorization token value overwritten with `REDACTION_FILL` (`0x00`). The frame keeps its length.
 
 ```typescript
-import { redactAuthTokens } from '@moqtap/codec/draft22';
+import { redactAuthTokens } from '@moqtap/codec/draft23';
 
 const { bytes: clean, redacted, incomplete, decoded } = redactAuthTokens(frame);
 ```
@@ -195,11 +203,11 @@ The session FSM validates protocol message ordering and tracks the lifecycle of 
 ```typescript
 import { createSessionState } from '@moqtap/codec/session';
 
-const session = createSessionState({ codec: { draft: '22' }, role: 'client' });
+const session = createSessionState({ codec: { draft: '23' }, role: 'client' });
 
 // Or, from a draft entry point:
-import { createDraft22SessionState } from '@moqtap/codec/draft22/session';
-const session22 = createDraft22SessionState('client');
+import { createDraft23SessionState } from '@moqtap/codec/draft23/session';
+const session23 = createDraft23SessionState('client');
 ```
 
 ### Core methods
@@ -235,6 +243,8 @@ Every `send()` and `receive()` call returns a result:
 ```
 
 Violation codes: `MESSAGE_BEFORE_SETUP`, `UNEXPECTED_MESSAGE`, `DUPLICATE_SUBSCRIBE_ID`, `DUPLICATE_REQUEST_ID`, `UNKNOWN_SUBSCRIBE_ID`, `UNKNOWN_REQUEST_ID`, `ROLE_VIOLATION`, `STATE_VIOLATION`, `SETUP_VIOLATION`.
+
+On draft-23 a violation also carries `closeCode` where the draft names the session termination code for it.
 
 ### Session phases
 
@@ -282,9 +292,9 @@ if (result.ok) {
       case 'fetch-ended':
         // effect.requestId
         break;
-      case 'fill-fetch-stream-opened':    // drafts 20–22
-      case 'fill-fetch-stream-closed':    // drafts 20–22
-      case 'subscription-state-notified': // drafts 20–22
+      case 'fill-fetch-stream-opened':    // drafts 20–23
+      case 'fill-fetch-stream-closed':    // drafts 20–23
+      case 'subscription-state-notified': // drafts 20–23
         break;
     }
   }

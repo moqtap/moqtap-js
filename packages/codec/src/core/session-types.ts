@@ -65,6 +65,11 @@ export interface ProtocolViolation<T extends string> {
   readonly message: string
   readonly currentPhase: SessionPhase
   readonly offendingMessage: T
+  /**
+   * The session termination code the draft names for this violation. Set by
+   * draft state machines that name one; undefined otherwise.
+   */
+  readonly closeCode?: bigint
 }
 
 export type ProtocolViolationCode =

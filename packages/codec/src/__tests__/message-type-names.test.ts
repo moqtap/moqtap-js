@@ -50,6 +50,7 @@
 
 import { readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { BufferReader, MoqtBufferReader } from '../core/buffer-reader.js'
 import * as draft07 from '../drafts/draft07/index.js'
 import * as draft08 from '../drafts/draft08/index.js'
 import * as draft09 from '../drafts/draft09/index.js'
@@ -66,8 +67,9 @@ import * as draft19 from '../drafts/draft19/index.js'
 import * as draft20 from '../drafts/draft20/index.js'
 import * as draft21 from '../drafts/draft21/index.js'
 import * as draft22 from '../drafts/draft22/index.js'
+import * as draft23 from '../drafts/draft23/index.js'
 import { DRAFT_VERSIONS } from '../index.js'
-import { loadVectorDir } from './helpers.js'
+import { hexToBytes, loadVectorDir, type TestVectorFile } from './helpers.js'
 
 interface Draft {
   /** The two-digit draft number, which is also its corpus directory suffix. */
@@ -105,13 +107,15 @@ const DRAFTS: readonly Draft[] = [
   { draft: '20', types: draft20.MESSAGE_TYPE_MAP, ids: draft20.MESSAGE_ID_MAP },
   { draft: '21', types: draft21.MESSAGE_TYPE_MAP, ids: draft21.MESSAGE_ID_MAP },
   { draft: '22', types: draft22.MESSAGE_TYPE_MAP, ids: draft22.MESSAGE_ID_MAP },
+  { draft: '23', types: draft23.MESSAGE_TYPE_MAP, ids: draft23.MESSAGE_ID_MAP },
 ]
 
 /**
  * The corpus's name for a type code no draft assigns.
  *
  * Each draft's `unknown-type.json` is a negative vector wearing the same header
- * as the positive ones: it puts 0x3f on the wire and expects a decoder to
+ * as the positive ones: it puts a type code the draft does not assign on the
+ * wire (0x3f, and on draft-23 also the reserved 0x18) and expects a decoder to
  * refuse it. It names no message, so it is excluded from the corpus's table and
  * then held to what it claims — this package must have no row for that id on
  * that draft.
@@ -147,6 +151,7 @@ const ALIASES: readonly Alias[] = [
   { draft: '20', alias: 'publish_ok', canonical: 'request_ok' },
   { draft: '21', alias: 'publish_ok', canonical: 'request_ok' },
   { draft: '22', alias: 'publish_ok', canonical: 'request_ok' },
+  { draft: '23', alias: 'publish_ok', canonical: 'request_ok' },
 ]
 
 /**
@@ -169,9 +174,9 @@ function byId(a: bigint, b: bigint): number {
  * The wire id a vector file declares, as the corpus writes it: `0x` and hex.
  *
  * `message_type_id` is optional in {@link TestVectorFile} and present in every
- * file in fact, so the absent case throws instead of being tolerated. Parsed as
- * a `bigint` because that is what the maps are keyed by; `MESSAGE_TYPE_MAP.get`
- * of a `number` misses every row.
+ * file that names a message, so the absent case throws instead of being
+ * tolerated. Parsed as a `bigint` because that is what the maps are keyed by;
+ * `MESSAGE_TYPE_MAP.get` of a `number` misses every row.
  */
 function declaredId(draft: string, file: string, raw: string | undefined): bigint {
   if (raw === undefined) throw new Error(`draft-${draft}/${file}: no message_type_id`)
@@ -179,6 +184,26 @@ function declaredId(draft: string, file: string, raw: string | undefined): bigin
     throw new Error(`draft-${draft}/${file}: message_type_id ${JSON.stringify(raw)} is not 0x hex`)
   }
   return BigInt(raw)
+}
+
+/**
+ * The type codes an `unknown-type.json` puts on the wire. A file that holds a
+ * single code declares it as `message_type_id`; one that holds several (the
+ * draft-23 file adds 0x18, reserved by Table 5) declares none, and each
+ * vector's code is read off its bytes in the draft's varint: MOQT's vi64 from
+ * draft-17, QUIC's before.
+ */
+function unassignedIds(draft: string, file: string, data: TestVectorFile): bigint[] {
+  if (data.message_type_id !== undefined) return [declaredId(draft, file, data.message_type_id)]
+  const ids = data.vectors.map((v) => {
+    const bytes = hexToBytes(v.hex)
+    const reader = Number(draft) >= 17 ? new MoqtBufferReader(bytes) : new BufferReader(bytes)
+    return reader.readVarInt()
+  })
+  expect(ids.length, `draft-${draft}/${file}: no vectors to read a type code from`).toBeGreaterThan(
+    0,
+  )
+  return ids
 }
 
 /**
@@ -204,17 +229,18 @@ function corpusNames(
   let unassigned = 0
 
   for (const { file, data } of files) {
-    const id = declaredId(draft, file, data.message_type_id)
-
     if (data.message_type === UNASSIGNED) {
       unassigned++
-      expect(
-        ours.has(id),
-        `draft-${draft}/${file} says ${hex(id)} is a type code the draft does not assign, and ` +
-          `this package names it ${ours.get(id)}`,
-      ).toBe(false)
+      for (const id of unassignedIds(draft, file, data)) {
+        expect(
+          ours.has(id),
+          `draft-${draft}/${file} says ${hex(id)} is a type code the draft does not assign, and ` +
+            `this package names it ${ours.get(id)}`,
+        ).toBe(false)
+      }
       continue
     }
+    const id = declaredId(draft, file, data.message_type_id)
 
     const spellings = named.get(id) ?? new Map<string, string>()
     const previous = spellings.get(data.message_type)
@@ -306,7 +332,7 @@ function namesAgreeWithTheCorpus({ draft, types }: Draft): void {
  *
  * A per-draft comparison catches a map wired to the wrong draft only where the
  * two drafts disagree about something, so which drafts agree completely is the
- * measure of what the sixteen tests above cannot see. Drafts 08, 09 and 10
+ * measure of what the per-draft tests above cannot see. Drafts 08, 09 and 10
  * assign exactly the same ids to exactly the same names, so those three tables
  * are interchangeable as far as any corpus check can tell. Drafts 20, 21 and 22
  * are the same: draft-21 restructures draft-20 without changing the wire, and

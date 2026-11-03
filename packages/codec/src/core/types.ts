@@ -16,6 +16,7 @@ export type Draft =
   | '20'
   | '21'
   | '22'
+  | '23'
 
 // Base codec interface — draft-specific codecs extend this
 export interface BaseCodec<M> {
@@ -43,11 +44,18 @@ export type DecodeErrorCode =
 export class DecodeError extends Error {
   readonly code: DecodeErrorCode
   readonly offset: number
+  /**
+   * The session termination code the draft names for this failure. Set by
+   * draft modules whose decoder names one; undefined otherwise, and for an
+   * `UNEXPECTED_END` that only means more bytes are needed.
+   */
+  readonly closeCode?: bigint
 
-  constructor(code: DecodeErrorCode, message: string, offset: number) {
+  constructor(code: DecodeErrorCode, message: string, offset: number, closeCode?: bigint) {
     super(message)
     this.name = 'DecodeError'
     this.code = code
     this.offset = offset
+    if (closeCode !== undefined) this.closeCode = closeCode
   }
 }

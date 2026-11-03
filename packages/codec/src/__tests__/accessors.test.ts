@@ -32,6 +32,7 @@ const ALL_DRAFTS: Draft[] = [
   '20',
   '21',
   '22',
+  '23',
 ]
 
 interface Decoded {
