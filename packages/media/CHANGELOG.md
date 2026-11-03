@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-03
+
 ### Changed
 
 - A track that fits `ietf-04` now also fits `ietf-05`, and resolves to both unless it carries
