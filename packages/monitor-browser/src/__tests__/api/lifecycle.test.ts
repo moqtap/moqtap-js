@@ -45,8 +45,15 @@ import type {
   LinkRecord,
   RollupRecord,
 } from '../../types.js'
-import { chunks, concatBytes, encodeControl, subscribeBytes } from '../decode/vectors.js'
+import {
+  chunks,
+  concatBytes,
+  encodeControl,
+  subgroupBytes,
+  subscribeBytes,
+} from '../decode/vectors.js'
 import { attempt, init, workerBuild } from '../support/init.js'
+import { allFacts } from '../support/runs.js'
 import { settle, until } from '../support/settle.js'
 import { afterPreamble, clockProbe } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
@@ -1943,11 +1950,11 @@ describe('newSession() — the next playback in the same page', () => {
     expect(of(b, 'end').map((e) => e.reason)).toEqual(['app'])
     expect(of(b, 'note').map((n) => n.name)).toEqual(['second'])
     const setup = of(b, 'setup')[0]
-    expect(setup?.identity).toMatchObject({
+    expect(setup?.identity).toEqual({
       sessionId: second.sessionId,
       instanceId: second.instanceId,
-      contentId: 'movie-2',
     })
+    expect(of(b, 'ident')[0]).toMatchObject({ content: 'movie-2' })
     expect(setup?.idSource).toBe('minted')
     // The second session runs on the first one's clock, from where it began.
     expect(of(a, 'setup')[0]?.startTs).toBeUndefined()
@@ -2330,5 +2337,67 @@ describe('nothing before the session attaches is lost', () => {
     expect(counted('early.dataChunks')).toBe(2)
     expect(counted('early.dataBytes')).toBe(9)
     expect((of(all, 'end')[0] as EndRecord).counters.parseFailures).toBe(0)
+  })
+
+  it('keeps skipping a stream from before init() after newSession()', async () => {
+    const { posts, impl } = recordingFetch()
+    ensureDormantHook()
+    const wt = await openTransport()
+    const src = wt.deliverUniStream([Uint8Array.of(0x10, 1, 2, 3)])
+    const arrived = await wt.incomingUnidirectionalStreams.getReader().read()
+    const reading = readAll(arrived.value as ReadableStream<Uint8Array>)
+    await settle(5)
+
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    c.newSession({ sessionId: 'sess-second' })
+    await settle()
+    // Bytes that would read as a subgroup header if the stream began here.
+    src.push(subgroupBytes({ alias: 4n, group: 1n, objects: [{ id: 0n, bytes: 10 }] }))
+    src.close()
+    await reading
+    await settle()
+    await c.end()
+
+    const all = await allRecords(posts)
+    const counted = (name: string): number =>
+      of(all, 'rollup').reduce((n, r) => n + (r.session[name] ?? 0), 0)
+    expect(counted('early.dataChunks')).toBe(2)
+    const { runs, ends } = await allFacts(posts.map((p) => p.body))
+    expect(runs).toEqual([])
+    expect(ends).toEqual([])
+    for (const r of of(all, 'end')) expect((r as EndRecord).counters.parseFailures).toBe(0)
+  })
+
+  it('keeps skipping the rest of a control stream it cut after newSession()', async () => {
+    const { posts, impl } = recordingFetch()
+    const frame = subscribeBytes(1n, 'v'.repeat(1000))
+    const size = 4096
+    const count = Math.ceil((80 * 1024) / frame.length)
+    const parts = chunks(concatBytes(...Array.from({ length: count }, () => frame)), size)
+    ensureDormantHook()
+    const wt = await openTransport()
+    const stream = wt.deliverBidiStream(parts)
+    const arrived = await wt.incomingBidirectionalStreams.getReader().read()
+    const reading = readAll((arrived.value as { readable: ReadableStream<Uint8Array> }).readable)
+    await settle(5)
+
+    const c = init(base(), { ...quiet, fetchImpl: impl })
+    await settle()
+    c.newSession({ sessionId: 'sess-second' })
+    await settle()
+    stream.inbound.push(frame)
+    stream.inbound.push(frame)
+    stream.inbound.close()
+    await reading
+    await settle()
+    await c.end()
+
+    const all = await allRecords(posts)
+    expect(of(all, 'ctrl')).toHaveLength(Math.floor(EARLY_CONTROL_CONNECTION_BYTES / frame.length))
+    for (const r of of(all, 'end')) expect((r as EndRecord).counters.parseFailures).toBe(0)
+    for (const r of of(all, 'conn-close')) {
+      expect((r as ConnCloseRecord).counters.parseFailures).toBe(0)
+    }
   })
 })

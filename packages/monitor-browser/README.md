@@ -65,19 +65,20 @@ runtime chunk loading.
 
 `apiKey` is the only required key. The rest is grouped by what you are deciding:
 
-| Key              | What it controls                                                      |
-| ---------------- | --------------------------------------------------------------------- |
-| `endpoint`       | Where uploads go. Defaults to the hosted ingest.                      |
-| `sessionId`      | Your own id for the first session, up to 128 UTF-8 bytes; else minted |
-| `context`        | `actorId`, `contentId`, `environment`, `release`, `tags`              |
-| `detail`         | `baseline`, `headers`, `headers+sizes` or `headers+data`              |
-| `metrics`        | How often the rollup closes, how many tracks it follows               |
-| `flightRecorder` | Memory depth, triggers, how long a triggered window stays open        |
-| `budget`         | Elevated minutes                                                      |
-| `upload`         | When to upload, how hard to retry, when to give up                    |
-| `storage`        | Space for uploads waiting to be sent                                  |
-| `privacy`        | Auth-token masking, on by default; actor-id hashing, off              |
-| `limits`         | Safety valves a healthy integration never touches                     |
+| Key              | What it controls                                                                |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `endpoint`       | Where uploads go. Defaults to the hosted ingest.                                |
+| `sessionId`      | Your own id for the first session, up to 128 UTF-8 bytes; else minted           |
+| `context`        | `actorId`, `contentId`, `environment`, `release`, `tags`                        |
+| `detail`         | `baseline`, `headers`, `headers+sizes` or `headers+data`                        |
+| `metrics`        | How often the rollup closes, how many tracks it follows                         |
+| `flightRecorder` | Memory depth, triggers, how long a triggered window stays open                  |
+| `budget`         | Elevated minutes                                                                |
+| `upload`         | When to upload, how hard to retry, when to give up                              |
+| `storage`        | Space for uploads waiting to be sent                                            |
+| `privacy`        | Auth-token masking, on by default; actor-id hashing, off                        |
+| `limits`         | Safety valves a healthy integration never touches                               |
+| `clock`          | A UTC clock of your own, such as one fed by PTP, returning `{ nowMs, errorMs }` |
 
 ```typescript
 init({

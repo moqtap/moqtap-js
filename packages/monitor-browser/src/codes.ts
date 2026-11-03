@@ -57,6 +57,8 @@ export const MQ1112 = 'MQ1112'
 export const MQ1113 = 'MQ1113'
 /** A context tag was left out: past the 16th, or a key or value outside its bounds. */
 export const MQ1114 = 'MQ1114'
+/** A context value longer than 256 characters was left out. */
+export const MQ1115 = 'MQ1115'
 
 /* ── 2xxx — envelope ─────────────────────────────────────────────────────── */
 

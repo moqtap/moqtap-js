@@ -12,16 +12,28 @@ import {
   type BodyTrack,
   type MarkInput,
   type RunInput,
+  type StreamEndInput,
   writeMarkRecord,
   writeRunRecord,
+  writeStreamEndRecord,
 } from '../envelope/contract.js'
 import { FrameWriter } from '../envelope/frame-writer.js'
-import { type RecordedMark, type RecordedRun, runIds, type Taken } from '../rollup/runs.js'
+import {
+  type RecordedEnd,
+  type RecordedMark,
+  type RecordedRun,
+  runIds,
+  type Taken,
+} from '../rollup/runs.js'
 import { type BucketKey, bucketKeyString, bucketKeyWire, type SupportedDraft } from '../types.js'
 import { ClockSync } from './clock-sync.js'
 
-/** Entries one `run` or `mark` record holds at most. */
+/** Entries one `run`, `mark` or `stream-end` record holds at most. */
 const MAX_RECORD_ENTRIES = 65_536
+
+/** Tracks and connections one viewer body lists at most. */
+export const MAX_BODY_TRACKS = 1_024
+export const MAX_BODY_CONNS = 64
 
 /** Per-connection counters a body's `tail` lists at most, newest first. */
 const MAX_TAIL_CONNS = 256
@@ -30,7 +42,8 @@ const MAX_TAIL_CONNS = 256
 const MAX_CLOSED_CONNS = 256
 
 interface Conn {
-  readonly draft: SupportedDraft
+  /** Once known, the connection's for its life. */
+  draft: SupportedDraft | null
   readonly relay: string
   open: boolean
   /** Closed, with records naming it possibly still buffered: every body lists it. */
@@ -54,6 +67,8 @@ export class Emitter {
   /** Buffered records naming each id. */
   private readonly _trackRefs: number[] = []
   private readonly _freeTracks: number[] = []
+  /** Each key object's string: the decoders hand the same frozen key for every object of a track. */
+  private readonly _keyStrings = new WeakMap<BucketKey, string>()
   private _conn = 0
   /** Ordinals of the hooked sessions still open, kept across the page's sessions. */
   private readonly _connIds = new Map<string, number>()
@@ -78,7 +93,11 @@ export class Emitter {
    * record names it, and free for another key once none does.
    */
   trackId(key: BucketKey, into: Set<number>): number {
-    const s = bucketKeyString(key)
+    let s = this._keyStrings.get(key)
+    if (s === undefined) {
+      s = bucketKeyString(key)
+      this._keyStrings.set(key, s)
+    }
     let id = this._tracks.get(s)
     if (id === undefined) {
       id = this._freeTracks.pop() ?? this._trackKeys.length
@@ -106,6 +125,16 @@ export class Emitter {
       this._trackKeys[id] = undefined
       this._freeTracks.push(id)
     }
+  }
+
+  /** Track ids in use: the distinct tracks buffered records name. */
+  get trackCount(): number {
+    return this._tracks.size
+  }
+
+  /** Whether `key` has an id now. */
+  hasTrack(key: BucketKey): boolean {
+    return this._tracks.has(bucketKeyString(key))
   }
 
   /** The `trk` entries of the tracks `ids` names, ascending. */
@@ -150,12 +179,18 @@ export class Emitter {
     this._through = Math.max(this._through, throughUs)
   }
 
-  /** A connection's draft is known: bodies list it from now until after it closes. */
-  noteConn(c: number, draft: SupportedDraft, relay: string): void {
+  /**
+   * A connection opened, or its draft became known: bodies list it from now
+   * until after it closes. A known draft stays the connection's.
+   */
+  noteConn(c: number, draft: SupportedDraft | null, relay: string): void {
     const known = this._conns.get(c)
-    if (known?.open) return
+    if (known?.open) {
+      known.draft ??= draft
+      return
+    }
     this._conns.delete(c)
-    this._conns.set(c, { draft, relay, open: true, listed: false })
+    this._conns.set(c, { draft: known?.draft ?? draft, relay, open: true, listed: false })
   }
 
   noteConnClosed(c: number): void {
@@ -220,17 +255,20 @@ export class Emitter {
   }
 
   /**
-   * The connections a body lists: every open one, every closed one until a
-   * seal leaves nothing buffered, and every one `referenced` names.
+   * The connections a body lists: every one `referenced` names, then every
+   * open one and every closed one until a seal leaves nothing buffered, up to
+   * {@link MAX_BODY_CONNS}.
    */
   bodyConns(referenced: ReadonlySet<number>): BodyConn[] {
     const out: BodyConn[] = []
+    let room = MAX_BODY_CONNS - referenced.size
     for (const [c, k] of this._conns) {
-      if (k.open || k.listed || referenced.has(c)) {
-        out.push({ c, draft: k.draft, relay: k.relay })
-      }
+      const named = referenced.has(c)
+      if (!named && (!(k.open || k.listed) || room <= 0)) continue
+      if (!named) room -= 1
+      out.push(k.draft === null ? { c, relay: k.relay } : { c, draft: k.draft, relay: k.relay })
     }
-    return out
+    return out.sort((a, b) => a.c - b.c)
   }
 }
 
@@ -248,39 +286,112 @@ export interface RecordRefs {
   readonly c: ReadonlySet<number>
 }
 
-/** `run` and `mark` records ready to buffer: their frames, and per record its rseq and references. */
+/** One `run`, `mark` or `stream-end` record ready to buffer: its frames, rseq and references. */
 export interface EncodedFacts {
   readonly frames: Uint8Array
   readonly count: number
   readonly records: readonly { readonly rseq: number; readonly refs: RecordRefs }[]
 }
 
-/** Encode `t`, taking an rseq per record. Empty when `t` holds nothing. */
-export function encodeFacts(e: Emitter, t: Taken): EncodedFacts {
-  const w = new FrameWriter({ initialBytes: 256 })
-  const records: { rseq: number; refs: RecordRefs }[] = []
-  for (let i = 0; i < t.runs.length; i += MAX_RECORD_ENTRIES) {
-    const ti = new Set<number>()
-    const c = new Set<number>()
-    const runs = t.runs
-      .slice(i, i + MAX_RECORD_ENTRIES)
-      .map((r): RunInput => runInput(r, e.trackId(r.key, ti), c))
-    const rseq = e.takeRseq()
-    writeRunRecord(w, rseq, RECORD_BASE_US, runs)
-    records.push({ rseq, refs: { ti, c } })
+type Entry = RecordedRun | RecordedMark | RecordedEnd
+
+/** The entries `[from, to)` of one record: none names more tracks or connections than a body lists. */
+function cut(list: readonly Entry[], from: number): number {
+  const end = Math.min(list.length, from + MAX_RECORD_ENTRIES)
+  // Distinct key objects bound the distinct tracks from above, so counting
+  // them settles the common case without building a key string per entry.
+  const objs = new Set<BucketKey>()
+  const few = new Set<number>()
+  let j = from
+  for (; j < end; j++) {
+    const x = list[j] as Entry
+    objs.add(x.key)
+    few.add(x.c)
+    if (objs.size > MAX_BODY_TRACKS || few.size > MAX_BODY_CONNS) break
   }
-  for (let i = 0; i < t.marks.length; i += MAX_RECORD_ENTRIES) {
-    const ti = new Set<number>()
-    const c = new Set<number>()
-    const marks = t.marks
-      .slice(i, i + MAX_RECORD_ENTRIES)
-      .map((m): MarkInput => markInput(m, e.trackId(m.key, ti), c))
-    const rseq = e.takeRseq()
-    writeMarkRecord(w, rseq, RECORD_BASE_US, marks)
-    records.push({ rseq, refs: { ti, c } })
+  if (j === end) return end
+  const keys = new Set<string>()
+  const conns = new Set<number>()
+  let i = from
+  for (; i < list.length && i - from < MAX_RECORD_ENTRIES; i++) {
+    const x = list[i] as Entry
+    const k = bucketKeyString(x.key)
+    const newKey = !keys.has(k)
+    const newConn = !conns.has(x.c)
+    if ((newKey && keys.size === MAX_BODY_TRACKS) || (newConn && conns.size === MAX_BODY_CONNS)) {
+      break
+    }
+    if (newKey) keys.add(k)
+    if (newConn) conns.add(x.c)
   }
-  const count = w.frameCount
-  return { frames: w.take(), count, records }
+  return i
+}
+
+/**
+ * Encode `t` one record at a time, taking an rseq per record, and hand each
+ * to `put`. `room` says whether the open body can list a record naming these
+ * tracks and connections; when it cannot, `full` seals it first.
+ */
+export function encodeFacts(
+  e: Emitter,
+  t: Taken,
+  put: (f: EncodedFacts) => void,
+  room: (
+    part: readonly { readonly key: BucketKey }[],
+    conns: ReadonlySet<number>,
+  ) => boolean = () => true,
+  full: () => void = () => {},
+): void {
+  const each = <T extends Entry>(
+    list: readonly T[],
+    write: (
+      w: FrameWriter,
+      rseq: number,
+      part: readonly T[],
+      ti: Set<number>,
+      c: Set<number>,
+    ) => void,
+  ): void => {
+    for (let i = 0; i < list.length; ) {
+      const to = cut(list, i)
+      const part = list.slice(i, to)
+      i = to
+      const conns = new Set<number>()
+      for (const x of part) conns.add(x.c)
+      if (!room(part, conns)) full()
+      const w = new FrameWriter({ initialBytes: 256 })
+      const ti = new Set<number>()
+      const c = new Set<number>()
+      const rseq = e.takeRseq()
+      write(w, rseq, part, ti, c)
+      const count = w.frameCount
+      put({ frames: w.take(), count, records: [{ rseq, refs: { ti, c } }] })
+    }
+  }
+  each(t.runs, (w, rseq, part, ti, c) =>
+    writeRunRecord(
+      w,
+      rseq,
+      RECORD_BASE_US,
+      part.map((r) => runInput(r, e.trackId(r.key, ti), c)),
+    ),
+  )
+  each(t.marks, (w, rseq, part, ti, c) =>
+    writeMarkRecord(
+      w,
+      rseq,
+      RECORD_BASE_US,
+      part.map((m) => markInput(m, e.trackId(m.key, ti), c)),
+    ),
+  )
+  each(t.ends, (w, rseq, part, ti, c) =>
+    writeStreamEndRecord(
+      w,
+      rseq,
+      RECORD_BASE_US,
+      part.map((x) => endInput(x, e.trackId(x.key, ti), c)),
+    ),
+  )
 }
 
 function runInput(r: RecordedRun, ti: number, conns: Set<number>): RunInput {
@@ -304,6 +415,22 @@ function runInput(r: RecordedRun, ti: number, conns: Set<number>): RunInput {
     eog: r.eog,
     end: r.end,
     ...(r.rc !== null ? { rc: r.rc } : {}),
+  }
+}
+
+function endInput(x: RecordedEnd, ti: number, conns: Set<number>): StreamEndInput {
+  conns.add(x.c)
+  return {
+    eog: x.eog,
+    end: x.end,
+    c: x.c,
+    ti,
+    path: x.path,
+    sid: BigInt(x.sid),
+    ...(x.g !== null ? { g: x.g } : {}),
+    ...(x.o !== null ? { o: x.o } : {}),
+    tUs: x.tUs,
+    ...(x.rc !== null ? { rc: x.rc } : {}),
   }
 }
 

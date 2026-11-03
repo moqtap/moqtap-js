@@ -1,10 +1,10 @@
 /**
- * The `run` and `mark` records of an uploaded body, decoded the way ingest
- * decodes them: an independent reader for the suite, so a test can say how
- * many objects arrived without trusting the writer it checks.
+ * The `run`, `mark` and `stream-end` records of an uploaded body, decoded the
+ * way ingest decodes them: an independent reader for the suite, so a test can
+ * say how many objects arrived without trusting the writer it checks.
  */
 
-import { DELIVERY_PATHS, MARK_KINDS, RUN_ENDS } from '../../envelope/contract.js'
+import { DELIVERY_PATHS, MARK_KINDS, RUN_ENDS, STREAM_END_KINDS } from '../../envelope/contract.js'
 import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/index.js'
 import { afterPreamble } from './uploads.js'
 
@@ -43,6 +43,19 @@ export interface DecodedMark {
   readonly sid: bigint | null
 }
 
+export interface DecodedEnd {
+  readonly eog: boolean
+  readonly end: (typeof STREAM_END_KINDS)[number]
+  readonly c: number
+  readonly ti: number
+  readonly path: (typeof DELIVERY_PATHS)[number]
+  readonly sid: bigint
+  readonly g: bigint | null
+  readonly o: bigint | null
+  readonly tUs: number
+  readonly rc: bigint | null
+}
+
 class Reader {
   private at = 0
   constructor(private readonly b: Uint8Array) {}
@@ -79,7 +92,8 @@ class Reader {
   }
 }
 
-const isFetch = (p: string) => p === 'fetch' || p === 'fetch_joining' || p === 'fill'
+const isFetch = (p: string) =>
+  p === 'fetch' || p === 'fetch_joining' || p === 'fill' || p === 'fetch_unseen'
 
 export function decodeRuns(raw: Uint8Array, n: number, baseUs: number): DecodedRun[] {
   const rd = new Reader(raw)
@@ -163,7 +177,7 @@ export function decodeMarks(raw: Uint8Array, n: number, baseUs: number): Decoded
       kind === 'rng_nx' || kind === 'rng_unk' || kind === 'rng_to' || kind === 'rng_gone'
     const g2 = range ? rd.big() : null
     const o2 = range ? rd.big() : null
-    const hasN = kind === 'pgg' || kind === 'pog' || kind === 'status_unknown'
+    const hasN = range || kind === 'pgg' || kind === 'pog' || kind === 'status_unknown'
     const nn = hasN ? rd.big() : null
     const tUs = lastT + rd.t()
     lastT = tUs
@@ -175,10 +189,33 @@ export function decodeMarks(raw: Uint8Array, n: number, baseUs: number): Decoded
   return out
 }
 
+export function decodeEnds(raw: Uint8Array, n: number, baseUs: number): DecodedEnd[] {
+  const rd = new Reader(raw)
+  let lastT = baseUs
+  const out: DecodedEnd[] = []
+  for (let j = 0; j < n; j++) {
+    const fl = rd.byte()
+    const end = STREAM_END_KINDS[(fl >> 3) & 3]!
+    const c = rd.u()
+    const ti = rd.u()
+    const path = DELIVERY_PATHS[rd.u()]!
+    const sid = rd.big()
+    const g = (fl & 0x02) !== 0 ? rd.big() : null
+    const o = (fl & 0x04) !== 0 ? rd.big() : null
+    const tUs = lastT + rd.t()
+    lastT = tUs
+    const rc = end === 'reset' ? rd.big() : null
+    out.push({ eog: (fl & 0x01) !== 0, end, c, ti, path, sid, g, o, tUs, rc })
+  }
+  if (!rd.done) throw new RangeError('bytes after the stream ends')
+  return out
+}
+
 export interface BodyFacts {
   readonly trk: readonly { id: number; key: { d: string; k: string; v: string; e: number } }[]
   readonly runs: DecodedRun[]
   readonly marks: DecodedMark[]
+  readonly ends: DecodedEnd[]
 }
 
 async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
@@ -201,6 +238,7 @@ export async function factsOf(body: Uint8Array): Promise<BodyFacts> {
   }
   const runs: DecodedRun[] = []
   const marks: DecodedMark[] = []
+  const ends: DecodedEnd[] = []
   for (let i = 1; i < list.length; i++) {
     const f = list[i]!
     if (f.raw) continue
@@ -208,17 +246,20 @@ export async function factsOf(body: Uint8Array): Promise<BodyFacts> {
     const raw = list[i + 1]
     if (r.t === 'run') runs.push(...decodeRuns(raw!.payload, r.n, batch.clk.base_us))
     if (r.t === 'mark') marks.push(...decodeMarks(raw!.payload, r.n, batch.clk.base_us))
+    if (r.t === 'stream-end') ends.push(...decodeEnds(raw!.payload, r.n, batch.clk.base_us))
   }
-  return { trk: batch.trk, runs, marks }
+  return { trk: batch.trk, runs, marks, ends }
 }
 
 /** Every run and mark in every body, with each run's track key resolved. */
 export async function allFacts(bodies: readonly Uint8Array[]): Promise<{
   runs: (DecodedRun & { key: string })[]
   marks: (DecodedMark & { key: string })[]
+  ends: (DecodedEnd & { key: string })[]
 }> {
   const runs: (DecodedRun & { key: string })[] = []
   const marks: (DecodedMark & { key: string })[] = []
+  const ends: (DecodedEnd & { key: string })[] = []
   for (const body of bodies) {
     const f = await factsOf(body)
     const keyOf = (ti: number) => {
@@ -227,6 +268,7 @@ export async function allFacts(bodies: readonly Uint8Array[]): Promise<{
     }
     for (const r of f.runs) runs.push({ ...r, key: keyOf(r.ti) })
     for (const m of f.marks) marks.push({ ...m, key: keyOf(m.ti) })
+    for (const e of f.ends) ends.push({ ...e, key: keyOf(e.ti) })
   }
-  return { runs, marks }
+  return { runs, marks, ends }
 }

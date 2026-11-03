@@ -537,9 +537,11 @@ function readPlainFetchObject(
   if (priority === undefined) return NEED
   p += 1
 
+  let props: Props | null = null
   if (d.fetchPlainBlock !== BLOCK_NONE) {
     const skipped = skipBlock(d, d.fetchPlainBlock, b, p)
     if (skipped === NEED) return NEED
+    if (d.fetchPlainBlock === BLOCK_LENGTH) props = propsOf(d, b, p, skipped)
     p = skipped
   }
 
@@ -560,7 +562,10 @@ function readPlainFetchObject(
   prev.prevSubgroupId = sub.value
   prev.prevPriority = priority
   prev.hadSubgroup = true
-  const info = finishFetchObject(prev, i, p, group.value, obj.value, payloadLength)
+  const info = withProps(
+    finishFetchObject(prev, i, p, group.value, obj.value, payloadLength),
+    props,
+  )
   return status === undefined ? info : { ...info, status }
 }
 
@@ -717,9 +722,11 @@ function readFlaggedFetchObject(
     p += 1
   }
 
+  let props: Props | null = null
   if (blockIsPresent) {
     const skipped = skipBlock(d, BLOCK_LENGTH, b, p)
     if (skipped === NEED) return NEED
+    props = propsOf(d, b, p, skipped)
     p = skipped
   }
 
@@ -740,8 +747,23 @@ function readFlaggedFetchObject(
   if (!datagramMode) prev.prevSubgroupId = subgroupId
   prev.prevPriority = priority
   prev.hadSubgroup = !datagramMode
-  const info = finishFetchObject(prev, i, p, groupId, objectId, payloadLength)
+  const info = withProps(finishFetchObject(prev, i, p, groupId, objectId, payloadLength), props)
   return status === undefined ? info : { ...info, status }
+}
+
+interface Props {
+  readonly propsStart: number
+  readonly propsEnd: number
+}
+
+/** The property bytes of a length-prefixed block at `at` ending at `end`, or `null` when empty. */
+function propsOf(d: WalkDialect, b: Uint8Array, at: number, end: number): Props | null {
+  const l = d.readVarint(b, at)
+  return l !== NEED && l.next < end ? { propsStart: l.next, propsEnd: end } : null
+}
+
+function withProps(info: ObjectHeaderInfo, props: Props | null): ObjectHeaderInfo {
+  return props === null ? info : { ...info, ...props }
 }
 
 /**
@@ -751,10 +773,7 @@ function readFlaggedFetchObject(
 function rangeGroup(prev: ObjectCursor, delta: bigint): bigint | Need {
   if (prev.first) return delta
   if (delta === 0n) return prev.prevGroupId
-  if (prev.descending === null) {
-    prev.orderMissing = true
-    return NEED
-  }
+  if (prev.descending === null) return unordered(prev)
   return prev.descending ? prev.prevGroupId - delta : prev.prevGroupId + delta
 }
 
@@ -766,11 +785,18 @@ function rangeGroup(prev: ObjectCursor, delta: bigint): bigint | Need {
  */
 function resolveGroup(prev: ObjectCursor, delta: bigint): bigint | Need {
   if (prev.first) return delta
-  if (prev.descending === null) {
-    prev.orderMissing = true
-    return NEED
-  }
+  if (prev.descending === null) return unordered(prev)
   return prev.descending ? prev.prevGroupId - delta - 1n : prev.prevGroupId + delta + 1n
+}
+
+/** A Group ID Delta with no group order: an unseen request's stream reads on without its groups. */
+function unordered(prev: ObjectCursor): bigint | Need {
+  if (prev.unseen) {
+    prev.ungrouped = true
+    return prev.prevGroupId
+  }
+  prev.orderMissing = true
+  return NEED
 }
 
 function finishFetchObject(

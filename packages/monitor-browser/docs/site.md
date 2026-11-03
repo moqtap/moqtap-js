@@ -177,6 +177,9 @@ init({
 A key is 1 to 32 characters and a value 1 to 128. A tag past the 16th, or outside those
 bounds, is left out and reported as `MQ1114`; the rest are kept.
 
+`actorId`, `contentId`, `environment` and `release` take up to 256 characters each, `actorId`
+counted after hashing. A longer value is left out and reported as `MQ1115`.
+
 ### Add your own player metrics
 
 Register a metric once on the page, then call `observe()` as often as you like, in the page or
@@ -234,7 +237,8 @@ const { sessionId } = vitals.newSession({ contentId: 'vod/episode-2' })
 ```
 
 `setContext()` takes `contentId`, `actorId` and `tags`. Tags add to the session's, and a key
-given again replaces its value. Each call is recorded in the session with what it set.
+given again replaces its value. An empty `contentId` or `actorId` clears it. Each call is
+recorded in the session with what it set.
 `newSession()` takes `contentId` and an optional `sessionId` of your own; the new session
 keeps the actor and tags. With a connection open, the new session begins at once. With none,
 `newSession()` ends the current session and the new one begins with the next `WebTransport`.
@@ -520,6 +524,7 @@ init({
 | `limits.linkTimeoutMs` | `5000` | How long a worker waits for the page to link it. |
 | `limits.*` | see `DEFAULTS` | Safety caps: concurrent transports (8), control messages per second (5,000), the pre-`init()` buffer (1 MB). |
 | `onInternalError` | none | Receives configuration problems and internal errors. The collector never throws into your code after `init()` returns. |
+| `clock` | none | A clock of your own that is synchronised to UTC, such as one fed by PTP: a function returning `{ nowMs, errorMs }`, UTC milliseconds and the bound on their error. Read at every upload. Insight uses it only to compare two times that both come from such a clock. |
 
 The exported `DEFAULTS` object holds every default.
 

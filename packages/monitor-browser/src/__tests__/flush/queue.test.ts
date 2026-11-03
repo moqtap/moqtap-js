@@ -269,6 +269,7 @@ describe('FlushQueue.seal', () => {
         },
       ],
       marks: [],
+      ends: [],
     }
     const e = new Emitter('i1', 0)
     e.noteConn(0, 20, 'https://relay.example')
@@ -322,7 +323,7 @@ describe('FlushQueue.seal', () => {
       q.raw(new Uint8Array(4))
     }
     e.noteConnClosed(0)
-    q.writeFacts({ runs: [run(1n), run(2n)], marks: [] })
+    q.writeFacts({ runs: [run(1n), run(2n)], marks: [], ends: [] })
     const bodies: FlushChunk[] = []
     for (let c = q.sealFront(4096); c !== null; c = q.sealFront(4096)) bodies.push(c)
     expect(bodies.length).toBeGreaterThan(1)
@@ -366,6 +367,7 @@ describe('FlushQueue.seal', () => {
         },
       ],
       marks: [],
+      ends: [],
     })
     const e = new Emitter('i1', 0)
     e.noteConn(0, 20, 'https://relay.example')
@@ -386,6 +388,79 @@ describe('FlushQueue.seal', () => {
       most = Math.max(most, t!.id)
     }
     expect(most).toBeLessThanOrEqual(1)
+  }, 30_000)
+
+  it('cuts records at the tracks a body lists, and seals before a record would list one too many', async () => {
+    const run = (id: number, c = 0): Taken['runs'][number] => ({
+      flow: `${c}:3:${id}`,
+      c,
+      key: Object.freeze({ dir: 'rx' as const, kind: 'alias' as const, id: BigInt(id), epoch: 0 }),
+      path: 'sub_stream',
+      g: 1n,
+      sub: 0n,
+      sid: 3,
+      o0: 0n,
+      ids: null,
+      n: 1,
+      last: 0n,
+      osub: null,
+      times: [1_000],
+      b: 1,
+      tl: 1_000,
+      cont: false,
+      fo: false,
+      foKnown: true,
+      eog: false,
+      end: 'fin',
+      rc: null,
+    })
+    const take = (from: number, n: number): Taken => ({
+      runs: Array.from({ length: n }, (_, i) => run(from + i)),
+      marks: [],
+      ends: [],
+    })
+    const e = new Emitter('i1', 0)
+    e.noteConn(0, 20, 'https://relay.example')
+    const q = new FlushQueue({ sessionId: 's1', emitter: e })
+    const bodies: FlushChunk[] = []
+    const full = (): void => {
+      bodies.push(q.seal() as FlushChunk)
+    }
+    q.writeFacts(take(0, 1_000), full)
+    expect(bodies).toHaveLength(0)
+    q.writeFacts(take(1_000, 100), full)
+    expect(bodies).toHaveLength(1)
+    q.writeFacts(take(5_000, 2_100), full)
+    bodies.push(q.seal() as FlushChunk)
+    let total = 0
+    for (const b of bodies) {
+      const batch = await batchOf(b)
+      expect(batch.trk.length).toBeLessThanOrEqual(1_024)
+      expect(Math.max(...batch.trk.map((t) => t.id))).toBeLessThan(65_536)
+      const facts = await factsOf(b.bytes)
+      for (const r of facts.runs) expect(batch.trk.some((t) => t.id === r.ti)).toBe(true)
+      total += facts.runs.length
+    }
+    expect(total).toBe(3_200)
+    // 1,000; 100; then 2,100 cut into 1,024, 1,024 and 52, each past what the open body holds.
+    expect(bodies.length).toBe(5)
+  })
+
+  it('lists a connection with no known draft without one, and keeps a stated draft', async () => {
+    const e = new Emitter('i1', 0)
+    e.noteConn(0, null, 'https://relay.example')
+    const q = new FlushQueue({ sessionId: 's1', emitter: e })
+    q.json({ t: 'note', ts: 0, lvl: 'baseline', name: 'a', data: null })
+    expect((await batchOf(q.seal() as FlushChunk)).conn).toEqual([
+      { c: 0, relay: 'https://relay.example' },
+    ])
+    e.noteConn(0, 14, 'https://relay.example')
+    e.noteConnClosed(0)
+    e.noteConn(0, null, 'https://relay.example')
+    q.json({ t: 'note', ts: 0, lvl: 'baseline', name: 'b', data: null })
+    expect((await batchOf(q.seal() as FlushChunk)).conn).toEqual([
+      { c: 0, draft: 14, relay: 'https://relay.example' },
+    ])
   })
 
   it('keys two instances of one session apart', () => {

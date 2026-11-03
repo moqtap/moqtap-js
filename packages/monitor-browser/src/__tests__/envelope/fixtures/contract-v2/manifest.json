@@ -178,7 +178,9 @@
               },
               "raw": ["0300050102030405"]
             }
-          ]
+          ],
+          "idents": [],
+          "streamEnds": []
         }
       }
     },
@@ -501,7 +503,9 @@
             }
           ],
           "marks": [],
-          "records": []
+          "records": [],
+          "idents": [],
+          "streamEnds": []
         }
       }
     },
@@ -613,7 +617,9 @@
             }
           ],
           "marks": [],
-          "records": []
+          "records": [],
+          "idents": [],
+          "streamEnds": []
         }
       }
     },
@@ -825,7 +831,9 @@
             }
           ],
           "marks": [],
-          "records": []
+          "records": [],
+          "idents": [],
+          "streamEnds": []
         }
       }
     },
@@ -961,15 +969,17 @@
             }
           ],
           "marks": [],
-          "records": []
+          "records": [],
+          "idents": [],
+          "streamEnds": []
         }
       }
     },
     {
       "name": "marks",
-      "note": "Marks as received: FETCH range markers (non-existent, timed out), Prior Group and Object ID Gaps, an undefined status, End of Track (22); End of Track and Group, Does Not Exist (8); End of Subgroup (7); a datagram mark has no stream id.",
+      "note": "Marks as received: FETCH range markers (non-existent after the previous entry at {10, 0}; timed out as the first entry of its stream, so from the request start), Prior Group and Object ID Gaps, an undefined status, End of Track (22); End of Track and Group, Does Not Exist (8); End of Subgroup (7); a datagram mark has no stream id.",
       "file": "marks.bin",
-      "bodyBytes": 974,
+      "bodyBytes": 976,
       "expect": {
         "ok": true
       },
@@ -1073,7 +1083,7 @@
                   "o": "0",
                   "g2": "12",
                   "o2": "4",
-                  "n": null,
+                  "n": "0",
                   "tUs": 7200000100,
                   "path": "fetch",
                   "sid": "14"
@@ -1083,13 +1093,13 @@
                   "c": 0,
                   "ti": 1,
                   "g": "13",
-                  "o": "0",
+                  "o": "9",
                   "g2": "13",
                   "o2": "9",
-                  "n": null,
+                  "n": "1",
                   "tUs": 7200000090,
                   "path": "fetch",
-                  "sid": "14"
+                  "sid": "18"
                 },
                 {
                   "kind": "pgg",
@@ -1185,7 +1195,9 @@
               ]
             }
           ],
-          "records": []
+          "records": [],
+          "idents": [],
+          "streamEnds": []
         }
       }
     },
@@ -1297,8 +1309,470 @@
             }
           ],
           "marks": [],
-          "records": []
+          "records": [],
+          "idents": [],
+          "streamEnds": []
         }
+      }
+    },
+    {
+      "name": "stream-ends",
+      "note": "Stream ends no run carries: a FIN after the run was sealed, EOG + FIN on a subgroup stream with no object (draft 20), a reset FETCH stream with no object, a FETCH End of Group alone and then a FIN on draft 23.",
+      "file": "stream-ends.bin",
+      "bodyBytes": 938,
+      "expect": {
+        "ok": true
+      },
+      "read": {
+        "ok": true,
+        "body": {
+          "side": "viewer",
+          "preamble": {
+            "v": 2,
+            "i": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "em": [
+              {
+                "first": 8,
+                "n": 1
+              }
+            ],
+            "seal": {
+              "seq": 1,
+              "fromUs": 7215000000,
+              "throughUs": 7230000000,
+              "ms": 15000
+            }
+          },
+          "batch": {
+            "v": 2,
+            "instanceId": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "seq": 1,
+            "idempotencyKey": "fadb2acde24a2fb932a602a9316478828f4e56abb3f5725c948d128f37d8f995",
+            "final": false,
+            "clk": {
+              "baseUs": 7200000000,
+              "epoch": 0,
+              "resUs": 5,
+              "sample": {
+                "oUs": 1761688800041500,
+                "rUs": 18250,
+                "atUs": 7198000000,
+                "pop": "LHR"
+              },
+              "app": null
+            },
+            "tail": {
+              "lastRseq": 8,
+              "preDrop": {
+                "records": 0,
+                "objects": 0
+              },
+              "conn": []
+            },
+            "conns": [
+              {
+                "c": 0,
+                "draft": 20,
+                "relay": "https://relay-a.example.net"
+              },
+              {
+                "c": 1,
+                "draft": 23,
+                "relay": "https://relay-b.example.net"
+              }
+            ],
+            "t": "batch",
+            "sessionId": "sess_8c41f2d0",
+            "lvl": "baseline",
+            "tracks": [
+              {
+                "id": 0,
+                "key": {
+                  "dir": "rx",
+                  "kind": "alias",
+                  "id": "1",
+                  "epoch": 0
+                }
+              },
+              {
+                "id": 1,
+                "key": {
+                  "dir": "tx",
+                  "kind": "fetch",
+                  "id": "5",
+                  "epoch": 0
+                }
+              },
+              {
+                "id": 2,
+                "key": {
+                  "dir": "tx",
+                  "kind": "fetch",
+                  "id": "6",
+                  "epoch": 0
+                }
+              }
+            ]
+          },
+          "runs": [],
+          "marks": [],
+          "records": [],
+          "idents": [],
+          "streamEnds": [
+            {
+              "rseq": 8,
+              "entries": [
+                {
+                  "eog": false,
+                  "end": "fin",
+                  "c": 0,
+                  "ti": 0,
+                  "path": "sub_stream",
+                  "sid": "11",
+                  "g": "101",
+                  "o": "1",
+                  "tUs": 7200000200,
+                  "rc": null
+                },
+                {
+                  "eog": true,
+                  "end": "fin",
+                  "c": 0,
+                  "ti": 0,
+                  "path": "sub_stream",
+                  "sid": "15",
+                  "g": "102",
+                  "o": null,
+                  "tUs": 7200000300,
+                  "rc": null
+                },
+                {
+                  "eog": false,
+                  "end": "reset",
+                  "c": 0,
+                  "ti": 1,
+                  "path": "fetch",
+                  "sid": "19",
+                  "g": null,
+                  "o": null,
+                  "tUs": 7200000250,
+                  "rc": "2"
+                },
+                {
+                  "eog": true,
+                  "end": "none",
+                  "c": 1,
+                  "ti": 2,
+                  "path": "fill",
+                  "sid": "6",
+                  "g": "40",
+                  "o": "7",
+                  "tUs": 7200000400,
+                  "rc": null
+                },
+                {
+                  "eog": false,
+                  "end": "fin",
+                  "c": 1,
+                  "ti": 2,
+                  "path": "fill",
+                  "sid": "6",
+                  "g": "41",
+                  "o": "2",
+                  "tUs": 7200000900,
+                  "rc": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "ident",
+      "note": "A session's identity: the first ident carries every field it has, a later one what setContext set (actor, one tag added), an empty content clears it.",
+      "file": "ident.bin",
+      "bodyBytes": 926,
+      "expect": {
+        "ok": true
+      },
+      "read": {
+        "ok": true,
+        "body": {
+          "side": "viewer",
+          "preamble": {
+            "v": 2,
+            "i": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "em": [
+              {
+                "first": 0,
+                "n": 3
+              }
+            ],
+            "seal": {
+              "seq": 0,
+              "fromUs": 7200000000,
+              "throughUs": 7215000000,
+              "ms": 15000
+            }
+          },
+          "batch": {
+            "v": 2,
+            "instanceId": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "seq": 0,
+            "idempotencyKey": "f3382ccd1be03893c514d90799d5f2ebd777b4ca76de3692c639a9c3ba3335c0",
+            "final": false,
+            "clk": {
+              "baseUs": 7200000000,
+              "epoch": 0,
+              "resUs": 5,
+              "sample": {
+                "oUs": 1761688800041500,
+                "rUs": 18250,
+                "atUs": 7198000000,
+                "pop": "LHR"
+              },
+              "app": null
+            },
+            "tail": {
+              "lastRseq": 2,
+              "preDrop": {
+                "records": 0,
+                "objects": 0
+              },
+              "conn": []
+            },
+            "conns": [
+              {
+                "c": 0,
+                "draft": 20,
+                "relay": "https://relay-a.example.net"
+              }
+            ],
+            "t": "batch",
+            "sessionId": "sess_8c41f2d0",
+            "lvl": "baseline",
+            "tracks": []
+          },
+          "runs": [],
+          "marks": [],
+          "records": [],
+          "idents": [
+            {
+              "rseq": 0,
+              "atUs": 7200000010,
+              "actor": null,
+              "content": "movie-42",
+              "env": "prod",
+              "release": "4.2.1",
+              "tags": {
+                "plan": "pro",
+                "region": "eu"
+              }
+            },
+            {
+              "rseq": 1,
+              "atUs": 7209000000,
+              "actor": "u_19f2",
+              "content": null,
+              "env": null,
+              "release": null,
+              "tags": {
+                "ab": "b"
+              }
+            },
+            {
+              "rseq": 2,
+              "atUs": 7212000000,
+              "actor": null,
+              "content": "",
+              "env": null,
+              "release": null,
+              "tags": {}
+            }
+          ],
+          "streamEnds": []
+        }
+      }
+    },
+    {
+      "name": "unknown-draft-unseen-fetch",
+      "note": "A connection whose draft the monitor did not see: no per-draft check applies. A FETCH stream on draft 14 whose request the monitor did not see: path fetch_unseen, ids as decoded.",
+      "file": "unknown-draft-unseen-fetch.bin",
+      "bodyBytes": 865,
+      "expect": {
+        "ok": true
+      },
+      "read": {
+        "ok": true,
+        "body": {
+          "side": "viewer",
+          "preamble": {
+            "v": 2,
+            "i": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "em": [
+              {
+                "first": 0,
+                "n": 1
+              }
+            ],
+            "seal": {
+              "seq": 0,
+              "fromUs": 7200000000,
+              "throughUs": 7215000000,
+              "ms": 15000
+            }
+          },
+          "batch": {
+            "v": 2,
+            "instanceId": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "seq": 0,
+            "idempotencyKey": "f3382ccd1be03893c514d90799d5f2ebd777b4ca76de3692c639a9c3ba3335c0",
+            "final": false,
+            "clk": {
+              "baseUs": 7200000000,
+              "epoch": 0,
+              "resUs": 5,
+              "sample": {
+                "oUs": 1761688800041500,
+                "rUs": 18250,
+                "atUs": 7198000000,
+                "pop": "LHR"
+              },
+              "app": null
+            },
+            "tail": {
+              "lastRseq": 0,
+              "preDrop": {
+                "records": 0,
+                "objects": 0
+              },
+              "conn": []
+            },
+            "conns": [
+              {
+                "c": 0,
+                "draft": null,
+                "relay": "https://relay-a.example.net"
+              },
+              {
+                "c": 1,
+                "draft": 14,
+                "relay": "https://relay-a.example.net"
+              }
+            ],
+            "t": "batch",
+            "sessionId": "sess_8c41f2d0",
+            "lvl": "baseline",
+            "tracks": [
+              {
+                "id": 0,
+                "key": {
+                  "dir": "rx",
+                  "kind": "alias",
+                  "id": "1",
+                  "epoch": 0
+                }
+              },
+              {
+                "id": 1,
+                "key": {
+                  "dir": "tx",
+                  "kind": "fetch",
+                  "id": "3",
+                  "epoch": 0
+                }
+              }
+            ]
+          },
+          "runs": [
+            {
+              "rseq": 0,
+              "entries": [
+                {
+                  "cont": false,
+                  "xid": false,
+                  "fo": true,
+                  "foKnown": true,
+                  "eog": false,
+                  "end": "fin",
+                  "gs": false,
+                  "c": 0,
+                  "ti": 0,
+                  "g": "3",
+                  "path": "sub_stream",
+                  "sub": "0",
+                  "sid": "3",
+                  "o0": "0",
+                  "n": 2,
+                  "oid": null,
+                  "osub": null,
+                  "t0Us": 7200001000,
+                  "dt": [333],
+                  "b": 900,
+                  "rc": null,
+                  "tl": 333
+                },
+                {
+                  "cont": false,
+                  "xid": false,
+                  "fo": false,
+                  "foKnown": false,
+                  "eog": false,
+                  "end": "fin",
+                  "gs": false,
+                  "c": 1,
+                  "ti": 1,
+                  "g": "9",
+                  "path": "fetch_unseen",
+                  "sub": null,
+                  "sid": "7",
+                  "o0": "0",
+                  "n": 3,
+                  "oid": null,
+                  "osub": ["0", "0", "0"],
+                  "t0Us": 7200002000,
+                  "dt": [1, 1],
+                  "b": 300,
+                  "rc": null,
+                  "tl": 2
+                }
+              ]
+            }
+          ],
+          "marks": [],
+          "records": [],
+          "idents": [],
+          "streamEnds": []
+        }
+      }
+    },
+    {
+      "name": "refuse-stream-end-eog-reset",
+      "note": "EOG on a subgroup stream that was reset: a reset loses the end of group.",
+      "file": "refuse-stream-end-eog-reset.bin",
+      "bodyBytes": 743,
+      "expect": {
+        "ok": false,
+        "reason": "bad-record"
+      },
+      "read": {
+        "ok": false,
+        "reason": "bad-record"
+      }
+    },
+    {
+      "name": "refuse-fetch-eog-before-23",
+      "note": "A FETCH End of Group stream end on draft 20, which has no such marker.",
+      "file": "refuse-fetch-eog-before-23.bin",
+      "bodyBytes": 743,
+      "expect": {
+        "ok": false,
+        "reason": "bad-record"
+      },
+      "read": {
+        "ok": false,
+        "reason": "bad-record"
       }
     },
     {

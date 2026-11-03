@@ -18,8 +18,14 @@ import {
   writePreamble,
 } from '../envelope/index.js'
 import type { Taken } from '../rollup/runs.js'
-import type { ClockSource, DetailLevel } from '../types.js'
-import { type Emitter, encodeFacts, RECORD_BASE_US } from './emitter.js'
+import { type BucketKey, bucketKeyString, type ClockSource, type DetailLevel } from '../types.js'
+import {
+  type Emitter,
+  encodeFacts,
+  MAX_BODY_CONNS,
+  MAX_BODY_TRACKS,
+  RECORD_BASE_US,
+} from './emitter.js'
 import { FrameBuffer, type FrameBufferOptions } from './frame-buffer.js'
 import type { Chunk } from './idb.js'
 
@@ -54,6 +60,15 @@ export interface FlushQueueOptions extends Omit<FrameBufferOptions, 'rseq' | 'on
   readonly sealMs?: () => number
   /** Records dropped on the device before encoding, cumulative. */
   readonly droppedRecords?: () => number
+  /** The integrator's offset to UTC as of now, read at each seal. */
+  readonly appClock?: () => AppOffset | undefined
+}
+
+/** An offset to UTC, µs: `utc − mono`, its bound, and the mono µs it was read at. */
+export interface AppOffset {
+  readonly oUs: number
+  readonly eUs: number
+  readonly atUs: number
 }
 
 /** What a seal stamps on the batch frame besides the key. */
@@ -93,6 +108,7 @@ export class FlushQueue extends FrameBuffer {
   private readonly _level: () => DetailLevel
   private readonly _sealMs: () => number
   private readonly _dropped: () => number
+  private readonly _appClock: () => AppOffset | undefined
 
   constructor(opts: FlushQueueOptions) {
     super({
@@ -106,6 +122,7 @@ export class FlushQueue extends FrameBuffer {
     this._level = opts.level ?? (() => 'baseline')
     this._sealMs = opts.sealMs ?? (() => 60_000)
     this._dropped = opts.droppedRecords ?? (() => this.droppedRecords)
+    this._appClock = opts.appClock ?? (() => undefined)
   }
 
   /** The number the next seal will take. Bodies so far are `0 … nextSeq - 1`. */
@@ -117,13 +134,42 @@ export class FlushQueue extends FrameBuffer {
     return this._emitter.instanceId
   }
 
-  /** Buffer runs and marks as records, numbered now. */
-  writeFacts(t: Taken): void {
-    if (t.runs.length === 0 && t.marks.length === 0) return
-    this._emitter.noteTotals(t.runs)
-    const f = encodeFacts(this._emitter, t)
-    for (const r of f.records) this._emitter.retainTracks(r.refs.ti)
-    this.facts(f)
+  /**
+   * Buffer runs, marks and stream ends as records, numbered now. `full` is
+   * called before a record whose tracks or connections the open body could
+   * not list on top of its own, to seal what is buffered.
+   */
+  writeFacts(t: Taken, full: () => void = () => {}): void {
+    if (t.runs.length === 0 && t.marks.length === 0 && t.ends.length === 0) return
+    const e = this._emitter
+    e.noteTotals(t.runs)
+    encodeFacts(
+      e,
+      t,
+      (f) => {
+        for (const r of f.records) e.retainTracks(r.refs.ti)
+        this.facts(f)
+      },
+      (part, conns) => this._room(part, conns),
+      full,
+    )
+  }
+
+  /** Whether the open body can list a record naming `part`'s tracks and `conns` too. */
+  private _room(part: readonly { readonly key: BucketKey }[], conns: ReadonlySet<number>): boolean {
+    if (this.records === 0) return true
+    const e = this._emitter
+    const objs = new Set<BucketKey>()
+    for (const x of part) objs.add(x.key)
+    if (e.trackCount + objs.size > MAX_BODY_TRACKS) {
+      const fresh = new Set<string>()
+      for (const x of part) if (!e.hasTrack(x.key)) fresh.add(bucketKeyString(x.key))
+      if (e.trackCount + fresh.size > MAX_BODY_TRACKS) return false
+    }
+    const named = this.refsOf(this.records).c
+    if (named.size + conns.size <= MAX_BODY_CONNS) return true
+    for (const c of conns) named.add(c)
+    return named.size <= MAX_BODY_CONNS
   }
 
   /**
@@ -192,6 +238,7 @@ export class FlushQueue extends FrameBuffer {
     const seq = e.takeSeq()
     const key = idempotencyKey(this._sessionId, e.instanceId, seq)
     const sample = e.clock.latest()
+    const app = this._appClock()
     const w = new FrameWriter({ initialBytes: 512 })
     w.json(
       batchJson({
@@ -206,6 +253,7 @@ export class FlushQueue extends FrameBuffer {
           epoch: e.clock.epoch,
           resUs: e.clock.resUs,
           ...(sample !== undefined ? { sample } : {}),
+          ...(app !== undefined ? { app } : {}),
         },
         tail: {
           ...(e.lastRseq !== undefined ? { lastRseq: e.lastRseq } : {}),

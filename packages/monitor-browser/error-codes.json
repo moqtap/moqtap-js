@@ -111,6 +111,11 @@
       "value": "the tag key, cut to 32 characters",
       "detail": "`context.tags` and `setContext({ tags })` take at most 16 tags. A key must be a string of 1 to 32 characters and a value a string of 1 to 128, with no unpaired surrogate. A tag past the 16th, or outside those bounds, is left out and the rest are kept: ingest finds sessions by the exact key and value, so a cut value would match nothing it was meant to."
     },
+    "MQ1115": {
+      "summary": "a context value was left out",
+      "value": "its length, in characters",
+      "detail": "`actorId` (as sent, after `privacy.hashActorId`), `contentId`, `environment` and `release` take at most 256 characters. A longer one is left out, never cut: at `init()` the default is used, and in `setContext()` the session keeps the value it had."
+    },
     "MQ2001": {
       "summary": "frame payload exceeds what a 31-bit length can carry",
       "value": "the payload length in bytes",

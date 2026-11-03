@@ -571,6 +571,13 @@ export interface ObjectCursor {
    */
   descending: boolean | null
   orderMissing: boolean
+  /**
+   * A fetch stream whose request was not observed: a Group ID Delta with no
+   * group order sets {@link ungrouped} instead of {@link orderMissing}.
+   */
+  unseen: boolean
+  /** The walk read a Group ID Delta it could not resolve; every later group is unknown. */
+  ungrouped: boolean
 }
 
 /** A cursor before the first object of a stream. */
@@ -584,6 +591,8 @@ export function newCursor(): ObjectCursor {
     hadSubgroup: false,
     descending: false,
     orderMissing: false,
+    unseen: false,
+    ungrouped: false,
   }
 }
 
@@ -799,11 +808,8 @@ export interface ObjectSample {
   /** The stream the object arrived on; absent on a datagram. */
   readonly streamId?: number
   readonly at: Mono
-  /**
-   * How the object was delivered: `null` on a fetch stream whose request was
-   * not observed, where nothing tells a FETCH from a fill or a joining FETCH.
-   */
-  readonly path: DeliveryPath | null
+  /** How the object was delivered. */
+  readonly path: DeliveryPath
   /** The object's Subgroup ID; `null` for a datagram or a datagram-flagged fetch object. */
   readonly sub: bigint | null
   /** The subgroup header's FIRST_OBJECT bit (drafts 18 on). */
@@ -814,8 +820,18 @@ export interface ObjectSample {
   readonly eog: boolean
 }
 
-/** How an object reached the viewer. Nothing on the wire tells a cache from a live path. */
-export type DeliveryPath = 'sub_stream' | 'datagram' | 'fetch' | 'fetch_joining' | 'fill'
+/**
+ * How an object reached the viewer. Nothing on the wire tells a cache from a
+ * live path. `fetch_unseen` is a fetch stream whose request was not observed,
+ * where nothing tells a FETCH from a fill or a joining FETCH.
+ */
+export type DeliveryPath =
+  | 'sub_stream'
+  | 'datagram'
+  | 'fetch'
+  | 'fetch_joining'
+  | 'fill'
+  | 'fetch_unseen'
 
 /** What a path said about objects other than by delivering them, as on the wire. */
 export interface MarkSample {
@@ -826,12 +842,18 @@ export interface MarkSample {
    * `groupId`/`objectId` are the Object it follows.
    *
    * An End-of-Range marker's `groupId`/`objectId` are the entry before it, or
-   * its own end when it opens the stream. After End of Group or End of Track
-   * that entry is {G, 2^64-1}.
+   * its own end when it opens the stream (`first`). After End of Group or End
+   * of Track that entry is {G, 2^64-1}.
    */
   readonly what:
     | { readonly status: bigint }
-    | { readonly range: number; readonly g2: bigint; readonly o2: bigint }
+    | {
+        readonly range: number
+        readonly g2: bigint
+        readonly o2: bigint
+        /** The marker is its stream's first entry. */
+        readonly first: boolean
+      }
     | { readonly gap: 'group' | 'object'; readonly n: bigint }
     | { readonly end: 'group' | 'track' }
   readonly groupId: bigint
@@ -887,6 +909,25 @@ export interface CountingSink {
   onControlFrame(e: ControlFrameEvent): void
   /** `key` is `null` when the failure happened before a bucket could be resolved. */
   onParseFailure(key: BucketKey | null, reason: ParseFailureReason): void
+  /** A data stream's header named its track: a subgroup or fetch stream. */
+  onStreamHeader?(h: StreamHeaderSample): void
+  /**
+   * An object on a fetch stream whose request was not observed, past the
+   * first group change from draft-18, where its group is not known.
+   */
+  onUngrouped?(): void
+}
+
+/** A data stream's header, before any object on it. */
+export interface StreamHeaderSample {
+  readonly key: BucketKey
+  readonly streamId: number
+  readonly path: DeliveryPath
+  /** The subgroup header's Group ID; `null` on a fetch stream. */
+  readonly groupId: bigint | null
+  /** The subgroup header's END_OF_GROUP bit. */
+  readonly eog: boolean
+  readonly at: Mono
 }
 
 /* ── histograms ──────────────────────────────────────────────────────────── */
@@ -1151,6 +1192,19 @@ export interface CollectorConfig {
   readonly limits?: Partial<Limits>
   readonly privacy?: Partial<PrivacyConfig>
   readonly onInternalError?: (err: unknown) => void
+  /**
+   * A clock of your own that is synchronised to UTC, read at every upload.
+   * Insight uses it only to compare two times that both have one.
+   */
+  readonly clock?: () => AppClockReading | null | undefined
+}
+
+/** What {@link CollectorConfig.clock} returns: now, and how far off it may be. */
+export interface AppClockReading {
+  /** UTC milliseconds since 1970, fractional. */
+  readonly nowMs: number
+  /** The bound on its error, in milliseconds. */
+  readonly errorMs: number
 }
 
 /**
@@ -1264,7 +1318,7 @@ export type RecordType =
   | 'link'
   | 'end'
   | 'escalation'
-  | 'context'
+  | 'ident'
 
 export interface RecordBase {
   readonly t: RecordType
@@ -1309,6 +1363,8 @@ export interface BatchRecord {
     readonly r_us?: number
     readonly at_us?: number
     readonly pop?: string
+    /** `CollectorConfig.clock`'s offset to UTC, its bound, and the mono µs it was read at. */
+    readonly app?: { readonly o_us: number; readonly e_us: number; readonly at_us: number }
   }
   /** The emitter's last rseq, what it dropped before encoding, and each connection's totals. */
   readonly tail: {
@@ -1316,7 +1372,8 @@ export interface BatchRecord {
     readonly pre_drop: { readonly records: number; readonly objects: number }
     readonly conn: readonly (readonly [c: number, objects: number, bytes: number])[]
   }
-  readonly conn: readonly { readonly c: number; readonly draft: number; readonly relay: string }[]
+  /** Each connection the body references; `draft` once the monitor has seen it. */
+  readonly conn: readonly { readonly c: number; readonly draft?: number; readonly relay: string }[]
   readonly trk: readonly { readonly id: number; readonly key: RollupTrackWire['key'] }[]
 }
 
@@ -1325,13 +1382,8 @@ export interface SetupRecord extends RecordBase {
   readonly t: 'setup'
   /** The page's clocks at `init()`. Every `ts` in the instance, workers' included, is relative to it. */
   readonly anchor: ClockAnchor
-  readonly identity: Identity
+  readonly identity: Pick<Identity, 'sessionId' | 'instanceId'>
   readonly idSource: 'minted' | 'supplied'
-  /** Carried on every session: "did this regress in 4.2.1" is the second question asked. */
-  readonly environment?: string
-  readonly release?: string
-  /** The session's tags when the instance started. */
-  readonly tags?: Readonly<Record<string, string>>
   readonly collectorVersion: string
   /**
    * When this session began, on the anchor's clock. Set on a session
@@ -1342,14 +1394,21 @@ export interface SetupRecord extends RecordBase {
 }
 
 /**
- * `setContext()` changed the session's context: what the call set, from this
- * record on. Tags add to the session's.
+ * The session's identity. The first of a session carries every field it has;
+ * a later one what `setContext()` set, from this record on. Tags add to the
+ * session's; an empty string clears a field.
  */
-export interface ContextRecord extends RecordBase {
-  readonly t: 'context'
-  readonly contentId?: string
-  readonly actorId?: string
+export interface IdentRecord {
+  readonly t: 'ident'
+  readonly v: 1
+  /** Device mono µs, on the runs' clock. */
+  readonly at_us: number
+  readonly actor?: string
+  readonly content?: string
+  readonly env?: string
+  readonly release?: string
   readonly tags?: Readonly<Record<string, string>>
+  readonly rseq?: number
 }
 
 /** Where a connection's transport lives. */
@@ -1799,7 +1858,7 @@ export type EnvelopeRecord =
   | LinkRecord
   | EndRecord
   | EscalationRecord
-  | ContextRecord
+  | IdentRecord
 
 /* ── sinks ────────────────────────────────────────────── */
 

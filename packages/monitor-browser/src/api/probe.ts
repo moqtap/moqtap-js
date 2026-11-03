@@ -309,7 +309,8 @@ export class ProbeRuntime {
     if (this._stopped || realm === null) return
     const now = this._clock.now()
     const taken = realm.takeRuns()
-    const hasRuns = taken.runs.length > 0 || taken.marks.length > 0 || taken.dropped > 0
+    const hasRuns =
+      taken.runs.length > 0 || taken.marks.length > 0 || taken.ends.length > 0 || taken.dropped > 0
     const hasFrames = this._buffer.frameCount > 0
     const closed = this._rollups
     const brk = this._brk

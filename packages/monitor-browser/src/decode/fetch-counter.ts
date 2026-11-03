@@ -184,8 +184,11 @@ export function readFetchObject(
       // Group ID Delta there overflows.
       objectId = prev.prevObjectId + o.value + 1n
     } else if (prev.descending === null) {
-      prev.orderMissing = true
-      return NEED
+      if (!prev.unseen) {
+        prev.orderMissing = true
+        return NEED
+      }
+      prev.ungrouped = true
     } else {
       groupId = prev.descending ? groupId - g.value : groupId + g.value
     }
@@ -311,6 +314,10 @@ export function readFetchObject(
 function groupFrom(prev: ObjectCursor, delta: bigint): bigint | Need {
   if (prev.first) return delta
   if (prev.descending === null) {
+    if (prev.unseen) {
+      prev.ungrouped = true
+      return prev.prevGroupId
+    }
     prev.orderMissing = true
     return NEED
   }
@@ -339,7 +346,7 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
   private key: BucketKey | null = null
   private capped = false
   private pendingHeaderBytes = 0
-  private path: DeliveryPath | null = null
+  private path: DeliveryPath = 'fetch_unseen'
   private readonly streamId: number
   private readonly cursor: ObjectCursor = newCursor()
   private readonly v: VarintReader
@@ -457,10 +464,22 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
         this.header = h
         this.pendingHeaderBytes = h.headerBytes
         this.key = this.keys.fetchKey(this.dir, h.requestId)
-        this.path = this.keys.fetchPath(this.dir, h.requestId)
+        const path = this.keys.fetchPath(this.dir, h.requestId)
+        if (path !== null) this.path = path
+        else this.cursor.unseen = this.draft >= FETCH_ORDER_FROM
         if (this.key === null && !this.capped) {
           this.capped = true
           this.sink.onParseFailure(null, 'bucket-cap')
+        }
+        if (this.key !== null && this.streamId >= 0) {
+          this.sink.onStreamHeader?.({
+            key: this.key,
+            streamId: this.streamId,
+            path: this.path,
+            groupId: null,
+            eog: false,
+            at,
+          })
         }
         i = h.next
         continue
@@ -480,7 +499,11 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
       if (o === DESYNC) return { consumed: i, skip: 0, desync: true }
 
       const flags = o.markerFlags ?? 0
-      if (o.marker === true) {
+      if (this.cursor.ungrouped) {
+        // Past an unresolved Group ID Delta nothing can be placed.
+        this.pendingHeaderBytes = 0
+        if (o.marker !== true && this.key !== null) this.sink.onUngrouped?.()
+      } else if (o.marker === true) {
         // A marker is not an object. Its bytes ride along on the next real one;
         // with none after it they go uncounted, as does the End of Group that
         // draft-23 puts after the last Object.
@@ -494,7 +517,7 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
           }
         } else {
           const from = priorFirst ? o : prior
-          this.mark(o, at, { range: flags, g2: o.groupId, o2: o.objectId }, from)
+          this.mark(o, at, { range: flags, g2: o.groupId, o2: o.objectId, first: priorFirst }, from)
         }
       } else {
         this.emit(o, at)
@@ -555,7 +578,7 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
     what: MarkSample['what'],
     from: { readonly groupId: bigint; readonly objectId: bigint } = o,
   ): void {
-    if (this.key === null || this.path === null || this.sink.onMark === undefined) return
+    if (this.key === null || this.sink.onMark === undefined) return
     this.sink.onMark({
       key: this.key,
       what,

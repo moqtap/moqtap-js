@@ -31,6 +31,7 @@ import {
   MQ1112,
   MQ1113,
   MQ1114,
+  MQ1115,
 } from '../codes.js'
 import { sha256Hex } from '../envelope/sha256.js'
 import {
@@ -206,6 +207,25 @@ function isTagText(v: unknown, max: number): v is string {
     } else if (c >= 0xdc00 && c <= 0xdfff) return false
   }
   return true
+}
+
+/** The longest `actorId`, `contentId`, `environment` or `release`, in UTF-16 code units. */
+export const MAX_CONTEXT_TEXT = 256
+
+/**
+ * `v` when it is a string of at most {@link MAX_CONTEXT_TEXT} code units. A
+ * longer one is reported as MQ1115 and left out, never cut. `undefined` for
+ * anything else.
+ */
+export function contextText(
+  v: unknown,
+  key: string,
+  report: (p: ConfigProblem) => void,
+): string | undefined {
+  if (typeof v !== 'string') return undefined
+  if (v.length <= MAX_CONTEXT_TEXT) return v
+  report({ key: `context.${key}`, code: MQ1115, got: String(v.length) })
+  return undefined
 }
 
 /**
@@ -553,6 +573,8 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
   const d = DEFAULTS.context
   const privacy = privacyOf(c.privacy, report)
   const actorId = str(ctx.actorId, d.actorId, 'context.actorId', report)
+  const text = (v: string, key: string, fallback: string): string =>
+    contextText(v, key, report) ?? fallback
 
   // Every bag is resolved by its own function and every field is required in
   // `ResolvedConfig`, so a bag left unfilled is a compile error rather than an
@@ -564,10 +586,18 @@ export function resolveConfig(c: CollectorConfig, opts: ResolveOptions = {}): Re
     idSource: minted ? 'minted' : 'supplied',
     detail: detailOf(c.detail, report),
     context: Object.freeze({
-      actorId: sentActorId(actorId, { apiKey: c.apiKey, privacy }),
-      contentId: str(ctx.contentId, d.contentId, 'context.contentId', report),
-      environment: str(ctx.environment, d.environment, 'context.environment', report),
-      release: str(ctx.release, d.release, 'context.release', report),
+      actorId: text(sentActorId(actorId, { apiKey: c.apiKey, privacy }), 'actorId', d.actorId),
+      contentId: text(
+        str(ctx.contentId, d.contentId, 'context.contentId', report),
+        'contentId',
+        d.contentId,
+      ),
+      environment: text(
+        str(ctx.environment, d.environment, 'context.environment', report),
+        'environment',
+        d.environment,
+      ),
+      release: text(str(ctx.release, d.release, 'context.release', report), 'release', d.release),
       tags: addTags(d.tags, ctx.tags, report).merged,
     }),
     metrics: metricsOf(c.metrics, report),

@@ -97,7 +97,7 @@ describe('grp.openMs — how long a group stayed open', () => {
     const { engine, sink } = setup()
     engine.onObject(obj(100, { groupId: 0n }))
     engine.onObject(obj(180, { groupId: 0n, objectId: 1n }))
-    // Group 1 starting is what closes group 0: MoQT has no end-of-group marker.
+    // With no end-of-group signal, group 1 starting is what closes group 0.
     engine.onObject(obj(200, { groupId: 1n }))
     engine.tick(1_000)
 
@@ -165,6 +165,26 @@ describe('grp.openMs — how long a group stayed open', () => {
     expect(h?.n).toBe(2)
     expect(h?.sum).toBe(0)
     expect(h?.i).toEqual([0])
+  })
+
+  it('closes a group at its end-of-group signal: a stream’s, a status, a datagram’s', () => {
+    const { engine, sink } = setup()
+    engine.onObject(obj(100, { groupId: 0n }))
+    engine.onObject(obj(130, { groupId: 0n, objectId: 1n }))
+    engine.onGroupEnd(TX, 0n)
+    // Past the end, the group is closed: neither this object nor group 1 adds to it.
+    engine.onObject(obj(400, { groupId: 0n, objectId: 2n }))
+    engine.onObject(obj(500, { groupId: 1n }))
+    engine.onObject(obj(520, { groupId: 1n, objectId: 1n, payloadBytes: 0, status: 3n }))
+    engine.onObject(obj(600, { groupId: 2n, path: 'datagram', sub: null }))
+    engine.onObject(obj(610, { groupId: 2n, objectId: 1n, path: 'datagram', sub: null, eog: true }))
+    // An end for a group that is not the open one closes nothing.
+    engine.onGroupEnd(TX, 1n)
+    engine.tick(1_000)
+
+    const h = rowFor(sink.lastRollup(), TX).hist.groupOpenMs
+    expect(h?.n).toBe(3)
+    expect(h?.sum).toBe(30 + 20 + 10)
   })
 
   it('keeps both directions, because a subscriber has group spans too', () => {

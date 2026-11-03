@@ -13,9 +13,11 @@ import {
   contractBody,
   encodeMarks,
   encodeRuns,
+  encodeStreamEnds,
   type MarkInput,
   preambleFrame,
   type RunInput,
+  type StreamEndInput,
   withRseq,
 } from '../../envelope/contract.js'
 import { FrameWriter } from '../../envelope/frame-writer.js'
@@ -34,6 +36,7 @@ const U64 = (1n << 64n) - 1n
 type Record_ =
   | { readonly kind: 'run'; readonly runs: readonly RunInput[] }
   | { readonly kind: 'mark'; readonly marks: readonly MarkInput[] }
+  | { readonly kind: 'stream-end'; readonly ends: readonly StreamEndInput[] }
   | { readonly kind: 'json'; readonly json: Record<string, unknown>; readonly raw: Uint8Array[] }
 
 interface Spec {
@@ -84,6 +87,9 @@ function build(p: Spec): Uint8Array {
     } else if (r.kind === 'mark') {
       frames.json({ t: 'mark', v: 1, n: r.marks.length, rseq } as unknown as EnvelopeRecord)
       frames.raw(encodeMarks(BASE, r.marks))
+    } else if (r.kind === 'stream-end') {
+      frames.json({ t: 'stream-end', v: 1, n: r.ends.length, rseq } as unknown as EnvelopeRecord)
+      frames.raw(encodeStreamEnds(BASE, r.ends))
     } else {
       const one = new FrameWriter()
       one.json(r.json as unknown as EnvelopeRecord)
@@ -371,6 +377,7 @@ const SPECS: Record<string, Spec> = {
             o: 0n,
             g2: 12n,
             o2: 4n,
+            n: 0n,
             tUs: BASE + 100,
             path: 'fetch',
             sid: 14n,
@@ -380,12 +387,13 @@ const SPECS: Record<string, Spec> = {
             c: 0,
             ti: 1,
             g: 13n,
-            o: 0n,
+            o: 9n,
             g2: 13n,
             o2: 9n,
+            n: 1n,
             tUs: BASE + 90,
             path: 'fetch',
-            sid: 14n,
+            sid: 18n,
           },
           {
             kind: 'pgg',
@@ -414,6 +422,117 @@ const SPECS: Record<string, Spec> = {
           { kind: 'eotg', c: 1, ti: 0, g: 4n, o: 9n, tUs: BASE + 600, path: 'sub_stream', sid: 2n },
           { kind: 'dne', c: 1, ti: 0, g: 4n, o: 2n, tUs: BASE + 610, path: 'sub_stream', sid: 2n },
           { kind: 'eosg', c: 2, ti: 0, g: 1n, o: 3n, tUs: BASE + 700, path: 'sub_stream', sid: 6n },
+        ],
+      },
+    ],
+  },
+  'stream-ends': {
+    seq: 1,
+    first: 8,
+    conn: [VCONN, { c: 1, draft: 23, relay: 'https://relay-b.example.net' }],
+    trk: [alias(0, '1'), fetchKey(1, '5'), fetchKey(2, '6')],
+    records: [
+      {
+        kind: 'stream-end',
+        ends: [
+          {
+            end: 'fin',
+            c: 0,
+            ti: 0,
+            path: 'sub_stream',
+            sid: 11n,
+            g: 101n,
+            o: 1n,
+            tUs: BASE + 200,
+          },
+          {
+            end: 'fin',
+            eog: true,
+            c: 0,
+            ti: 0,
+            path: 'sub_stream',
+            sid: 15n,
+            g: 102n,
+            tUs: BASE + 300,
+          },
+          { end: 'reset', c: 0, ti: 1, path: 'fetch', sid: 19n, rc: 0x2n, tUs: BASE + 250 },
+          {
+            end: 'none',
+            eog: true,
+            c: 1,
+            ti: 2,
+            path: 'fill',
+            sid: 6n,
+            g: 40n,
+            o: 7n,
+            tUs: BASE + 400,
+          },
+          { end: 'fin', c: 1, ti: 2, path: 'fill', sid: 6n, g: 41n, o: 2n, tUs: BASE + 900 },
+        ],
+      },
+    ],
+  },
+  ident: {
+    conn: [VCONN],
+    trk: [],
+    records: [
+      {
+        kind: 'json',
+        json: {
+          t: 'ident',
+          v: 1,
+          at_us: BASE + 10,
+          content: 'movie-42',
+          env: 'prod',
+          release: '4.2.1',
+          tags: { plan: 'pro', region: 'eu' },
+        },
+        raw: [],
+      },
+      {
+        kind: 'json',
+        json: { t: 'ident', v: 1, at_us: BASE + 9_000_000, actor: 'u_19f2', tags: { ab: 'b' } },
+        raw: [],
+      },
+      { kind: 'json', json: { t: 'ident', v: 1, at_us: BASE + 12_000_000, content: '' }, raw: [] },
+    ],
+  },
+  'unknown-draft-unseen-fetch': {
+    conn: [
+      { c: 0, relay: 'https://relay-a.example.net' },
+      { c: 1, draft: 14, relay: 'https://relay-a.example.net' },
+    ],
+    trk: [alias(0, '1'), fetchKey(1, '3')],
+    records: [
+      {
+        kind: 'run',
+        runs: [
+          {
+            c: 0,
+            ti: 0,
+            g: 3n,
+            path: 'sub_stream',
+            sub: 0n,
+            sid: 3n,
+            ids: ids(0n, 2),
+            timesUs: times(BASE + 1_000, 33_333, 2),
+            b: 900,
+            fo: true,
+            foKnown: true,
+            end: 'fin',
+          },
+          {
+            c: 1,
+            ti: 1,
+            g: 9n,
+            path: 'fetch_unseen',
+            sid: 7n,
+            ids: ids(0n, 3),
+            osub: [0n, 0n, 0n],
+            timesUs: times(BASE + 2_000, 100, 3),
+            b: 300,
+            end: 'fin',
+          },
         ],
       },
     ],
@@ -468,8 +587,21 @@ describe('v2 viewer goldens', () => {
         want.map((r) => [r.path, r.g, r.ids, r.b]),
       )
       const marks = spec.records.flatMap((r) => (r.kind === 'mark' ? r.marks : []))
-      expect(facts.marks.map((m) => [m.kind, m.g, m.o])).toEqual(
-        marks.map((m) => [m.kind, m.g, m.o]),
+      expect(facts.marks.map((m) => [m.kind, m.g, m.o, m.n])).toEqual(
+        marks.map((m) => [m.kind, m.g, m.o, m.n ?? null]),
+      )
+      const ends = spec.records.flatMap((r) => (r.kind === 'stream-end' ? r.ends : []))
+      expect(facts.ends.map((e) => [e.end, e.eog, e.path, e.sid, e.g, e.o, e.tUs, e.rc])).toEqual(
+        ends.map((e) => [
+          e.end,
+          e.eog === true,
+          e.path,
+          e.sid,
+          e.g ?? null,
+          e.o ?? null,
+          e.tUs,
+          e.rc ?? null,
+        ]),
       )
     })
 

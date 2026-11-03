@@ -246,7 +246,7 @@ describe('the first WebTransport begins the session', () => {
     }
   })
 
-  it('holds the context set before it, and sends it with setup', async () => {
+  it('holds the context set before it, and sends it in the first ident', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base({ context: { tags: { experiment: 'a' } } }), {
       ...quiet,
@@ -258,11 +258,14 @@ describe('the first WebTransport begins the session', () => {
     await c.end()
 
     const all = await allRecords(posts)
-    expect(of(all, 'setup')[0]).toMatchObject({
-      identity: { sessionId: 'sess-fixed', contentId: 'live/7', actorId: 'viewer-2' },
-      tags: { experiment: 'a', cdn: 'edge-3' },
-    })
-    expect(of(all, 'context')).toEqual([])
+    expect(of(all, 'setup')[0]).toMatchObject({ identity: { sessionId: 'sess-fixed' } })
+    expect(of(all, 'ident')).toEqual([
+      expect.objectContaining({
+        content: 'live/7',
+        actor: 'viewer-2',
+        tags: { experiment: 'a', cdn: 'edge-3' },
+      }),
+    ])
     expect(of(all, 'conn-open')[0]?.contentId).toBe('live/7')
   })
 
@@ -291,7 +294,7 @@ describe('the first WebTransport begins the session', () => {
       expect(of(all, 'note').map((n) => n.name)).toEqual(['after'])
       expect(of(all, 'life')).toEqual([])
       expect(of(all, 'escalation')).toEqual([])
-      expect(all.every((r) => r.lvl === 'baseline')).toBe(true)
+      expect(all.every((r) => r.t === 'ident' || r.lvl === 'baseline')).toBe(true)
       const samples = of(all, 'rollup').flatMap((r) => r.custom ?? [])
       expect(samples.map((m) => [m.name, m.hist?.n])).toEqual([['decodeMs', 1]])
     } finally {
@@ -440,8 +443,12 @@ describe('the session ends when its connections have', () => {
     expect(sessionsOf(all)).toEqual([first.sessionId, second.sessionId])
     const setups = of(all, 'setup')
     expect(setups[1]).toMatchObject({
-      identity: second,
+      identity: { sessionId: second.sessionId, instanceId: second.instanceId },
       idSource: 'minted',
+    })
+    expect(of(all, 'ident').at(-1)).toMatchObject({
+      content: 'live/1',
+      actor: 'viewer-1',
       tags: { experiment: 'a', cdn: 'edge-1' },
     })
     expect(setups[1]?.anchor.originMono).toBeGreaterThan(setups[0]?.anchor.originMono ?? 0)
@@ -563,8 +570,9 @@ describe('newSession()', () => {
     const all = await allRecords(posts)
     expect(of(all, 'setup').map((s) => s.identity)).toEqual([
       expect.objectContaining({ sessionId: 'sess-fixed' }),
-      next,
+      { sessionId: next.sessionId, instanceId: next.instanceId },
     ])
+    expect(of(all, 'ident').at(-1)).toMatchObject({ content: 'vod/2' })
     expect(of(all, 'setup')[1]).not.toHaveProperty('startTs')
   })
 
@@ -581,8 +589,12 @@ describe('newSession()', () => {
     await c.end()
     const all = await allRecords(posts)
     expect(of(all, 'setup')).toEqual([
-      expect.objectContaining({ identity: next, idSource: 'supplied' }),
+      expect.objectContaining({
+        identity: { sessionId: next.sessionId, instanceId: next.instanceId },
+        idSource: 'supplied',
+      }),
     ])
+    expect(of(all, 'ident')).toEqual([expect.objectContaining({ content: 'vod/2' })])
     expect(of(all, 'end').map((e) => e.reason)).toEqual(['app'])
   })
 })

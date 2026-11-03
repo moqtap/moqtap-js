@@ -195,10 +195,8 @@ describe('a probe’s runs', () => {
     h.stop()
 
     const pieces = h.forwards.flatMap((f) => (f.runs === undefined ? [] : [f.runs]))
-    expect(pieces.map((t) => t.runs.map((r) => [r.n, r.end]))).toEqual([
-      [[3, 'open']],
-      [[0, 'fin']],
-    ])
+    expect(pieces.map((t) => t.runs.map((r) => [r.n, r.end]))).toEqual([[[3, 'open']], []])
+    expect(pieces.map((t) => t.ends.map((e) => [e.g, e.o, e.end]))).toEqual([[], [[0n, 2n, 'fin']]])
     const page = new RunRecorder(0)
     for (const t of pieces) page.absorb(t)
     expect(page.take().runs.map((r) => [r.g, r.n, r.end])).toEqual([[0n, 3, 'fin']])

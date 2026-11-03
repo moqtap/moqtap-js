@@ -11,6 +11,8 @@ import { FetchCounter } from '../../decode/fetch-counter.js'
 import { RequestOrder } from '../../decode/request-order.js'
 import { SubgroupCounter } from '../../decode/subgroup-counter.js'
 import { TrackKeys } from '../../decode/track-key.js'
+import { DRAFT14_ADAPTER } from '../../drafts/draft14/index.js'
+import { DRAFT16_ADAPTER } from '../../drafts/draft16/index.js'
 import type {
   BucketKey,
   ControlFrameEvent,
@@ -18,6 +20,7 @@ import type {
   MarkSample,
   ObjectSample,
   ParseFailureReason,
+  StreamHeaderSample,
 } from '../../types.js'
 import { DRAFT20_ADAPTER, datagramBytes, subgroupBytes } from './vectors.js'
 
@@ -25,8 +28,16 @@ class Sink implements CountingSink {
   readonly objects: ObjectSample[] = []
   readonly marks: MarkSample[] = []
   readonly failures: ParseFailureReason[] = []
+  readonly headers: StreamHeaderSample[] = []
+  ungrouped = 0
   onObject(s: ObjectSample): void {
     this.objects.push({ ...s })
+  }
+  onStreamHeader(h: StreamHeaderSample): void {
+    this.headers.push(h)
+  }
+  onUngrouped(): void {
+    this.ungrouped += 1
   }
   onMark(m: MarkSample): void {
     this.marks.push(m)
@@ -184,11 +195,92 @@ describe('a fetch stream’s group order', () => {
     ])
   })
 
-  it('walks a stream whose request was never seen as far as it reads, and says why it stopped', () => {
+  it('reads a stream whose request was never seen on its own path, counting objects past its first group', () => {
     const { sink, counter } = fetchWith(new TrackKeys())
     counter.end()
-    expect(sink.objects.map((o) => [o.groupId, o.path])).toEqual([[11n, null]])
+    expect(sink.headers.map((h) => [h.path, h.groupId, h.streamId])).toEqual([
+      ['fetch_unseen', null, 5],
+    ])
+    expect(sink.objects.map((o) => [o.groupId, o.path])).toEqual([[11n, 'fetch_unseen']])
+    expect(sink.ungrouped).toBe(1)
+    expect(sink.failures).toEqual([])
+  })
+
+  it('stops a stream whose request was seen but whose order never settled, and says why', () => {
+    const keys = new TrackKeys()
+    keys.applyControl(
+      {
+        type: 'subscribe',
+        request_id: 9n,
+        track_namespace: ['a'],
+        track_name: 'b',
+        parameters: {},
+      },
+      'tx',
+      2,
+      0,
+    )
+    const { sink, counter } = fetchWith(keys)
+    counter.end()
+    expect(sink.objects.map((o) => [o.groupId, o.path])).toEqual([[11n, 'fill']])
+    expect(sink.ungrouped).toBe(0)
     expect(sink.failures).toEqual(['fetch-order-unknown'])
+  })
+
+  it('reads every group of an unseen request’s stream before draft-18, whose Group IDs are absolute', () => {
+    // Draft-16: flags 0x0C (Group ID and Object ID present), Group ID 11, Object ID 0; then Group 10.
+    const bytes = new Uint8Array([
+      0x05, 0x09, 0x0c, 0x0b, 0x00, 0x01, 0xaa, 0x0c, 0x0a, 0x00, 0x01, 0xbb,
+    ])
+    const sink = new Sink()
+    const c = new FetchCounter('rx', new TrackKeys(), sink, DRAFT16_ADAPTER, { streamId: 5 })
+    c.push(bytes, 1)
+    c.end()
+    expect(sink.objects.map((o) => [o.groupId, o.path])).toEqual([
+      [11n, 'fetch_unseen'],
+      [10n, 'fetch_unseen'],
+    ])
+    expect(sink.ungrouped).toBe(0)
+  })
+})
+
+describe('gap properties on fetch streams before draft-20', () => {
+  it.each([
+    // Draft-16: flags 0x3C (Group ID, Object ID, priority, properties), the block holding 0x3C = 3.
+    [
+      'draft-16',
+      DRAFT16_ADAPTER,
+      [0x05, 0x09, 0x3c, 0x0b, 0x00, 0x80, 0x02, 0x3c, 0x03, 0x01, 0xaa],
+    ],
+    // Draft-14: Group ID, Subgroup ID, Object ID, priority, then the block, every field present.
+    [
+      'draft-14',
+      DRAFT14_ADAPTER,
+      [0x05, 0x09, 0x0b, 0x00, 0x00, 0x80, 0x02, 0x3c, 0x03, 0x01, 0xaa],
+    ],
+  ] as const)('reads Prior Group ID Gap on %s', (_name, adapter, bytes) => {
+    const sink = new Sink()
+    const c = new FetchCounter('rx', new TrackKeys(), sink, adapter, { streamId: 5 })
+    c.push(new Uint8Array(bytes), 1)
+    c.end()
+    expect(sink.failures).toEqual([])
+    expect(sink.objects.map((o) => [o.groupId, o.objectId, o.payloadBytes])).toEqual([[11n, 0n, 1]])
+    expect(sink.marks.map((m) => [m.groupId, m.objectId, m.what, m.path])).toEqual([
+      [11n, 0n, { gap: 'group', n: 3n }, 'fetch_unseen'],
+    ])
+  })
+})
+
+describe('a stream header', () => {
+  it('is reported before any object, with the subgroup header’s group and END_OF_GROUP bit', () => {
+    const sink = new Sink()
+    const c = new SubgroupCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER, { streamId: 3 })
+    c.push(subgroupBytes({ alias: 4n, group: 102n, objects: [], headerType: 0x18 }), 1)
+    c.end()
+    expect(sink.objects).toEqual([])
+    expect(sink.headers.map((h) => [h.path, h.groupId, h.eog, h.streamId])).toEqual([
+      ['sub_stream', 102n, true, 3],
+    ])
   })
 })
 

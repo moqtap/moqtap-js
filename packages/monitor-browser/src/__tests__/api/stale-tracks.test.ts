@@ -99,7 +99,7 @@ function rig(): Rig {
           at,
           data: subgroupBytes({ alias: 1n, group: BigInt(at), objects: [{ id: 0n, bytes: 8 }] }),
         })
-        realm.onStreamClose(SESSION, id)
+        realm.onStreamClose(SESSION, id, at)
       }
     },
   }

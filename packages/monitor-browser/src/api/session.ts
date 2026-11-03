@@ -51,15 +51,16 @@ import type { CustomMetrics } from '../rollup/index.js'
 import { RunRecorder } from '../rollup/runs.js'
 import type { TransportHook } from '../transport/index.js'
 import type {
+  AppClockReading,
   ClockAnchor,
   ClockSource,
-  ContextRecord,
   ContextUpdate,
   DetailLevel,
   EndCounters,
   EndRecord,
   EnvelopeRecord,
   Identity,
+  IdentRecord,
   LifeRecord,
   LinkRecord,
   Mono,
@@ -70,7 +71,7 @@ import type {
   UsageReport,
 } from '../types.js'
 import { COLLECTOR_VERSION } from '../version.js'
-import { addTags, type ConfigProblem, mintId, sentActorId } from './config.js'
+import { addTags, type ConfigProblem, contextText, mintId, sentActorId } from './config.js'
 import { levelIndex } from './defaults.js'
 import type { DormantState } from './dormant.js'
 import {
@@ -84,7 +85,7 @@ import {
 } from './features.js'
 import type { PageMessage } from './link.js'
 import { UsageMeter } from './meter.js'
-import type { ConnectionState, RealmObserver } from './realm.js'
+import type { ConnectionState, RealmCarry, RealmObserver } from './realm.js'
 
 /** Re-exported for the public API; defined in `../version.js` so the dormant
  * path can read it without pulling this module in. */
@@ -152,6 +153,10 @@ export interface RuntimePorts {
   readonly reported?: Set<string> | undefined
   /** `CollectorConfig.onInternalError`, which `ResolvedConfig` deliberately omits. */
   readonly onInternalError?: (err: unknown) => void
+  /** `CollectorConfig.clock`, which `ResolvedConfig` omits like `onInternalError`. */
+  readonly appClock?: (() => AppClockReading | null | undefined) | undefined
+  /** The earlier session's run recorder and the decoders of the connections it left open. */
+  readonly carry?: RealmCarry | undefined
 }
 
 /**
@@ -383,6 +388,7 @@ export class CollectorRuntime {
       droppedRecords: () => this._emitter.droppedRecords + this._dropped(),
       maxPendingBytes: () => this._cap(),
       onInternalError: this._onError,
+      appClock: () => this._appOffset(),
     })
     this._schedule = new FlushSchedule({
       onFlush: () => this._sealNow(true),
@@ -446,6 +452,7 @@ export class CollectorRuntime {
             ordinalDone: (id) => this._emitter.connDone(id),
             clock: this._clock,
             recorder: build.features.flightRecorder,
+            carry: ports.carry,
             host: {
               sink: this._sink,
               onConn: (c, draft, relay) => this._emitter.noteConn(c, draft, relay),
@@ -695,39 +702,62 @@ export class CollectorRuntime {
 
   /**
    * Context for connections opened from now on, in this page and its linked
-   * workers. `ids()` carries it at once, and a `context` record says from when.
-   * Tags add to the session's.
+   * workers. `ids()` carries it at once, and an `ident` record says from when.
+   * Tags add to the session's; an empty string clears a field.
    */
   setContext(ctx: ContextUpdate): void {
     if (this._ended) return
     const c = this._context
-    const record: { -readonly [K in keyof ContextRecord]: ContextRecord[K] } = {
-      t: 'context',
-      ts: this._relNow(),
-      lvl: this._escalation.level,
+    const record: { -readonly [K in keyof IdentRecord]: IdentRecord[K] } = {
+      t: 'ident',
+      v: 1,
+      at_us: Math.floor(this._clock.now() * 1000),
     }
-    if (typeof ctx.contentId === 'string') {
-      c.contentId = ctx.contentId
-      this._realm?.setContentId(ctx.contentId)
-      this._broadcast({ t: 'context', contentId: ctx.contentId })
-      if (ctx.contentId !== '') record.contentId = ctx.contentId
+    const report = (p: ConfigProblem): void => this._report(p)
+    const contentId = contextText(ctx.contentId, 'contentId', report)
+    if (contentId !== undefined) {
+      c.contentId = contentId
+      this._realm?.setContentId(contentId)
+      this._broadcast({ t: 'context', contentId })
+      record.content = contentId
     }
-    if (typeof ctx.actorId === 'string') {
-      c.actorId = sentActorId(ctx.actorId, this.config)
-      if (c.actorId !== '') record.actorId = c.actorId
+    const actorId =
+      typeof ctx.actorId === 'string'
+        ? contextText(sentActorId(ctx.actorId, this.config), 'actorId', report)
+        : undefined
+    if (actorId !== undefined) {
+      c.actorId = actorId
+      record.actor = actorId
     }
     if (ctx.tags !== undefined) {
-      const { merged, accepted } = addTags(c.tags, ctx.tags, (p) => this._report(p))
+      const { merged, accepted } = addTags(c.tags, ctx.tags, report)
       c.tags = merged
       if (Object.keys(accepted).length > 0) record.tags = accepted
     }
-    if (
-      record.contentId !== undefined ||
-      record.actorId !== undefined ||
-      record.tags !== undefined
-    ) {
+    if (record.content !== undefined || record.actor !== undefined || record.tags !== undefined) {
       this._sink.json(record)
     }
+  }
+
+  /** `CollectorConfig.clock` as an offset from this page's monotonic clock, read now. */
+  private _appOffset(): { oUs: number; eUs: number; atUs: number } | undefined {
+    const read = this._ports.appClock
+    if (read === undefined) return undefined
+    let r: AppClockReading | null | undefined
+    try {
+      r = read()
+    } catch (err) {
+      this._onError(err)
+      return undefined
+    }
+    const atUs = Math.floor(this._clock.now() * 1000)
+    if (r == null || !Number.isFinite(r.nowMs) || !Number.isFinite(r.errorMs) || r.errorMs < 0) {
+      return undefined
+    }
+    const oUs = Math.floor(r.nowMs * 1000) - atUs
+    const eUs = Math.ceil(r.errorMs * 1000)
+    if (!Number.isSafeInteger(oUs) || !Number.isSafeInteger(eUs)) return undefined
+    return { oUs, eUs, atUs }
   }
 
   /** A rejected argument, in the form `init()` reports a rejected option. */
@@ -854,6 +884,7 @@ export class CollectorRuntime {
       custom: this._custom ?? undefined,
       reported: this._reported,
       emitter: this._emitter,
+      carry: this._realm?.carry(),
       ...ports,
     })
     // The links go on with the next session, and their count with them.
@@ -992,7 +1023,7 @@ export class CollectorRuntime {
         self._emitter.noteDroppedObjects(t.dropped ?? 0)
       },
       noteConns: (open, gone) => {
-        for (const c of open) if (c.draft !== null) self._emitter.noteConn(c.c, c.draft, c.origin)
+        for (const c of open) self._emitter.noteConn(c.c, c.draft, c.origin)
         for (const c of gone) self._emitter.noteConnClosed(c.c)
       },
       ensureSetup: () => self._ensureSetup(),
@@ -1032,10 +1063,18 @@ export class CollectorRuntime {
     const own = this._realm?.takeRuns(hold)
     const forwarded = this._forwarded.take(hold)
     if (own !== undefined) this._emitter.noteDroppedObjects(own.dropped)
-    const before = this._queue.pendingBytes
+    let before = this._queue.pendingBytes
+    // A body lists at most so many tracks and connections: past them, what
+    // is buffered is sealed first.
+    const full = (): void => {
+      const n = this._queue.pendingBytes - before
+      if (n > 0) this._buffered(n)
+      if (this._sealQueued() !== null) void this._drain()
+      before = this._queue.pendingBytes
+    }
     try {
-      if (own !== undefined) this._queue.writeFacts(own)
-      this._queue.writeFacts(forwarded)
+      if (own !== undefined) this._queue.writeFacts(own, full)
+      this._queue.writeFacts(forwarded, full)
     } catch (err) {
       this._onError(err)
     }
@@ -1115,21 +1154,30 @@ export class CollectorRuntime {
     if (this._setupSent) return
     this._setupSent = true
     const ctx = this.config.context
-    const tags = this._context.tags
+    const c = this._context
     const record: SetupRecord = {
       t: 'setup',
       ts: this._relNow(),
       lvl: this._escalation.level,
       anchor: this.anchor,
-      identity: this.ids(),
+      identity: { sessionId: this.config.sessionId, instanceId: this.instanceId },
       idSource: this.config.idSource,
       collectorVersion: COLLECTOR_VERSION,
-      ...(ctx.environment !== '' ? { environment: ctx.environment } : {}),
-      ...(ctx.release !== '' ? { release: ctx.release } : {}),
-      ...(Object.keys(tags).length > 0 ? { tags } : {}),
       ...(this._startTs !== undefined ? { startTs: this._startTs } : {}),
     }
     this._queue.json(record)
+    // The session's identity: every field it has.
+    const ident: IdentRecord = {
+      t: 'ident',
+      v: 1,
+      at_us: Math.floor(this._clock.now() * 1000),
+      ...(c.actorId !== '' ? { actor: c.actorId } : {}),
+      ...(c.contentId !== '' ? { content: c.contentId } : {}),
+      ...(ctx.environment !== '' ? { env: ctx.environment } : {}),
+      ...(ctx.release !== '' ? { release: ctx.release } : {}),
+      ...(Object.keys(c.tags).length > 0 ? { tags: c.tags } : {}),
+    }
+    this._queue.json(ident)
   }
 
   private _writeLife(ev: LifeRecord['ev'], gapMs?: number): void {
@@ -1369,6 +1417,12 @@ export class CollectorRuntime {
   private _seal(final = false, beacon = false): Chunk | null {
     if (this._discarded) return null
     this._writeFacts()
+    return this._sealQueued(final, beacon)
+  }
+
+  /** {@link _seal} of what is buffered now, with no facts taken first. */
+  private _sealQueued(final = false, beacon = false): Chunk | null {
+    if (this._discarded) return null
     const t = this.config.upload.byteThreshold
     let last: Chunk | null = null
     for (;;) {

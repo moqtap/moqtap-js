@@ -394,7 +394,7 @@ describe('a flight dump of one slice', () => {
         at,
         data: subgroupBytes({ alias: 1n, group: BigInt(at), objects: [{ id: 0n, bytes: 8 }] }),
       })
-      realm.onStreamClose(id, stream)
+      realm.onStreamClose(id, stream, at)
     }
     realm.tick(2_600)
 

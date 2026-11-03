@@ -203,6 +203,11 @@ export class RollupEngine implements CountingSink, MedianSource {
     b.onObject(s)
   }
 
+  /** Group `g` of `k` ended: an end-of-group signal on a stream or a FETCH. */
+  onGroupEnd(k: BucketKey, g: bigint): void {
+    this.peek(k)?.endGroup(g)
+  }
+
   /**
    * A control frame: counted, and shipped raw at baseline.
    *

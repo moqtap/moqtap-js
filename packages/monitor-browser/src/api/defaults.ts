@@ -272,4 +272,5 @@ export const CONFIG_KEYS: readonly (keyof CollectorConfig)[] = /*#__PURE__*/ Obj
   'limits',
   'privacy',
   'onInternalError',
+  'clock',
 ])

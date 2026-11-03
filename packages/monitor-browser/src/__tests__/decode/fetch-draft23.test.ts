@@ -110,8 +110,16 @@ describe('FetchCounter on draft-23', () => {
   it('marks End-of-Range by its decoded range, End of Gone Range included', () => {
     const ranges = count(stream(MIXED)).marks.filter((m) => 'range' in m.what)
     expect(ranges.map((m) => [m.groupId, m.objectId, m.what])).toEqual([
-      [5n, 4n, { range: 0x10c, g2: 5n, o2: 7n }],
-      [7n, 0n, { range: 0x40c, g2: 9n, o2: 2n }],
+      [5n, 4n, { range: 0x10c, g2: 5n, o2: 7n, first: false }],
+      [7n, 0n, { range: 0x40c, g2: 9n, o2: 2n, first: false }],
+    ])
+  })
+
+  it('marks an End of Range that opens its stream as first, at its own end', () => {
+    const sink = count(hex('0504808c050700'))
+    expect(sink.failures).toEqual([])
+    expect(sink.marks.map((m) => [m.groupId, m.objectId, m.what])).toEqual([
+      [5n, 7n, { range: 0x8c, g2: 5n, o2: 7n, first: true }],
     ])
   })
 
@@ -167,7 +175,7 @@ describe('FetchCounter on draft-23', () => {
     ])
     expect(sink.marks.map((m) => [m.groupId, m.objectId, m.what])).toEqual([
       [5n, 2n, { end: 'group' }],
-      [5n, MAX_U64, { range: 0x40c, g2: 7n, o2: 5n }],
+      [5n, MAX_U64, { range: 0x40c, g2: 7n, o2: 5n, first: false }],
     ])
   })
 

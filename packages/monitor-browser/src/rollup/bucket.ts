@@ -430,10 +430,8 @@ export class TrackBucket {
       if (this.lastNewGroupAt !== undefined) {
         this.hist.groupCadenceMs.observe(at - this.lastNewGroupAt)
       }
-      // A higher group starting is the only signal that the previous one is
-      // done — MoQT has no end-of-group marker a counter can see — so the span
-      // is observed here, one group behind. The last group of a track is
-      // therefore never observed, which is correct: it never closed.
+      // The open group closes at its end-of-group signal, or else when a
+      // higher group starts. A last group with neither never closed.
       if (this.curGroupFirstAt !== undefined) {
         this.hist.groupOpenMs.observe(this.curGroupLastAt - this.curGroupFirstAt)
       }
@@ -442,11 +440,13 @@ export class TrackBucket {
       this.lastNewGroupAt = at
       this.maxGroup = s.groupId
     } else if (s.groupId === max) {
-      // Still the open group. Its span grows until a higher group closes it.
-      // An object of a lower group extends no span: a closed group cannot
-      // reopen without the histogram depending on arrival order.
+      // Still the open group. Its span grows until it closes. An object of a
+      // lower group extends no span: a closed group cannot reopen without the
+      // histogram depending on arrival order.
       this.curGroupLastAt = at
     }
+    // End of Group status (0x3 in every draft) or a datagram's END_OF_GROUP.
+    if (s.status === 3n || (s.eog && s.path === 'datagram')) this.endGroup(s.groupId)
 
     // Duplicates, over a fixed recency window. Structural duplicates (a
     // shared alias — one object sent once per matching subscription) arrive
@@ -463,6 +463,13 @@ export class TrackBucket {
       this.dupGroups[slot] = g
       this.dupObjects[slot] = o
     }
+  }
+
+  /** Group `g` ended: its span is observed now, if it is the open group. */
+  endGroup(g: bigint): void {
+    if (this.curGroupFirstAt === undefined || g !== this.maxGroup) return
+    this.hist.groupOpenMs.observe(this.curGroupLastAt - this.curGroupFirstAt)
+    this.curGroupFirstAt = undefined
   }
 
   /**

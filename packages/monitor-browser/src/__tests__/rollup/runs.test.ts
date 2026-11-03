@@ -39,7 +39,7 @@ describe('stream runs', () => {
     const r = new RunRecorder(0)
     for (let i = 0; i < 4; i++) r.onObject(0, obj(7n, BigInt(i), 100 + i * 33))
     r.onPayload(0, 3, 300)
-    r.onStreamEnd(0, 3, 'fin')
+    r.onStreamEnd(0, 3, 'fin', undefined, 9)
     const { runs } = r.take()
     expect(runs).toHaveLength(1)
     const [run] = runs
@@ -56,7 +56,7 @@ describe('stream runs', () => {
     r.onObject(0, obj(7n, 0n, 1, { fo: true, eog: true }))
     expect(r.take().runs[0]).toMatchObject({ fo: true, eog: false, end: 'open', cont: false })
     r.onObject(0, obj(7n, 1n, 2, { fo: true, eog: true }))
-    r.onStreamEnd(0, 3, 'fin')
+    r.onStreamEnd(0, 3, 'fin', undefined, 9)
     expect(r.take().runs[0]).toMatchObject({ fo: false, eog: true, end: 'fin', cont: true })
   })
 
@@ -93,19 +93,19 @@ describe('stream runs', () => {
     const r = new RunRecorder(0)
     r.onObject(0, obj(1n, 0n, 1, { streamId: 3 }))
     r.onObject(0, obj(2n, 0n, 1, { streamId: 7 }))
-    r.onStreamEnd(0, 3, 'reset', 16)
-    r.onStreamEnd(0, 7, 'gone')
+    r.onStreamEnd(0, 3, 'reset', 16, 9)
+    r.onStreamEnd(0, 7, 'gone', undefined, 9)
     expect(r.take().runs.map((x) => [x.end, x.rc])).toEqual([
       ['reset', 16n],
       ['open', null],
     ])
   })
 
-  it('counts an arrival on a fetch stream whose request was never seen, and records no run', () => {
+  it('records a fetch stream whose request was never seen as runs on its own path', () => {
     const r = new RunRecorder(0)
-    r.onObject(0, obj(1n, 0n, 1, { key: FETCH, path: null }))
-    expect(r.take().runs).toEqual([])
-    expect(r.droppedObjects).toBe(1)
+    r.onObject(0, obj(1n, 0n, 1, { key: FETCH, path: 'fetch_unseen', streamId: 5 }))
+    expect(r.take().runs.map((x) => [x.path, x.g, x.osub])).toEqual([['fetch_unseen', 1n, [0n]]])
+    expect(r.droppedObjects).toBe(0)
   })
 
   it('records receive tracks only', () => {
@@ -126,7 +126,7 @@ describe('a stream that ends after a take', () => {
     twoObjects(r)
     expect(r.take(true).runs).toEqual([])
     expect(r.openFlows).toBe(1)
-    r.onStreamEnd(0, 3, 'fin')
+    r.onStreamEnd(0, 3, 'fin', undefined, 9)
     expect(r.take().runs.map((x) => [x.n, x.end, x.eog, x.cont])).toEqual([[2, 'fin', true, false]])
   })
 
@@ -134,8 +134,23 @@ describe('a stream that ends after a take', () => {
     const r = new RunRecorder(0)
     twoObjects(r)
     r.take(true)
-    r.onStreamEnd(0, 3, 'reset', 7)
+    r.onStreamEnd(0, 3, 'reset', 7, 9)
     expect(r.take().runs.map((x) => [x.n, x.end, x.rc])).toEqual([[2, 'reset', 7n]])
+  })
+
+  it('records the end alone once its run was taken, with the run’s last object', () => {
+    for (const [end, code, want] of [
+      ['fin', undefined, [true, 'fin', 7n, 1n, null, 9000]],
+      ['reset', 7, [false, 'reset', 7n, 1n, 7n, 9000]],
+    ] as const) {
+      const r = new RunRecorder(0)
+      twoObjects(r)
+      expect(r.take().runs.map((x) => [x.n, x.end])).toEqual([[2, 'open']])
+      r.onStreamEnd(0, 3, end, code, 9)
+      const { runs, ends } = r.take()
+      expect(runs).toEqual([])
+      expect(ends.map((e) => [e.eog, e.end, e.g, e.o, e.rc, e.tUs])).toEqual([want])
+    }
   })
 
   it('in a worker, forwards the end alone, and the page joins it to the run', () => {
@@ -143,45 +158,82 @@ describe('a stream that ends after a take', () => {
       ['fin', undefined, [2, 'fin', true, null]],
       ['reset', 7, [2, 'reset', false, 7n]],
     ] as const) {
-      const w = new RunRecorder(0, undefined, true)
+      const w = new RunRecorder(0)
       twoObjects(w)
       const first = w.take()
-      expect(first.runs.map((x) => [x.n, x.end])).toEqual([[2, 'open']])
-      w.onStreamEnd(0, 3, end, code)
+      w.onStreamEnd(0, 3, end, code, 9)
       const second = w.take()
-      expect(second.runs.map((x) => [x.n, x.end, x.cont])).toEqual([[0, end, true]])
+      expect(second.runs).toEqual([])
+      expect(second.ends).toHaveLength(1)
       const page = new RunRecorder(0)
       page.absorb(first)
       // A take between forwards that seals nothing keeps the forwarded run open.
       expect(page.take(true).runs).toEqual([])
       page.absorb(second)
-      expect(page.take().runs.map((x) => [x.n, x.end, x.eog, x.rc])).toEqual([want])
+      const out = page.take()
+      expect(out.runs.map((x) => [x.n, x.end, x.eog, x.rc])).toEqual([want])
+      expect(out.ends).toEqual([])
     }
   })
 
-  it('counts a forwarded end whose run a seal already took, and records no run for it', () => {
-    const w = new RunRecorder(0, undefined, true)
+  it('keeps a forwarded end whose run a seal already took as a stream end', () => {
+    const w = new RunRecorder(0)
     twoObjects(w)
     const page = new RunRecorder(0)
     page.absorb(w.take())
     expect(page.take().runs.map((x) => x.end)).toEqual(['open'])
-    w.onStreamEnd(0, 3, 'fin')
+    w.onStreamEnd(0, 3, 'fin', undefined, 9)
     page.absorb(w.take())
-    expect(page.take().runs).toEqual([])
-    expect(page.endsLost).toBe(1)
+    const { runs, ends } = page.take()
+    expect(runs).toEqual([])
+    expect(ends.map((e) => [e.end, e.eog, e.g, e.o])).toEqual([['fin', true, 7n, 1n]])
   })
 
-  it('sends no end alone for a stream that failed, or from the page', () => {
-    const w = new RunRecorder(0, undefined, true)
-    twoObjects(w)
-    w.take()
-    w.onStreamEnd(0, 3, 'gone')
-    expect(w.take().runs).toEqual([])
+  it('records no end for a stream that failed', () => {
     const r = new RunRecorder(0)
     twoObjects(r)
     r.take()
-    r.onStreamEnd(0, 3, 'fin')
-    expect(r.take().runs).toEqual([])
+    r.onStreamEnd(0, 3, 'gone', undefined, 9)
+    expect(r.take().ends).toEqual([])
+  })
+})
+
+describe('a stream that carried no object', () => {
+  const header = (path: 'sub_stream' | 'fetch', g: bigint | null, eog = false) => ({
+    key: path === 'fetch' ? FETCH : ALIAS,
+    streamId: 3,
+    path,
+    groupId: g,
+    eog,
+    at: 1,
+  })
+
+  it('ends with its header’s group, EOG only with FIN', () => {
+    const r = new RunRecorder(0)
+    r.onStreamHeader(0, header('sub_stream', 102n, true))
+    expect(r.onStreamEnd(0, 3, 'fin', undefined, 5)).toEqual({ key: ALIAS, g: 102n })
+    r.onStreamHeader(0, { ...header('sub_stream', 103n, true), streamId: 7 })
+    expect(r.onStreamEnd(0, 7, 'reset', 2, 6)).toBeUndefined()
+    expect(r.take().ends.map((e) => [e.path, e.sid, e.eog, e.end, e.g, e.o, e.rc])).toEqual([
+      ['sub_stream', 3, true, 'fin', 102n, null, null],
+      ['sub_stream', 7, false, 'reset', 103n, null, 2n],
+    ])
+  })
+
+  it('ends a fetch stream with no group', () => {
+    const r = new RunRecorder(0)
+    r.onStreamHeader(0, header('fetch', null))
+    r.onStreamEnd(0, 3, 'reset', 2, 5)
+    expect(r.take().ends.map((e) => [e.path, e.end, e.g, e.o, e.rc])).toEqual([
+      ['fetch', 'reset', null, null, 2n],
+    ])
+  })
+
+  it('records a send stream’s header not at all', () => {
+    const r = new RunRecorder(0)
+    r.onStreamHeader(0, { ...header('sub_stream', 1n), key: { ...ALIAS, dir: 'tx' } })
+    r.onStreamEnd(0, 3, 'fin', undefined, 5)
+    expect(r.take().ends).toEqual([])
   })
 })
 
@@ -231,7 +283,7 @@ describe('marks', () => {
     r.onMark(0, 22, obj(7n, 5n, 1, { status: 9n, payloadBytes: 0 }))
     const range: MarkSample = {
       key: FETCH,
-      what: { range: 0x20c, g2: 13n, o2: 9n },
+      what: { range: 0x20c, g2: 13n, o2: 9n, first: false },
       groupId: 13n,
       objectId: 0n,
       path: 'fetch',
@@ -239,12 +291,19 @@ describe('marks', () => {
       at: 2,
     }
     r.onMark(0, 22, range)
+    r.onMark(0, 22, {
+      ...range,
+      what: { range: 0x8c, g2: 4n, o2: 1n, first: true },
+      groupId: 4n,
+      objectId: 1n,
+    })
     r.onMark(0, 22, { ...range, key: ALIAS, what: { gap: 'object', n: 2n }, path: 'datagram' })
     const { marks, runs } = r.take()
     expect(runs).toEqual([])
     expect(marks.map((m) => [m.kind, m.g, m.o, m.g2, m.o2, m.n, m.path, m.sid])).toEqual([
       ['status_unknown', 7n, 5n, undefined, undefined, 9n, 'sub_stream', 3],
-      ['rng_to', 13n, 0n, 13n, 9n, undefined, 'fetch', 5],
+      ['rng_to', 13n, 0n, 13n, 9n, 0n, 'fetch', 5],
+      ['rng_nx', 4n, 1n, 4n, 1n, 1n, 'fetch', 5],
       ['pog', 13n, 0n, undefined, undefined, 2n, 'datagram', 5],
     ])
   })
@@ -279,7 +338,7 @@ describe('draft-23 fetch indicators', () => {
     r.onObject(0, fetchObj(5n, 1n, 2))
     r.onMark(0, 23, end('group', 5n, 1n))
     r.onObject(0, fetchObj(6n, 0n, 3))
-    r.onStreamEnd(0, 3, 'fin')
+    r.onStreamEnd(0, 3, 'fin', undefined, 9)
     const { runs, marks } = r.take()
     expect(runs.map((x) => [x.g, x.eog, x.end])).toEqual([
       [5n, true, 'open'],
@@ -307,14 +366,27 @@ describe('draft-23 fetch indicators', () => {
   })
 
   it('carries a worker’s End of Group across a forward to the run it ends', () => {
-    const worker = new RunRecorder(0, undefined, true)
+    const worker = new RunRecorder(0)
     const page = new RunRecorder(0)
     worker.onObject(9, fetchObj(5n, 0n, 1))
     page.absorb(worker.take())
     worker.onMark(9, 23, end('group', 5n, 0n))
     page.absorb(worker.take())
-    const { runs } = page.take()
+    const { runs, ends } = page.take()
     expect(runs.map((x) => [x.g, x.n, x.eog])).toEqual([[5n, 1, true]])
+    expect(ends).toEqual([])
+  })
+
+  it('records End of Group alone once its run was taken, then the FIN', () => {
+    const r = new RunRecorder(0)
+    r.onObject(9, fetchObj(40n, 7n, 1))
+    r.take()
+    r.onMark(9, 23, end('group', 40n, 7n))
+    r.onStreamEnd(9, 3, 'fin', undefined, 10)
+    expect(r.take().ends.map((e) => [e.eog, e.end, e.g, e.o])).toEqual([
+      [true, 'none', 40n, 7n],
+      [false, 'fin', 40n, 7n],
+    ])
   })
 })
 
@@ -326,7 +398,7 @@ describe('across realms and bounds', () => {
     worker.onObject(9, obj(7n, 1n, 2))
     page.absorb(worker.take())
     worker.onObject(9, obj(7n, 2n, 3))
-    worker.onStreamEnd(9, 3, 'fin')
+    worker.onStreamEnd(9, 3, 'fin', undefined, 9)
     page.absorb(worker.take())
     const { runs } = page.take()
     expect(runs.map((x) => [runIds(x), x.end, x.cont, x.times])).toEqual([

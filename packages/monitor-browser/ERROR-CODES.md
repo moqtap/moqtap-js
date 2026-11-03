@@ -116,6 +116,12 @@ A supplied `sessionId` must be at most 128 UTF-8 bytes, well-formed UTF-16 (no u
 
 *Value carried:* the tag key, cut to 32 characters.
 
+### `MQ1115` — a context value was left out
+
+`actorId` (as sent, after `privacy.hashActorId`), `contentId`, `environment` and `release` take at most 256 characters. A longer one is left out, never cut: at `init()` the default is used, and in `setContext()` the session keeps the value it had.
+
+*Value carried:* its length, in characters.
+
 ## 2xxx — envelope — framing, body, idempotency, gzip
 
 ### `MQ2001` — frame payload exceeds what a 31-bit length can carry

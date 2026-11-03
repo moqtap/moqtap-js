@@ -7,12 +7,14 @@
  * one on the stream, at FIN or RESET, and at a seal; a datagram run keeps ids
  * in arrival order and breaks only at a seal. A run never spans bodies: one
  * still open at a seal is taken with `end: open`, and the next run of the
- * same flow is marked `cont`, until the stream ends.
+ * same flow is marked `cont`, until the stream ends. A stream's end that no
+ * run can carry, because its last run was taken already or it carried no
+ * object, is a stream end of its own.
  *
  * Nothing here infers a group start, a loss or an order from ids.
  */
 
-import type { MarkKind, RunEnd } from '../envelope/contract.js'
+import type { MarkKind, RunEnd, StreamEndKind } from '../envelope/contract.js'
 import {
   type BucketKey,
   bucketKeyString,
@@ -20,6 +22,7 @@ import {
   type MarkSample,
   type Mono,
   type ObjectSample,
+  type StreamHeaderSample,
   type SupportedDraft,
 } from '../types.js'
 
@@ -72,20 +75,49 @@ export interface RecordedMark {
   readonly sid: number
 }
 
+/** A stream's end that no run carries. */
+export interface RecordedEnd {
+  readonly c: number
+  readonly key: BucketKey
+  readonly path: DeliveryPath
+  readonly sid: number
+  readonly eog: boolean
+  readonly end: StreamEndKind
+  /** The group of the stream's last object, or its subgroup header's. */
+  readonly g: bigint | null
+  /** The stream's last object id in `g`. */
+  readonly o: bigint | null
+  readonly tUs: number
+  readonly rc: bigint | null
+}
+
 export interface Taken {
   readonly runs: RecordedRun[]
   readonly marks: RecordedMark[]
+  readonly ends: RecordedEnd[]
   /** Arrivals since the last take that no run could hold. */
   readonly dropped?: number
+}
+
+/** A stream end that closes a group, for the rollup's group span. */
+export interface GroupEnd {
+  readonly key: BucketKey
+  readonly g: bigint
 }
 
 interface StreamFlow {
   readonly c: number
   readonly sid: number
+  readonly key: BucketKey
+  readonly path: DeliveryPath
+  /** The subgroup header's group; null on a fetch stream. */
+  headerG: bigint | null
+  /** The stream has delivered an object. */
+  seen: boolean
   /** The header's FIRST_OBJECT, which only the stream's first run starts at. */
-  readonly fo: boolean
-  readonly foKnown: boolean
-  readonly eog: boolean
+  fo: boolean
+  foKnown: boolean
+  eog: boolean
   first: boolean
   run: RecordedRun | null
   /** The last id the stream delivered, across seals. */
@@ -142,22 +174,16 @@ export class RunRecorder {
   /** This interval's runs by flow, for joining a worker's pieces. */
   private byFlow = new Map<string, RecordedRun>()
   private marks: RecordedMark[] = []
+  private ends: RecordedEnd[] = []
   private readonly totals = new Map<number, { objects: number; bytes: number }>()
-  /** Arrivals no run could hold: a fetch stream whose request was never observed. */
+  /** Arrivals no run could hold: objects of an unseen request's stream whose group is not known. */
   droppedObjects = 0
-  /** Stream ends a worker forwarded after the run they end was sealed. */
-  endsLost = 0
 
   constructor(
     /** The session anchor's monotonic origin, ms. */
     private readonly origin: Mono,
     /** Called once when the open flows reach {@link MAX_OPEN_FLOWS}. */
-    private readonly onFull?: () => void,
-    /**
-     * A worker's: its takes are forwards the page joins, so a stream that ends
-     * after its run was taken sends the end alone, as a run of no objects.
-     */
-    private readonly forwards = false,
+    public onFull?: () => void,
   ) {}
 
   /** Flows with a run open now. */
@@ -172,13 +198,17 @@ export class RunRecorder {
     return out
   }
 
+  /** A data stream's header, before any object on it. */
+  onStreamHeader(c: number, h: StreamHeaderSample): void {
+    if (h.key.dir !== 'rx') return
+    const f = this.flow(c, h.streamId, h.key, h.path)
+    f.headerG = h.groupId
+    f.eog = h.eog
+  }
+
   /** One Normal object. Status objects go to {@link onMark}. */
   onObject(c: number, s: ObjectSample): void {
     if (s.key.dir !== 'rx' || s.status !== undefined) return
-    if (s.path === null) {
-      this.droppedObjects += 1
-      return
-    }
     const t = (s.at - this.origin) * 1000
     let total = this.totals.get(c)
     if (total === undefined) {
@@ -199,36 +229,45 @@ export class RunRecorder {
 
   /**
    * The stream ended: its open run takes the end, and the flow is forgotten.
-   * A stream that failed (`gone`) ends neither in FIN nor in a reset code.
+   * With no open run the end is recorded alone. A stream that failed (`gone`)
+   * ends neither in FIN nor in a reset code. Returns the group the end
+   * closes, for the rollup.
    */
-  onStreamEnd(c: number, sid: number, end: 'fin' | 'reset' | 'gone', code?: number): void {
+  onStreamEnd(
+    c: number,
+    sid: number,
+    end: 'fin' | 'reset' | 'gone',
+    code: number | undefined,
+    at: Mono,
+  ): GroupEnd | undefined {
     const flows = this.streams.get(c)
     const f = flows?.get(sid)
-    if (f === undefined) return
+    if (f === undefined) return undefined
     const run = f.run
     if (run !== null) {
       endRun(run, f, end, code)
       this.close(run)
       this.open -= 1
-    } else if (f.taken !== null && this.forwards && end !== 'gone') {
+    } else if (end !== 'gone' && (f.taken !== null || !f.seen)) {
       const t = f.taken
-      const piece: RecordedRun = {
-        ...t,
-        ids: null,
-        n: 0,
-        osub: t.osub === null ? null : [],
-        times: [],
-        b: 0,
-        cont: true,
-        eog: false,
-        end: 'open',
-        rc: null,
-      }
-      endRun(piece, f, end, code)
-      this.done.push(piece)
+      this.ends.push({
+        c,
+        key: f.key,
+        path: f.path,
+        sid,
+        eog: end === 'fin' && f.eog && f.path === 'sub_stream',
+        end,
+        g: t !== null ? t.g : f.headerG,
+        o: t !== null ? t.last : null,
+        tUs: (at - this.origin) * 1000,
+        rc: end === 'reset' ? BigInt(code ?? 0) : null,
+      })
     }
     flows!.delete(sid)
     if (flows!.size === 0) this.streams.delete(c)
+    if (end !== 'fin' || !f.eog || f.path !== 'sub_stream') return undefined
+    const g = f.seen ? f.lastGroup : f.headerG
+    return g === null ? undefined : { key: f.key, g }
   }
 
   /** The connection is gone: every stream of it ends where it stood. */
@@ -279,11 +318,12 @@ export class RunRecorder {
       )
     } else if ('range' in w) {
       const kind = rangeKind(w.range, draft)
-      if (kind !== undefined) this.marks.push({ ...base, kind, g2: w.g2, o2: w.o2 })
+      const n = w.first ? 1n : 0n
+      if (kind !== undefined) this.marks.push({ ...base, kind, g2: w.g2, o2: w.o2, n })
     } else if ('end' in w) {
       // The run holding {G, O} ends the group. End of Track also says no
       // Location past {G, O} exists, which is End of Track at {G, O + 1}.
-      this.endGroup(c, sid, m.groupId, m.objectId)
+      this.endGroup(c, sid, m.groupId, m.objectId, tUs)
       if (w.end === 'track' && m.objectId < MAX_U64) {
         this.marks.push({ ...base, kind: 'eot', o: m.objectId + 1n })
       }
@@ -331,17 +371,19 @@ export class RunRecorder {
     this.open = open
     const kept = hold ? this.done.filter((r) => r.end === 'open') : []
     const runs = hold ? this.done.filter((r) => r.end !== 'open') : this.done
-    const out = { runs, marks: this.marks }
+    const out = { runs, marks: this.marks, ends: this.ends }
     this.done = kept
     this.marks = []
+    this.ends = []
     this.byFlow = new Map(kept.map((r) => [r.flow, r]))
     return out
   }
 
   /**
-   * A worker's forwarded runs and marks, appended to this interval's. A piece
-   * that continues a run of this interval is joined to it, so a worker's run
-   * spans its forwards and is sealed once.
+   * A worker's forwarded runs, marks and stream ends, appended to this
+   * interval's. A piece that continues a run of this interval is joined to
+   * it, and so is an end whose run is still here, so a worker's run spans its
+   * forwards and is sealed once.
    */
   absorb(t: Taken): void {
     for (const r of t.runs) {
@@ -350,19 +392,26 @@ export class RunRecorder {
         join(prior, r)
         continue
       }
-      // An end whose run was sealed already: no record carries an end alone.
-      if (r.n === 0) {
-        this.endsLost += 1
-        continue
-      }
       this.done.push(r)
       this.byFlow.set(r.flow, r)
     }
     for (const m of t.marks) this.marks.push(m)
+    for (const e of t.ends) {
+      const prior = e.g === null ? undefined : this.byFlow.get(`${e.c}:${e.sid}:${e.g}`)
+      if (prior !== undefined && prior.end === 'open' && prior.last === e.o) {
+        if (e.end !== 'none') {
+          prior.end = e.end
+          prior.rc = e.rc
+        }
+        if (e.eog) prior.eog = true
+        continue
+      }
+      this.ends.push(e)
+    }
   }
 
   /** The stream's run whose last object is {g, o} ends its group. */
-  private endGroup(c: number, sid: number, g: bigint, o: bigint): void {
+  private endGroup(c: number, sid: number, g: bigint, o: bigint, tUs: number): void {
     const f = this.streams.get(c)?.get(sid)
     if (f === undefined) return
     const run = f.run
@@ -370,29 +419,24 @@ export class RunRecorder {
       if (run.g === g && run.last === o) run.eog = true
       return
     }
-    // Taken at a forward: the end travels alone, as a run of no objects.
+    // Its run was taken already: the end goes alone.
     const t = f.taken
-    if (t === null || !this.forwards || t.g !== g || t.last !== o) return
-    this.done.push({
-      ...t,
-      ids: null,
-      n: 0,
-      osub: t.osub === null ? null : [],
-      times: [],
-      b: 0,
-      cont: true,
+    if (t === null || t.g !== g || t.last !== o) return
+    this.ends.push({
+      c,
+      key: f.key,
+      path: f.path,
+      sid,
       eog: true,
-      end: 'open',
+      end: 'none',
+      g,
+      o,
+      tUs,
       rc: null,
     })
   }
 
-  private close(run: RecordedRun): void {
-    this.done.push(run)
-    this.byFlow.set(run.flow, run)
-  }
-
-  private stream(c: number, sid: number, s: ObjectSample, t: number): void {
+  private flow(c: number, sid: number, key: BucketKey, path: DeliveryPath): StreamFlow {
     let flows = this.streams.get(c)
     if (flows === undefined) {
       flows = new Map()
@@ -403,9 +447,13 @@ export class RunRecorder {
       f = {
         c,
         sid,
-        fo: s.fo,
-        foKnown: s.foKnown,
-        eog: s.eog,
+        key,
+        path,
+        headerG: null,
+        seen: false,
+        fo: false,
+        foKnown: false,
+        eog: false,
         first: true,
         run: null,
         lastId: 0n,
@@ -414,6 +462,22 @@ export class RunRecorder {
         taken: null,
       }
       flows.set(sid, f)
+    }
+    return f
+  }
+
+  private close(run: RecordedRun): void {
+    this.done.push(run)
+    this.byFlow.set(run.flow, run)
+  }
+
+  private stream(c: number, sid: number, s: ObjectSample, t: number): void {
+    const f = this.flow(c, sid, s.key, s.path)
+    if (!f.seen) {
+      f.seen = true
+      f.fo = s.fo
+      f.foKnown = s.foKnown
+      f.eog = s.eog
     }
     let run = f.run
     if (run !== null && (run.g !== s.groupId || s.objectId <= run.last)) {
@@ -432,7 +496,7 @@ export class RunRecorder {
         flow: `${c}:${sid}:${s.groupId}`,
         c,
         key: s.key,
-        path: s.path as DeliveryPath,
+        path: s.path,
         g: s.groupId,
         sub: fetch ? null : s.sub,
         sid,

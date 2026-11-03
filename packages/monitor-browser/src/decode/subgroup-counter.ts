@@ -230,8 +230,8 @@ export interface CounterOptions {
  *
  * One instance per subgroup stream. The stream header's own bytes are folded
  * into the first object's `headerBytes` so no byte on the stream goes
- * unattributed; a subgroup stream that carries no objects at all therefore
- * reports nothing, which is correct — it has no bucket to report against.
+ * unattributed. A stream that carries no object reports its header alone,
+ * so its end can still be recorded.
  *
  * Its {@link ObjectHeaderFields} are the stream header's: every object on a
  * subgroup stream shares one priority and one subgroup.
@@ -300,6 +300,16 @@ export class SubgroupCounter extends DataStreamCounter implements ObjectHeaderFi
         if (this.key === null && !this.capped) {
           this.capped = true
           this.sink.onParseFailure(null, 'bucket-cap')
+        }
+        if (this.key !== null && this.streamId >= 0) {
+          this.sink.onStreamHeader?.({
+            key: this.key,
+            streamId: this.streamId,
+            path: 'sub_stream',
+            groupId: h.groupId,
+            eog: this.eog,
+            at,
+          })
         }
         i = h.next
         continue

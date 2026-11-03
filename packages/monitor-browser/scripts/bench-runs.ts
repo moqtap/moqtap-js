@@ -5,7 +5,8 @@
  * `onObject`, which every object already pays.
  *
  * Three shapes: a 30 fps video subgroup stream (one run per group), 20 ms
- * audio objects one per stream, and datagrams. Each is fed through the
+ * audio objects one per stream, and datagrams. Each stream's header is
+ * reported before its first object, as the decoders do. Each is fed through the
  * recorder with a take every 60 s of media, as a page seals, and each take
  * is encoded as the seal encodes it. Timed with `performance.now()` over
  * enough objects to swamp its resolution. Prints ns per object for the
@@ -72,10 +73,15 @@ for (const kind of ['video', 'audio', 'datagram'] as const) {
     const r = new RunRecorder(0)
     for (let i = 0; i < objects.length; i++) {
       const s = objects[i] as ObjectSample
+      if (s.streamId !== undefined && s.objectId === 0n) {
+        r.onStreamHeader(0, { ...s, streamId: s.streamId, path: s.path, groupId: s.groupId })
+      }
       r.onObject(0, s)
-      if (kind === 'audio' && s.streamId !== undefined) r.onStreamEnd(0, s.streamId, 'fin')
+      if (kind === 'audio' && s.streamId !== undefined) {
+        r.onStreamEnd(0, s.streamId, 'fin', undefined, s.at)
+      }
       if (kind === 'video' && s.objectId === 7n && s.streamId !== undefined) {
-        r.onStreamEnd(0, s.streamId, 'fin')
+        r.onStreamEnd(0, s.streamId, 'fin', undefined, s.at)
       }
       if (i % perTake === perTake - 1) onTake(r.take())
     }
@@ -83,7 +89,7 @@ for (const kind of ['video', 'audio', 'datagram'] as const) {
   const recorder = time(record(() => {}))
   const both = time(
     record((t) => {
-      encodeFacts(new Emitter('bench', 0), t)
+      encodeFacts(new Emitter('bench', 0), t, () => {})
     }),
   )
 

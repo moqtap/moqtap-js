@@ -4,13 +4,15 @@
  * a JSON frame, gzipped or not. A `run` or `mark` record is one JSON
  * descriptor followed by one raw frame of LEB128 columns:
  *
- *     run   fl c ti g path [sk [sub]] [sid] o0 n [oid…] [osub…] t0 dt… b [rc] tl
- *     mark  kind c ti g o [g2 o2] [n] t path [sid]
+ *     run         fl c ti g path [sk [sub]] [sid] o0 n [oid…] [osub…] t0 dt… b [rc] tl
+ *     mark        kind c ti g o [g2 o2] [n] t path [sid]
+ *     stream-end  fl c ti path sid [g [o]] t [rc]
  *
  * Within a record, `g` is a `z` delta from the same track's previous run (the
  * first from 0), `sid` a `z` delta from the previous stream run's (the first
  * from 0), and `t0`/`t` a `t` delta from the previous entry's (the first from
- * the body's `clk.base_us`). Every time is device mono µs, floored.
+ * the body's `clk.base_us`). A stream end's `sid` is absolute. Every time is
+ * device mono µs, floored.
  */
 
 import type { BatchRecord, EnvelopeRecord } from '../types.js'
@@ -19,7 +21,14 @@ import { LebWriter } from './leb.js'
 
 export const CONTRACT_BODY_VERSION = 2
 
-export const DELIVERY_PATHS = ['sub_stream', 'datagram', 'fetch', 'fetch_joining', 'fill'] as const
+export const DELIVERY_PATHS = [
+  'sub_stream',
+  'datagram',
+  'fetch',
+  'fetch_joining',
+  'fill',
+  'fetch_unseen',
+] as const
 export type DeliveryPath = (typeof DELIVERY_PATHS)[number]
 
 export const RUN_ENDS = ['open', 'fin', 'reset', 'na'] as const
@@ -100,7 +109,11 @@ export interface MarkInput {
   /** FETCH range end: `rng_*` only. */
   readonly g2?: bigint
   readonly o2?: bigint
-  /** `pgg`/`pog` the gap; `status_unknown` the raw status code. */
+  /**
+   * `pgg`/`pog` the gap; `status_unknown` the raw status code. `rng_*`: 1 when
+   * the marker is its stream's first entry, so the range begins at the
+   * request's start, else 0: after {G, O}, the stream's previous entry.
+   */
   readonly n?: bigint
   readonly tUs: number
   readonly path: DeliveryPath
@@ -110,9 +123,9 @@ export interface MarkInput {
 
 const isRange = (k: MarkKind) =>
   k === 'rng_nx' || k === 'rng_unk' || k === 'rng_to' || k === 'rng_gone'
-const hasN = (k: MarkKind) => k === 'pgg' || k === 'pog' || k === 'status_unknown'
+const hasN = (k: MarkKind) => k === 'pgg' || k === 'pog' || k === 'status_unknown' || isRange(k)
 export const isFetchPath = (p: DeliveryPath) =>
-  p === 'fetch' || p === 'fetch_joining' || p === 'fill'
+  p === 'fetch' || p === 'fetch_joining' || p === 'fill' || p === 'fetch_unseen'
 
 function quantum(us: number, t0: number): number {
   const q = Math.floor((us - t0) / DT_QUANTUM_US)
@@ -221,7 +234,62 @@ export function encodeMarks(baseUs: number, marks: readonly MarkInput[]): Uint8A
   return w.bytes()
 }
 
-/** `run` and `mark` records: a descriptor with its rseq, then its raw columns. */
+/** How a stream ended: no end (a FETCH End of Group alone), FIN, or a reset. */
+export const STREAM_END_KINDS = ['none', 'fin', 'reset'] as const
+export type StreamEndKind = (typeof STREAM_END_KINDS)[number]
+
+/**
+ * A stream's end that no run carries: it came after the stream's last run
+ * was sealed, or the stream carried no object.
+ */
+export interface StreamEndInput {
+  /** EOG header bit and FIN, or a FETCH End of Group or End of Track after Object {g, o}. */
+  readonly eog?: boolean
+  readonly end: StreamEndKind
+  readonly c: number
+  readonly ti: number
+  readonly path: DeliveryPath
+  readonly sid: bigint
+  /** The group of the stream's last object, or its subgroup header's. */
+  readonly g?: bigint
+  /** The stream's last object id in `g`. */
+  readonly o?: bigint
+  readonly tUs: number
+  /** The reset code, when `end` is `reset`. */
+  readonly rc?: bigint
+}
+
+const SE_EOG = 0x01
+const SE_G = 0x02
+const SE_O = 0x04
+const SE_END_SHIFT = 3
+
+export function encodeStreamEnds(baseUs: number, ends: readonly StreamEndInput[]): Uint8Array {
+  const w = new LebWriter(ends.length * 10)
+  let lastT = Math.floor(baseUs)
+  for (const e of ends) {
+    if (e.o !== undefined && e.g === undefined) throw new RangeError('an object id needs its group')
+    w.byte(
+      (e.eog ? SE_EOG : 0) |
+        (e.g !== undefined ? SE_G : 0) |
+        (e.o !== undefined ? SE_O : 0) |
+        (STREAM_END_KINDS.indexOf(e.end) << SE_END_SHIFT),
+    )
+    w.u(e.c)
+    w.u(e.ti)
+    w.u(DELIVERY_PATHS.indexOf(e.path))
+    w.u(e.sid)
+    if (e.g !== undefined) w.u(e.g)
+    if (e.o !== undefined) w.u(e.o)
+    const t = Math.floor(e.tUs)
+    w.t(t - lastT)
+    lastT = t
+    if (e.end === 'reset') w.u(e.rc ?? 0n)
+  }
+  return w.bytes()
+}
+
+/** `run`, `mark` and `stream-end` records: a descriptor with its rseq, then its raw columns. */
 export function writeRunRecord(
   w: FrameWriter,
   rseq: number,
@@ -241,6 +309,17 @@ export function writeMarkRecord(
 ): void {
   const raw = encodeMarks(baseUs, marks)
   w.json({ t: 'mark', v: 1, n: marks.length, rseq } as unknown as EnvelopeRecord)
+  w.raw(raw)
+}
+
+export function writeStreamEndRecord(
+  w: FrameWriter,
+  rseq: number,
+  baseUs: number,
+  ends: readonly StreamEndInput[],
+): void {
+  const raw = encodeStreamEnds(baseUs, ends)
+  w.json({ t: 'stream-end', v: 1, n: ends.length, rseq } as unknown as EnvelopeRecord)
   w.raw(raw)
 }
 
@@ -325,12 +404,17 @@ export interface BodyClock {
     readonly atUs: number
     readonly pop?: string
   }
+  /** The integrator's offset to UTC, its bound, and the mono µs it was read at. */
+  readonly app?: { readonly oUs: number; readonly eUs: number; readonly atUs: number }
 }
 
-/** One connection a body references: its per-emitter ordinal, negotiated draft and relay origin. */
+/**
+ * One connection a body references: its per-emitter ordinal, its negotiated
+ * draft once known, and its relay origin.
+ */
 export interface BodyConn {
   readonly c: number
-  readonly draft: number
+  readonly draft?: number
   readonly relay: string
 }
 
@@ -390,13 +474,20 @@ export function batchJson(b: BatchV2): BatchRecord {
             at_us: s.atUs,
             ...(s.pop === undefined ? {} : { pop: s.pop }),
           }),
+      ...(b.clk.app === undefined
+        ? {}
+        : { app: { o_us: b.clk.app.oUs, e_us: b.clk.app.eUs, at_us: b.clk.app.atUs } }),
     },
     tail: {
       ...(b.tail.lastRseq === undefined ? {} : { last_rseq: b.tail.lastRseq }),
       pre_drop: { records: b.tail.preDrop.records, objects: b.tail.preDrop.objects },
       conn: b.tail.conn.map((e) => [e[0], e[1], e[2]]),
     },
-    conn: b.conn.map((c) => ({ c: c.c, draft: c.draft, relay: c.relay })),
+    conn: b.conn.map((c) =>
+      c.draft === undefined
+        ? { c: c.c, relay: c.relay }
+        : { c: c.c, draft: c.draft, relay: c.relay },
+    ),
     trk: b.trk.map((t) => ({ id: t.id, key: { d: t.key.d, k: t.key.k, v: t.key.v, e: t.key.e } })),
   }
 }

@@ -33,6 +33,7 @@ import type {
 import { COLLECTOR_VERSION } from '../version.js'
 import {
   type ConfigProblem,
+  contextText,
   isStorableSessionId,
   mintId,
   resolveConfig,
@@ -244,13 +245,16 @@ class PendingCollector implements Collector {
 
   setContext(ctx: ContextUpdate): void {
     const { actorId, contentId } = this.#identity
+    // The runtime reports a value it leaves out; here it only stays out of `ids()`.
+    const quiet = (): void => {}
+    const sent =
+      typeof ctx.actorId === 'string'
+        ? contextText(sentActorId(ctx.actorId, this.#config), 'actorId', quiet)
+        : undefined
     this.#identity = {
       ...this.#identity,
-      ...withId(
-        'actorId',
-        typeof ctx.actorId === 'string' ? sentActorId(ctx.actorId, this.#config) : actorId,
-      ),
-      ...withId('contentId', typeof ctx.contentId === 'string' ? ctx.contentId : contentId),
+      ...withId('actorId', sent ?? actorId),
+      ...withId('contentId', contextText(ctx.contentId, 'contentId', quiet) ?? contentId),
     }
     this.#defer((r) => r.setContext(ctx))
   }
@@ -476,6 +480,7 @@ export function initWith(
         armed: true,
         onSession: (r) => pending.swap(r),
         onInternalError: onError,
+        ...(typeof config.clock === 'function' ? { appClock: config.clock } : {}),
       })
       runtime.start()
       pending.attach(runtime)

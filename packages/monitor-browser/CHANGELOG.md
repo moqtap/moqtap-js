@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking (types):** `SupportedDraft` gains `23`, and `MarkSample['what']`
   gains `{ end: 'group' | 'track' }`, so an exhaustive `switch` over either
   needs the new case.
+- **Breaking (types):** the `context` record (`ContextRecord`) is replaced by
+  `ident` (`IdentRecord`), and `SetupRecord` no longer carries the actor,
+  content, `environment`, `release` or `tags`: the first `ident` of a session
+  carries every field it has, a later one what `setContext()` set, and an
+  empty string clears a field. `DeliveryPath` gains `fetch_unseen`,
+  `ObjectSample.path` is never `null`, a range in `MarkSample['what']` gains
+  `first`, and `BatchRecord.conn[].draft` is optional.
 - A shorter upload interval asked by Insight is taken up to 60 s, was 10 s,
   and never past `upload.intervalMs`.
 
@@ -24,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A FETCH End of Group or End of Track (draft-23) sets `eog` on the run whose
   last object it follows. End of Track is also an `eot` mark at the next
   Object ID.
+- `stream-end` records: a stream's FIN, reset or FETCH End of Group that
+  comes after its last run was sealed, or ends a stream that carried no
+  object.
+- The `clock` option: a UTC clock of your own, read at every upload.
+- A fetch stream whose request was not seen is recorded on the `fetch_unseen`
+  path; from draft-18, its objects past the first group change, whose groups
+  cannot be read, are counted as dropped. Range marks state whether their
+  range begins at the request's start.
+- `MQ1115`: an `actorId`, `contentId`, `environment` or `release` longer than
+  256 characters is left out.
 
 ### Fixed
 
@@ -32,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A fetch stream that decodes a Group or Object ID above 2^64-1 no longer
   counts objects under that ID; from draft-20 it is reported as
   `fetch-desync`.
+- A stream open across `newSession()` is still read in the new session, its
+  runs continuing; the rest of it was lost.
+- A connection is listed in every body from its open, before its draft is
+  known.
+- A body lists at most 1,024 tracks and 64 connections; what would take it
+  past either is sealed into the next body.
+- End of Group closes a group's `groupOpenMs` span, and Prior Group and Object
+  ID Gaps are read on fetch streams before draft-20.
 
 ## [0.13.0] - 2026-11-03
 
