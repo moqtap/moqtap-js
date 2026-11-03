@@ -23,6 +23,7 @@ export {
   encodeMessage,
   encodeObjectProperties,
   encodeSubgroupStream,
+  malformedTrackReason,
   redactAuthTokens,
 } from './codec.js'
 export type {

@@ -39,6 +39,16 @@ This file starts at 0.9.0. Earlier releases are in the git history.
 - `DecodeError.closeCode` and `ProtocolViolation.closeCode`: the session
   termination code the draft names, set by the draft-23 decoder and session
   state machine.
+- Drafts 14-22: `malformedTrackReason`, which reports a Prior Group ID Gap or Prior
+  Object ID Gap larger than the Group or Object ID, a repeated gap, or two gaps
+  that differ within a Group.
+
+### Fixed
+
+- Drafts 15-22: the subgroup decoder accepted Properties (extension headers on
+  drafts 15-16) on an Object whose status is not Normal. It now refuses them.
+- Drafts 11-14: extension headers on an Object Does Not Exist (0x1) decoded.
+  The subgroup, datagram and fetch decoders now refuse them.
 
 ## [0.14.0] - 2026-10-28
 

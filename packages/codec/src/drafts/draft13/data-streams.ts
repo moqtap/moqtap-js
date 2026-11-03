@@ -17,6 +17,26 @@ import type {
   SubgroupStream,
 } from './types.js'
 
+/**
+ * draft-13 Section 9.2.1.2: "Any Object may have extension headers except those
+ * with Object Status 'Object Does Not Exist'. If an endpoint receives a
+ * non-existent Object containing extension headers it MUST close the session
+ * with a Protocol Violation."
+ */
+function checkNonExistentExtensions(
+  status: bigint,
+  extensionData: Uint8Array | undefined,
+  offset: number,
+): void {
+  if (status === 0x1n && extensionData !== undefined && extensionData.byteLength > 0) {
+    throw new DecodeError(
+      'CONSTRAINT_VIOLATION',
+      'an Object Does Not Exist (0x1) must not carry extension headers',
+      offset,
+    )
+  }
+}
+
 // ─── Data Stream Encoding/Decoding ─────────────────────────────────────────────
 
 const FETCH_STREAM_TYPE = 0x05n
@@ -174,6 +194,7 @@ export function decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupSt
       let payloadByteOffset: number
       if (payloadLength === 0) {
         status = r.readVarInt()
+        checkNonExistentExtensions(status, extensionData, r.offset)
         payloadByteOffset = r.offset
         payload = new Uint8Array(0)
       } else {
@@ -252,6 +273,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     let payload: Uint8Array
     if (isStatus) {
       objectStatus = r.readVarInt()
+      checkNonExistentExtensions(objectStatus, extensionData, r.offset)
       payload = new Uint8Array(0)
     } else {
       payload = r.readBytesView(r.remaining)
@@ -317,6 +339,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
       let payloadByteOffset: number
       if (payloadLength === 0) {
         objectStatus = r.readVarInt()
+        checkNonExistentExtensions(objectStatus, extensionData, r.offset)
         payloadByteOffset = r.offset
         payload = new Uint8Array(0)
       } else {

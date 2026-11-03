@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { createDraft21Codec } from '../../drafts/draft21/codec.js'
-import type { DatagramObject, FetchStream, SubgroupStream } from '../../drafts/draft21/types.js'
+import { createDraft21Codec, malformedTrackReason } from '../../drafts/draft21/codec.js'
+import type {
+  DatagramObject,
+  Draft21DataStream,
+  FetchStream,
+  SubgroupStream,
+} from '../../drafts/draft21/types.js'
 import {
   bytesToHex,
   endpointRefuses,
@@ -15,7 +20,7 @@ const vectorEntries = loadVectorDir('transport/draft21/codec/data-streams')
 
 /** See the note in messages.test.ts — these counts guard against silent skips. */
 const EXPECTED_FILES = 3
-const EXPECTED_VECTORS = 57
+const EXPECTED_VECTORS = 60
 
 describe('draft-21 data stream vector corpus', () => {
   it('loads every published data-stream vector file', () => {
@@ -53,7 +58,12 @@ for (const { file, data: vectorFile } of vectorEntries) {
           it('should fail to decode', () => {
             const streamType = getStreamType(file, vector)
             const result = codec.decodeDataStream(streamType, bytes)
-            expect(endpointRefuses(result, codec.decodeObjectProperties)).toBe(true)
+            // An endpoint refuses what does not decode, and a Track whose
+            // Prior Gaps make it malformed (Section 12.1).
+            const refused =
+              endpointRefuses(result, codec.decodeObjectProperties) ||
+              (result.ok && malformedTrackReason(result.value) !== null)
+            expect(refused).toBe(true)
           })
         } else if (vector.decoded) {
           const decoded = vector.decoded
@@ -65,6 +75,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
             if (!result.ok) return
 
             assertDataStreamMatch(result.value, decoded, streamType)
+            expect(malformedTrackReason(result.value as Draft21DataStream)).toBeNull()
           })
 
           if (vector.canonical !== false) {

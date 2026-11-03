@@ -58,6 +58,7 @@ export {
   encodeMessage,
   encodeObjectProperties,
   encodeSubgroupStream,
+  malformedTrackReason,
   redactAuthTokens,
   UNKNOWN_STREAM_COUNT,
 } from './codec.js'

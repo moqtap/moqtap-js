@@ -71,6 +71,90 @@ export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectPr
   }
 }
 
+const PROPERTY_IMMUTABLE = 0x0bn
+const PROPERTY_PRIOR_GROUP_ID_GAP = 0x3cn
+const PROPERTY_PRIOR_OBJECT_ID_GAP = 0x3en
+
+/**
+ * Why an Object's Prior Group ID Gap or Prior Object ID Gap makes its Track
+ * malformed (draft-22 Section 12.1), or null. Only what the Object shows by
+ * itself, with `groupGap` the Prior Group ID Gap an earlier Object of the same
+ * Group carried. Immutable Properties are searched too.
+ *
+ *  - Section 10.8: "An Object contains more than one instance of Prior Group
+ *    ID Gap.", "A Group contains more than one Object with different values for
+ *    Prior Group ID Gap." and "An Object has a Prior Group ID Gap larger than
+ *    the Group ID."
+ *  - Section 10.9: "An Object contains more than one instance of Prior Object
+ *    ID Gap." and "An Object has a Prior Object ID Gap larger than the Object
+ *    ID."
+ *
+ * The conditions that need Objects received earlier, such as a gap covering an
+ * Object already received, are the receiver's to check.
+ */
+function priorGapsMalformed(
+  block: Uint8Array | undefined,
+  groupId: bigint,
+  objectId: bigint,
+  groupGap: bigint | undefined,
+): { reason: string } | { groupGap: bigint | undefined } {
+  if (block === undefined || block.byteLength === 0) return { groupGap }
+  const decoded = decodeObjectProperties(block)
+  if (!decoded.ok) return { groupGap }
+
+  const all: ObjectProperty[] = []
+  for (const p of decoded.value) {
+    all.push(p)
+    if (p.type === PROPERTY_IMMUTABLE) all.push(...(p.properties ?? []))
+  }
+
+  const groupGaps = all.filter((p) => p.type === PROPERTY_PRIOR_GROUP_ID_GAP)
+  const objectGaps = all.filter((p) => p.type === PROPERTY_PRIOR_OBJECT_ID_GAP)
+  if (groupGaps.length > 1) return { reason: 'Prior Group ID Gap appears more than once' }
+  if (objectGaps.length > 1) return { reason: 'Prior Object ID Gap appears more than once' }
+
+  const priorGroupGap = groupGaps[0]?.value
+  if (priorGroupGap !== undefined) {
+    if (priorGroupGap > groupId) {
+      return { reason: `Prior Group ID Gap ${priorGroupGap} is larger than Group ID ${groupId}` }
+    }
+    if (groupGap !== undefined && groupGap !== priorGroupGap) {
+      return {
+        reason: `Group ${groupId} carries Prior Group ID Gap ${groupGap} and ${priorGroupGap}`,
+      }
+    }
+  }
+  const priorObjectGap = objectGaps[0]?.value
+  if (priorObjectGap !== undefined && priorObjectGap > objectId) {
+    return { reason: `Prior Object ID Gap ${priorObjectGap} is larger than Object ID ${objectId}` }
+  }
+  return { groupGap: priorGroupGap ?? groupGap }
+}
+
+/**
+ * Why the Prior Group ID Gap and Prior Object ID Gap on a decoded subgroup
+ * stream, datagram or fetch stream make the Track malformed, or null. See
+ * {@link priorGapsMalformed} for the conditions. A malformed Track is not a
+ * decode failure: draft-22 Section 12.1, "When a subscriber detects a
+ * Malformed Track, it MUST cancel any corresponding subscription or fetches for
+ * that Track from that publisher".
+ */
+export function malformedTrackReason(stream: Draft22DataStream): string | null {
+  if (stream.type === 'datagram') {
+    const r = priorGapsMalformed(stream.extensionData, stream.groupId, stream.objectId, undefined)
+    return 'reason' in r ? r.reason : null
+  }
+  const gaps = new Map<bigint, bigint | undefined>()
+  for (const obj of stream.objects) {
+    const groupId =
+      stream.type === 'subgroup' ? stream.groupId : (obj as FetchObjectPayload).groupId
+    const r = priorGapsMalformed(obj.extensionData, groupId, obj.objectId, gaps.get(groupId))
+    if ('reason' in r) return r.reason
+    gaps.set(groupId, r.groupGap)
+  }
+  return null
+}
+
 /** Encode properties into a block to carry as an Object's `extensionData`. */
 export function encodeObjectProperties(props: readonly ObjectPropertyInit[]): Uint8Array {
   const w = new BufferWriter(32)
@@ -486,6 +570,16 @@ function readSubgroupObject(
     // next Object's Object ID Delta, which desynchronises the rest of the
     // stream silently.
     status = r.readVarInt()
+    // Section 11.1.2: "If an endpoint receives properties on an Object with
+    // status that is not Normal, it MUST close the session with a
+    // PROTOCOL_VIOLATION."
+    if (extensionData.byteLength > 0 && status !== OBJECT_STATUS_NORMAL) {
+      throw new DecodeError(
+        'CONSTRAINT_VIOLATION',
+        `only a Normal (0x0) Object may carry Properties, got status 0x${status.toString(16)}`,
+        base + r.offset,
+      )
+    }
     payloadByteOffset = base + r.offset
     payload = new Uint8Array(0)
   } else {

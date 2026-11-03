@@ -20,6 +20,26 @@ import type {
   SubgroupStreamHeader,
 } from './types.js'
 
+/**
+ * draft-14 Section 10.2.1.2: "Any Object may have extension headers except those
+ * with Object Status 'Object Does Not Exist'. If an endpoint receives a
+ * non-existent Object containing extension headers it MUST close the session
+ * with a PROTOCOL_VIOLATION."
+ */
+function checkNonExistentExtensions(
+  status: bigint,
+  extensionData: Uint8Array | undefined,
+  offset: number,
+): void {
+  if (status === 0x1n && extensionData !== undefined && extensionData.byteLength > 0) {
+    throw new DecodeError(
+      'CONSTRAINT_VIOLATION',
+      'an Object Does Not Exist (0x1) must not carry extension headers',
+      offset,
+    )
+  }
+}
+
 // ─── Data Stream Constants ────────────────────────────────────────────────────
 
 const FETCH_STREAM_TYPE = 0x05n
@@ -53,6 +73,85 @@ export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectPr
     if (e instanceof DecodeError) return { ok: false, error: e }
     throw e
   }
+}
+
+const PROPERTY_PRIOR_GROUP_ID_GAP = 0x3cn
+const PROPERTY_PRIOR_OBJECT_ID_GAP = 0x3en
+
+/**
+ * Why an Object's Prior Group ID Gap or Prior Object ID Gap makes its Track
+ * malformed (draft-14 Section 2.5), or null. Only what the Object shows by
+ * itself, with `groupGap` the Prior Group ID Gap an earlier Object of the same
+ * Group carried.
+ *
+ *  - Section 11.1: "An Object contains more than one instance of Prior Group
+ *    ID Gap", "A Group contains more than one Object with different values for
+ *    Prior Group ID Gap" and "An Object has a Prior Group ID Gap larger than
+ *    the Group ID".
+ *  - Section 11.3: "An Object contains more than one instance of Prior Object
+ *    ID Gap" and "An Object has a Prior Object ID Gap larger than the Object
+ *    ID".
+ *
+ * The conditions that need Objects received earlier, such as a gap covering an
+ * Object already received, are the receiver's to check.
+ */
+function priorGapsMalformed(
+  block: Uint8Array | undefined,
+  groupId: bigint,
+  objectId: bigint,
+  groupGap: bigint | undefined,
+): { reason: string } | { groupGap: bigint | undefined } {
+  if (block === undefined || block.byteLength === 0) return { groupGap }
+  const decoded = decodeObjectProperties(block)
+  if (!decoded.ok) return { groupGap }
+
+  const all = decoded.value
+
+  const groupGaps = all.filter((p) => p.type === PROPERTY_PRIOR_GROUP_ID_GAP)
+  const objectGaps = all.filter((p) => p.type === PROPERTY_PRIOR_OBJECT_ID_GAP)
+  if (groupGaps.length > 1) return { reason: 'Prior Group ID Gap appears more than once' }
+  if (objectGaps.length > 1) return { reason: 'Prior Object ID Gap appears more than once' }
+
+  const priorGroupGap = groupGaps[0]?.value
+  if (priorGroupGap !== undefined) {
+    if (priorGroupGap > groupId) {
+      return { reason: `Prior Group ID Gap ${priorGroupGap} is larger than Group ID ${groupId}` }
+    }
+    if (groupGap !== undefined && groupGap !== priorGroupGap) {
+      return {
+        reason: `Group ${groupId} carries Prior Group ID Gap ${groupGap} and ${priorGroupGap}`,
+      }
+    }
+  }
+  const priorObjectGap = objectGaps[0]?.value
+  if (priorObjectGap !== undefined && priorObjectGap > objectId) {
+    return { reason: `Prior Object ID Gap ${priorObjectGap} is larger than Object ID ${objectId}` }
+  }
+  return { groupGap: priorGroupGap ?? groupGap }
+}
+
+/**
+ * Why the Prior Group ID Gap and Prior Object ID Gap on a decoded subgroup
+ * stream, datagram or fetch stream make the Track malformed, or null. See
+ * {@link priorGapsMalformed} for the conditions. A malformed Track is not a
+ * decode failure: draft-14 Section 2.5, "When a subscriber detects a
+ * Malformed Track, it MUST UNSUBSCRIBE any subscription and FETCH_CANCEL any
+ * fetch for that Track from that publisher".
+ */
+export function malformedTrackReason(stream: Draft14DataStream): string | null {
+  if (stream.type === 'datagram') {
+    const r = priorGapsMalformed(stream.extensionData, stream.groupId, stream.objectId, undefined)
+    return 'reason' in r ? r.reason : null
+  }
+  const gaps = new Map<bigint, bigint | undefined>()
+  for (const obj of stream.objects) {
+    const groupId =
+      stream.type === 'subgroup' ? stream.groupId : (obj as FetchObjectPayload).groupId
+    const r = priorGapsMalformed(obj.extensionData, groupId, obj.objectId, gaps.get(groupId))
+    if ('reason' in r) return r.reason
+    gaps.set(groupId, r.groupGap)
+  }
+  return null
 }
 
 /** Encode Extension Headers into a block to carry as an Object's `extensionData`. */
@@ -269,6 +368,7 @@ function readSubgroupObject(
     // Skipping it leaves the varint to be read as the next Object's Object ID
     // Delta, which desynchronises the rest of the stream silently.
     status = r.readVarInt()
+    checkNonExistentExtensions(status, extensionData, r.offset)
     payloadByteOffset = base + r.offset
     payload = new Uint8Array(0)
   } else {
@@ -373,6 +473,7 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
     let payload: Uint8Array
     if (isStatus) {
       objectStatus = r.readVarInt()
+      checkNonExistentExtensions(objectStatus, extensionData, r.offset)
       payload = new Uint8Array(0)
     } else {
       payload = r.readBytesView(r.remaining)
@@ -447,6 +548,7 @@ function readFetchObject(r: BufferReader, base: number, _st: FetchObjectState): 
   let payloadByteOffset: number
   if (payloadLength === 0) {
     status = r.readVarInt()
+    checkNonExistentExtensions(status, extensionData, r.offset)
     payloadByteOffset = base + r.offset
     payload = new Uint8Array(0)
   } else {
@@ -852,6 +954,7 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
             let payloadByteOffset: number
             if (payloadLength === 0) {
               status = r.readVarInt()
+              checkNonExistentExtensions(status, extensionData, r.offset)
               payloadByteOffset = r.offset
               payload = new Uint8Array(0)
             } else {
@@ -913,6 +1016,7 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
             let payloadByteOffset: number
             if (payloadLength === 0) {
               status = r.readVarInt()
+              checkNonExistentExtensions(status, extensionData, r.offset)
               payloadByteOffset = r.offset
               payload = new Uint8Array(0)
             } else {

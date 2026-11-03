@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { createDraft17Codec } from '../../drafts/draft17/codec.js'
-import type { DatagramObject, FetchStream, SubgroupStream } from '../../drafts/draft17/types.js'
+import { createDraft17Codec, malformedTrackReason } from '../../drafts/draft17/codec.js'
+import type {
+  DatagramObject,
+  Draft17DataStream,
+  FetchStream,
+  SubgroupStream,
+} from '../../drafts/draft17/types.js'
 import {
   bytesToHex,
   endpointRefuses,
@@ -25,7 +30,12 @@ for (const { file, data: vectorFile } of vectorEntries) {
           it('should fail to decode', () => {
             const streamType = getStreamType(messageType, vector)
             const result = codec.decodeDataStream(streamType, bytes)
-            expect(endpointRefuses(result, codec.decodeObjectProperties)).toBe(true)
+            // An endpoint refuses what does not decode, and a Track whose
+            // Prior Gaps make it malformed (Section 2.4.2).
+            const refused =
+              endpointRefuses(result, codec.decodeObjectProperties) ||
+              (result.ok && malformedTrackReason(result.value) !== null)
+            expect(refused).toBe(true)
           })
         } else if (vector.decoded) {
           const decoded = vector.decoded
@@ -37,6 +47,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
             if (!result.ok) return
 
             assertDataStreamMatch(result.value, decoded, streamType)
+            expect(malformedTrackReason(result.value as Draft17DataStream)).toBeNull()
           })
 
           if (vector.canonical !== false) {

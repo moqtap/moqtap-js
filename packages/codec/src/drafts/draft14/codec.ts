@@ -1287,6 +1287,7 @@ import {
   encodeFetchStream,
   encodeObjectProperties,
   encodeSubgroupStream,
+  malformedTrackReason,
 } from './data-streams.js'
 
 export {
@@ -1302,6 +1303,7 @@ export {
   encodeFetchStream,
   encodeObjectProperties,
   encodeSubgroupStream,
+  malformedTrackReason,
 }
 
 // ─── Stream Decoders ───────────────────────────────────────────────────────────

@@ -155,6 +155,8 @@ The list keeps wire order, repeated types, odd-typed values and unknown types. A
 
 On draft-23, `malformedTrackReason(stream)` checks the Object Properties of a decoded subgroup stream, datagram or fetch stream for the conditions that make a Track malformed: a Property block that cannot be parsed, Immutable Properties nested in Immutable Properties, a Track-only or Mandatory Track Property (0x4000-0x7FFF, grease excepted) on an Object, a repeated Property, a Prior Group ID Gap or Prior Object ID Gap larger than the Group or Object ID, or two Objects of one Group with different Prior Group ID Gaps. `malformedTrackPropertiesReason(message.track_properties)` does the same for the Track Properties of a SUBSCRIBE_OK, PUBLISH or REQUEST_OK: a repeated Property, an Object-only Property (0x3C, 0x3E), or Immutable Properties that cannot be parsed. The decoder keeps a repeated Track Property after the first in `unknown`. Both return the reason or `null`. A malformed Track is not a decode error.
 
+On drafts 14 to 22, `malformedTrackReason(stream)` checks only the Prior Group ID Gap and Prior Object ID Gap: one larger than the Group or Object ID, one an Object carries twice, or two Objects of one Group with different Prior Group ID Gaps.
+
 ### VarInt
 
 `@moqtap/codec/draft07` exports the variable-length integer helpers:
