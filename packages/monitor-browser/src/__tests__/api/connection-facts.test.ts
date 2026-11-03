@@ -310,10 +310,20 @@ describe('the bodies a session uploads, as one emitter', () => {
     await settle()
     const first = await open('https://relay.test:4443/moq')
     const uni = first.incomingUnidirectionalStreams.getReader()
-    await receive(first, uni, subgroupBytes({ alias: 4n, group: 1n, objects: [{ id: 0n, bytes: 10 }] }), 'close')
+    await receive(
+      first,
+      uni,
+      subgroupBytes({ alias: 4n, group: 1n, objects: [{ id: 0n, bytes: 10 }] }),
+      'close',
+    )
     c.newSession({ sessionId: 'sess-second' })
     await settle()
-    await receive(first, uni, subgroupBytes({ alias: 4n, group: 2n, objects: [{ id: 0n, bytes: 10 }] }), 'close')
+    await receive(
+      first,
+      uni,
+      subgroupBytes({ alias: 4n, group: 2n, objects: [{ id: 0n, bytes: 10 }] }),
+      'close',
+    )
     // A connection opened after the rotation is a new one.
     await open('https://relay.test:4443/other')
     await c.end()
@@ -326,8 +336,8 @@ describe('the bodies a session uploads, as one emitter', () => {
     ])
     // Each transport is one connection, in both sessions.
     expect(merged(all).map((r) => r.c)).toEqual([0, 1])
-    expect(of(all, 'conn-open').every((r) => r.c === (r.conn === merged(all)[0]?.conn ? 0 : 1))).toBe(
-      true,
-    )
+    expect(
+      of(all, 'conn-open').every((r) => r.c === (r.conn === merged(all)[0]?.conn ? 0 : 1)),
+    ).toBe(true)
   })
 })

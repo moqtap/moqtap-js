@@ -618,9 +618,9 @@ function main(): void {
           r.first.sessionId === 'smoke-1' &&
             typeof r.first.instanceId === 'string' &&
             r.second.sessionId !== 'smoke-1' &&
-            r.second.instanceId !== r.first.instanceId &&
+            r.second.instanceId === r.first.instanceId &&
             r.second.contentId === 'next',
-          `newSession() returns the next session’s ids at once: ${label}`,
+          `newSession() returns the next session id at once and keeps the instance id: ${label}`,
           JSON.stringify({ first: r.first, second: r.second }),
         )
         check(
