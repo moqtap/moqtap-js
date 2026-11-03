@@ -13,11 +13,10 @@
 import { decodeFetchStream } from '@moqtap/codec/draft20'
 import { describe, expect, it } from 'vitest'
 import { FetchCounter } from '../../decode/fetch-counter.js'
-import { TrackKeys } from '../../decode/track-key.js'
 import { DRAFT19_ADAPTER } from '../../drafts/draft19/index.js'
 import { DRAFT20_ADAPTER } from '../../drafts/draft20/index.js'
 import type { DraftAdapter } from '../../types.js'
-import { chunks, type FetchObjSpec, fetchBytes, Recorder } from './vectors.js'
+import { AscendingKeys, chunks, type FetchObjSpec, fetchBytes, Recorder } from './vectors.js'
 
 /**
  * A stream that exercises every delta form: absolute first object, implicit
@@ -39,7 +38,7 @@ function count(
   adapter: DraftAdapter = DRAFT20_ADAPTER,
 ): Recorder {
   const sink = new Recorder()
-  const c = new FetchCounter('rx', new TrackKeys(), sink, adapter)
+  const c = new FetchCounter('rx', new AscendingKeys(), sink, adapter)
   for (const part of chunks(bytes, chunkSize)) c.push(part, 1)
   c.end()
   return sink
@@ -87,7 +86,7 @@ describe('FetchCounter', () => {
 
   it('keys the bucket on the request id in the header, with no epoch', () => {
     const sink = new Recorder()
-    const keys = new TrackKeys()
+    const keys = new AscendingKeys()
     const c = new FetchCounter('rx', keys, sink, DRAFT20_ADAPTER)
     c.push(fetchBytes(11n, [{ group: 0n, id: 0n, bytes: 1, flags: 0x0c }]), 1)
     // `FetchStreamHeader` is `{type, requestId}` and nothing else, and a
@@ -124,7 +123,7 @@ describe('FetchCounter', () => {
   it('skips a large payload without buffering it', () => {
     const bytes = fetchBytes(3n, [{ group: 0n, id: 0n, bytes: 120_000, flags: 0x0c }])
     const sink = new Recorder()
-    const c = new FetchCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
+    const c = new FetchCounter('rx', new AscendingKeys(), sink, DRAFT20_ADAPTER)
     let peak = 0
     for (const part of chunks(bytes, 8192)) {
       c.push(part, 1)
@@ -137,7 +136,7 @@ describe('FetchCounter', () => {
   it('does not report a truncated stream as a parse failure', () => {
     const bytes = fetchBytes(5n, [{ group: 1n, id: 1n, bytes: 60, flags: 0x0c }])
     const sink = new Recorder()
-    const c = new FetchCounter('rx', new TrackKeys(), sink, DRAFT20_ADAPTER)
+    const c = new FetchCounter('rx', new AscendingKeys(), sink, DRAFT20_ADAPTER)
     c.push(bytes.subarray(0, 5), 1)
     c.end()
     expect(sink.reasons).toEqual([])
@@ -163,7 +162,7 @@ describe('FetchCounter header fields', () => {
   function fields(bytes: Uint8Array, adapter: DraftAdapter = DRAFT20_ADAPTER) {
     const seen: [number, bigint | null][] = []
     const sink = new Recorder()
-    const c = new FetchCounter('rx', new TrackKeys(), sink, adapter)
+    const c = new FetchCounter('rx', new AscendingKeys(), sink, adapter)
     sink.onObject = (): void => {
       seen.push([c.priority, c.subgroupId])
     }

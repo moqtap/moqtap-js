@@ -76,7 +76,7 @@
  */
 
 export { BEACON_MAX_BYTES, type SendTailOptions, sendTail } from './beacon.js'
-export { CLOCK_TICK_MS, CLOCK_WINDOW_MS, ClockSync, DRIFT } from './clock-sync.js'
+export { B_BREAK_US, type ClockSample, ClockSync, DRIFT, RES_UNKNOWN_US } from './clock-sync.js'
 export { type Deadline, deadlineSignal, NO_DEADLINE, sleepUntil } from './deadline.js'
 export {
   DIRECTIVE_ELEVATE_MAX_LEVEL,
@@ -88,6 +88,7 @@ export {
   DIRECTIVE_HOLD_MAX_SPAN_MS,
   parseDirective,
 } from './directive.js'
+export { Emitter, encodeFacts } from './emitter.js'
 export { FrameBuffer, type FrameBufferOptions } from './frame-buffer.js'
 export {
   type Chunk,
@@ -118,4 +119,11 @@ export {
   type SealOptions,
 } from './queue.js'
 export { FlushSchedule, type FlushScheduleOptions, type TimerSource } from './schedule.js'
-export { RECV_HEADER, SEND_HEADER, Uploader, type UploaderOptions } from './uploader.js'
+export {
+  clockEndpoint,
+  POP_HEADER,
+  RECV_HEADER,
+  SEND_HEADER,
+  Uploader,
+  type UploaderOptions,
+} from './uploader.js'

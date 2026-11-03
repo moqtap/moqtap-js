@@ -96,6 +96,9 @@ export abstract class DataStreamCounter {
   /** Report the desync to the sink. Called at most once per stream. */
   protected abstract onDesync(): void
 
+  /** A chunk carried payload an earlier chunk's object still owed. */
+  protected payloadArrived(_at: Mono): void {}
+
   /** True once the stream was abandoned. Nothing further is parsed. */
   get failed(): boolean {
     return this.dead
@@ -108,6 +111,7 @@ export abstract class DataStreamCounter {
 
   push(chunk: Uint8Array, at: Mono): void {
     if (this.dead || this.closed || chunk.length === 0) return
+    if (this.skip > 0) this.payloadArrived(at)
 
     let off = 0
     while (off < chunk.length) {

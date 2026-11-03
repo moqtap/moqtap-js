@@ -23,6 +23,7 @@ import type {
   ObjectSample,
   TrackKeyResolver,
 } from '../types.js'
+import { readGaps } from './gaps.js'
 
 /**
  * Count one datagram.
@@ -60,24 +61,35 @@ export function countDatagram(
   }
 
   if (fields !== undefined) fields.priority = counts.priority
-  const sample: ObjectSample =
-    counts.status === undefined
-      ? {
-          key,
-          groupId: counts.groupId,
-          objectId: counts.objectId,
-          headerBytes: counts.headerBytes,
-          payloadBytes: counts.payloadBytes,
-          at: atMono,
-        }
-      : {
-          key,
-          groupId: counts.groupId,
-          objectId: counts.objectId,
-          headerBytes: counts.headerBytes,
-          payloadBytes: counts.payloadBytes,
-          status: counts.status,
-          at: atMono,
-        }
+  const sample: ObjectSample = {
+    key,
+    groupId: counts.groupId,
+    objectId: counts.objectId,
+    headerBytes: counts.headerBytes,
+    payloadBytes: counts.payloadBytes,
+    at: atMono,
+    path: 'datagram',
+    sub: null,
+    fo: false,
+    foKnown: false,
+    eog: counts.endOfGroup === true,
+  }
+  // A zero-length datagram with status 0x0 is a Normal object with no payload.
+  if (counts.status !== undefined && counts.status !== 0n) {
+    ;(sample as { status?: bigint }).status = counts.status
+  }
   sink.onObject(sample)
+  if (counts.props !== undefined && sink.onMark !== undefined) {
+    const g = readGaps(a.varint, counts.props, 0, counts.props.byteLength, a.draft)
+    if (g === null) return
+    const base = {
+      key,
+      groupId: counts.groupId,
+      objectId: counts.objectId,
+      path: 'datagram' as const,
+      at: atMono,
+    }
+    if (g.group !== undefined) sink.onMark({ ...base, what: { gap: 'group', n: g.group } })
+    if (g.object !== undefined) sink.onMark({ ...base, what: { gap: 'object', n: g.object } })
+  }
 }

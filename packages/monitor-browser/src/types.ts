@@ -16,7 +16,7 @@
  *  2. **Body self-description.** `sendBeacon` cannot set request headers, so it
  *     can send neither `Content-Encoding: gzip` nor an `Idempotency-Key`. An
  *     8-byte preamble carries the version and a gzip flag, and the first frame
- *     of every body is always a {@link BatchRecord} carrying the key. The
+ *     of every body is always a batch record (`envelope/contract.ts`) carrying the key. The
  *     `fetch()` path sets the header too, so ingest need not parse to dedupe.
  *  3. **Trigger config shape.** One object keyed by trigger kind, where absent
  *     means off — which also makes automated mode ship off by default, so a
@@ -510,6 +510,8 @@ export interface SubgroupHeaderInfo {
    * desynchronises on the first object.
    */
   readonly propertiesPresent: boolean
+  /** The header's Type Flags, for the bits whose meaning depends on the draft. */
+  readonly typeFlags: number
   /**
    * The Subgroup ID the header states: the field where it is on the wire, 0
    * where the type says zero. Not yet known under
@@ -561,6 +563,13 @@ export interface ObjectCursor {
   prevPriority: number
   /** The last object had a Subgroup ID: false for a DATAGRAM-mode fetch object. */
   hadSubgroup: boolean
+  /**
+   * A fetch stream's groups descend: Group ID Deltas count down (drafts 18
+   * on). `null` while the control plane has not said, when a delta cannot be
+   * read and the walk sets {@link orderMissing} instead.
+   */
+  descending: boolean | null
+  orderMissing: boolean
 }
 
 /** A cursor before the first object of a stream. */
@@ -572,6 +581,8 @@ export function newCursor(): ObjectCursor {
     prevSubgroupId: 0n,
     prevPriority: -1,
     hadSubgroup: false,
+    descending: false,
+    orderMissing: false,
   }
 }
 
@@ -594,6 +605,11 @@ export interface ObjectHeaderInfo {
    * objects does not exist, is unknown or timed out. Not an object.
    */
   readonly marker?: true
+  /** The marker's Serialization Flags: 0x8C, 0x10C or 0x20C. */
+  readonly markerFlags?: number
+  /** Where the object's property block lies in the walked buffer, when it has one. */
+  readonly propsStart?: number
+  readonly propsEnd?: number
 }
 
 export interface DatagramCounts {
@@ -605,6 +621,10 @@ export interface DatagramCounts {
   readonly status?: bigint
   /** Publisher Priority, or -1 where the datagram leaves it off. */
   readonly priority: number
+  /** The datagram's END_OF_GROUP flag (drafts 12 on). */
+  readonly endOfGroup?: boolean
+  /** The datagram's property block, a view valid only while it is counted. */
+  readonly props?: Uint8Array
 }
 
 /**
@@ -734,6 +754,10 @@ export interface TrackKeyResolver {
   fetchKey(dir: Direction, requestId: bigint): BucketKey | null
   applyControl(msg: AnyMessage, dir: Direction, streamId: number, at: Mono): void
   pendingFor(streamId: number): PendingRequest | undefined
+  /** The path a fetch stream answering `requestId` delivers on; `null` when the request was not observed. */
+  fetchPath(dir: Direction, requestId: bigint): DeliveryPath | null
+  /** Whether that stream's groups descend; `null` while nothing observed settles it. */
+  descending(dir: Direction, requestId: bigint): boolean | null
   /** Feeds the `conn-close` and `end` counters. */
   readonly bucketsRefused: number
 }
@@ -764,9 +788,43 @@ export interface ObjectSample {
   readonly objectId: bigint
   readonly headerBytes: number
   readonly payloadBytes: number
-  /** Present on a status object (`payloadLength === 0`), absent otherwise. */
+  /**
+   * A non-Normal Object Status. Absent on every Normal object, a zero-length
+   * one with an explicit 0x0 included: that is an arrival with no payload.
+   */
   readonly status?: bigint
   /** The stream the object arrived on; absent on a datagram. */
+  readonly streamId?: number
+  readonly at: Mono
+  /**
+   * How the object was delivered: `null` on a fetch stream whose request was
+   * not observed, where nothing tells a FETCH from a fill or a joining FETCH.
+   */
+  readonly path: DeliveryPath | null
+  /** The object's Subgroup ID; `null` for a datagram or a datagram-flagged fetch object. */
+  readonly sub: bigint | null
+  /** The subgroup header's FIRST_OBJECT bit (drafts 18 on). */
+  readonly fo: boolean
+  /** The stream is a subgroup stream on a draft that has FIRST_OBJECT. */
+  readonly foKnown: boolean
+  /** The subgroup header's END_OF_GROUP bit, or the datagram's END_OF_GROUP flag. */
+  readonly eog: boolean
+}
+
+/** How an object reached the viewer. Nothing on the wire tells a cache from a live path. */
+export type DeliveryPath = 'sub_stream' | 'datagram' | 'fetch' | 'fetch_joining' | 'fill'
+
+/** What a path said about objects other than by delivering them, as on the wire. */
+export interface MarkSample {
+  readonly key: BucketKey
+  /** A non-Normal Object Status, a FETCH End-of-Range marker, or a gap property. */
+  readonly what:
+    | { readonly status: bigint }
+    | { readonly range: number; readonly g2: bigint; readonly o2: bigint }
+    | { readonly gap: 'group' | 'object'; readonly n: bigint }
+  readonly groupId: bigint
+  readonly objectId: bigint
+  readonly path: DeliveryPath
   readonly streamId?: number
   readonly at: Mono
 }
@@ -796,6 +854,9 @@ export type ParseFailureReason =
   | 'malformed-datagram'
   | 'subgroup-desync'
   | 'fetch-desync'
+  // A fetch stream on draft 18 or later whose group order the observed
+  // control plane never settled: its Group ID Deltas cannot be read.
+  | 'fetch-order-unknown'
   | 'unknown-stream-type'
   | 'bucket-cap'
 
@@ -807,6 +868,10 @@ export type ParseFailureReason =
  */
 export interface CountingSink {
   onObject(s: ObjectSample): void
+  /** A status object, a FETCH range marker or a gap property, as received. */
+  onMark?(m: MarkSample): void
+  /** More of an object's payload arrived on `streamId`, in a chunk delivered at `at`. */
+  onPayload?(streamId: number, at: Mono): void
   onControlFrame(e: ControlFrameEvent): void
   /** `key` is `null` when the failure happened before a bucket could be resolved. */
   onParseFailure(key: BucketKey | null, reason: ParseFailureReason): void
@@ -831,8 +896,7 @@ export interface CountingSink {
  * no evidence for it. Widening this union means widening `BOUNDARIES` with it.
  *
  * A per-subgroup count is absent because nothing carries the identity it needs
- * — `ObjectSample` has no subgroup id, the same gap that stops `outOfOrder`
- * being counted within a group.
+ * — the rollup reads no subgroup id.
  */
 export type HistogramKind =
   | 'interArrivalMs'
@@ -1199,58 +1263,49 @@ export interface RecordBase {
    * by it, so it is on every record and never inferred from context.
    */
   readonly lvl: DetailLevel
+  /** The record's number in the emitter: its last field, set as it is buffered in the page. */
+  readonly rseq?: number
 }
 
 /**
- * **ALWAYS the first frame of every body**, on both the `fetch()` and
- * `sendBeacon` paths.
+ * **ALWAYS the first frame after a body's preamble**, on both the `fetch()`
+ * and `sendBeacon` paths: the body's key, its clock and what it references.
  *
- * It carries the idempotency key that `sendBeacon` cannot put in a header,
- * since that path sets no request headers at all. The URL carries it as well,
- * so ingest can dedupe without decompressing, but the frame is authoritative
- * and always present.
- *
- * `seq` numbers this instance's bodies from zero with no gaps: it is taken at
- * seal time and only when the body has frames, so a number is never held,
- * reserved or skipped. A gap the server sees is a body that has not arrived
- * yet, or one listed in `lost`.
+ * `seq` numbers the emitter's bodies from zero with no gaps, across the page's
+ * sessions: it is taken at seal time, so a number is never held, reserved or
+ * skipped. `idempotencyKey` is `sha256(sessionId + ':' + instanceId + ':' + seq)`.
  */
-export interface BatchRecord extends RecordBase {
+export interface BatchRecord {
   readonly t: 'batch'
   readonly v: 2
   readonly sessionId: string
   readonly instanceId: string
   readonly seq: number
-  /** `sha256(sessionId + ':' + instanceId + ':' + seq)`, lowercase hex. */
   readonly idempotencyKey: string
-  readonly wall: Wall
   /** This instance's last body. Its `seq` is the `finalSeq` on the `end` record it carries. */
-  readonly final?: true
+  readonly final: boolean
+  readonly lvl: DetailLevel
   /**
-   * Bodies of this instance that will never arrive: refused by ingest for good,
-   * or given up with no stored copy. Cumulative, so every body that does
-   * arrive carries every loss before it.
+   * The body's clock: `base_us` mono µs at its base, the clock `epoch`, its
+   * resolution, and the epoch's latest exchange sample when it has one.
    */
-  readonly lost?: readonly number[]
-  /** Records dropped on the device so far, cumulative: buffer caps and sampling. */
-  readonly dropped: number
-  /** The device's clock against ingest's when the body was sealed. Absent when no recent `fetch()` upload got ingest's timestamped reply. */
-  readonly clock?: BatchClock
-}
-
-/**
- * The device's wall clock against ingest's, from the upload exchanges of the
- * last ten minutes. A time on ingest's clock is `wall + o`.
- */
-export interface BatchClock {
-  /** Offset, ingest minus device, ms. */
-  readonly o: number
-  /** Round trip of the exchange `o` came from, ms. */
-  readonly r: number
-  /** Exchanges in the window. */
-  readonly n: number
-  /** Age of the exchange `o` came from when the body was sealed, s. */
-  readonly a: number
+  readonly clk: {
+    readonly base_us: number
+    readonly epoch: number
+    readonly res_us: number
+    readonly o_us?: number
+    readonly r_us?: number
+    readonly at_us?: number
+    readonly pop?: string
+  }
+  /** The emitter's last rseq, what it dropped before encoding, and each connection's totals. */
+  readonly tail: {
+    readonly last_rseq?: number
+    readonly pre_drop: { readonly records: number; readonly objects: number }
+    readonly conn: readonly (readonly [c: number, objects: number, bytes: number])[]
+  }
+  readonly conn: readonly { readonly c: number; readonly draft: number; readonly relay: string }[]
+  readonly trk: readonly { readonly id: number; readonly key: RollupTrackWire['key'] }[]
 }
 
 /** Sent once per instance, in its first body. */
@@ -1300,6 +1355,8 @@ export type Role = 'publisher' | 'subscriber'
 export interface ConnOpenRecord extends RecordBase {
   readonly t: 'conn-open'
   readonly conn: string
+  /** The connection's ordinal within the emitter: never reused, the runs' and marks' `c`. */
+  readonly c?: number
   readonly realm: Realm
   /** Scheme, host and port only: a path or query can carry a token. */
   readonly origin: string
@@ -1339,6 +1396,8 @@ export type ConnCloseCause = 'closed' | 'failed' | 'worker-gone' | 'session-end'
 export interface ConnCloseRecord extends RecordBase {
   readonly t: 'conn-close'
   readonly conn: string
+  /** The connection's ordinal within the emitter: never reused, the runs' and marks' `c`. */
+  readonly c?: number
   readonly cause: ConnCloseCause
   /** Who ended the transport, on a `closed` or `failed` cause. */
   readonly by?: CloseBy
@@ -1376,14 +1435,16 @@ export interface RollupTrackWire {
   /** Bounds the interval for ingest and lets it detect ambiguity. 16 bytes per bucket. */
   readonly firstSeen: Mono
   readonly lastSeen: Mono
-  readonly objects: number
-  readonly payloadBytes: number
+  /**
+   * Objects, payload bytes, groups, duplicates and status objects: a send
+   * track's only. A receive track's are in its runs and marks.
+   */
+  readonly objects?: number
+  readonly payloadBytes?: number
   readonly headerBytes: number
-  readonly groups: number
-  readonly groupGaps: number
-  readonly outOfOrder: number
-  readonly duplicates: number
-  readonly statusObjects: number
+  readonly groups?: number
+  readonly duplicates?: number
+  readonly statusObjects?: number
   readonly parseFailures: number
   /**
    * `pub.blockedMs`: total time this interval the page spent awaiting
@@ -1409,14 +1470,6 @@ export interface RollupTrackWire {
    */
   readonly ackedBytes?: number
   /**
-   * The groups `groupGaps` counted, as `[from, to]` ranges of decimal group
-   * ids, both included, in the order they were found: at most 16 per interval.
-   * Absent when the interval found none.
-   */
-  readonly gapRanges?: readonly (readonly [fromGroup: string, toGroup: string])[]
-  /** Ranges found past the 16 `gapRanges` holds. Absent when none were. */
-  readonly gapRangesDropped?: number
-  /**
    * Streams carrying this track that were reset this interval, by RESET_STREAM
    * error code as a decimal string: by the peer on a receive track, by the page
    * on a send track. At most 32 codes; the rest are counted under `other`.
@@ -1428,12 +1481,6 @@ export interface RollupTrackWire {
    * the bucket, or when two live requests share its alias.
    */
   readonly rq?: RequestLinkWire
-  /**
-   * First-object arrival of each group whose first object arrived this
-   * interval, on a receive track delivered by subscription or publish. Absent
-   * when there was none.
-   */
-  readonly ga?: GroupArrivalsWire
   readonly hist: Partial<Record<HistogramKind, HistogramWire>>
 }
 
@@ -1441,26 +1488,6 @@ export interface RollupTrackWire {
 export interface RequestLinkWire {
   readonly d: Direction
   readonly v: string
-}
-
-/**
- * See {@link RollupTrackWire.ga}. Groups are listed by ascending id, each
- * reported once per request.
- */
-export interface GroupArrivalsWire {
-  /** The first group id, decimal. */
-  readonly g: string
-  /** Present when the ids are not contiguous: one delta per group, the first 0. */
-  readonly dg?: readonly number[]
-  /**
-   * Arrival in ms: the first after the rollup's `startMono`, each later one
-   * after the one before it, both rounded to 1 ms before they are subtracted.
-   */
-  readonly at: readonly number[]
-  /** `[index, object id]` for each group whose first arrival was not object 0. */
-  readonly ob?: readonly (readonly [index: number, object: string])[]
-  /** Only groups with `id mod 2^k == 0` are listed. Absent means 0. */
-  readonly k?: number
 }
 
 /**
@@ -1478,6 +1505,8 @@ export interface RollupRecord extends RecordBase {
    * only the page's custom metrics, which belong to no connection.
    */
   readonly conn: string
+  /** The connection's ordinal within the emitter: never reused, the runs' and marks' `c`. */
+  readonly c?: number
   readonly seq: number
   readonly startMono: Mono
   readonly endMono: Mono
@@ -1511,8 +1540,14 @@ export interface CustomMetricWire {
 export interface CtrlRecord extends RecordBase {
   readonly t: 'ctrl'
   readonly conn: string
+  /** The connection's ordinal within the emitter: never reused, the runs' and marks' `c`. */
+  readonly c?: number
+  /** The frame's capture time on the emitter's monotonic clock, µs: the runs' clock. */
+  readonly at_us?: number
   readonly dir: Direction
   readonly streamId: number
+  /** The control stream, numbered as the runs' `sid`. */
+  readonly sid?: number
   /** Byte length of the raw frame that follows. */
   readonly n: number
   readonly kind?: ExchangeKind
@@ -1536,6 +1571,8 @@ export interface CtrlRecord extends RecordBase {
 export interface HdrRecord extends RecordBase {
   readonly t: 'hdr'
   readonly conn: string
+  /** The connection's ordinal within the emitter: never reused, the runs' and marks' `c`. */
+  readonly c?: number
   readonly key: RollupTrackWire['key']
   /** The stream the object arrived on, as `ctrl.streamId` numbers them; absent on a datagram. */
   readonly streamId?: number
@@ -1574,6 +1611,8 @@ export interface FlightRecord extends RecordBase {
   readonly t: 'flight'
   /** The connection whose track fired the trigger. */
   readonly conn: string
+  /** The connection's ordinal within the emitter: never reused, the runs' and marks' `c`. */
+  readonly c?: number
   readonly trigger: TriggerKind
   readonly windowStart: Mono
   readonly windowEnd: Mono
@@ -1581,8 +1620,9 @@ export interface FlightRecord extends RecordBase {
   readonly cols: {
     readonly key: readonly string[]
     readonly at: readonly number[]
-    readonly group: readonly number[]
-    readonly object: readonly number[]
+    /** Decimal: ids are u64. */
+    readonly group: readonly string[]
+    readonly object: readonly string[]
     readonly bytes: readonly number[]
     readonly deliveryMs: readonly number[]
   }

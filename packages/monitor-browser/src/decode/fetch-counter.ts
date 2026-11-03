@@ -30,9 +30,11 @@
 import {
   type BucketKey,
   type CountingSink,
+  type DeliveryPath,
   type Direction,
   type DraftAdapter,
   type FetchHeaderInfo,
+  type MarkSample,
   type Mono,
   NEED,
   type Need,
@@ -44,6 +46,7 @@ import {
   type TrackKeyResolver,
   type VarintReader,
 } from '../types.js'
+import { readGaps } from './gaps.js'
 import {
   DataStreamCounter,
   DEFAULT_HEADER_SLACK_BYTES,
@@ -113,7 +116,9 @@ export function readFetchObject(
     const g = v.read(b, p)
     if (g === NEED) return NEED
     p = g.next
-    groupId = prev.first ? g.value : prev.prevGroupId + g.value + 1n
+    const mg = groupFrom(prev, g.value)
+    if (mg === NEED) return NEED
+    groupId = mg
     const o = v.read(b, p)
     if (o === NEED) return NEED
     p = o.next
@@ -130,6 +135,7 @@ export function readFetchObject(
       headerBytes: p - i,
       next: p + payloadLength,
       marker: true,
+      markerFlags: flags,
     }
   }
 
@@ -143,7 +149,9 @@ export function readFetchObject(
     const g = v.read(b, p)
     if (g === NEED) return NEED
     p = g.next
-    groupId = prev.first ? g.value : prev.prevGroupId + g.value + 1n
+    const og = groupFrom(prev, g.value)
+    if (og === NEED) return NEED
+    groupId = og
   } else if (prev.first) {
     // Section 11.4.4: the first object on a fetch stream must carry both ids.
     return DESYNC
@@ -188,6 +196,7 @@ export function readFetchObject(
     p += 1
   }
 
+  let propsStart = -1
   if (propsPresent) {
     const propsLen = v.read(b, p)
     if (propsLen === NEED) return NEED
@@ -195,8 +204,10 @@ export function readFetchObject(
     const n = Number(propsLen.value)
     if (!Number.isSafeInteger(n) || n < 0 || n > slack) return DESYNC
     if (p + n > b.length) return NEED
+    if (n > 0) propsStart = p
     p += n
   }
+  const propsEnd = propsStart >= 0 ? p : -1
 
   const len = v.read(b, p)
   if (len === NEED) return NEED
@@ -207,25 +218,58 @@ export function readFetchObject(
   if (!datagramMode) prev.prevSubgroupId = subgroupId
   prev.prevPriority = priority
   prev.hadSubgroup = !datagramMode
-  return { objectId, groupId, payloadLength, headerBytes: p - i, next: p + payloadLength }
+  const info: ObjectHeaderInfo = {
+    objectId,
+    groupId,
+    payloadLength,
+    headerBytes: p - i,
+    next: p + payloadLength,
+  }
+  return propsStart < 0 ? info : { ...info, propsStart, propsEnd }
 }
 
+/** A Group ID Delta against the prior object, in the stream's group order. */
+function groupFrom(prev: ObjectCursor, delta: bigint): bigint | Need {
+  if (prev.first) return delta
+  if (prev.descending === null) {
+    prev.orderMissing = true
+    return NEED
+  }
+  return prev.descending ? prev.prevGroupId - delta - 1n : prev.prevGroupId + delta + 1n
+}
+
+/** Group ID Deltas follow the group order from this draft. */
+export const FETCH_ORDER_FROM = 18
+
+/** Bytes a fetch stream may hold while its group order is not yet known. */
+export const FETCH_HOLD_BYTES = 64 * 1024
+
 /**
- * O(1) memory per stream. Payload bytes are skipped, never viewed.
+ * O(1) memory per stream, but for one case: from draft-18 a fetch stream's
+ * Group ID Deltas count in the stream's group order, which comes from the
+ * control plane. Until the request it names settles the order, the stream's
+ * chunks are held, up to {@link FETCH_HOLD_BYTES}, and walked once it does.
+ * A stream that ends, or outgrows the hold, first is walked as far as it
+ * reads without the order, and abandoned at the first delta that needs it.
  *
- * Its {@link ObjectHeaderFields} are the last object's, which is the one being
- * reported while the sink's `onObject` runs.
+ * Its {@link ObjectHeaderFields} are the last object's, which is what a fetch
+ * object's "prior" fields refer to.
  */
 export class FetchCounter extends DataStreamCounter implements ObjectHeaderFields {
   private header: FetchHeaderInfo | null = null
   private key: BucketKey | null = null
   private capped = false
   private pendingHeaderBytes = 0
+  private path: DeliveryPath | null = null
   private readonly streamId: number
   private readonly cursor: ObjectCursor = newCursor()
   private readonly v: VarintReader
+  private readonly draft: DraftAdapter['draft']
   /** Set for a draft before {@link FETCH_HAND_WALK_FROM}: its adapter walks the stream. */
   private readonly older: DraftAdapter | null
+  /** Chunks held while the group order is unknown; `null` once it is known or not needed. */
+  private held: { chunk: Uint8Array; at: Mono }[] | null
+  private heldBytes = 0
 
   constructor(
     private readonly dir: Direction,
@@ -237,11 +281,18 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
     super(opts?.slackBytes ?? DEFAULT_HEADER_SLACK_BYTES)
     this.streamId = opts?.streamId ?? -1
     this.v = a.varint
+    this.draft = a.draft
     this.older = a.draft < FETCH_HAND_WALK_FROM ? a : null
+    this.held = a.draft >= FETCH_ORDER_FROM ? [] : null
   }
 
   get bucketKey(): BucketKey | null {
     return this.key
+  }
+
+  /** The stream is waiting for its group order. */
+  get holding(): boolean {
+    return this.held !== null
   }
 
   get priority(): number {
@@ -250,6 +301,65 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
 
   get subgroupId(): bigint | null {
     return this.cursor.hadSubgroup ? this.cursor.prevSubgroupId : null
+  }
+
+  override push(chunk: Uint8Array, at: Mono): void {
+    const held = this.held
+    if (held === null) {
+      super.push(chunk, at)
+      return
+    }
+    if (chunk.length === 0) return
+    held.push({ chunk: chunk.slice(), at })
+    this.heldBytes += chunk.length
+    this.retry()
+    if (this.held !== null && this.heldBytes > FETCH_HOLD_BYTES) this.release(null)
+  }
+
+  /** Walk the held chunks if the control plane has since settled the group order. */
+  retry(): void {
+    const held = this.held
+    if (held === null || held.length === 0) return
+    const id = this.requestId(held)
+    if (id === undefined) return
+    const descending = this.keys.descending(this.dir, id)
+    if (descending !== null) this.release(descending)
+  }
+
+  override end(): void {
+    if (this.held !== null) {
+      this.retry()
+      if (this.held !== null) this.release(null)
+    }
+    super.end()
+  }
+
+  /** Walk what is held in the order given, or as far as it reads without one. */
+  private release(descending: boolean | null): void {
+    const held = this.held ?? []
+    this.cursor.descending = descending
+    this.held = null
+    this.heldBytes = 0
+    for (const h of held) super.push(h.chunk, h.at)
+  }
+
+  /** The Request ID the held bytes open with, once their header is whole. */
+  private requestId(held: readonly { chunk: Uint8Array }[]): bigint | undefined {
+    let bytes = held[0]!.chunk
+    if (held.length > 1) {
+      const n = Math.min(this.heldBytes, this.slack)
+      bytes = new Uint8Array(n)
+      let at = 0
+      for (const h of held) {
+        if (at >= n) break
+        const part = h.chunk.subarray(0, n - at)
+        bytes.set(part, at)
+        at += part.length
+      }
+    }
+    const h =
+      this.older === null ? readFetchHeader(this.v, bytes, 0) : this.older.readFetchHeader(bytes, 0)
+    return h === NEED || h === DESYNC ? undefined : h.requestId
   }
 
   protected override parse(b: Uint8Array, at: Mono): ParseRun {
@@ -263,6 +373,7 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
         this.header = h
         this.pendingHeaderBytes = h.headerBytes
         this.key = this.keys.fetchKey(this.dir, h.requestId)
+        this.path = this.keys.fetchPath(this.dir, h.requestId)
         if (this.key === null && !this.capped) {
           this.capped = true
           this.sink.onParseFailure(null, 'bucket-cap')
@@ -271,19 +382,28 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
         continue
       }
 
+      const priorFirst = this.cursor.first
+      const priorGroup = this.cursor.prevGroupId
+      const priorObject = this.cursor.prevObjectId
       const o =
         this.older === null
           ? readFetchObject(this.v, b, i, this.cursor, this.slack)
           : this.older.readFetchObject(b, i, this.cursor)
-      if (o === NEED) break
+      if (o === NEED) {
+        if (this.cursor.orderMissing) return { consumed: i, skip: 0, desync: true }
+        break
+      }
       if (o === DESYNC) return { consumed: i, skip: 0, desync: true }
 
       if (o.marker === true) {
         // A marker is not an object. Its bytes ride along on the next real one
         // so the track's byte total still balances against the wire.
         this.pendingHeaderBytes += o.headerBytes
+        const from = priorFirst ? o : { groupId: priorGroup, objectId: priorObject }
+        this.mark(o, at, { range: o.markerFlags ?? 0, g2: o.groupId, o2: o.objectId }, from)
       } else {
         this.emit(o, at)
+        if (o.propsStart !== undefined) this.gaps(b, o, at)
       }
       // Section 11.4.4.2: prior Group ID and prior Object ID come FROM a marker,
       // so the cursor advances for markers too.
@@ -300,7 +420,12 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
   }
 
   protected override onDesync(): void {
-    this.sink.onParseFailure(this.key, 'fetch-desync')
+    const reason = this.cursor.orderMissing ? 'fetch-order-unknown' : 'fetch-desync'
+    this.sink.onParseFailure(this.key, reason)
+  }
+
+  protected override payloadArrived(at: Mono): void {
+    if (this.key !== null) this.sink.onPayload?.(this.streamId, at)
   }
 
   private emit(o: ObjectHeaderInfo, at: Mono): void {
@@ -308,26 +433,47 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
     this.pendingHeaderBytes = 0
     const key = this.key
     if (key === null) return
-    // Only drafts 07-15 put an Object Status on a fetch object.
-    const sample: ObjectSample =
-      o.status === undefined
-        ? {
-            key,
-            groupId: o.groupId,
-            objectId: o.objectId,
-            headerBytes,
-            payloadBytes: o.payloadLength,
-            at,
-          }
-        : {
-            key,
-            groupId: o.groupId,
-            objectId: o.objectId,
-            headerBytes,
-            payloadBytes: o.payloadLength,
-            status: o.status,
-            at,
-          }
-    this.sink.onObject(withStream(sample, this.streamId))
+    const s: ObjectSample = {
+      key,
+      groupId: o.groupId,
+      objectId: o.objectId,
+      headerBytes,
+      payloadBytes: o.payloadLength,
+      at,
+      path: this.path,
+      sub: this.cursor.hadSubgroup ? this.cursor.prevSubgroupId : null,
+      fo: false,
+      foKnown: false,
+      eog: false,
+    }
+    // Only drafts 07-15 put an Object Status on a fetch object, and 0x0 is Normal.
+    if (o.status !== undefined && o.status !== 0n) (s as { status?: bigint }).status = o.status
+    this.sink.onObject(withStream(s, this.streamId))
+  }
+
+  private mark(
+    o: ObjectHeaderInfo,
+    at: Mono,
+    what: MarkSample['what'],
+    from: { readonly groupId: bigint; readonly objectId: bigint } = o,
+  ): void {
+    if (this.key === null || this.path === null || this.sink.onMark === undefined) return
+    this.sink.onMark({
+      key: this.key,
+      what,
+      groupId: from.groupId,
+      objectId: from.objectId,
+      path: this.path,
+      ...(this.streamId >= 0 ? { streamId: this.streamId } : {}),
+      at,
+    })
+  }
+
+  private gaps(b: Uint8Array, o: ObjectHeaderInfo, at: Mono): void {
+    if (this.sink.onMark === undefined) return
+    const g = readGaps(this.v, b, o.propsStart as number, o.propsEnd as number, this.draft)
+    if (g === null) return
+    if (g.group !== undefined) this.mark(o, at, { gap: 'group', n: g.group })
+    if (g.object !== undefined) this.mark(o, at, { gap: 'object', n: g.object })
   }
 }

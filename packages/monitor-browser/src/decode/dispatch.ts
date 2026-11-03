@@ -112,6 +112,8 @@ export interface DispatcherOptions {
 export class StreamDispatcher {
   /** Keyed by `streamId * 2 + directionBit`: see the header's point 1. */
   private readonly streams = new Map<number, Entry>()
+  /** Fetch streams waiting for the control plane to settle their group order. */
+  private readonly holding = new Set<FetchCounter>()
   private readonly observeLatency: ((kind: ExchangeKind, ms: number) => void) | undefined
   private readonly slackBytes: number | undefined
   private readonly maskAuthParams: boolean
@@ -193,6 +195,7 @@ export class StreamDispatcher {
       const e = this.streams.get(k)
       if (e === undefined) continue
       e.counter?.end()
+      if (e.counter instanceof FetchCounter) this.holding.delete(e.counter)
       // A fetch bucket's cap slot is freed here and nowhere else. Request ids
       // are never reused within a session, so without this a long-running
       // session's finished fetches would eventually crowd out its live tracks.
@@ -239,11 +242,11 @@ export class StreamDispatcher {
           kind,
           counter: new SubgroupCounter(c.direction, this.keys, this.sink, this.a, opts),
         }
-      case 'fetch':
-        return {
-          kind,
-          counter: new FetchCounter(c.direction, this.keys, this.sink, this.a, opts),
-        }
+      case 'fetch': {
+        const counter = new FetchCounter(c.direction, this.keys, this.sink, this.a, opts)
+        if (counter.holding) this.holding.add(counter)
+        return { kind, counter }
+      }
       default:
         // A padding stream (`0x132B3E28`) lands here, as does any type
         // a later draft adds and any subgroup header that used a non-minimal
@@ -263,6 +266,7 @@ export class StreamDispatcher {
     const outer = this.sink
     const keys = this.keys
     const observe = this.observeLatency
+    const holding = this.holding
     return {
       onObject(s: ObjectSample): void {
         outer.onObject(s)
@@ -277,6 +281,10 @@ export class StreamDispatcher {
           if (requestIdOf(msg) === undefined) {
             const lat = keys.noteResponse(e.streamId, e.dir, exchangeKindOf(msg), e.at)
             if (lat !== undefined) observe?.(lat.kind, lat.latencyMs)
+          }
+          for (const f of holding) {
+            f.retry()
+            if (!f.holding) holding.delete(f)
           }
         }
         outer.onControlFrame(e)

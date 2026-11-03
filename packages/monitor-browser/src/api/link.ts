@@ -11,6 +11,7 @@
  * uploads its records in the page's own stream.
  */
 
+import type { Taken } from '../rollup/runs.js'
 import type { BucketKey, DetailLevel, Mono, RollupRecord, TriggerKind } from '../types.js'
 import type { ConnectionSnapshot, RealmConfig } from './realm.js'
 
@@ -22,7 +23,7 @@ export const HANDSHAKE = '__moqtap_collector__'
  * from another release stays unlinked and the page reports the link as
  * `timeout` rather than mixing two record formats in one session.
  */
-export const LINK_VERSION = 5
+export const LINK_VERSION = 6
 
 /**
  * How often a probe hands its records to the page, in ms. Fixed rather than
@@ -30,6 +31,12 @@ export const LINK_VERSION = 5
  * deployment changes the right answer.
  */
 export const FORWARD_INTERVAL_MS = 250
+
+/**
+ * Connection ordinals a realm may hand out: the page's from 0, the probe of
+ * the page's `N`th link from `N × CONN_SPACE`. One emitter never reuses one.
+ */
+export const CONN_SPACE = 1 << 20
 
 /** How often an idle probe says it is still there. */
 export const HEARTBEAT_MS = 1_000
@@ -56,6 +63,10 @@ export interface LinkedMessage {
    * and says `open` when this worker constructs a `WebTransport`.
    */
   readonly base?: Mono | undefined
+  /** Subtract from the worker's `performance.now()` to read the page's. */
+  readonly mono: Mono
+  /** The first connection ordinal this probe hands out: its own range in the page's emitter. */
+  readonly connBase: number
   readonly level: DetailLevel
   /** Present while the page refuses every raise; see {@link PageMessage}'s `level`. */
   readonly capped?: true
@@ -72,22 +83,7 @@ export interface FramesPart {
   readonly n: number
 }
 
-/**
- * Whole frames the probe compressed, transferred: the deflate data of one gzip
- * member, with its trailer's CRC-32 and length. The page seals them as the end
- * of a body of their own and never inflates them.
- */
-export interface DeflatePart {
-  readonly deflate: ArrayBuffer
-  readonly byteLength: number
-  readonly crc: number
-  /** Uncompressed length. */
-  readonly size: number
-  /** How many frames. */
-  readonly n: number
-}
-
-export type ForwardPart = FramesPart | DeflatePart
+export type ForwardPart = FramesPart
 
 /** Probe → page, every forward interval with records or every heartbeat without. */
 export interface ForwardMessage {
@@ -108,7 +104,15 @@ export interface ForwardMessage {
    * it already wrote of one for a worker it counted gone. Absent when none.
    */
   readonly rollups?: readonly RollupRecord[]
+  /**
+   * The runs and marks since the last forward, times on the page's clock.
+   * A run still open is continued by the next forward's, and the page joins
+   * the two. Absent when none.
+   */
+  readonly runs?: Taken
   readonly conns: readonly ConnectionSnapshot[]
+  /** The probe's clock broke after what this forward holds: the page seals it under the old epoch. */
+  readonly brk?: true
 }
 
 /** Probe → page: a verb the probe forwards rather than performs. */

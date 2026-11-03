@@ -27,19 +27,12 @@
  * which is what a browser does.
  */
 
-import { crc32, deflateRawSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { envelope, FORWARD_INTERVAL_MS, type LinkedMessage, linkMessage } from '../../api/link.js'
-import { ProbeRuntime, type ProbeTuning } from '../../api/probe.js'
+import { ProbeRuntime } from '../../api/probe.js'
 import type { LinkEvent, MessageTarget } from '../../api/session.js'
-import {
-  BODY_PREAMBLE_BYTES,
-  type DeflateSegment,
-  readFrames,
-  readPreamble,
-  sha256Hex,
-} from '../../envelope/index.js'
+import { readFrames, readPreamble, sha256Hex } from '../../envelope/index.js'
 import {
   type ChunkBackend,
   ChunkStore,
@@ -50,6 +43,7 @@ import { installWebTransportHook } from '../../transport/index.js'
 import type { BatchRecord, ClockSource, EndRecord, EnvelopeRecord } from '../../types.js'
 import { subscribeBytes } from '../decode/vectors.js'
 import { attempt, init, workerBuild } from '../support/init.js'
+import { afterPreamble, clockProbe } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -167,7 +161,7 @@ interface Arrival {
 async function decode(body: Uint8Array): Promise<{ records: EnvelopeRecord[]; raw: string }> {
   const pre = readPreamble(body)
   expect(pre).not.toBeNull()
-  let frames = body.subarray(BODY_PREAMBLE_BYTES)
+  let frames = afterPreamble(body)
   if ((pre as { gzipped: boolean }).gzipped) {
     const ds = new DecompressionStream('gzip')
     const out = new Response(new Blob([frames as unknown as BlobPart]).stream().pipeThrough(ds))
@@ -228,19 +222,6 @@ async function deliver(
   for (;;) if ((await reader.read()).done) break
 }
 
-/**
- * A compressor that finishes within the turn it was asked in. Virtual time
- * does not wait for the platform's, and a compression the clock outran would
- * read as a forward held back for seconds.
- */
-async function deflateNow(bytes: Uint8Array): Promise<DeflateSegment> {
-  return {
-    deflate: new Uint8Array(deflateRawSync(bytes)),
-    crc: crc32(bytes),
-    size: bytes.byteLength,
-  }
-}
-
 /* ── one run ────────────────────────────────────────────────────────────── */
 
 interface RunResult {
@@ -254,7 +235,7 @@ interface RunResult {
   readonly running: (t: number) => number
 }
 
-async function run(seed: number, steps: number, tuning: ProbeTuning = {}): Promise<RunResult> {
+async function run(seed: number, steps: number): Promise<RunResult> {
   const rand = prng(seed)
   const pick = (n: number): number => Math.floor(rand() * n)
   const vt = new VirtualTime()
@@ -278,6 +259,8 @@ async function run(seed: number, steps: number, tuning: ProbeTuning = {}): Promi
     )
   }
   const fetchImpl = (async (url: string, req: RequestInit) => {
+    const clock = clockProbe(url)
+    if (clock !== undefined) return clock
     if (offline || gone) throw new TypeError('network down')
     const body = req.body
     receive(
@@ -381,7 +364,6 @@ async function run(seed: number, steps: number, tuning: ProbeTuning = {}): Promi
                 vt.clear(h)
               },
             },
-            tuning,
           )
           probe.runtime.start()
         },
@@ -631,31 +613,34 @@ function check(seed: number, r: RunResult): void {
   }
   const bodies = [...byKey.values()]
 
-  // Contiguous seqs per instance, ending in the body the end record names.
+  // Contiguous seqs per instance, across its sessions; each session's last
+  // body is final, and its end record names it.
   const instances = new Map<string, BatchRecord[]>()
+  const sessions = new Map<string, { batches: BatchRecord[]; ends: EndRecord[] }>()
   for (const b of bodies) {
     const batch = b.records[0] as BatchRecord
     instances.set(batch.instanceId, [...(instances.get(batch.instanceId) ?? []), batch])
+    const key = `${batch.sessionId}/${batch.instanceId}`
+    const s = sessions.get(key) ?? { batches: [], ends: [] }
+    s.batches.push(batch)
+    s.ends.push(...b.records.filter((x): x is EndRecord => x.t === 'end'))
+    sessions.set(key, s)
   }
-  expect(instances.size, why).toBeGreaterThanOrEqual(2)
+  expect(instances.size, why).toBeGreaterThanOrEqual(1)
   for (const [instance, batches] of instances) {
     const seqs = batches.map((b) => b.seq).sort((a, b) => a - b)
     expect(seqs, `${why}: instance ${instance}`).toEqual(seqs.map((_, i) => i))
-    const last = seqs.length - 1
+    for (const b of batches) expect(b.tail.pre_drop.records, why).toBe(0)
+  }
+  for (const [key, { batches, ends }] of sessions) {
+    const last = Math.max(...batches.map((b) => b.seq))
     expect(
-      batches.filter((b) => b.final === true).map((b) => b.seq),
-      `${why}: instance ${instance}`,
+      batches.filter((b) => b.final).map((b) => b.seq),
+      `${why}: session ${key}`,
     ).toEqual([last])
-    for (const b of batches) {
-      expect(b.lost ?? [], why).toEqual([])
-      expect(b.dropped, why).toBe(0)
-    }
-    const ends = bodies
-      .filter((b) => (b.records[0] as BatchRecord).instanceId === instance)
-      .flatMap((b) => b.records.filter((x): x is EndRecord => x.t === 'end'))
     expect(
       ends.map((e) => e.finalSeq),
-      `${why}: instance ${instance}`,
+      `${why}: session ${key}`,
     ).toEqual([last])
   }
 
@@ -713,15 +698,6 @@ describe('the page and its probes, interleaved at random', () => {
 
   it.each(SEEDS)('keeps every property for seed %i', async (seed) => {
     const r = await run(seed, 40)
-    check(seed, r)
-  }, 30_000)
-})
-
-describe('the same, with every forward compressed in the probe', () => {
-  const SEEDS = Array.from({ length: 24 }, (_, i) => 0xc0de + i * 7919)
-
-  it.each(SEEDS)('keeps every property for seed %i', async (seed) => {
-    const r = await run(seed, 40, { compressMinBytes: 1, deflate: deflateNow })
     check(seed, r)
   }, 30_000)
 })

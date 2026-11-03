@@ -25,15 +25,17 @@ const DECODER = new TextDecoder()
 
 const batch: BatchRecord = {
   t: 'batch',
-  ts: 0,
-  lvl: 'baseline',
   v: 2,
   sessionId: 'sess-1',
   instanceId: 'inst-1',
   seq: 3,
   idempotencyKey: '0'.repeat(64),
-  wall: 1_700_000_000_000,
-  dropped: 0,
+  final: false,
+  lvl: 'baseline',
+  clk: { base_us: 0, epoch: 0, res_us: 1 },
+  tail: { pre_drop: { records: 0, objects: 0 }, conn: [] },
+  conn: [],
+  trk: [],
 }
 
 const ctrl: CtrlRecord = {

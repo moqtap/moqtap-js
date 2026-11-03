@@ -15,7 +15,6 @@ import {
   crc32 as nodeCrc32,
 } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { BODY_PREAMBLE_BYTES, readPreamble } from '../../envelope/body.js'
 import {
   crc32,
   crc32Combine,
@@ -27,8 +26,6 @@ import {
   splitFrames,
 } from '../../envelope/index.js'
 import { openSegment } from '../../envelope/open-segment.js'
-import { FlushQueue } from '../../flush/index.js'
-import { compress } from '../../flush/queue.js'
 
 /** A deterministic byte soup: compressible in places, not in others. */
 function bytes(n: number, seed: number): Uint8Array {
@@ -248,40 +245,5 @@ describe('a recycled frame buffer', () => {
       (f) => (JSON.parse(new TextDecoder().decode(f.payload)) as { name: string }).name,
     )
     expect(names).toEqual(['b', 'c'])
-  })
-})
-
-describe('sealing a segment', () => {
-  it('numbers it with the other seals, batch frame first, already compressed', async () => {
-    const q = new FlushQueue({ sessionId: 's', instanceId: 'i' })
-    q.json({ t: 'note', ts: 0, lvl: 'baseline', name: 'first', data: null })
-    const plain = q.seal()
-    q.json({ t: 'note', ts: 1, lvl: 'baseline', name: 'page-own', data: null })
-    const w = new FrameWriter()
-    for (let i = 0; i < 500; i += 1)
-      w.json({ t: 'note', ts: i, lvl: 'baseline', name: 'w', data: i })
-    const chunk = q.sealSegment(await deflateSegment(w.take()), { dropped: 3 })
-    expect(plain?.seq).toBe(0)
-    expect(chunk.seq).toBe(1)
-    expect(q.nextSeq).toBe(2)
-    expect(q.pendingBytes).toBe(0)
-
-    expect(readPreamble(chunk.bytes)?.gzipped).toBe(true)
-    const before = chunk.bytes
-    await compress(chunk)
-    expect(chunk.bytes).toBe(before)
-
-    const frames = await platformGunzip(chunk.bytes.subarray(BODY_PREAMBLE_BYTES))
-    const records = [...readFrames(frames)].map(
-      (f) => JSON.parse(new TextDecoder().decode(f.payload)) as { t: string; name?: string },
-    )
-    expect(records[0]).toMatchObject({
-      t: 'batch',
-      seq: 1,
-      idempotencyKey: chunk.idempotencyKey,
-      dropped: 3,
-    })
-    expect(records[1]).toMatchObject({ t: 'note', name: 'page-own' })
-    expect(records.slice(2)).toHaveLength(500)
   })
 })

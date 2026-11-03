@@ -67,7 +67,20 @@ const TX: BucketKey = { dir: 'tx', kind: 'alias', id: 7n, epoch: 0 }
 const RX: BucketKey = { dir: 'rx', kind: 'alias', id: 9n, epoch: 0 }
 
 function obj(at: Mono, o: Partial<ObjectSample> = {}): ObjectSample {
-  return { key: TX, groupId: 0n, objectId: 0n, headerBytes: 4, payloadBytes: 100, at, ...o }
+  return {
+    key: TX,
+    groupId: 0n,
+    objectId: 0n,
+    headerBytes: 4,
+    payloadBytes: 100,
+    at,
+    path: 'sub_stream',
+    sub: 0n,
+    fo: false,
+    foKnown: false,
+    eog: false,
+    ...o,
+  }
 }
 
 function rowFor(r: RollupRecord, k: BucketKey): RollupTrackWire {
@@ -133,7 +146,6 @@ describe('grp.openMs — how long a group stayed open', () => {
     engine.tick(1_000)
 
     const t = rowFor(sink.lastRollup(), TX)
-    expect(t.outOfOrder).toBe(1)
     // Group 0 = 50 ms, group 1 = 0 ms. The 900 ms straggler contributes to
     // neither, and in particular group 0 is not 800 ms.
     expect(t.hist.groupOpenMs?.n).toBe(2)

@@ -4,8 +4,9 @@
  * Every assertion below is a durability property, not a shape check:
  *
  *  - **A seal is synchronous and numbers only what it seals.** The sequence is
- *    the instance's own, in memory, taken only when there are frames, so the
- *    bodies of one instance are `0, 1, 2, …` with no gap a seal could leave.
+ *    the emitter's own, in memory, taken only when there is something to
+ *    seal, so the bodies of one emitter are `0, 1, 2, …` with no gap a seal
+ *    could leave, and every record's `rseq` is in exactly one body's `em`.
  *  - **The key is derived at the seal.** `sha256(sessionId:instanceId:seq)`,
  *    on the batch frame of the body it names, so a retry from any page load
  *    sends the same key.
@@ -33,7 +34,8 @@ import {
 } from '../../envelope/index.js'
 import { openSegment } from '../../envelope/open-segment.js'
 import type { Chunk as FlushChunk, FlushScheduleOptions, TimerSource } from '../../flush/index.js'
-import { compress, FlushQueue, FlushSchedule } from '../../flush/index.js'
+import { compress, Emitter, FlushQueue, FlushSchedule } from '../../flush/index.js'
+import type { Taken } from '../../rollup/runs.js'
 import type {
   BatchRecord,
   ClockSource,
@@ -42,6 +44,8 @@ import type {
   NoteRecord,
   SealReason,
 } from '../../types.js'
+import { factsOf } from '../support/runs.js'
+import { afterPreamble, preambleOf } from '../support/uploads.js'
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -73,8 +77,10 @@ const ctrl = (n: number): CtrlRecord => ({
   decoded: true,
 })
 
-const queue = (over: Partial<ConstructorParameters<typeof FlushQueue>[0]> = {}): FlushQueue =>
-  new FlushQueue({ sessionId: 's1', instanceId: 'i1', ...over })
+const queue = (
+  over: Partial<ConstructorParameters<typeof FlushQueue>[0]> & { instanceId?: string } = {},
+): FlushQueue =>
+  new FlushQueue({ sessionId: 's1', emitter: new Emitter(over.instanceId ?? 'i1', 0), ...over })
 
 const gunzip = async (input: Uint8Array): Promise<Uint8Array> => {
   const ds = new DecompressionStream('gzip')
@@ -107,6 +113,7 @@ const gunzip = async (input: Uint8Array): Promise<Uint8Array> => {
 
 interface DecodedBody {
   readonly preamble: BodyPreamble
+  readonly head: ReturnType<typeof preambleOf>
   readonly frames: readonly { raw: boolean; payload: Uint8Array }[]
   readonly records: readonly EnvelopeRecord[]
 }
@@ -115,14 +122,14 @@ interface DecodedBody {
 const decodeBody = async (bytes: Uint8Array): Promise<DecodedBody> => {
   const preamble = readPreamble(bytes)
   if (preamble === null) throw new Error('body has no preamble')
-  const raw = bytes.subarray(BODY_PREAMBLE_BYTES)
+  const raw = afterPreamble(bytes)
   const frameBytes = preamble.gzipped ? await gunzip(raw) : raw
   const frames = [...readFrames(frameBytes)]
   const decoder = new TextDecoder()
   const records = frames
     .filter((f) => !f.raw)
     .map((f) => JSON.parse(decoder.decode(f.payload)) as EnvelopeRecord)
-  return { preamble, frames, records }
+  return { preamble, head: preambleOf(bytes), frames, records }
 }
 
 const nameOf = (r: EnvelopeRecord): string | undefined => (r.t === 'note' ? r.name : undefined)
@@ -155,36 +162,58 @@ describe('FlushQueue.seal', () => {
 
   it('carries a v2 batch frame naming the session, the instance, the number and the key', async () => {
     const clock = clockAt(2_500)
-    const q = queue({ clock, level: () => 'headers' })
+    const q = queue({ clock, level: () => 'headers', droppedRecords: () => 7 })
     q.json(note('a'))
-    const chunk = q.seal({ dropped: 7 }) as FlushChunk
+    const chunk = q.seal() as FlushChunk
     const batch = await batchOf(chunk)
     expect(batch).toEqual({
       t: 'batch',
-      ts: 2_500,
-      lvl: 'headers',
       v: 2,
       sessionId: 's1',
       instanceId: 'i1',
       seq: 0,
       idempotencyKey: idempotencyKey('s1', 'i1', 0),
-      wall: 1_700_000_002_500,
-      dropped: 7,
+      final: false,
+      lvl: 'headers',
+      clk: { base_us: 0, epoch: 0, res_us: 1_000_000 },
+      tail: { last_rseq: 0, pre_drop: { records: 7, objects: 0 }, conn: [] },
+      conn: [],
+      trk: [],
     })
     expect(chunk).toMatchObject({ sessionId: 's1', instanceId: 'i1', seq: 0, level: 'headers' })
   })
 
-  it('marks the final body and lists lost bodies only when there are any', async () => {
+  it('opens with the preamble: the claim, the rseq ranges and the sealed interval', async () => {
+    const clock = clockAt(2_500)
+    const q = queue({ clock, sealMs: () => 15_000 })
+    q.json(note('a'))
+    q.json(note('b'))
+    const first = await decodeBody((q.seal() as FlushChunk).bytes)
+    expect(first.head).toEqual({
+      v: 2,
+      i: 'i1',
+      em: [[0, 2]],
+      seal: { seq: 0, from_us: 0, through_us: 2_500_000, ms: 15_000 },
+    })
+    expect(first.records.slice(1).map((r) => ('rseq' in r ? r.rseq : undefined))).toEqual([0, 1])
+    clock.t = 4_000
+    q.json(note('c'))
+    const second = await decodeBody((q.seal() as FlushChunk).bytes)
+    expect(second.head.em).toEqual([[2, 1]])
+    expect(second.head.seal).toEqual({
+      seq: 1,
+      from_us: 2_500_000,
+      through_us: 4_000_000,
+      ms: 15_000,
+    })
+  })
+
+  it('marks the final body', async () => {
     const q = queue()
     q.json(note('a'))
-    const plain = await batchOf(q.seal() as FlushChunk)
-    expect(plain).not.toHaveProperty('final')
-    expect(plain).not.toHaveProperty('lost')
-
+    expect((await batchOf(q.seal() as FlushChunk)).final).toBe(false)
     q.json(note('b'))
-    const last = await batchOf(q.seal({ final: true, lost: [0] }) as FlushChunk)
-    expect(last.final).toBe(true)
-    expect(last.lost).toEqual([0])
+    expect((await batchOf(q.seal({ final: true }) as FlushChunk)).final).toBe(true)
   })
 
   it('returns null and takes no number when there is nothing to seal', () => {
@@ -209,6 +238,154 @@ describe('FlushQueue.seal', () => {
     }
     expect(keys.size).toBe(5)
     expect(q.nextSeq).toBe(5)
+  })
+
+  it('buffers runs as records, each body listing only the tracks its own records name', async () => {
+    const key = Object.freeze({ dir: 'rx' as const, kind: 'alias' as const, id: 4n, epoch: 0 })
+    const facts: Taken = {
+      runs: [
+        {
+          flow: '0:3:7',
+          c: 0,
+          key,
+          path: 'sub_stream',
+          g: 7n,
+          sub: 0n,
+          sid: 3,
+          o0: 0n,
+          ids: null,
+          n: 2,
+          last: 1n,
+          osub: null,
+          times: [1_000, 2_000],
+          b: 10,
+          tl: 2_500,
+          cont: false,
+          fo: false,
+          foKnown: false,
+          eog: false,
+          end: 'open',
+          rc: null,
+        },
+      ],
+      marks: [],
+    }
+    const e = new Emitter('i1', 0)
+    e.noteConn(0, 20, 'https://relay.example')
+    const q = new FlushQueue({ sessionId: 's1', emitter: e })
+    q.json(note('a'))
+    q.writeFacts(facts)
+    const body = await decodeBody((q.seal() as FlushChunk).bytes)
+    expect(body.records.map((r) => r.t as string)).toEqual(['batch', 'note', 'run'])
+    expect(body.head.em).toEqual([[0, 2]])
+    const batch = body.records[0] as BatchRecord
+    expect(batch.clk.base_us).toBe(0)
+    expect(batch.trk).toEqual([{ id: 0, key: { d: 'rx', k: 'alias', v: '4', e: 0 } }])
+    expect(batch.conn).toEqual([{ c: 0, draft: 20, relay: 'https://relay.example' }])
+    expect(batch.tail.conn).toEqual([[0, 2, 10]])
+    // A later body with no run lists no track.
+    q.json(note('b'))
+    const next = await decodeBody((q.seal() as FlushChunk).bytes)
+    expect((next.records[0] as BatchRecord).trk).toEqual([])
+  })
+
+  it('lists a closed connection in every body its buffered records reach, split or not', async () => {
+    const key = Object.freeze({ dir: 'rx' as const, kind: 'alias' as const, id: 4n, epoch: 0 })
+    const run = (g: bigint): Taken['runs'][number] => ({
+      flow: `0:3:${g}`,
+      c: 0,
+      key,
+      path: 'sub_stream',
+      g,
+      sub: 0n,
+      sid: 3,
+      o0: 0n,
+      ids: null,
+      n: 1,
+      last: 0n,
+      osub: null,
+      times: [1_000],
+      b: 10,
+      tl: 1_000,
+      cont: false,
+      fo: false,
+      foKnown: false,
+      eog: false,
+      end: 'fin',
+      rc: null,
+    })
+    const e = new Emitter('i1', 0)
+    e.noteConn(0, 20, 'https://relay.example')
+    const q = new FlushQueue({ sessionId: 's1', emitter: e })
+    for (let i = 0; i < 200; i++) {
+      q.json({ ...ctrl(4), c: 0 } as EnvelopeRecord)
+      q.raw(new Uint8Array(4))
+    }
+    e.noteConnClosed(0)
+    q.writeFacts({ runs: [run(1n), run(2n)], marks: [] })
+    const bodies: FlushChunk[] = []
+    for (let c = q.sealFront(4096); c !== null; c = q.sealFront(4096)) bodies.push(c)
+    expect(bodies.length).toBeGreaterThan(1)
+    for (const chunk of bodies) {
+      const body = await decodeBody(chunk.bytes)
+      const declared = new Set((body.records[0] as BatchRecord).conn.map((c) => c.c))
+      const named = body.records.flatMap((r) => ('c' in r && typeof r.c === 'number' ? [r.c] : []))
+      const { runs } = await factsOf(chunk.bytes)
+      for (const c of [...named, ...runs.map((r) => r.c)]) expect(declared.has(c)).toBe(true)
+    }
+    // Everything sealed: the next body lists it no more.
+    q.json(note('after'))
+    expect((await batchOf(q.seal() as FlushChunk)).conn).toEqual([])
+  })
+
+  it('frees a track id once no buffered record names it, so ids stay small over a long page', async () => {
+    const run = (id: bigint): Taken => ({
+      runs: [
+        {
+          flow: `0:3:${id}`,
+          c: 0,
+          key: Object.freeze({ dir: 'tx' as const, kind: 'fetch' as const, id, epoch: 0 }),
+          path: 'fetch',
+          g: 1n,
+          sub: null,
+          sid: 3,
+          o0: 0n,
+          ids: null,
+          n: 1,
+          last: 0n,
+          osub: [0n],
+          times: [1_000],
+          b: 1,
+          tl: 1_000,
+          cont: false,
+          fo: false,
+          foKnown: false,
+          eog: false,
+          end: 'fin',
+          rc: null,
+        },
+      ],
+      marks: [],
+    })
+    const e = new Emitter('i1', 0)
+    e.noteConn(0, 20, 'https://relay.example')
+    const q = new FlushQueue({ sessionId: 's1', emitter: e })
+    const trk = async (c: FlushChunk) => (await batchOf(c)).trk
+    // Buffered together: one id per key, the same key the same id.
+    q.writeFacts(run(1n))
+    q.writeFacts(run(2n))
+    q.writeFacts(run(1n))
+    expect((await trk(q.seal() as FlushChunk)).map((t) => [t.id, t.key.v])).toEqual([
+      [0, '1'],
+      [1, '2'],
+    ])
+    let most = 0
+    for (let i = 3n; i < 70_003n; i++) {
+      q.writeFacts(run(i))
+      const [t] = await trk(q.sealFront(1 << 20) as FlushChunk)
+      most = Math.max(most, t!.id)
+    }
+    expect(most).toBeLessThanOrEqual(1)
   })
 
   it('keys two instances of one session apart', () => {
@@ -271,6 +448,7 @@ describe("FlushQueue.sealSegment with the open stream's own front", () => {
     const packed = q.sealSegment(segment, {}, front)
     expect(q.takes).not.toBe(takes)
     const body = await decodeBody(packed.bytes)
+    expect(body.head.em).toEqual([[0, 2]])
     expect(body.preamble.gzipped).toBe(true)
     expect(body.records.map((r) => r.t)).toEqual(['batch', 'note', 'ctrl'])
     expect(body.frames.at(-1)?.raw).toBe(true)

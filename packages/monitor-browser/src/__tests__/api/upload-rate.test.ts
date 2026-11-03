@@ -15,13 +15,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { FORWARD_INTERVAL_MS } from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
-import { BODY_PREAMBLE_BYTES, readPreamble } from '../../envelope/index.js'
+import { readPreamble } from '../../envelope/index.js'
 import { BEACON_MAX_BYTES } from '../../flush/beacon.js'
 import type { CollectorConfig, EnvelopeRecord } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
 import { init, workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
-import { allRecords, of, type Post, recordingFetch } from '../support/uploads.js'
+import { afterPreamble, allRecords, of, type Post, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -184,7 +184,7 @@ function meterGzip(): {
 
 /** The frame bytes a body carries, ungzipped. */
 async function rawSize(body: Uint8Array): Promise<number> {
-  const frames = body.subarray(BODY_PREAMBLE_BYTES)
+  const frames = afterPreamble(body)
   if (!(readPreamble(body) as { gzipped: boolean }).gzipped) return frames.byteLength
   const ds = new DecompressionStream('gzip')
   const out = new Response(new Blob([frames as unknown as BlobPart]).stream().pipeThrough(ds))
@@ -341,13 +341,14 @@ describe('upload rate while detail is raised', () => {
   }, 60_000)
 
   // Ten times the objects is a few more uploads, not ten times as many, in
-  // the page and in a worker it links alike. Whatever the rate, the page
+  // the page and in a worker it links alike. Every header carries its own
+  // rseq, which gzip cannot fold away, so the busiest rate takes a few more. Whatever the rate, the page
   // gzips at most twice what it uploads, no one compression is longer than a
   // merge and a step, and no one task of it longer than the piece gzip writes.
   const rates = [
     { video: VIDEO_FPS, audio: AUDIO_PER_SEC, most: 6 },
     { video: 150, audio: 250, most: 6 },
-    { video: 300, audio: 500, most: 8 },
+    { video: 300, audio: 500, most: 10 },
   ] as const
   for (const { video, audio, most } of rates) {
     it(`uploads ${video} + ${audio} objects a second as rarely from a worker as from the page`, async () => {
@@ -403,7 +404,7 @@ describe('upload rate while detail is raised', () => {
 
       const changes = of(run.records, 'escalation').map((r) => `${r.from}->${r.to}`)
       expect(changes).toEqual(['baseline->headers', 'headers->baseline'])
-      expect(Math.max(...of(run.records, 'batch').map((b) => b.dropped))).toBe(0)
+      expect(Math.max(...of(run.records, 'batch').map((b) => b.tail.pre_drop.records))).toBe(0)
       expect(of(run.records, 'hdr')).toHaveLength((steady + burst) * (VIDEO_FPS + AUDIO_PER_SEC))
       for (const b of run.beaconed) expect(b.byteLength).toBeLessThanOrEqual(BEACON_MAX_BYTES)
     }, 60_000)

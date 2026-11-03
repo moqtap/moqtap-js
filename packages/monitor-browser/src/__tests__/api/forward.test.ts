@@ -1,11 +1,7 @@
 /**
- * What a probe hands its page when it compresses.
- *
- * Every frame arrives once and in order, whatever the compressor does: a piece
- * that comes out too large for a body is split and compressed again, one that
- * cannot be split or compressed goes as it is, and a forward asked for while
- * a compression runs follows it rather than overtaking it. While detail is
- * raised the page packs what it is forwarded, so frames go to it as they are.
+ * What a probe hands its page: its frames as they are, once and in order, its
+ * runs and marks with times on the page's clock, and its closed rollups.
+ * A run still open at a forward is continued by the next forward's.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -18,11 +14,11 @@ import {
   type LinkedMessage,
   linkMessage,
 } from '../../api/link.js'
-import { ProbeRuntime, type ProbeTuning } from '../../api/probe.js'
-import type { DeflateSegment } from '../../envelope/index.js'
-import { crc32, readFrames } from '../../envelope/index.js'
+import { ProbeRuntime } from '../../api/probe.js'
+import { readFrames } from '../../envelope/index.js'
+import { RunRecorder } from '../../rollup/runs.js'
 import { installWebTransportHook } from '../../transport/index.js'
-import type { DetailLevel, EnvelopeRecord } from '../../types.js'
+import type { ClockSource, DetailLevel, EnvelopeRecord } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
 import { workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
@@ -33,22 +29,22 @@ interface Harness {
   readonly errors: unknown[]
   /** Deliver `objects` objects of group `group` on the probe's transport. */
   send(group: number, objects: number): Promise<void>
+  /** As {@link send}, leaving the stream open; the result ends it with FIN. */
+  sendOpen(group: number, objects: number): Promise<() => Promise<void>>
   forward(): void
   /** The page's detail level, as the page announces it. */
   level(level: DetailLevel): void
+  /** The page's next session began, its clock where this one's was. */
+  session(): void
   /** Close the rollup interval, as the probe's metrics timer does. */
   tick(): void
   stop(): void
 }
 
-/** Stand-in compressor output that is the input itself, so the test can read it back. */
-const stored = (bytes: Uint8Array): DeflateSegment => ({
-  deflate: bytes.slice(),
-  crc: crc32(bytes),
-  size: bytes.byteLength,
-})
-
-async function harness(tuning: ProbeTuning): Promise<Harness> {
+async function harness(
+  level: DetailLevel = 'headers+sizes',
+  clock?: ClockSource,
+): Promise<Harness> {
   const forwards: ForwardMessage[] = []
   const errors: unknown[] = []
   let onmessage: ((e: MessageEvent) => void) | undefined
@@ -71,7 +67,9 @@ async function harness(tuning: ProbeTuning): Promise<Harness> {
     sessionId: 'sess',
     instanceId: 'inst',
     base: 0,
-    level: 'headers+sizes',
+    mono: 0,
+    connBase: 1 << 20,
+    level,
     room: 8 * 1024 * 1024,
     config: { metrics, flightRecorder, limits, privacy, upload, context },
   }
@@ -79,18 +77,12 @@ async function harness(tuning: ProbeTuning): Promise<Harness> {
   const hook = installWebTransportHook(realm, null)
   // The probe's own timers never fire here: the test runs each one it needs.
   const timers: { fn: () => void; ms: number }[] = []
-  const probe = new ProbeRuntime(
-    linked,
-    port,
-    hook,
-    workerBuild,
-    {
-      setTimer: (fn, ms) => timers.push({ fn, ms }),
-      clearTimer: () => {},
-      onInternalError: (e) => errors.push(e),
-    },
-    tuning,
-  )
+  const probe = new ProbeRuntime(linked, port, hook, workerBuild, {
+    ...(clock !== undefined ? { clock } : {}),
+    setTimer: (fn, ms) => timers.push({ fn, ms }),
+    clearTimer: () => {},
+    onInternalError: (e) => errors.push(e),
+  })
   probe.start()
   const wt = new (realm.WebTransport as new (u: string) => MockWebTransport)('https://relay.test/w')
   await wt.open('moqt-20')
@@ -108,8 +100,25 @@ async function harness(tuning: ProbeTuning): Promise<Harness> {
       for (;;) if ((await reader.read()).done) break
       await settle(2)
     },
+    async sendOpen(group, n) {
+      const objects = Array.from({ length: n }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
+      const src = wt.deliverUniStream([subgroupBytes({ alias: 4n, group: BigInt(group), objects })])
+      const arrived = await uni.read()
+      const reader = (arrived.value as ReadableStream<Uint8Array>).getReader()
+      await reader.read()
+      await settle(2)
+      return async () => {
+        src.close()
+        for (;;) if ((await reader.read()).done) break
+        await settle(2)
+      }
+    },
     forward: () => onmessage?.({ data: envelope({ t: 'forward' }) } as MessageEvent),
     level: (level) => onmessage?.({ data: envelope({ t: 'level', level }) } as MessageEvent),
+    session: () =>
+      onmessage?.({
+        data: envelope({ t: 'session', sessionId: 'sess-2', instanceId: 'inst', level, base: 0 }),
+      } as MessageEvent),
     tick: () => timers.find((t) => t.ms === metrics.intervalMs)?.fn(),
     stop: () => onmessage?.({ data: envelope({ t: 'unlinked' }) } as MessageEvent),
   }
@@ -120,10 +129,7 @@ function records(parts: readonly ForwardPart[]): EnvelopeRecord[] {
   const out: EnvelopeRecord[] = []
   const decoder = new TextDecoder()
   for (const p of parts) {
-    const bytes =
-      'deflate' in p
-        ? new Uint8Array(p.deflate, 0, p.byteLength)
-        : new Uint8Array(p.frames, 0, p.byteLength)
+    const bytes = new Uint8Array(p.frames, 0, p.byteLength)
     for (const f of readFrames(bytes)) {
       if (!f.raw) out.push(JSON.parse(decoder.decode(f.payload)) as EnvelopeRecord)
     }
@@ -143,104 +149,113 @@ afterEach(() => {
   resetDormantForTest()
 })
 
-describe('a compressing probe', () => {
-  it('forwards frames as they are while detail is raised, in parts the page takes at baseline', async () => {
-    const h = await harness({ compressMinBytes: 1, deflate: async (b) => stored(b) })
-    for (let group = 0; group < 8; group += 1) await h.send(group, 300)
+describe('a probe’s frames', () => {
+  it('forwards frames as they are, in parts the page takes at baseline, every one in order', async () => {
+    const h = await harness()
+    for (let group = 0; group < 8; group += 1) await h.send(group, 100)
     h.forward()
     await settle(20)
     h.stop()
 
     expect(h.forwards).toHaveLength(1)
     const parts = h.forwards[0]?.parts ?? []
-    expect(parts.length).toBeGreaterThan(1)
-    for (const p of parts) {
-      expect('frames' in p).toBe(true)
-      expect(p.byteLength).toBeLessThanOrEqual(8 * 32 * 1024)
-    }
-    expect(parts.reduce((n, p) => n + p.n, 0)).toBe(h.forwards[0]?.n)
-    const groups = hdrGroups(records(parts))
-    expect(groups).toHaveLength(2400)
-    expect(groups).toEqual([...groups].sort((a, b) => Number(a) - Number(b)))
-  })
-
-  it('splits a piece that comes out too large for a body, and keeps every frame in order', async () => {
-    const h = await harness({ compressMinBytes: 1, deflate: async (b) => stored(b) })
-    for (let group = 0; group < 4; group += 1) await h.send(group, 200)
-    h.level('baseline')
-    h.forward()
-    await settle(20)
-    h.stop()
-
-    expect(h.forwards).toHaveLength(1)
-    const parts = h.forwards[0]?.parts ?? []
-    expect(parts.length).toBeGreaterThan(1)
-    for (const p of parts) {
-      expect('deflate' in p).toBe(true)
-      expect(p.byteLength).toBeLessThanOrEqual(48 * 1024)
-    }
+    for (const p of parts) expect(p.byteLength).toBeLessThanOrEqual(8 * 32 * 1024)
     expect(parts.reduce((n, p) => n + p.n, 0)).toBe(h.forwards[0]?.n)
     const groups = hdrGroups(records(parts))
     expect(groups).toHaveLength(800)
     expect(groups).toEqual([...groups].sort((a, b) => Number(a) - Number(b)))
   })
+})
 
-  it('sends the frames as they are when the compressor fails', async () => {
-    const h = await harness({
-      compressMinBytes: 1,
-      deflate: async () => {
-        throw new Error('no compressor')
-      },
-    })
-    await h.send(0, 50)
-    h.level('baseline')
+describe('a probe’s runs', () => {
+  it('forwards each group as a run, on its own connection ordinal, with every object', async () => {
+    const h = await harness('baseline')
+    await h.send(0, 5)
+    await h.send(1, 3)
     h.forward()
-    await settle(20)
+    await settle(5)
     h.stop()
 
-    const parts = h.forwards[0]?.parts ?? []
-    expect(parts.every((p) => 'frames' in p)).toBe(true)
-    expect(hdrGroups(records(parts))).toHaveLength(50)
-    expect(h.errors.length).toBeGreaterThan(0)
+    const runs = h.forwards.flatMap((f) => f.runs?.runs ?? [])
+    expect(runs.map((r) => [r.g, r.n, r.end])).toEqual([
+      [0n, 5, 'fin'],
+      [1n, 3, 'fin'],
+    ])
+    expect(runs.every((r) => r.c === 1 << 20 && r.path === 'sub_stream')).toBe(true)
+    expect(runs.every((r) => !r.cont)).toBe(true)
   })
 
-  it('holds a forward asked for during a compression until that one is sent', async () => {
-    const gates: (() => void)[] = []
-    const h = await harness({
-      compressMinBytes: 1,
-      deflate: (b) =>
-        new Promise((resolve) => {
-          gates.push(() => resolve(stored(b)))
-        }),
-    })
-    await h.send(0, 20)
-    h.level('baseline')
+  it('forwards a FIN after the forward that took its run, which the page joins to it', async () => {
+    const h = await harness('baseline')
+    const fin = await h.sendOpen(0, 3)
+    h.forward()
+    await fin()
     h.forward()
     await settle(5)
-    h.level('headers+sizes')
-    await h.send(1, 20)
-    h.level('baseline')
-    h.forward()
-    await settle(5)
-    expect(h.forwards).toHaveLength(0)
-    expect(gates).toHaveLength(1)
-    gates[0]?.()
-    await settle(10)
-    expect(gates).toHaveLength(2)
-    gates[1]?.()
-    await settle(10)
     h.stop()
 
-    expect(h.forwards.map((f) => hdrGroups(records(f.parts ?? [])))).toEqual([
-      Array(20).fill('0'),
-      Array(20).fill('1'),
+    const pieces = h.forwards.flatMap((f) => (f.runs === undefined ? [] : [f.runs]))
+    expect(pieces.map((t) => t.runs.map((r) => [r.n, r.end]))).toEqual([[[3, 'open']], [[0, 'fin']]])
+    const page = new RunRecorder(0)
+    for (const t of pieces) page.absorb(t)
+    expect(page.take().runs.map((r) => [r.g, r.n, r.end])).toEqual([[0n, 3, 'fin']])
+  })
+
+  it('keeps a connection’s ordinal when the page’s next session begins', async () => {
+    const h = await harness('baseline')
+    await h.send(0, 1)
+    h.forward()
+    h.session()
+    await settle(5)
+    await h.send(1, 1)
+    h.forward()
+    await settle(5)
+    h.stop()
+
+    const runs = h.forwards.flatMap((f) => f.runs?.runs ?? [])
+    expect(runs.map((r) => [r.g, r.c])).toEqual([
+      [0n, 1 << 20],
+      [1n, 1 << 20],
     ])
+  })
+
+  it('names its connections with their ordinals beside the runs', async () => {
+    const h = await harness('baseline')
+    await h.send(0, 1)
+    h.forward()
+    await settle(5)
+    h.stop()
+    expect(h.forwards[0]?.conns.map((s) => [s.conn.c, s.conn.draft])).toEqual([[1 << 20, 20]])
+  })
+})
+
+describe('a probe’s clock', () => {
+  it('forwards what it captured before a break at once, marked, and what came after later', async () => {
+    let skew = 0
+    const clock: ClockSource = {
+      now: () => performance.now(),
+      wall: () => performance.now() + skew,
+    }
+    const h = await harness('baseline', clock)
+    await h.send(0, 2)
+    // Suspended: the monotonic clock stood still while wall time went on.
+    skew = 60_000
+    await h.send(1, 2)
+    h.forward()
+    await settle(5)
+    h.stop()
+
+    const marked = h.forwards.filter((f) => f.brk === true)
+    expect(marked).toHaveLength(1)
+    expect(marked[0]?.runs?.runs.map((r) => r.g)).toEqual([0n])
+    const after = h.forwards.slice(h.forwards.indexOf(marked[0]!) + 1)
+    expect(after.flatMap((f) => f.runs?.runs.map((r) => r.g) ?? [])).toEqual([1n])
   })
 })
 
 describe('a probe’s rollups', () => {
   it('hands the page each closed interval beside the frames rather than in them', async () => {
-    const h = await harness({})
+    const h = await harness()
     await h.send(0, 3)
     h.tick()
     h.forward()
@@ -249,7 +264,7 @@ describe('a probe’s rollups', () => {
 
     const [f] = h.forwards
     expect(records(f?.parts ?? []).filter((r) => r.t === 'rollup')).toEqual([])
-    expect(f?.rollups?.map((r) => r.tracks.reduce((n, t) => n + t.objects, 0))).toEqual([3])
-    expect(f?.conns[0]?.rollup).toBeNull()
+    expect(f?.rollups?.map((r) => r.tracks.map((t) => t.key.d))).toEqual([['rx']])
+    expect(f?.conns[0]).not.toHaveProperty('rollup')
   })
 })

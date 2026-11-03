@@ -72,6 +72,10 @@ interface DecodedDatagram {
   readonly status?: bigint
   /** Every draft names it the same; 128 where the datagram leaves it off. */
   readonly publisherPriority?: number
+  /** From draft-14; drafts 12-13 carry it in the type, `streamTypeId`. */
+  readonly endOfGroup?: boolean
+  readonly streamTypeId?: number
+  readonly extensionData?: Uint8Array
 }
 
 type DatagramResult =
@@ -158,8 +162,21 @@ export function makeAdapter(
           payloadBytes,
           priority: datagramPriority(d, bytes, v.publisherPriority),
         }
+        // Drafts 12-13 flag END_OF_GROUP in the datagram type (0x02, 0x03); the
+        // codec reports it as a field from 14.
+        const eog =
+          v.endOfGroup ??
+          (draft >= 12 && draft <= 13 && typeof v.streamTypeId === 'number'
+            ? (v.streamTypeId & 0x02) !== 0
+            : false)
+        const props = v.extensionData
+        const full: DatagramCounts = {
+          ...counts,
+          ...(eog ? { endOfGroup: true } : {}),
+          ...(props !== undefined && props.byteLength > 0 ? { props } : {}),
+        }
         const status = v.objectStatus ?? v.status
-        return status === undefined ? counts : { ...counts, status }
+        return status === undefined ? full : { ...full, status }
       } catch {
         return null
       }

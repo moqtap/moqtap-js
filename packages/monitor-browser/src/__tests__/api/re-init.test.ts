@@ -28,11 +28,12 @@ import {
   resetDormantForTest,
   teardownDormant,
 } from '../../api/dormant.js'
-import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/index.js'
+import { readFrames, readPreamble } from '../../envelope/index.js'
 import type { CollectorConfig, EnvelopeRecord, RollupTrackWire } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
 import { init } from '../support/init.js'
 import { settle } from '../support/settle.js'
+import { afterPreamble, clockProbe } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -41,6 +42,8 @@ let originalWT: unknown
 function recordingFetch(): { posts: Uint8Array[]; impl: typeof fetch } {
   const posts: Uint8Array[] = []
   const impl = (async (_url: string, init: RequestInit) => {
+    const clock = clockProbe(_url)
+    if (clock !== undefined) return clock
     posts.push(new Uint8Array(init.body as unknown as ArrayBufferLike as never))
     return { ok: true, status: 200, headers: { get: () => null } } as unknown as Response
   }) as unknown as typeof fetch
@@ -49,7 +52,7 @@ function recordingFetch(): { posts: Uint8Array[]; impl: typeof fetch } {
 
 async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
   const pre = readPreamble(body)
-  let frames = body.subarray(BODY_PREAMBLE_BYTES)
+  let frames = afterPreamble(body)
   if ((pre as { gzipped: boolean }).gzipped) {
     const ds = new DecompressionStream('gzip')
     const out = new Response(new Blob([frames as unknown as BlobPart]).stream().pipeThrough(ds))

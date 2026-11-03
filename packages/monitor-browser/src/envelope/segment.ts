@@ -1,18 +1,16 @@
 /**
- * Compressed segments: frames gzipped in one realm and sealed in another.
+ * Compressed segments: frames gzipped ahead of the seal that takes them.
  *
- * A linked worker compresses what it forwards, so its page only appends,
- * stores and uploads. But the body the page seals must open with a batch
- * frame only the page can write, ingest reads every body as **one** gzip
- * member (`DecompressionStream` in browsers and workerd stops at the first),
- * and `CompressionStream` always ends its output with a final block. So the
- * worker's output can only ever be the last thing in a body.
+ * The page packs its buffer as it grows, but the body it seals must open with
+ * a batch frame written only at the seal, ingest reads every body as **one**
+ * gzip member (`DecompressionStream` in browsers and workerd stops at the
+ * first), and `CompressionStream` always ends its output with a final block.
  *
- * {@link joinSegment} builds that body's single member around it: a gzip
- * header, the page's own bytes as stored (uncompressed) deflate blocks, which
- * end on a byte boundary and are not final, then the worker's deflate data
+ * {@link joinSegment} builds that body's single member around a segment: a gzip
+ * header, the batch frame as stored (uncompressed) deflate blocks, which end
+ * on a byte boundary and are not final, then the segment's deflate data
  * verbatim, then a trailer whose CRC-32 is combined from the two halves'. No
- * byte is inflated or recompressed on the page.
+ * byte is inflated or recompressed.
  *
  * A segment opened by `openSegment` ends without a final block, so it can be
  * followed: by other open segments, which {@link joinSegments} puts end to

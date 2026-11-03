@@ -33,13 +33,7 @@ import {
   linkMessage,
 } from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
-import {
-  BODY_PREAMBLE_BYTES,
-  FrameWriter,
-  readFrames,
-  readPreamble,
-  sha256Hex,
-} from '../../envelope/index.js'
+import { FrameWriter, readFrames, readPreamble, sha256Hex } from '../../envelope/index.js'
 import { type Chunk, ChunkStore, type LockManagerLike, MemoryBackend } from '../../flush/index.js'
 import type {
   BatchRecord,
@@ -54,6 +48,7 @@ import type {
 import { chunks, concatBytes, encodeControl, subscribeBytes } from '../decode/vectors.js'
 import { attempt, init, workerBuild } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
+import { afterPreamble, clockProbe } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -73,6 +68,8 @@ function recordingFetch(status: number | (() => number) = 200): {
 } {
   const posts: Post[] = []
   const impl = (async (url: string, init: RequestInit) => {
+    const clock = clockProbe(url)
+    if (clock !== undefined) return clock
     const body =
       init.body instanceof Blob
         ? new Uint8Array(await init.body.arrayBuffer())
@@ -93,7 +90,7 @@ function recordingFetch(status: number | (() => number) = 200): {
 async function framesOf(body: Uint8Array): Promise<Uint8Array> {
   const pre = readPreamble(body)
   expect(pre).not.toBeNull()
-  const frames = body.subarray(BODY_PREAMBLE_BYTES)
+  const frames = afterPreamble(body)
   if (!(pre as { gzipped: boolean }).gzipped) return frames
   const ds = new DecompressionStream('gzip')
   const out = new Response(new Blob([frames as unknown as BlobPart]).stream().pipeThrough(ds))
@@ -323,7 +320,7 @@ describe('end() — the instance is done', () => {
     // buffered at `end()`, and the end record's own.
     const batches = await batchesOf(posts)
     expect(batches.map((b) => b.seq)).toEqual([0, 1, 2, 3])
-    expect(batches.map((b) => b.final)).toEqual([undefined, undefined, undefined, true])
+    expect(batches.map((b) => b.final)).toEqual([false, false, false, true])
     const end = of(await allRecords(posts), 'end')
     expect(end).toHaveLength(1)
     expect(end[0]).toMatchObject({ reason: 'app', finalSeq: 3 })
@@ -389,6 +386,8 @@ describe('end() — the instance is done', () => {
     const s = await store()
     let opened = 0
     const impl = ((_url: string, init: RequestInit) => {
+      const clock = clockProbe(_url)
+      if (clock !== undefined) return clock
       opened += 1
       return new Promise<Response>((_resolve, reject) => {
         init.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
@@ -531,7 +530,7 @@ describe('an upload that fails is retried in the same page', () => {
     }
   })
 
-  it('lists a body ingest refused for good as lost, on the next body', async () => {
+  it('leaves a body ingest refused for good as a gap in the record numbers', async () => {
     let first = true
     const { posts, impl } = recordingFetch(() => {
       if (!first) return 200
@@ -546,8 +545,12 @@ describe('an upload that fails is retried in the same page', () => {
     c.annotate('accepted')
     await c.end()
 
+    // A body refused for good never arrives: the record numbers it held are
+    // the gap before the next body's, which ingest reads as their loss.
     const batches = await batchesOf(posts)
-    expect(batches.at(-1)?.lost).toEqual([0])
+    const seqs = batches.map((b) => b.seq)
+    expect(seqs).toEqual(seqs.map((_, i) => i))
+    expect(batches.at(-1)?.tail.last_rseq).toBeGreaterThan(0)
   })
 })
 
@@ -826,7 +829,7 @@ describe('worker links', () => {
     listener?.({ data: 'hello' })
     expect(sent).toEqual([])
 
-    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 6, t: 'hello', timeOrigin: 0 } })
     expect(sent).toHaveLength(1)
     const linked = sent[0]?.message as Record<string, unknown>
     expect(linked).toMatchObject({ t: 'linked', sessionId: 'sess-fixed', instanceId: 'inst-1' })
@@ -910,13 +913,13 @@ describe('worker links', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(worker)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
+    listener?.({ data: { __moqtap_collector__: 6, t: 'hello', timeOrigin: 0 } })
     // Speak for the worker over the port the page handed it: it attempted a
     // connection, which begins the session, and that connection is open in
     // its last forward.
-    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
+    port?.postMessage({ __moqtap_collector__: 6, t: 'open' })
     port?.postMessage({
-      __moqtap_collector__: 5,
+      __moqtap_collector__: 6,
       t: 'fwd',
       n: 0,
       dropped: 0,
@@ -973,10 +976,10 @@ describe('a linked worker whose control plane outran it', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
-    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
+    listener?.({ data: { __moqtap_collector__: 6, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 6, t: 'open' })
     port?.postMessage({
-      __moqtap_collector__: 5,
+      __moqtap_collector__: 6,
       t: 'overrun',
       at: 1_234,
       signal: 'control-plane rate exceeded 1/s',
@@ -1010,8 +1013,8 @@ describe('a linked worker that forwards more than the page buffers', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
-    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
+    listener?.({ data: { __moqtap_collector__: 6, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 6, t: 'open' })
     await settle(5)
     // Ten frames parts of ~30 KB in one forward: more than the page's eight
     // thresholds of buffer before any byte seal has had a turn to run.
@@ -1022,7 +1025,7 @@ describe('a linked worker that forwards more than the page buffers', () => {
       return { frames: frames.buffer, byteLength: frames.byteLength, n: 1 }
     })
     port?.postMessage({
-      __moqtap_collector__: 5,
+      __moqtap_collector__: 6,
       t: 'fwd',
       parts,
       n: parts.length,
@@ -1039,6 +1042,9 @@ describe('a linked worker that forwards more than the page buffers', () => {
     port?.close()
   })
 })
+
+/** The ordinal the page gives its first linked worker's first connection. */
+const W_CONN = 1 << 20
 
 describe('a linked worker that falls silent', () => {
   it('is counted gone after ten seconds of silence, and linked again when it speaks', async () => {
@@ -1064,14 +1070,14 @@ describe('a linked worker that falls silent', () => {
     })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
-    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
+    listener?.({ data: { __moqtap_collector__: 6, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 6, t: 'open' })
     await settle(5)
     t += 11_000
     // The heartbeat runs every 10 ms here; let one see the silence.
     await settle(10, 20)
     port?.postMessage({
-      __moqtap_collector__: 5,
+      __moqtap_collector__: 6,
       t: 'fwd',
       n: 0,
       dropped: 0,
@@ -1085,15 +1091,13 @@ describe('a linked worker that falls silent', () => {
     expect(links).toEqual(['linked', 'gone', 'linked'])
     port?.close()
   })
-  /**
-   * A worker's rollup for `w-conn`: one track, `objects` objects of 10 bytes
-   * each, and as many of every other additive count.
-   */
-  const rollup = (seq: number, objects: number, endMono = 0): RollupRecord =>
+  /** A worker's closed interval for `w-conn`: one receive track. */
+  const rollup = (seq: number, endMono = 0): RollupRecord =>
     ({
       t: 'rollup',
       v: 1,
       conn: 'w-conn',
+      c: W_CONN,
       ts: endMono,
       lvl: 'baseline',
       seq,
@@ -1104,34 +1108,56 @@ describe('a linked worker that falls silent', () => {
           key: { d: 'rx', k: 'alias', v: '1', e: 0 },
           firstSeen: 0,
           lastSeen: 0,
-          objects,
-          payloadBytes: objects * 10,
           headerBytes: 0,
-          groups: objects,
-          groupGaps: objects,
-          outOfOrder: 0,
-          duplicates: 0,
-          statusObjects: 0,
           parseFailures: 0,
-          gapRanges: Array.from({ length: objects }, (_, i) => [`${2 * i}`, `${2 * i}`]),
-          resets: { '7': objects },
-          hist: { stallMs: { i: [12], c: [objects], n: objects, sum: objects * 300 } },
+          hist: {},
         },
       ],
-      session: { 'ctrl.rx.frames': objects },
+      session: { 'ctrl.rx.frames': 1 },
     }) as unknown as RollupRecord
 
-  /** `w-conn` open, its interval `seq` holding `objects` so far. */
-  const open = (seq: number, objects: number | null) => ({
+  /** `w-conn` open. */
+  const open = () => ({
     conn: {
       id: 'w-conn',
+      c: W_CONN,
       realm: 'worker',
       origin: 'https://relay.test',
       draft: 20,
       state: 'open',
     },
-    rollup: objects === null ? null : rollup(seq, objects),
     counters: { parseFailures: 0, bucketsRefused: 0 },
+  })
+
+  /** One run of `n` objects of group `g` on `w-conn`'s stream 3, open at the forward. */
+  const piece = (g: bigint, from: bigint, n: number, cont: boolean) => ({
+    runs: [
+      {
+        flow: `${W_CONN}:3:${g}`,
+        c: W_CONN,
+        key: { dir: 'rx', kind: 'alias', id: 1n, epoch: 0 },
+        path: 'sub_stream',
+        g,
+        sub: 0n,
+        sid: 3,
+        o0: from,
+        ids: null,
+        n,
+        last: from + BigInt(n - 1),
+        osub: null,
+        times: Array.from({ length: n }, (_, i) => 1_000 * (Number(from) + i)),
+        b: 10 * n,
+        tl: 1_000 * (Number(from) + n),
+        cont,
+        fo: false,
+        foKnown: true,
+        eog: false,
+        end: 'open',
+        rc: null,
+      },
+    ],
+    marks: [],
+    dropped: 0,
   })
 
   /** A page with one linked worker whose messages the test writes, on a clock it moves. */
@@ -1164,8 +1190,8 @@ describe('a linked worker that falls silent', () => {
     })
     c.linkWorker(target)
     await settle(5)
-    listener?.({ data: { __moqtap_collector__: 5, t: 'hello', timeOrigin: 0 } })
-    port?.postMessage({ __moqtap_collector__: 5, t: 'open' })
+    listener?.({ data: { __moqtap_collector__: 6, t: 'hello', timeOrigin: 0 } })
+    port?.postMessage({ __moqtap_collector__: 6, t: 'open' })
     return {
       posts,
       c,
@@ -1177,141 +1203,96 @@ describe('a linked worker that falls silent', () => {
     }
   }
 
-  /** A forward with the intervals the worker `closed` since the last, and its open `conns`. */
+  /** A forward with the intervals the worker `closed`, its runs, and its open `conns`. */
   function forward(
     port: MessagePort | undefined,
     closed: readonly RollupRecord[],
     conns: readonly unknown[],
+    runs?: unknown,
   ): void {
     port?.postMessage({
-      __moqtap_collector__: 5,
+      __moqtap_collector__: 6,
       t: 'fwd',
       n: 0,
       dropped: 0,
       ready: true,
       ...(closed.length > 0 ? { rollups: closed } : {}),
+      ...(runs !== undefined ? { runs } : {}),
       conns,
     })
   }
 
-  /** The totals of `w-conn`'s rollups, each count apart. */
-  const totalsOf = (all: readonly EnvelopeRecord[]) => {
-    const sum = { objects: 0, payloadBytes: 0, groups: 0, gaps: 0, resets: 0, stalls: 0, frames: 0 }
-    for (const r of of(all, 'rollup')) {
-      if (r.conn !== 'w-conn') continue
-      sum.frames += r.session['ctrl.rx.frames'] ?? 0
-      for (const tr of r.tracks) {
-        sum.objects += tr.objects
-        sum.payloadBytes += tr.payloadBytes
-        sum.groups += tr.groups
-        sum.gaps += tr.groupGaps
-        sum.gaps += tr.gapRanges?.length ?? 0
-        sum.resets += Object.values(tr.resets ?? {}).reduce((a, b) => a + b, 0)
-        sum.stalls += (tr.hist.stallMs?.c ?? []).reduce((a, b) => a + b, 0)
+  /** Run entries in every body. */
+  const runEntries = async (posts: readonly Post[]): Promise<number> => {
+    let n = 0
+    for (const p of posts) {
+      for (const r of await recordsOf(p.body)) {
+        if ((r.t as string) === 'run') n += (r as unknown as { n: number }).n
       }
     }
-    return sum
+    return n
   }
 
-  /** Every total, for `n` objects' worth of each count. */
-  const counted = (n: number) => ({
-    objects: n,
-    payloadBytes: n * 10,
-    groups: n,
-    gaps: 2 * n,
-    resets: n,
-    stalls: n,
-    frames: n,
-  })
-
-  it('writes the interval it falls silent in at once, in a body of its own', async () => {
+  it('stands nothing in for a worker that falls silent: its connection closes, its runs arrive once', async () => {
     const w = await silentWorker()
-    forward(w.port(), [], [open(0, 5)])
+    forward(w.port(), [], [open()], piece(4n, 0n, 5, false))
     await settle(5)
     w.advance(11_000)
     await settle(10, 20)
 
-    // Sealed and sent when it was counted gone, with the session still running.
     const sent = await allRecords(w.posts)
     expect(of(sent, 'link').map((l) => l.ev)).toEqual(['linked', 'gone'])
-    expect(totalsOf(sent)).toEqual(counted(5))
+    expect(of(sent, 'conn-close')).toEqual([
+      expect.objectContaining({ conn: 'w-conn', c: W_CONN, cause: 'worker-gone' }),
+    ])
+    expect(of(sent, 'rollup').filter((r) => r.conn === 'w-conn')).toEqual([])
+    const batches = of(sent, 'batch')
+    expect(batches.some((b) => b.conn.some((c) => c.c === W_CONN))).toBe(true)
     await w.c.end()
-
-    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(5))
     w.port()?.close()
   })
 
-  it('counts the interval it was silent in once when it resumes and closes it', async () => {
+  it('writes a resumed worker’s closed interval as it is, and keeps its connection closed', async () => {
     const w = await silentWorker()
-    // Five objects into interval 0 as of the last forward before the freeze.
-    forward(w.port(), [], [open(0, 5)])
+    forward(w.port(), [], [open()])
     await settle(5)
     w.advance(11_000)
     await settle(10, 20)
-    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(5))
-    // Resumed: it closes interval 0 with all eight of its objects, and opens 1.
-    forward(w.port(), [rollup(0, 8, 12_000)], [open(1, null)])
+    forward(w.port(), [rollup(0, 12_000)], [open()])
     await settle(10)
     await w.c.end()
 
     const all = await allRecords(w.posts)
     expect(of(all, 'link').map((l) => l.ev)).toEqual(['linked', 'gone', 'linked'])
-    expect(of(all, 'conn-close')[0]).toMatchObject({ conn: 'w-conn', cause: 'worker-gone' })
-    expect(totalsOf(all)).toEqual(counted(8))
+    expect(of(all, 'conn-close').filter((r) => r.conn === 'w-conn')).toHaveLength(1)
+    expect(of(all, 'rollup').filter((r) => r.conn === 'w-conn')).toHaveLength(1)
     w.port()?.close()
   })
 
-  it('counts an interval it fell silent in twice once', async () => {
+  it('joins a run a worker continued across two forwards into one', async () => {
     const w = await silentWorker()
-    forward(w.port(), [], [open(0, 5)])
-    await settle(5)
-    w.advance(11_000)
-    await settle(10, 20)
-    // Back for a moment, interval 0 still open, then silent again.
-    forward(w.port(), [], [open(0, 6)])
-    await settle(5)
-    w.advance(11_000)
-    await settle(10, 20)
-    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(6))
-    forward(w.port(), [rollup(0, 9)], [open(1, 1)])
+    forward(w.port(), [], [open()], piece(4n, 0n, 3, false))
+    forward(w.port(), [], [open()], piece(4n, 3n, 2, true))
     await settle(10)
     await w.c.end()
 
-    const all = await allRecords(w.posts)
-    expect(of(all, 'link').map((l) => l.ev)).toEqual(['linked', 'gone', 'linked', 'gone', 'linked'])
-    expect(totalsOf(all)).toEqual(counted(10))
+    expect(await runEntries(w.posts)).toBe(1)
     w.port()?.close()
   })
 
-  it('counts the interval once when it resumes and the session ends before it closes it', async () => {
+  it('seals what a terminated worker posted before dying, once', async () => {
     const w = await silentWorker()
-    forward(w.port(), [], [open(0, 5)])
-    await settle(5)
-    w.advance(11_000)
-    await settle(10, 20)
-    forward(w.port(), [], [open(0, 7)])
-    await settle(10)
-    await w.c.end()
-
-    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(7))
-    w.port()?.close()
-  })
-
-  it('writes a terminated worker’s interval at once, and what it posted before dying once', async () => {
-    const w = await silentWorker()
-    forward(w.port(), [], [open(0, 5)])
+    forward(w.port(), [], [open()])
     await settle(5)
     w.terminate()
     await settle(10)
-    expect(totalsOf(await allRecords(w.posts))).toEqual(counted(5))
-    // Posted before it died: interval 0 closed with seven objects, and two in 1.
-    forward(w.port(), [rollup(0, 7)], [open(1, 2)])
+    forward(w.port(), [rollup(0)], [open()], piece(4n, 0n, 2, false))
     await settle(10)
     await w.c.end()
 
     const all = await allRecords(w.posts)
     expect(of(all, 'link').map((l) => l.ev)).toEqual(['linked', 'gone'])
-    expect(totalsOf(all)).toEqual(counted(9))
+    expect(of(all, 'rollup').filter((r) => r.conn === 'w-conn')).toHaveLength(1)
     w.port()?.close()
   })
 })
@@ -1417,6 +1398,12 @@ describe('a pre-15 session over WebTransport', () => {
       ['tx', true],
       ['rx', true],
     ])
+    // Each names its control stream as the runs name theirs, and its capture time.
+    const ctrl = of(all, 'ctrl')
+    expect(ctrl.every((r) => Number.isInteger(r.sid))).toBe(true)
+    expect(ctrl.map((r) => [r.c, r.sid, typeof r.at_us])).toEqual(
+      ctrl.map((r) => [0, r.streamId, 'number']),
+    )
   })
 
   it('sends the connection again when the transport is ready, before SETUP names the draft', async () => {
@@ -1529,6 +1516,8 @@ describe('the page going away', () => {
   function tailFetch(): { calls: { url: string; init: RequestInit }[]; impl: typeof fetch } {
     const calls: { url: string; init: RequestInit }[] = []
     const impl = ((url: string, init: RequestInit) => {
+      const clock = clockProbe(url)
+      if (clock !== undefined) return clock
       calls.push({ url, init })
       return Promise.resolve({
         ok: true,
@@ -1592,6 +1581,8 @@ describe('the page going away', () => {
       let sent = 0
       // The session's first body is uploaded; the next one's upload never ends.
       const hanging = ((_url: string, _init: RequestInit) => {
+        const clock = clockProbe(_url)
+        if (clock !== undefined) return clock
         sent += 1
         return sent === 1
           ? Promise.resolve(new Response(null, { status: 200 }))
@@ -1929,7 +1920,7 @@ async function bySession(posts: readonly Post[]): Promise<Map<string, EnvelopeRe
 }
 
 describe('newSession() — the next playback in the same page', () => {
-  it('ends the first session in a final body and numbers the second from zero', async () => {
+  it('ends the first session in a final body and numbers the second on, as one emitter', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
     attempt()
@@ -1938,7 +1929,7 @@ describe('newSession() — the next playback in the same page', () => {
     const first = c.ids()
     const second = c.newSession({ contentId: 'movie-2' })
     expect(second.sessionId).not.toBe(first.sessionId)
-    expect(second.instanceId).not.toBe(first.instanceId)
+    expect(second.instanceId).toBe(first.instanceId)
     expect(second.contentId).toBe('movie-2')
     expect(c.ids()).toEqual(second)
     c.annotate('second')
@@ -1962,11 +1953,9 @@ describe('newSession() — the next playback in the same page', () => {
     expect(of(a, 'setup')[0]?.startTs).toBeUndefined()
     expect(setup?.startTs).toBeGreaterThanOrEqual(0)
     expect(setup?.startTs).toBeLessThanOrEqual(of(b, 'end')[0]?.ts as number)
-    for (const records of [a, b]) {
-      const batches = of(records, 'batch')
-      expect(batches.map((x) => x.seq)).toEqual(batches.map((_, i) => i))
-      expect(batches.at(-1)?.final).toBe(true)
-    }
+    const seqs = [...of(a, 'batch'), ...of(b, 'batch')].map((x) => x.seq)
+    expect(seqs).toEqual(seqs.map((_, i) => i))
+    for (const records of [a, b]) expect(of(records, 'batch').at(-1)?.final).toBe(true)
   })
 
   it('keeps observing: a transport still open continues in the new session', async () => {
@@ -2241,6 +2230,8 @@ describe('nothing before the session attaches is lost', () => {
       sessionId: 'sess-fixed',
       instanceId: 'inst-1',
       base: 0,
+      mono: 0,
+      connBase: 1 << 20,
       level: 'baseline',
       room: 8 * 1024 * 1024,
       config: { metrics, flightRecorder, limits, privacy, upload, context },
@@ -2314,7 +2305,7 @@ describe('nothing before the session attaches is lost', () => {
     expect(of(all, 'ctrl')).toHaveLength(Math.floor(EARLY_CONTROL_CONNECTION_BYTES / frame.length))
     expect((of(all, 'end')[0] as EndRecord).counters.sampledTypes).toContain('early-control')
     const last = (await batchesOf(posts)).at(-1)
-    expect(last?.dropped).toBe(parts.length - held + 2)
+    expect(last?.tail.pre_drop.records).toBe(parts.length - held + 2)
   })
 
   it('counts object data from before init() on its connection, and decodes none of it', async () => {

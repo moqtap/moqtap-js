@@ -39,6 +39,7 @@ import {
 import type { TriggerEvent } from '../recorder/index.js'
 import type { RingEntry } from '../ring/index.js'
 import { RollupEngine } from '../rollup/index.js'
+import { RunRecorder, type Taken } from '../rollup/runs.js'
 import type { TransportHook } from '../transport/index.js'
 import {
   type BucketKey,
@@ -59,6 +60,7 @@ import {
   type FlightRecord,
   type HdrRecord,
   type InterceptedSession,
+  type MarkSample,
   type Mono,
   type ObjectSample,
   type ParseFailureReason,
@@ -68,7 +70,6 @@ import {
   type RecordType,
   type ResolvedConfig,
   type Role,
-  type RollupRecord,
   type SessionCloseInfo,
   type StreamChunk,
   type SupportedDraft,
@@ -165,6 +166,14 @@ export interface RealmHost {
    */
   dumpRoom(): number
   onError(err: unknown): void
+  /** A connection's draft is known: bodies list it under its ordinal. */
+  onConn?(c: number, draft: SupportedDraft, relay: string): void
+  /** The connection closed. */
+  onConnGone?(c: number): void
+  /** The run recorder holds as many open flows as it may: seal early. */
+  onFlowsFull?(): void
+  /** A chunk was captured: the host checks its clock for a break. */
+  clockCheck?(): void
 }
 
 export interface RealmOptions {
@@ -175,6 +184,18 @@ export interface RealmOptions {
   readonly host: RealmHost
   /** The session anchor's monotonic origin. Every `ts` this realm writes is relative to it. */
   readonly originMono: Mono
+  /**
+   * What to subtract from this realm's clock to read the emitter's monotonic
+   * clock, the page's `performance.now()`: 0 in the page.
+   */
+  readonly monoBase?: Mono
+  /**
+   * The ordinal of the hooked session `id`: unique in the emitter, never
+   * reused, and the same for a session a later realm observes again.
+   */
+  readonly ordinal?: (id: string) => number
+  /** The session `id` closed: its ordinal is never asked for again. */
+  readonly ordinalDone?: (id: string) => void
   readonly clock: ClockSource
   /** The flight recorder, when the build carries it. Without it the realm rings nothing. */
   readonly recorder?: FlightRecorderFeature | undefined
@@ -183,6 +204,8 @@ export interface RealmOptions {
 /** A connection as the page's API and the probe's snapshots report it. */
 export interface ConnectionState {
   readonly id: string
+  /** The connection's ordinal in the emitter. */
+  readonly c: number
   readonly realm: Realm
   readonly origin: string
   readonly draft: SupportedDraft | null
@@ -194,13 +217,12 @@ export interface ConnectionState {
 /** An open connection as a worker reports it to its page with every forward. */
 export interface ConnectionSnapshot {
   readonly conn: ConnectionState
-  /** The open interval so far: what the page reports if the worker is gone before the next one. */
-  readonly rollup: RollupRecord | null
   readonly counters: ConnCloseRecord['counters']
 }
 
 interface Connection {
   readonly id: string
+  readonly c: number
   readonly session: InterceptedSession
   readonly origin: string
   readonly options: ConnOptions | undefined
@@ -272,6 +294,10 @@ interface Connection {
    * metric, not merely a tail.
    */
   ackedByStream: Map<number, SendStreamAcks>
+  /** Receive streams reset, by code, until they close. */
+  resets: Map<number, number>
+  /** Streams that failed rather than ended. */
+  errored: Set<number>
 }
 
 interface SendStreamAcks {
@@ -285,6 +311,8 @@ interface SendStreamAcks {
 
 type ConnectionSink = RecordSink & {
   onObject(s: ObjectSample): void
+  onMark(m: MarkSample): void
+  onPayload(streamId: number, at: Mono): void
   onControlFrame(e: ControlFrameEvent): void
   onParseFailure(k: BucketKey | null, r: ParseFailureReason): void
   observeControlLatency(k: ExchangeKind, ms: number): void
@@ -363,12 +391,21 @@ export class RealmObserver {
   private _overrunSignal: string | undefined
   /** A closing connection's last interval is being written; it passes the halt gate. */
   private _closing = false
+  private readonly _runs: RunRecorder
+  private readonly _ordinal: (id: string) => number
 
   constructor(o: RealmOptions) {
     this._o = o
     this._host = o.host
     this._origin = o.originMono
     this._contentId = o.config.context.contentId
+    this._runs = new RunRecorder(
+      o.monoBase ?? 0,
+      () => this._host.onFlowsFull?.(),
+      o.realm === 'worker',
+    )
+    let next = 0
+    this._ordinal = o.ordinal ?? (() => next++)
     const f = o.recorder
     if (f !== undefined) {
       this._recorder = f.create(
@@ -411,6 +448,17 @@ export class RealmObserver {
   /** Records refused by the droppable gate or the pre-draft buffer cap. */
   get droppedRecords(): number {
     return this._droppedRecords
+  }
+
+  /**
+   * The runs and marks since the last take, and the arrivals since then that
+   * no run could hold. With `hold`, stream runs still open stay open.
+   */
+  takeRuns(hold = false): Taken & { readonly dropped: number } {
+    const t = this._runs.take(hold)
+    const dropped = this._runs.droppedObjects
+    this._runs.droppedObjects = 0
+    return { ...t, dropped }
   }
 
   /** Objects seen in the current one-second window: the pacer's pressure signal. */
@@ -477,12 +525,11 @@ export class RealmObserver {
   }
 
   /** Every open connection with its open rollup interval, which stays open. */
-  snapshots(now: Mono): ConnectionSnapshot[] {
+  snapshots(): ConnectionSnapshot[] {
     const out: ConnectionSnapshot[] = []
     for (const c of this._connections.values()) {
       out.push({
         conn: this._stateOf(c),
-        rollup: c.rollup.snapshot(now),
         counters: {
           parseFailures: c.rollup.parseFailures,
           bucketsRefused: c.rollup.bucketsRefused,
@@ -569,6 +616,7 @@ export class RealmObserver {
     const config = this._o.config
     const offered = offeredOf(s.options?.protocols ?? [], draftOfOffered)
     const keys = new TrackKeys({ maxBuckets: config.metrics.maxTracks })
+    const ordinal = this._ordinal(s.id)
     const rollup = new RollupEngine({
       intervalMs: config.metrics.intervalMs,
       maxBuckets: config.metrics.maxTracks,
@@ -576,10 +624,13 @@ export class RealmObserver {
       sink: this._sink,
       originMono: this._origin,
       conn: s.id,
+      c: ordinal,
+      monoBase: this._o.monoBase ?? 0,
       requestOf: (k) => keys.requestFor(k),
     })
     const c: Connection = {
       id: s.id,
+      c: ordinal,
       session: s,
       origin: originOf(s.url),
       options: connOptionsOf(s.options),
@@ -604,6 +655,8 @@ export class RealmObserver {
       probedStreams: new Set(),
       skip: new Set(),
       ackedByStream: new Map(),
+      resets: new Map(),
+      errored: new Set(),
     }
     this._connections.set(s.id, c)
     // Stamped with the transport's own construction time, which precedes this
@@ -645,6 +698,7 @@ export class RealmObserver {
 
   onStreamData(c: StreamChunk): void {
     if (this._halted) return
+    this._host.clockCheck?.()
     // Control bytes are deliberately NOT ringed: a token would sit in memory
     // for the life of the session.
     //
@@ -708,9 +762,16 @@ export class RealmObserver {
     conn.skip.delete(halfOf(streamId, 'rx'))
     conn.skip.delete(halfOf(streamId, 'tx'))
     conn.dispatcher?.onStreamClose(streamId)
+    const code = conn.resets.get(streamId)
+    if (code !== undefined) this._runs.onStreamEnd(conn.c, streamId, 'reset', code)
+    else if (conn.errored.has(streamId)) this._runs.onStreamEnd(conn.c, streamId, 'gone')
+    else this._runs.onStreamEnd(conn.c, streamId, 'fin')
+    conn.resets.delete(streamId)
+    conn.errored.delete(streamId)
   }
 
-  onStreamError(_sessionId: string, _streamId: number, error: unknown): void {
+  onStreamError(sessionId: string, streamId: number, error: unknown): void {
+    this._connections.get(sessionId)?.errored.add(streamId)
     this._host.onError(error)
   }
 
@@ -723,6 +784,7 @@ export class RealmObserver {
     if (this._halted) return
     const conn = this._connections.get(sessionId)
     if (conn === undefined) return
+    if (d === 'rx') conn.resets.set(streamId, code)
     const key = conn.dispatcher?.trackForStream(streamId, d) ?? null
     if (key !== null) conn.rollup.observeReset(key, code, at)
     else if (conn.dispatcher !== null) conn.rollup.count('resets.untracked', 1)
@@ -730,6 +792,7 @@ export class RealmObserver {
 
   onDatagram(c: DatagramChunk): void {
     if (this._halted) return
+    this._host.clockCheck?.()
     if (this._armed()) {
       this._recorder?.ring.push({
         sessionId: c.sessionId,
@@ -852,9 +915,19 @@ export class RealmObserver {
           this._writeConnOpen(c)
         }
         rollup.onObject(s)
+        if (s.status !== undefined) {
+          if (c.draft !== null) this._runs.onMark(c.c, c.draft, s)
+        } else this._runs.onObject(c.c, s)
         this._recorder?.onObject(s)
         const lvl = this._host.level()
         if (lvl !== 'baseline') this._writeHdr(c, s, lvl)
+      },
+      onMark: (m: MarkSample): void => {
+        const c = conn()
+        if (c.draft !== null) this._runs.onMark(c.c, c.draft, m)
+      },
+      onPayload: (streamId: number, at: Mono): void => {
+        this._runs.onPayload(conn().c, streamId, at)
       },
       onControlFrame: (e: ControlFrameEvent): void => {
         this._noteControlFrame(e.at)
@@ -1005,6 +1078,7 @@ export class RealmObserver {
       ts: ts ?? this._relNow(),
       lvl: this._host.level(),
       conn: c.id,
+      c: c.c,
       realm: this._o.realm,
       origin: c.origin,
       relay: c.origin,
@@ -1046,6 +1120,7 @@ export class RealmObserver {
       ts: at - this._origin,
       lvl: this._host.level(),
       conn: c.id,
+      c: c.c,
       cause: info.cause,
       ...(detail.by !== undefined ? { by: detail.by } : {}),
       ...(detail.code !== undefined ? { code: detail.code } : {}),
@@ -1056,6 +1131,10 @@ export class RealmObserver {
       },
     }
     this._writeCritical(record)
+    this._runs.onConnClose(c.c)
+    this._host.onConnGone?.(c.c)
+    // A session's end leaves the transport open for the next session's realm.
+    if (info.cause !== 'session-end') this._o.ordinalDone?.(c.id)
     this._closedParseFailures += c.rollup.parseFailures
     this._closedBucketsRefused += c.rollup.bucketsRefused
     this._connections.delete(c.id)
@@ -1067,6 +1146,7 @@ export class RealmObserver {
   private _stateOf(c: Connection): ConnectionState {
     return {
       id: c.id,
+      c: c.c,
       realm: this._o.realm,
       origin: c.origin,
       draft: c.draft,
@@ -1170,6 +1250,7 @@ export class RealmObserver {
     }
     c.adapter = result.adapter
     c.draft = result.draft
+    this._host.onConn?.(c.c, result.draft, c.origin)
     c.dispatcher = new StreamDispatcher(result.adapter, c.keys, c.sink, {
       slackBytes: this._o.config.limits.maxHeaderSlackBytes,
       maskAuthParams: this._o.config.privacy.maskAuthParams,

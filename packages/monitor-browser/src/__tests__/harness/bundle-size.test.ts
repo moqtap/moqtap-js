@@ -72,12 +72,12 @@ const PAGE_ONLY = [
   '1116352408', // envelope/sha256.ts — the first round constant, 0x428a2f98
   'pagehide', // api/session.ts
   'indexedDB', // flush/idb.ts
+  'CompressionStream', // envelope/gzip.ts: the page compresses, a probe forwards frames as they are
 ] as const
 
 /** Strings every worker entry reaches. */
 const WORKER_ALWAYS = [
   '__moqtap_collector__', // api/link.ts
-  'CompressionStream', // envelope/gzip.ts, the probe's compressor
   'incomingUnidirectionalStreams', // the hook
 ] as const
 
@@ -94,25 +94,25 @@ const FORBIDDEN_CODEC_IMPORTS = ['encodeMessage', 'encodeSubgroupStream', 'encod
  */
 const CEILING_GZ = {
   /** `.`: every draft, every feature. */
-  root: 75_500,
+  root: 81_500,
   /** `./draftNN`: one draft, every feature. */
-  draft: 58_500,
+  draft: 64_500,
   /** `./draftNN/thin`: one draft, no optional feature. */
-  thin: 45_500,
+  thin: 52_000,
   /** `compose({ features: [workers] })`: a page whose transports live in its workers. */
-  linked: 21_000,
+  linked: 26_000,
   /**
    * `compose({ features: [workers, escalation, persistence] })` built for
    * es2019 and es2020, where `#` members cost WeakMap helpers.
    */
-  es2019: 28_000,
-  es2020: 27_000,
+  es2019: 33_000,
+  es2020: 31_500,
   /** `./worker`: every draft and the flight recorder. */
-  worker: 54_000,
+  worker: 56_000,
   /** `./draftNN/worker`. */
-  draftWorker: 37_000,
+  draftWorker: 39_500,
   /** `./draftNN/thin/worker`. */
-  thinWorker: 32_500,
+  thinWorker: 34_500,
 } as const
 
 /**

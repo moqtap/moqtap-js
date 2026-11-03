@@ -22,6 +22,7 @@ import type {
 import type { TriggerEvent } from '../recorder/index.js'
 import type { RingEntry } from '../ring/index.js'
 import type { CustomMetrics } from '../rollup/index.js'
+import type { Taken } from '../rollup/runs.js'
 import type { TransportHook } from '../transport/index.js'
 import type {
   BucketKey,
@@ -42,7 +43,7 @@ import type {
   TriggerKind,
 } from '../types.js'
 import type { DormantClaim, DormantState } from './dormant.js'
-import type { DeflatePart, PageMessage } from './link.js'
+import type { PageMessage } from './link.js'
 import type { UsageMeter } from './meter.js'
 import type { ConnectionState, RealmConfig, RealmObserver, RealmOptions } from './realm.js'
 import type { LinkEvent, MessageTarget } from './session.js'
@@ -174,14 +175,20 @@ export interface LinkOwner {
   context(): ResolvedConfig['context']
   /** What a probe subtracts from its own clock to land on this session's. */
   base(workerOrigin: number): Mono
+  /** What a probe subtracts from its own clock to read the page's `performance.now()`. */
+  monoBase(workerOrigin: number): Mono
   /** A linked worker constructed a `WebTransport` while the session waited for one. */
   begin(): void
   writeLink(id: string, ev: LinkRecord['ev']): void
   /** Frames a probe forwarded as they are. */
   append(frames: Uint8Array, n: number): void
-  /** Frames a probe compressed: the end of a body of their own. */
-  sealSegment(part: DeflatePart): void
+  /** Runs and marks a probe forwarded, sealed into the page's next body. */
+  absorbRuns(t: Taken): void
+  /** A probe's open connections as of its last forward; `gone` are those it no longer reports. */
+  noteConns(open: readonly ConnectionState[], gone: readonly ConnectionState[]): void
   ensureSetup(): void
+  /** A probe's clock broke after its last forward: seal, raise the epoch, probe. */
+  clockBreak(): void
   connReady(): void
   /** A linked worker has fewer connections open than it had. */
   noteClosed(): void

@@ -425,8 +425,9 @@ describe('the session ends when its connections have', () => {
 
     // Waiting again: new ids at once, the context so far, and nothing sent.
     const second = c.ids()
+    // A new session of the same emitter: the instance claim stays.
     expect(second.sessionId).not.toBe(first.sessionId)
-    expect(second.instanceId).not.toBe(first.instanceId)
+    expect(second.instanceId).toBe(first.instanceId)
     expect(second).toMatchObject({ contentId: 'live/1', actorId: 'viewer-1' })
     const sent = posts.length
     c.annotate('between')
@@ -495,13 +496,13 @@ describe('the session ends when its connections have', () => {
 describe('what ingest asked of a session', () => {
   it('ends with it: the next session seals on the usual schedule, at the configured level', async () => {
     const serverNow = 5_000_000_000_000
-    let first = ''
+    let watching = false
     const { posts, impl } = recordingFetch((n) => {
       const url = posts[n]?.url ?? ''
       return {
         [RECV_HEADER]: String(serverNow),
         [SEND_HEADER]: String(serverNow),
-        ...(first !== '' && url.includes(`i=${first}`)
+        ...(watching && url.includes('ik=')
           ? {
               [DIRECTIVE_HEADER]: JSON.stringify({
                 flushMs: 2_000,
@@ -516,7 +517,7 @@ describe('what ingest asked of a session', () => {
     const c = init(base(), { ...quiet, fetchImpl: impl, ...timers })
     await settle()
     const wt = attempt()
-    first = c.ids().instanceId
+    watching = true
     await wt.open('moqt-20')
     await c.flush()
     expect(timers.pending(2_000)).toBe(1)
@@ -524,6 +525,7 @@ describe('what ingest asked of a session', () => {
     await settle(5)
     timers.run(IDLE_END_MS)
     await until(async () => of(await allRecords(posts), 'end').length === 1)
+    watching = false
     expect(timers.pending(2_000)).toBe(0)
 
     attempt()

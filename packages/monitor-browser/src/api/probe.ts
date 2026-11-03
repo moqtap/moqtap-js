@@ -4,23 +4,10 @@
  *
  * A probe numbers, seals, stores and uploads nothing, and has no end of its
  * own. Every {@link FORWARD_INTERVAL_MS} it transfers the frames it has written
- * to the page, with a snapshot of each open connection's rollup interval, so a
- * worker terminated without warning loses at most that interval's per-object
- * records and none of its counters. The page appends the frames to its own
- * stream without parsing them.
- *
- * At baseline a forward of at least `upload.byteThreshold` is gzipped here
- * first, in pieces small enough to be a body each, so the page seals, stores
- * and uploads it without compressing anything on its main thread. The
- * droppable gate then weighs this probe's buffer by what it will cost once
- * compressed, not by its raw size.
- *
- * While detail is raised, the page packs its buffer into bodies by what they
- * cost gzipped, a body holding twenty or forty times the threshold of object
- * headers; a piece gzipped here would be a body of its own, at a forward's
- * worth of headers. So forwards go to the page as frames, to be packed with
- * the page's own. Only a flight dump's slices, a body each, are gzipped here
- * still.
+ * and the runs and marks its realm recorded to the page, so a worker
+ * terminated without warning loses at most that interval. The page numbers
+ * the frames as it appends them, joins each run to the one it continues, and
+ * seals them in its own bodies, once.
  *
  * Every timestamp is written on the page's timeline from the start: the page
  * sends the offset between the two clocks with each session it records the
@@ -30,17 +17,13 @@
  */
 
 import type { DraftSet } from '../draft/index.js'
-import {
-  type DeflateSegment,
-  deflateSegment,
-  gzipSupported,
-  splitFrames,
-} from '../envelope/index.js'
+import { splitFrames } from '../envelope/index.js'
+import { BreakCheck } from '../flush/clock-sync.js'
 import { FrameBuffer } from '../flush/frame-buffer.js'
 import type { TriggerEvent } from '../recorder/index.js'
 import type { TransportHook } from '../transport/index.js'
 import type { ClockSource, DetailLevel, Mono, RollupRecord } from '../types.js'
-import { isElevated, levelIndex } from './defaults.js'
+import { levelIndex } from './defaults.js'
 import { armDormant, type DormantState, dormantPending } from './dormant.js'
 import { TRIGGER_CAPTURE_LEVEL } from './escalation.js'
 import type { FlightRecorderFeature } from './features.js'
@@ -49,14 +32,13 @@ import {
   envelope,
   FORWARD_INTERVAL_MS,
   type ForwardMessage,
-  type ForwardPart,
   type FramesPart,
   HEARTBEAT_MS,
   type LinkedMessage,
   linkMessage,
   type PageMessage,
 } from './link.js'
-import { BODY_OVERHEAD_BYTES, type RealmConfig, RealmObserver } from './realm.js'
+import { type RealmConfig, RealmObserver } from './realm.js'
 
 /** What a worker's build carries: its drafts, and the flight recorder when it has one. */
 export interface WorkerBuild {
@@ -71,33 +53,7 @@ export interface ProbePorts {
   readonly onInternalError?: (err: unknown) => void
 }
 
-/** Knobs the suite turns; nothing in a deployment does. */
-export interface ProbeTuning {
-  /** Forwards of at least this many bytes are compressed here. Default `upload.byteThreshold`. */
-  readonly compressMinBytes?: number
-  /** The compressor. Default `CompressionStream`, through {@link deflateSegment}. */
-  readonly deflate?: (bytes: Uint8Array) => Promise<DeflateSegment>
-}
-
 const platformClock: ClockSource = { now: () => performance.now(), wall: () => Date.now() }
-
-/**
- * Compressed bytes one piece aims at, and the most it may come to.
- *
- * Each piece becomes a body of its own, which has to fit `sendBeacon`'s 64 KiB
- * at `pagehide` with the page's few frames of its own in front.
- */
-const PIECE_TARGET_BYTES = 32 * 1024
-const PIECE_MAX_BYTES = 48 * 1024
-
-/** Compressed over raw, before any forward has been compressed. */
-const START_RATIO = 1 / 4
-/**
- * The least the droppable gate takes the ratio to be. It keeps the gate's
- * limit under the raw buffer's cap, so the gate always sheds droppable records
- * before the cap refuses one that must not be lost.
- */
-const GATE_MIN_RATIO = 1 / 16
 
 /** Forwards a probe keeps count of separately while the page has not taken them in. */
 const MAX_UNHEARD = 64
@@ -108,10 +64,14 @@ interface Unheard {
   readonly bytes: number
 }
 
-/** Raw bytes a probe may hold, in `upload.byteThreshold`s, when it compresses. */
+/**
+ * Raw bytes a probe may hold, in `upload.byteThreshold`s: enough for a
+ * forward's worth of raised detail, which the page packs.
+ */
 const RAW_CAP_THRESHOLDS = 128
-/** And when it cannot: the page refuses a forward larger than its own buffer. */
-const PLAIN_CAP_THRESHOLDS = 8
+
+/** The most one part of a forward carries: what the page's buffer takes at baseline. */
+const PART_THRESHOLDS = 8
 
 export class ProbeRuntime {
   /** The page's clock base; `undefined` while the page's session has not begun. */
@@ -128,11 +88,14 @@ export class ProbeRuntime {
   /** Rollup intervals closed since the last forward, in order. They travel beside the frames. */
   private _rollups: RollupRecord[] = []
 
-  private readonly _compresses: boolean
-  private readonly _compressMin: number
-  /** The most frames one part of a forward carries uncompressed: what the page's buffer takes at baseline. */
+  /** The most frames one part of a forward carries: what the page's buffer takes at baseline. */
   private readonly _plainMax: number
-  private readonly _deflate: (bytes: Uint8Array) => Promise<DeflateSegment>
+  /** Subtract from this worker's clock to read the page's `performance.now()`. */
+  private readonly _mono: Mono
+  /** The next connection ordinal, in this probe's own range: it lasts across the page's sessions. */
+  private _nextConn: number
+  /** Ordinals of this worker's hooked sessions still open. */
+  private readonly _connIds = new Map<string, number>()
 
   private _ids: { sessionId: string; instanceId: string }
   private _config: RealmConfig
@@ -145,22 +108,15 @@ export class ProbeRuntime {
   private _lastPost: Mono
   private _forwardHandle: unknown
   private _intervalHandle: unknown
-  /** Compressed over raw, from the forwards so far. */
-  private _ratio: number
-  /** A forward is being compressed; the next waits for it, so forwards arrive in order. */
-  private _compressing = false
-  private _forwardAgain = false
-  /** And it carries a flight dump's slice. */
-  private _sliceAgain = false
-  /** How long the last compression took: the next forward starts that much earlier. */
-  private _compressMs = 0
   /** The outbox room the page last gave this probe's flight dumps. */
   private _room: number
   /** The last forward's `seq`. */
   private _seq = 0
   private _unheard: Unheard[] = []
-  /** Raw bytes of the forward being compressed. */
-  private _compressingBytes = 0
+  /** Checks this worker's captured times for a clock break; its epoch is the page's. */
+  private readonly _breaks = new BreakCheck()
+  /** A break was seen and the page not told yet. */
+  private _brk = false
 
   constructor(
     linked: LinkedMessage,
@@ -168,7 +124,6 @@ export class ProbeRuntime {
     hook: TransportHook,
     build: WorkerBuild,
     ports: ProbePorts = {},
-    tuning: ProbeTuning = {},
   ) {
     this._base = linked.base
     this._ids = { sessionId: linked.sessionId, instanceId: linked.instanceId }
@@ -190,13 +145,11 @@ export class ProbeRuntime {
     this._room = linked.room
     this._lastPost = this._clock.now()
     const threshold = linked.config.upload.byteThreshold
-    this._deflate = tuning.deflate ?? deflateSegment
-    this._compresses = tuning.deflate !== undefined || gzipSupported()
-    this._compressMin = Math.max(1, tuning.compressMinBytes ?? threshold)
-    this._plainMax = PLAIN_CAP_THRESHOLDS * threshold
-    this._ratio = this._compresses ? START_RATIO : 1
+    this._plainMax = PART_THRESHOLDS * threshold
+    this._mono = linked.mono
+    this._nextConn = linked.connBase
     this._buffer = new FrameBuffer({
-      maxPendingBytes: (this._compresses ? RAW_CAP_THRESHOLDS : PLAIN_CAP_THRESHOLDS) * threshold,
+      maxPendingBytes: RAW_CAP_THRESHOLDS * threshold,
       onInternalError: this._onError,
     })
   }
@@ -208,7 +161,6 @@ export class ProbeRuntime {
   private _record(base: Mono): void {
     this._base = base
     const buffer = this._buffer
-    const ratio = (): number => Math.max(GATE_MIN_RATIO, this._ratio)
     const realm = new RealmObserver({
       realm: 'worker',
       config: this._config,
@@ -216,19 +168,27 @@ export class ProbeRuntime {
       drafts: this._build.drafts,
       recorder: this._build.recorder,
       originMono: base,
+      monoBase: this._mono,
+      ordinal: (id) => {
+        let c = this._connIds.get(id)
+        if (c === undefined) {
+          c = this._nextConn++
+          this._connIds.set(id, c)
+        }
+        return c
+      },
+      ordinalDone: (id) => this._connIds.delete(id),
       clock: this._clock,
       host: {
         sink: {
-          // A closed interval goes to the page as a record rather than as
-          // frames: the page may already have written part of it for a
-          // worker it counted gone, and writes only the rest.
+          // A closed interval goes to the page as a record beside the frames.
           json: (r) => {
             if (r.t === 'rollup') this._rollups.push(r)
             else buffer.json(r)
           },
           raw: (b) => buffer.raw(b),
           get pendingBytes(): number {
-            return buffer.pendingBytes * ratio()
+            return buffer.pendingBytes
           },
         },
         level: () => this._level,
@@ -243,7 +203,8 @@ export class ProbeRuntime {
         },
         onPressure: () => {},
         onBytes: () => {},
-        flush: () => this._forward(true),
+        clockCheck: () => this._clockCheck(),
+        flush: () => this._forward(),
         dumpRoom: () => this._dumpRoom(),
         onError: this._onError,
       },
@@ -275,7 +236,7 @@ export class ProbeRuntime {
    * written.
    */
   private _dumpRoom(): number {
-    let owed = this._buffer.pendingBytes + this._compressingBytes
+    let owed = this._buffer.pendingBytes
     for (const u of this._unheard) owed += u.bytes
     return Math.max(0, this._room - owed)
   }
@@ -293,11 +254,7 @@ export class ProbeRuntime {
     const forward = (): void => {
       if (this._stopped) return
       this._forward()
-      // A compressed forward reaches the page when its compression ends, so
-      // the next one starts that much early: what a terminated worker loses
-      // stays within one interval.
-      const ms = Math.max(FORWARD_INTERVAL_MS / 2, FORWARD_INTERVAL_MS - this._compressMs)
-      this._forwardHandle = set(forward, ms)
+      this._forwardHandle = set(forward, FORWARD_INTERVAL_MS)
     }
     this._forwardHandle = set(forward, FORWARD_INTERVAL_MS)
     const interval = this._config.metrics.intervalMs
@@ -335,117 +292,60 @@ export class ProbeRuntime {
     this._call(reason === undefined ? { t: 'resolve' } : { t: 'resolve', reason })
   }
 
-  /**
-   * Hand the page what this probe has written, or say it is still here.
-   *
-   * The frames' buffers are transferred, not copied: the page's main thread
-   * pays for a pointer and an append, or for a pointer and a seal when they
-   * arrive compressed. One compression at a time: a forward asked for while
-   * one runs follows it, so the page receives the frames in order. A
-   * `slice` of a flight dump is compressed at any level.
-   */
-  private _forward(slice = false): void {
-    const realm = this._realm
-    if (this._stopped || realm === null) return
-    if (this._compressing) {
-      this._forwardAgain = true
-      this._sliceAgain ||= slice
-      return
-    }
-    const now = this._clock.now()
-    const hasFrames = this._buffer.frameCount > 0
-    const closed = this._rollups
-    if (!hasFrames && closed.length === 0 && now - this._lastPost < HEARTBEAT_MS) return
-    const conns = realm.snapshots(now)
-    const dropped = this._buffer.droppedRecords + realm.droppedRecords
-    const ready = this._ready
-    const rollups = closed.length > 0 ? { rollups: closed } : {}
-    this._rollups = []
-    this._lastPost = now
-    if (!hasFrames) {
-      this._post({ t: 'fwd', n: 0, dropped, ready, ...rollups, conns }, [])
-      return
-    }
-    const { frames, count } = this._buffer.takeFrames()
-    if (
-      !this._compresses ||
-      frames.byteLength < this._compressMin ||
-      (!slice && isElevated(this._level))
-    ) {
-      const parts =
-        frames.byteLength <= this._plainMax
-          ? [framesPart(frames, count)]
-          : splitFrames(frames, count, this._plainMax / 2).map((p) =>
-              framesPart(p.bytes.slice(), p.count),
-            )
-      this._post(
-        { t: 'fwd', parts, n: count, dropped, ready, ...rollups, conns },
-        parts.map((p) => p.frames),
-      )
-      return
-    }
-    this._compressing = true
-    this._compressingBytes = frames.byteLength
-    void this._compress(frames, count).then((parts) => {
-      this._compressMs = Math.max(0, this._clock.now() - now)
-      this._compressing = false
-      this._compressingBytes = 0
-      this._buffer.recycle(frames)
-      const transfer = parts.map((p) => ('deflate' in p ? p.deflate : p.frames))
-      this._post({ t: 'fwd', parts, n: count, dropped, ready, ...rollups, conns }, transfer)
-      if (this._forwardAgain) {
-        const again = this._sliceAgain
-        this._forwardAgain = false
-        this._sliceAgain = false
-        this._forward(again)
-      }
-    })
+  /** What was captured before a break goes to the page now, marked so it seals it. */
+  private _clockCheck(): void {
+    if (!this._breaks.check(this._clock.wall(), this._clock.now())) return
+    this._brk = true
+    this._forward()
   }
 
   /**
-   * The frames in pieces of about {@link PIECE_TARGET_BYTES} compressed, in
-   * order. A piece that compresses past {@link PIECE_MAX_BYTES} is split and
-   * compressed again; one that cannot be split, or cannot be compressed, goes
-   * as it is. Never rejects.
+   * Hand the page what this probe has written and recorded, or say it is
+   * still here. The frames' buffers are transferred, not copied: the page's
+   * main thread pays for a pointer and an append.
    */
-  private async _compress(frames: Uint8Array, count: number): Promise<ForwardPart[]> {
-    const parts: ForwardPart[] = []
-    let raw = 0
-    let packed = 0
-    const piece = async (bytes: Uint8Array, n: number): Promise<void> => {
-      let segment: DeflateSegment | null = null
-      try {
-        segment = await this._deflate(bytes)
-      } catch (err) {
-        this._onError(err)
-      }
-      if (segment !== null && segment.deflate.byteLength <= PIECE_MAX_BYTES) {
-        raw += bytes.byteLength
-        packed += segment.deflate.byteLength
-        const deflate = new Uint8Array(segment.deflate).buffer as ArrayBuffer
-        parts.push({
-          deflate,
-          byteLength: deflate.byteLength,
-          crc: segment.crc,
-          size: segment.size,
-          n,
-        })
-        return
-      }
-      const halves = segment === null ? [] : splitFrames(bytes, n, Math.ceil(bytes.byteLength / 2))
-      if (halves.length > 1) {
-        for (const h of halves) await piece(h.bytes, h.count)
-        return
-      }
-      parts.push(framesPart(bytes.slice(), n))
+  private _forward(): void {
+    const realm = this._realm
+    if (this._stopped || realm === null) return
+    const now = this._clock.now()
+    const taken = realm.takeRuns()
+    const hasRuns = taken.runs.length > 0 || taken.marks.length > 0 || taken.dropped > 0
+    const hasFrames = this._buffer.frameCount > 0
+    const closed = this._rollups
+    const brk = this._brk
+    if (
+      !brk &&
+      !hasFrames &&
+      !hasRuns &&
+      closed.length === 0 &&
+      now - this._lastPost < HEARTBEAT_MS
+    ) {
+      return
     }
-    const target = Math.max(1024, Math.floor(PIECE_TARGET_BYTES / this._ratio))
-    for (const span of splitFrames(frames, count, target)) await piece(span.bytes, span.count)
-    if (raw > 0) {
-      // Half the old estimate and half the new, so one odd forward moves it only so far.
-      this._ratio = Math.min(1, Math.max(1 / 1024, (this._ratio + packed / raw) / 2))
+    const conns = realm.snapshots()
+    const dropped = this._buffer.droppedRecords + realm.droppedRecords
+    const ready = this._ready
+    const rollups = closed.length > 0 ? { rollups: closed } : {}
+    const runs = hasRuns ? { runs: taken } : {}
+    const broke = brk ? { brk: true as const } : {}
+    this._rollups = []
+    this._lastPost = now
+    this._brk = false
+    if (!hasFrames) {
+      this._post({ t: 'fwd', n: 0, dropped, ready, ...rollups, ...runs, conns, ...broke }, [])
+      return
     }
-    return parts
+    const { frames, count } = this._buffer.takeFrames()
+    const parts =
+      frames.byteLength <= this._plainMax
+        ? [framesPart(frames, count)]
+        : splitFrames(frames, count, this._plainMax / 2).map((p) =>
+            framesPart(p.bytes.slice(), p.count),
+          )
+    this._post(
+      { t: 'fwd', parts, n: count, dropped, ready, ...rollups, ...runs, conns, ...broke },
+      parts.map((p) => p.frames),
+    )
   }
 
   private _post(message: Omit<ForwardMessage, 'seq'>, transfer: Transferable[]): void {
@@ -453,9 +353,7 @@ export class ProbeRuntime {
     const seq = ++this._seq
     // A compressed part is a body of its own; frames join the page's buffer.
     let bytes = 0
-    for (const p of message.parts ?? []) {
-      bytes += 'deflate' in p ? p.byteLength + BODY_OVERHEAD_BYTES : p.byteLength
-    }
+    for (const p of message.parts ?? []) bytes += p.byteLength
     if (bytes > 0) {
       this._unheard.push({ seq, bytes })
       // A page that stops answering leaves this to grow; two merged under the

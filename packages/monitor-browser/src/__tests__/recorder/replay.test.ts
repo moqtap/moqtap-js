@@ -388,8 +388,8 @@ describe('the dump is one columnar record', () => {
     for (const col of [at, group, object, bytes, deliveryMs]) expect(col).toHaveLength(key.length)
     expect(key[0]).toBe('rx:alias:9:0')
     expect(at).toEqual([500, 500])
-    expect(group).toEqual([4, 4])
-    expect(object).toEqual([0, 1])
+    expect(group).toEqual(['4', '4'])
+    expect(object).toEqual(['0', '1'])
     // A record is one JSON object no matter how many objects the window held.
     expect(JSON.parse(JSON.stringify(rec)).cols.at).toEqual([500, 500])
   })
@@ -686,6 +686,8 @@ describe('a ring that outlived a reconnect', () => {
       fetchKey: (dir, id): BucketKey => ({ dir, kind: 'fetch', id, epoch }),
       applyControl: () => {},
       pendingFor: () => undefined,
+      fetchPath: () => null,
+      descending: () => false,
       bucketsRefused: 0,
     }
   }
@@ -749,7 +751,7 @@ describe('a ring that outlived a reconnect', () => {
     })
 
     expect(rec.conn).toBe('b')
-    expect(rec.cols.group).toEqual([9, 9])
+    expect(rec.cols.group).toEqual(['9', '9'])
     expect(rec.cols.key).toEqual(['rx:alias:1:7', 'rx:alias:1:7'])
   })
 
@@ -769,7 +771,7 @@ describe('a ring that outlived a reconnect', () => {
 
     const record = sink.records[0] as FlightRecord
     expect(record.conn).toBe('b')
-    expect(record.cols.group).toEqual([9, 9])
+    expect(record.cols.group).toEqual(['9', '9'])
     expect(record.truncated).toBe(false)
   })
 })

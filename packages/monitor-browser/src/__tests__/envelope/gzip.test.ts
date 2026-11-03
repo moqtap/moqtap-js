@@ -91,8 +91,6 @@ function rollupFrames(intervals: number): Uint8Array {
           payloadBytes: 240_000,
           headerBytes: 360,
           groups: 1,
-          groupGaps: 0,
-          outOfOrder: 0,
           duplicates: 0,
           statusObjects: 0,
           parseFailures: 0,

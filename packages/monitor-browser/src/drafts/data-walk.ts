@@ -341,6 +341,7 @@ export function readSubgroupHeader(
     trackAlias: alias.value,
     groupId: group.value,
     propertiesPresent: blockPresent(d, flags),
+    typeFlags: flags,
     subgroupId,
     subgroupIsFirstObjectId: !explicit && (flags & 0x02) !== 0,
     priority,
@@ -386,9 +387,18 @@ export function readSubgroupObject(
       : prev.prevObjectId + 1n + id.value
     : id.value
 
+  let propsStart = -1
+  let propsEnd = -1
   if (st.propertiesPresent) {
     const skipped = skipBlock(d, d.blockShape, b, p)
     if (skipped === NEED) return NEED
+    if (d.blockShape === BLOCK_LENGTH) {
+      const l = d.readVarint(b, p)
+      if (l !== NEED && l.next < skipped) {
+        propsStart = l.next
+        propsEnd = skipped
+      }
+    }
     p = skipped
   }
 
@@ -405,13 +415,14 @@ export function readSubgroupObject(
     p = s.next
   }
 
-  const info: ObjectHeaderInfo = {
+  let info: ObjectHeaderInfo = {
     objectId,
     groupId: st.groupId,
     payloadLength,
     headerBytes: p - i,
     next: p + payloadLength,
   }
+  if (propsStart >= 0) info = { ...info, propsStart, propsEnd }
   prev.first = false
   prev.prevObjectId = objectId
   prev.prevGroupId = st.groupId
@@ -571,9 +582,9 @@ function readFlaggedFetchObject(
     const gd = d.readVarint(b, p)
     if (gd === NEED) return NEED
     p = gd.next
-    groupId = d.markerGroupIsAbsolute
-      ? gd.value
-      : resolveGroup(prev.first, gd.value, prev.prevGroupId)
+    const mg = d.markerGroupIsAbsolute ? gd.value : resolveGroup(prev, gd.value)
+    if (mg === NEED) return NEED
+    groupId = mg
 
     const od = d.readVarint(b, p)
     if (od === NEED) return NEED
@@ -586,7 +597,7 @@ function readFlaggedFetchObject(
     // A marker has no Subgroup ID or Priority of its own: the prior ones stay
     // with the last object before it.
     const info = finishFetchObject(prev, i, p, groupId, objectId, Number(len.value))
-    return { ...info, marker: true }
+    return { ...info, marker: true, markerFlags: flags }
   }
 
   const datagramMode = d.fetchDatagramMode && (flags & 0x40) !== 0
@@ -600,9 +611,9 @@ function readFlaggedFetchObject(
     const gd = d.readVarint(b, p)
     if (gd === NEED) return NEED
     p = gd.next
-    groupId = d.fetchGroupIsAbsolute
-      ? gd.value
-      : resolveGroup(prev.first, gd.value, prev.prevGroupId)
+    const g = d.fetchGroupIsAbsolute ? gd.value : resolveGroup(prev, gd.value)
+    if (g === NEED) return NEED
+    groupId = g
   } else if (prev.first && !datagramMode) {
     // "First fetch object must include groupId" — a violation in every codec
     // from draft-15 on.
@@ -679,12 +690,17 @@ function readFlaggedFetchObject(
 
 /**
  * The first object's Group ID Delta IS the absolute Group ID; on any later
- * object the Group ID is `prior + delta + 1` for ascending group order. Group
- * Order is a control-plane parameter this decoder never sees, so ascending is
- * assumed — the same assumption the codec documents.
+ * object the Group ID is `prior + delta + 1` in ascending group order and
+ * `prior - delta - 1` in descending, which the counter sets on the cursor from
+ * the control plane before the stream is walked.
  */
-function resolveGroup(first: boolean, delta: bigint, prevGroupId: bigint): bigint {
-  return first ? delta : prevGroupId + delta + 1n
+function resolveGroup(prev: ObjectCursor, delta: bigint): bigint | Need {
+  if (prev.first) return delta
+  if (prev.descending === null) {
+    prev.orderMissing = true
+    return NEED
+  }
+  return prev.descending ? prev.prevGroupId - delta - 1n : prev.prevGroupId + delta + 1n
 }
 
 function finishFetchObject(

@@ -191,6 +191,11 @@ export class FlushSchedule {
     this._rearmInterval()
   }
 
+  /** The seal interval in force, ms. */
+  get sealMs(): number {
+    return this._shortMs ?? this._intervalMs
+  }
+
   /** Idempotent. After this nothing fires, including timers already queued. */
   stop(): void {
     this._stopped = true

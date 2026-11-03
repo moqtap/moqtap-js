@@ -38,7 +38,19 @@ function tag(k: BucketKey): string {
 }
 
 function sample(key: BucketKey, at: number, objectId = 0n): ObjectSample {
-  return { key, groupId: 0n, objectId, headerBytes: 8, payloadBytes: 1000, at }
+  return {
+    key,
+    groupId: 0n,
+    objectId,
+    headerBytes: 8,
+    payloadBytes: 1000,
+    at,
+    path: 'sub_stream',
+    sub: 0n,
+    fo: false,
+    foKnown: false,
+    eog: false,
+  }
 }
 
 interface Harness {

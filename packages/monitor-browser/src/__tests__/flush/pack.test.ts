@@ -7,9 +7,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { type DeflateSegment, deflateSegment, readFrames } from '../../envelope/index.js'
-import { FlushQueue } from '../../flush/index.js'
-import { Packer, type PackerOptions } from '../../flush/pack.js'
+import { Emitter, FlushQueue } from '../../flush/index.js'
+import { Packer, type PackerOptions, type TakenRuns } from '../../flush/pack.js'
 import type { NoteRecord } from '../../types.js'
+import { afterPreamble } from '../support/uploads.js'
 
 const note = (i: number): NoteRecord => ({
   t: 'note',
@@ -22,7 +23,7 @@ const note = (i: number): NoteRecord => ({
 async function gunzipFrames(body: Uint8Array): Promise<number> {
   const ds = new DecompressionStream('gzip')
   const out = new Response(
-    new Blob([body.subarray(8) as unknown as BlobPart]).stream().pipeThrough(ds),
+    new Blob([afterPreamble(body) as unknown as BlobPart]).stream().pipeThrough(ds),
   )
   return [...readFrames(new Uint8Array(await out.arrayBuffer()))].length
 }
@@ -30,7 +31,7 @@ async function gunzipFrames(body: Uint8Array): Promise<number> {
 function harness(over: Partial<PackerOptions> = {}) {
   const queue = new FlushQueue({
     sessionId: 's',
-    instanceId: 'i',
+    emitter: new Emitter('i', 0),
     maxPendingBytes: 1 << 24,
   })
   const timers: (() => void)[] = []
@@ -175,7 +176,7 @@ describe('Packer', () => {
     const packed = h.packer.take()
     expect(packed?.bytes).toBe(first)
     expect(packed?.rest).toBe(false)
-    h.queue.sealSegment(packed?.segment as DeflateSegment, {}, packed ?? undefined)
+    h.queue.sealSegment(packed?.segment as DeflateSegment, {}, packed as TakenRuns)
     const left = h.queue.pendingBytes
     h.hold(false)
     h.release()
@@ -187,7 +188,7 @@ describe('Packer', () => {
     const body = h.packer.take(1 << 20)
     expect(body?.rest).toBe(true)
     const frames = h.queue.frameCount
-    const sealed = h.queue.sealSegment(body?.segment as DeflateSegment, {}, body ?? undefined, true)
+    const sealed = h.queue.sealSegment(body?.segment as DeflateSegment, {}, body as TakenRuns, true)
     expect(await gunzipFrames(sealed.bytes)).toBe(1 + frames)
     expect(h.queue.frameCount).toBe(0)
   })

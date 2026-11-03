@@ -58,6 +58,7 @@ import {
   type TrackKeyResolver,
   type VarintReader,
 } from '../types.js'
+import { readGaps } from './gaps.js'
 import {
   DataStreamCounter,
   DEFAULT_HEADER_SLACK_BYTES,
@@ -65,6 +66,11 @@ import {
   type Desync,
   type ParseRun,
 } from './stream-walk.js'
+
+/** FIRST_OBJECT is in the subgroup header from draft-18. */
+export const FIRST_OBJECT_FROM = 18
+/** END_OF_GROUP in the subgroup header: types 0x18-0x1D in 12-15, bit 0x08 from 16. */
+export const HEADER_EOG_FROM = 12
 
 /**
  * Walk a SUBGROUP_HEADER, draft-20 Section 11.4.2.
@@ -119,6 +125,7 @@ export function readSubgroupHeader(
     trackAlias: alias.value,
     groupId: group.value,
     propertiesPresent: (flags & 0x01) !== 0,
+    typeFlags: flags,
     subgroupId,
     subgroupIsFirstObjectId: mode === 0x01,
     priority,
@@ -152,6 +159,7 @@ export function readSubgroupObject(
   // id is the prior object's id plus the delta plus one.
   const objectId = prev.first ? delta.value : prev.prevObjectId + 1n + delta.value
 
+  let propsStart = -1
   if (st.propertiesPresent) {
     const propsLen = v.read(b, p)
     if (propsLen === NEED) return NEED
@@ -163,8 +171,10 @@ export function readSubgroupObject(
     // into a counter, which is exactly why they need a ceiling.
     if (!Number.isSafeInteger(n) || n < 0 || n > slack) return DESYNC
     if (p + n > b.length) return NEED
+    if (n > 0) propsStart = p
     p += n
   }
+  const propsEnd = propsStart >= 0 ? p : -1
 
   const len = v.read(b, p)
   if (len === NEED) return NEED
@@ -179,7 +189,7 @@ export function readSubgroupObject(
     const status = v.read(b, p)
     if (status === NEED) return NEED
     p = status.next
-    return {
+    const info: ObjectHeaderInfo = {
       objectId,
       groupId: st.groupId,
       payloadLength: 0,
@@ -187,15 +197,17 @@ export function readSubgroupObject(
       headerBytes: p - i,
       next: p,
     }
+    return propsStart < 0 ? info : { ...info, propsStart, propsEnd }
   }
 
-  return {
+  const info: ObjectHeaderInfo = {
     objectId,
     groupId: st.groupId,
     payloadLength,
     headerBytes: p - i,
     next: p + payloadLength,
   }
+  return propsStart < 0 ? info : { ...info, propsStart, propsEnd }
 }
 
 /**
@@ -235,6 +247,9 @@ export class SubgroupCounter extends DataStreamCounter implements ObjectHeaderFi
   private readonly v: VarintReader
   /** Set for a draft before {@link HAND_WALK_FROM}: its adapter walks the stream. */
   private readonly older: DraftAdapter | null
+  private readonly draft: DraftAdapter['draft']
+  private fo = false
+  private eog = false
 
   constructor(
     private readonly dir: Direction,
@@ -246,6 +261,7 @@ export class SubgroupCounter extends DataStreamCounter implements ObjectHeaderFi
     super(opts?.slackBytes ?? DEFAULT_HEADER_SLACK_BYTES)
     this.streamId = opts?.streamId ?? -1
     this.v = a.varint
+    this.draft = a.draft
     this.older = a.draft < HAND_WALK_FROM ? a : null
   }
 
@@ -274,6 +290,8 @@ export class SubgroupCounter extends DataStreamCounter implements ObjectHeaderFi
         if (h === DESYNC) return { consumed: i, skip: 0, desync: true }
         this.header = h
         this.subgroup = h.subgroupId
+        this.fo = this.draft >= FIRST_OBJECT_FROM && (h.typeFlags & 0x40) !== 0
+        this.eog = this.draft >= HEADER_EOG_FROM && (h.typeFlags & 0x08) !== 0
         this.pendingHeaderBytes = h.headerBytes
         // The bucket key is the raw wire number, tagged with the seam's
         // direction and the control plane's alias epoch. No name is read, here
@@ -298,6 +316,9 @@ export class SubgroupCounter extends DataStreamCounter implements ObjectHeaderFi
 
       if (first && this.header.subgroupIsFirstObjectId) this.subgroup = o.objectId
       this.emit(o, at)
+      if (o.propsStart !== undefined && this.key !== null && this.sink.onMark !== undefined) {
+        this.gaps(b, o, at)
+      }
       this.cursor.first = false
       this.cursor.prevObjectId = o.objectId
       this.cursor.prevGroupId = o.groupId
@@ -314,34 +335,48 @@ export class SubgroupCounter extends DataStreamCounter implements ObjectHeaderFi
     this.sink.onParseFailure(this.key, 'subgroup-desync')
   }
 
+  protected override payloadArrived(at: Mono): void {
+    if (this.key !== null) this.sink.onPayload?.(this.streamId, at)
+  }
+
   private emit(o: ObjectHeaderInfo, at: Mono): void {
     const headerBytes = o.headerBytes + this.pendingHeaderBytes
     this.pendingHeaderBytes = 0
     const key = this.key
     if (key === null) return
-    this.sink.onObject(
-      withStream(
-        o.status === undefined
-          ? {
-              key,
-              groupId: o.groupId,
-              objectId: o.objectId,
-              headerBytes,
-              payloadBytes: o.payloadLength,
-              at,
-            }
-          : {
-              key,
-              groupId: o.groupId,
-              objectId: o.objectId,
-              headerBytes,
-              payloadBytes: o.payloadLength,
-              status: o.status,
-              at,
-            },
-        this.streamId,
-      ),
-    )
+    const s: ObjectSample = {
+      key,
+      groupId: o.groupId,
+      objectId: o.objectId,
+      headerBytes,
+      payloadBytes: o.payloadLength,
+      at,
+      path: 'sub_stream',
+      sub: this.subgroup,
+      fo: this.fo,
+      foKnown: this.draft >= FIRST_OBJECT_FROM,
+      eog: this.eog,
+    }
+    // A zero-length object with status 0x0 is a Normal object with no payload.
+    if (o.status !== undefined && o.status !== 0n) (s as { status?: bigint }).status = o.status
+    this.sink.onObject(withStream(s, this.streamId))
+  }
+
+  private gaps(b: Uint8Array, o: ObjectHeaderInfo, at: Mono): void {
+    const g = readGaps(this.v, b, o.propsStart as number, o.propsEnd as number, this.draft)
+    if (g === null) return
+    const base = {
+      key: this.key as BucketKey,
+      groupId: o.groupId,
+      objectId: o.objectId,
+      path: 'sub_stream' as const,
+      ...(this.streamId >= 0 ? { streamId: this.streamId } : {}),
+      at,
+    }
+    if (g.group !== undefined) this.sink.onMark?.({ ...base, what: { gap: 'group', n: g.group } })
+    if (g.object !== undefined) {
+      this.sink.onMark?.({ ...base, what: { gap: 'object', n: g.object } })
+    }
   }
 }
 

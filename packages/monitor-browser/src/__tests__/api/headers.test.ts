@@ -22,7 +22,7 @@ import {
   linkMessage,
 } from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
-import { BODY_PREAMBLE_BYTES, readFrames, readPreamble } from '../../envelope/index.js'
+import { readFrames, readPreamble } from '../../envelope/index.js'
 import type {
   BatchRecord,
   CollectorConfig,
@@ -33,7 +33,9 @@ import type {
 } from '../../types.js'
 import { datagramBytes, fetchBytes, subgroupBytes, subscribeBytes } from '../decode/vectors.js'
 import { init, workerBuild } from '../support/init.js'
+import { allFacts } from '../support/runs.js'
 import { settle, until } from '../support/settle.js'
+import { afterPreamble, clockProbe } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -46,6 +48,8 @@ interface Post {
 function recordingFetch(): { posts: Post[]; impl: typeof fetch } {
   const posts: Post[] = []
   const impl = (async (_url: string, init: RequestInit) => {
+    const clock = clockProbe(_url)
+    if (clock !== undefined) return clock
     const body =
       init.body instanceof Blob
         ? new Uint8Array(await init.body.arrayBuffer())
@@ -68,7 +72,7 @@ async function framesOf(posts: readonly Post[]): Promise<Frames> {
   const rawAfter: string[] = []
   for (const p of posts) {
     const pre = readPreamble(p.body) as { gzipped: boolean }
-    let frames = p.body.subarray(BODY_PREAMBLE_BYTES)
+    let frames = afterPreamble(p.body)
     if (pre.gzipped) {
       const ds = new DecompressionStream('gzip')
       const out = new Response(new Blob([frames as unknown as BlobPart]).stream().pipeThrough(ds))
@@ -136,7 +140,9 @@ const GROUP_7 = subgroupBytes({
   ],
 })
 
-async function sessionAt(level: DetailLevel): Promise<{ records: Frames; conn: string }> {
+async function sessionAt(
+  level: DetailLevel,
+): Promise<{ records: Frames; conn: string; posts: Post[] }> {
   const { posts, impl } = recordingFetch()
   const c = init(base(), { ...quiet, fetchImpl: impl })
   await settle()
@@ -145,7 +151,7 @@ async function sessionAt(level: DetailLevel): Promise<{ records: Frames; conn: s
   await peer.stream(GROUP_7)
   const conn = c.connections()[0]?.id as string
   await c.end()
-  return { records: await framesOf(posts), conn }
+  return { records: await framesOf(posts), conn, posts }
 }
 
 beforeEach(() => {
@@ -162,11 +168,14 @@ afterEach(() => {
 
 describe('object headers follow the detail level', () => {
   it('writes none at baseline', async () => {
-    const { records } = await sessionAt('baseline')
+    const { records, posts } = await sessionAt('baseline')
     expect(of(records.records, 'hdr')).toEqual([])
-    // The objects were counted all the same.
-    const rows = of(records.records, 'rollup').flatMap((r) => r.tracks)
-    expect(rows.reduce((n, t) => n + t.objects, 0)).toBe(3)
+    // The objects arrived all the same: two in a run, the status as a mark.
+    const { runs, marks } = await allFacts(posts.map((p) => p.body))
+    expect(runs.map((r) => [r.g, r.ids, r.b, r.end, r.eog])).toEqual([
+      [7n, [0n, 1n], 184, 'fin', false],
+    ])
+    expect(marks.map((m) => [m.kind, m.g, m.o])).toEqual([['eog', 7n, 2n]])
   })
 
   it('writes one per object at headers, with its connection, stream, group and object, and no size', async () => {
@@ -187,13 +196,14 @@ describe('object headers follow the detail level', () => {
         object: '0',
         priority: 128,
         subgroup: '0',
+        rseq: expect.any(Number),
       },
       expect.objectContaining({ group: '7', object: '1' }),
       expect.objectContaining({ group: '7', object: '2', status: 3 }),
     ])
     for (const h of hdr) expect(h).not.toHaveProperty('size')
-    // Decoded fields only: the raw frames in the upload are the control plane's.
-    expect(records.rawAfter.every((t) => t === 'ctrl')).toBe(true)
+    // Decoded fields only: the raw frames in the upload are the control plane's and the runs'.
+    expect(records.rawAfter.every((t) => ['ctrl', 'run', 'mark'].includes(t))).toBe(true)
   })
 
   it('adds the payload size at headers+sizes', async () => {
@@ -211,12 +221,12 @@ describe('object headers follow the detail level', () => {
     const { records } = await sessionAt('headers+data')
     const hdr = of(records.records, 'hdr')
     const strip = (h: HdrRecord) => {
-      const { lvl: _lvl, ts: _ts, conn: _conn, ...rest } = h
+      const { lvl: _lvl, ts: _ts, conn: _conn, rseq: _rseq, ...rest } = h
       return rest
     }
     expect(hdr.map((h) => h.lvl)).toEqual(['headers+data', 'headers+data', 'headers+data'])
     expect(hdr.map(strip)).toEqual(sizes.map(strip))
-    expect(records.rawAfter.every((t) => t === 'ctrl')).toBe(true)
+    expect(records.rawAfter.every((t) => ['ctrl', 'run', 'mark'].includes(t))).toBe(true)
   })
 
   it('stops when the window closes', async () => {
@@ -358,13 +368,13 @@ describe('object headers give way when the buffer nears its cap', () => {
     const end = of(records, 'end')[0] as EndRecord
     expect(end.counters.sampledTypes).toContain('hdr')
     const last = of(records, 'batch').at(-1) as BatchRecord
-    expect(last.dropped).toBeGreaterThanOrEqual(600 - hdr.length)
-    // Non-droppable records stay whole.
-    const rows = of(records, 'rollup').flatMap((r) => r.tracks)
-    expect(rows.reduce((n, t) => n + t.objects, 0)).toBe(600)
+    expect(last.tail.pre_drop.records).toBeGreaterThanOrEqual(600 - hdr.length)
+    // The runs stay whole.
+    const { runs } = await allFacts(posts.map((p) => p.body))
+    expect(runs.reduce((n, r) => n + r.ids.length, 0)).toBe(600)
     const ctrl = of(records, 'ctrl')
     expect(ctrl).toHaveLength(1)
-    expect(rawAfter).toEqual(['ctrl'])
+    expect(rawAfter.filter((t) => t !== 'run')).toEqual(['ctrl'])
   })
 })
 
@@ -385,6 +395,8 @@ describe('a linked worker writes object headers and forwards them', () => {
       sessionId: 'sess-fixed',
       instanceId: 'inst-1',
       base: 0,
+      mono: 0,
+      connBase: 1 << 20,
       level: 'baseline',
       room: 8 * 1024 * 1024,
       config: { metrics, flightRecorder, limits, privacy, upload, context },
@@ -423,12 +435,10 @@ describe('a linked worker writes object headers and forwards them', () => {
   })
 })
 
-describe('a linked worker forwards its headers compressed', () => {
-  it('keeps every header the raw buffer size would have shed, in bodies ingest reads', async () => {
+describe('a linked worker forwards its headers', () => {
+  it('in frames the page packs, every one numbered once, in bodies ingest reads', async () => {
     const { posts, impl } = recordingFetch()
-    // At a 1 KB threshold the droppable gate sits at 6 KB. A hundred headers
-    // are about 15 KB as written and well under 6 KB once compressed.
-    const c = init(base({ upload: { byteThreshold: 1024 } }), { ...quiet, fetchImpl: impl })
+    const c = init(base(), { ...quiet, fetchImpl: impl })
     const channel = new MessageChannel()
     c.linkWorker(channel.port1)
     await settle(5)
@@ -449,11 +459,12 @@ describe('a linked worker forwards its headers compressed', () => {
     const { records } = await framesOf(posts)
     expect(of(records, 'hdr')).toHaveLength(600)
     const batches = of(records, 'batch')
-    expect(batches.at(-1)?.dropped).toBe(0)
+    expect(batches.at(-1)?.tail.pre_drop.records).toBe(0)
     expect(batches.map((b) => b.seq)).toEqual(batches.map((_, i) => i))
-    // Each forward of headers is one body, compressed before the page saw it.
-    const gzipped = posts.filter((p) => (readPreamble(p.body) as { gzipped: boolean }).gzipped)
-    expect(gzipped.length).toBeGreaterThanOrEqual(6)
+    const rseqs = records.flatMap((r) => ('rseq' in r && r.rseq !== undefined ? [r.rseq] : []))
+    expect(new Set(rseqs).size).toBe(rseqs.length)
+    const { runs } = await allFacts(posts.map((p) => p.body))
+    expect(runs.reduce((n, r) => n + r.ids.length, 0)).toBe(600)
     channel.port1.close()
   })
 })

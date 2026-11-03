@@ -25,6 +25,7 @@ import {
   type ObjectPayload,
   type SubgroupStream,
 } from '@moqtap/codec/draft20'
+import { TrackKeys } from '../../decode/track-key.js'
 import type {
   BucketKey,
   ControlFrameEvent,
@@ -34,6 +35,16 @@ import type {
 } from '../../types.js'
 
 export { DRAFT20_ADAPTER } from '../../drafts/draft20/index.js'
+
+/**
+ * Track keys as if every fetch stream's FETCH had been seen with no
+ * GROUP_ORDER: Ascending, which is also how the codec reads a stream alone.
+ */
+export class AscendingKeys extends TrackKeys {
+  override descending(): boolean {
+    return false
+  }
+}
 
 /** A recognisable payload of `n` bytes. */
 export function filled(n: number, seed = 0x40): Uint8Array {

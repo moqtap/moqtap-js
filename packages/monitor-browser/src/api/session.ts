@@ -3,10 +3,11 @@
  * stores, uploads or ends anything.
  *
  * It observes the page's own transports through a {@link RealmObserver}, takes
- * the frames linked workers forward, and turns both into one stream of bodies
- * for this instance: numbered from zero in memory, keyed at the seal, kept in
- * an outbox until ingest answers, and copied to IndexedDB so a body the page
- * could not send is sent by the next page load on the origin.
+ * the frames, runs and marks linked workers forward, and turns them into one
+ * stream of bodies for the page's emitter: numbered in memory, across the
+ * page's sessions, keyed at the seal, kept in an outbox until ingest answers,
+ * and copied to IndexedDB so a body the page could not send is sent by the
+ * next page load on the origin.
  *
  * Rules every method below keeps:
  *
@@ -27,7 +28,7 @@ import {
   type Chunk,
   type ChunkDestination,
   type ChunkStore,
-  type ClockSync,
+  ClockSync,
   compress,
   DIRECTIVE_ELEVATE_MAX_LEVEL,
   DIRECTIVE_ELEVATE_MAX_SPAN_MS,
@@ -36,6 +37,7 @@ import {
   DIRECTIVE_FLUSH_MIN_MS,
   DIRECTIVE_HOLD_MAX_SPAN_MS,
   deadlineSignal,
+  Emitter,
   FlushQueue,
   FlushSchedule,
   type LockManagerLike,
@@ -46,6 +48,7 @@ import {
 } from '../flush/index.js'
 import type { TriggerEvent } from '../recorder/index.js'
 import type { CustomMetrics } from '../rollup/index.js'
+import { RunRecorder } from '../rollup/runs.js'
 import type { TransportHook } from '../transport/index.js'
 import type {
   ClockAnchor,
@@ -79,7 +82,7 @@ import {
   type Persistence,
   type WorkerLinks,
 } from './features.js'
-import type { DeflatePart, PageMessage } from './link.js'
+import type { PageMessage } from './link.js'
 import { UsageMeter } from './meter.js'
 import type { ConnectionState, RealmObserver } from './realm.js'
 
@@ -106,6 +109,8 @@ export interface RuntimePorts {
   readonly clock?: ClockSource
   /** The page's upload clock exchanges, kept across its sessions. */
   readonly clockSync?: ClockSync
+  /** The page's emitter: its numbers, connections and clock, kept across its sessions. */
+  readonly emitter?: Emitter
   /** `performance.timeOrigin`: the page's clock origin, against which a worker's is rebased. */
   readonly timeOrigin?: number
   readonly fetchImpl?: typeof fetch
@@ -165,13 +170,6 @@ const RETRY_MAX_MS = 60_000
  * seal is recent enough that sealing again would only add an upload.
  */
 const HIDDEN_SEAL_GAP_MS = 5_000
-
-/**
- * The most of the page's own buffered frames a compressed forward's body takes
- * in front of it, uncompressed. Past it they are sealed and compressed first,
- * in a body of their own.
- */
-const SEGMENT_PREFIX_MAX_BYTES = 8 * 1024
 
 /**
  * Raw bytes, in `upload.byteThreshold`s, a body weighed compressed may hold
@@ -289,8 +287,12 @@ export class CollectorRuntime {
   private readonly _prepared = new WeakMap<Chunk, Promise<void>>()
   /** Bodies already counted in `usage()`, so a body both beaconed and prepared counts once. */
   private readonly _metered = new WeakSet<Chunk>()
-  /** This instance's bodies that will never arrive. */
-  private readonly _lost: number[] = []
+  /** The page's emitter, shared with every session in the page. */
+  private readonly _emitter: Emitter
+  /** Runs and marks linked workers forwarded, until the next seal. */
+  private readonly _forwarded = new RunRecorder(0)
+  /** A clock exchange is under way. */
+  private _probing = false
   private _pumping: Promise<void> | null = null
   private _urgent = false
   private _wake: (() => void) | undefined
@@ -359,28 +361,26 @@ export class CollectorRuntime {
     this.anchor = ports.anchor ?? this._anchorNow()
     this._startTs = ports.startTs
     this._armed = ports.armed === true
-    this.instanceId = ports.instanceId ?? mintId()
+    this.instanceId = ports.emitter?.instanceId ?? ports.instanceId ?? mintId()
+    this._emitter =
+      ports.emitter ??
+      new Emitter(this.instanceId, this._clock.now() * 1000, ports.clockSync ?? new ClockSync())
+    if (ports.emitter === undefined) this._emitter.clock.measure(() => this._clock.now())
     this._lastSealMono = this._clock.now()
     this._dest = { endpoint: config.endpoint, keyHash: sha256Hex(config.apiKey) }
     this._locks =
       ports.locks === null ? undefined : (ports.locks ?? this._persistence?.platformLocks())
-
-    // Every record is stamped session-relative: the queue's batch frame here,
-    // and every other record by whoever writes it, against the same anchor.
-    const relClock: ClockSource = {
-      now: () => this._clock.now() - this.anchor.originMono,
-      wall: () => this._clock.wall(),
-    }
 
     this._meter = new UsageMeter(this._clock)
     this._store = ports.store ?? null
 
     this._queue = new FlushQueue({
       sessionId: config.sessionId,
-      instanceId: this.instanceId,
-      clock: relClock,
+      emitter: this._emitter,
+      clock: this._clock,
       level: () => this._escalation.level,
-      serverClock: () => this._uploader.clockSync.best(this._clock.wall(), this._clock.now()),
+      sealMs: () => this._schedule.sealMs,
+      droppedRecords: () => this._emitter.droppedRecords + this._dropped(),
       maxPendingBytes: () => this._cap(),
       onInternalError: this._onError,
     })
@@ -441,10 +441,17 @@ export class CollectorRuntime {
             hook,
             drafts: build.drafts,
             originMono: this.anchor.originMono,
+            monoBase: 0,
+            ordinal: (id) => this._emitter.connOf(id),
+            ordinalDone: (id) => this._emitter.connDone(id),
             clock: this._clock,
             recorder: build.features.flightRecorder,
             host: {
               sink: this._sink,
+              onConn: (c, draft, relay) => this._emitter.noteConn(c, draft, relay),
+              onConnGone: (c) => this._emitter.noteConnClosed(c),
+              onFlowsFull: () => this._sealNow(false),
+              clockCheck: () => this._clockCheck(),
               level: () => this._escalation.level,
               onTrigger: (e: TriggerEvent) => this._escalation.onTrigger(e.kind, e.atMono, e.key),
               onConnReady: () => {
@@ -514,7 +521,7 @@ export class CollectorRuntime {
       // pending for the life of the page, and the outbox behind it with it.
       timeoutMs: config.upload.timeoutMs,
       clock: this._clock,
-      ...(ports.clockSync !== undefined ? { clockSync: ports.clockSync } : {}),
+      clockSync: this._emitter.clock,
       ...(ports.fetchImpl !== undefined ? { fetchImpl: ports.fetchImpl } : {}),
       onInternalError: this._onError,
     })
@@ -545,6 +552,7 @@ export class CollectorRuntime {
     if (this._escalation.capped) this._escalation.tick(this._clock.now())
     this._realm?.start(this._dormant)
     this._dormant = undefined
+    if (this._emitter.clock.latest() === undefined) this._probeClock()
     this._schedule.start(this._clock.now())
     this._startInterval()
     this._installLifecycle()
@@ -845,9 +853,11 @@ export class CollectorRuntime {
       startTs: undefined,
       custom: this._custom ?? undefined,
       reported: this._reported,
-      clockSync: this._uploader.clockSync,
+      emitter: this._emitter,
       ...ports,
     })
+    // The links go on with the next session, and their count with them.
+    this._emitter.noteDroppedRecords(this._dropped() - (this._links?.dropped() ?? 0))
     // The session's tags so far, `setContext()`'s included, go on with it.
     runtime._context.tags = this._context.tags
     runtime._dormant = this._dormant
@@ -962,6 +972,7 @@ export class CollectorRuntime {
       context: () => ({ ...self.config.context, ...self._context }),
       base: (origin) =>
         (self._ports.timeOrigin ?? performance.timeOrigin) + self.anchor.originMono - origin,
+      monoBase: (origin) => (self._ports.timeOrigin ?? performance.timeOrigin) - origin,
       begin: () => self._beginNow(),
       writeLink: (id, ev) => self._writeLink(id, ev),
       append: (frames, n) => {
@@ -976,8 +987,20 @@ export class CollectorRuntime {
         if (taken) self._buffered(frames.byteLength)
         else self._forwardRefused += n
       },
-      sealSegment: (part) => self._sealSegment(part),
+      absorbRuns: (t) => {
+        self._forwarded.absorb(t)
+        self._emitter.noteDroppedObjects(t.dropped ?? 0)
+      },
+      noteConns: (open, gone) => {
+        for (const c of open) if (c.draft !== null) self._emitter.noteConn(c.c, c.draft, c.origin)
+        for (const c of gone) self._emitter.noteConnClosed(c.c)
+      },
       ensureSetup: () => self._ensureSetup(),
+      clockBreak: () => {
+        // The page's own baseline moves past the break too, so it is raised once.
+        self._emitter.clock.check(self._clock.wall(), self._clock.now())
+        self._clockBreak()
+      },
       connReady: () => self._schedule.ready(self._clock.now()),
       noteClosed: () => self._noteClosed(),
       sealNow: () => self._sealNow(false),
@@ -1000,30 +1023,50 @@ export class CollectorRuntime {
   })()
 
   /**
-   * Frames a probe compressed: the end of a body of their own, sealed now
-   * behind what the page has buffered, and sent. Nothing is inflated or
-   * compressed here.
+   * Buffer the runs and marks since the last time: the page realm's and what
+   * linked workers forwarded. At a seal a run still open is taken `open` and
+   * continued; with `hold`, between seals, it stays open.
    */
-  private _sealSegment(part: DeflatePart): void {
-    if (this._discarded) return
-    if (this._queue.pendingBytes > SEGMENT_PREFIX_MAX_BYTES) this._seal()
-    let chunk: Chunk
+  private _writeFacts(hold = false): void {
+    if (this._discarded || this._armed) return
+    const own = this._realm?.takeRuns(hold)
+    const forwarded = this._forwarded.take(hold)
+    if (own !== undefined) this._emitter.noteDroppedObjects(own.dropped)
+    const before = this._queue.pendingBytes
     try {
-      chunk = this._queue.sealSegment(
-        {
-          deflate: new Uint8Array(part.deflate, 0, part.byteLength),
-          crc: part.crc,
-          size: part.size,
-        },
-        { lost: this._lost, dropped: this._dropped() },
-      )
+      if (own !== undefined) this._queue.writeFacts(own)
+      this._queue.writeFacts(forwarded)
     } catch (err) {
       this._onError(err)
-      this._forwardRefused += part.n
-      return
     }
-    this._admit(chunk)
-    void this._drain()
+    const n = this._queue.pendingBytes - before
+    if (n > 0) this._buffered(n)
+  }
+
+  /**
+   * A chunk was captured: wall and mono read together now, never the chunk's
+   * own time, which a replayed chunk carries from earlier. A clock break seals
+   * what came before it under the old epoch, then raises the epoch and probes
+   * for a new sample.
+   */
+  private _clockCheck(): void {
+    if (this._emitter.clock.check(this._clock.wall(), this._clock.now())) this._clockBreak()
+  }
+
+  private _clockBreak(): void {
+    if (this._ended) return
+    this._sealNow(false)
+    this._emitter.clock.raise()
+    this._probeClock()
+  }
+
+  /** One clock exchange, so the epoch has a sample before its first body. */
+  private _probeClock(): void {
+    if (this._probing || this._ended || this._armed) return
+    this._probing = true
+    void this._uploader.probe(this.instanceId, this._life.signal).finally(() => {
+      this._probing = false
+    })
   }
 
   private _broadcast(m: PageMessage): void {
@@ -1185,6 +1228,7 @@ export class CollectorRuntime {
     const now = this._clock.now()
     this._realm?.tick(now)
     this._customRollup?.tick(now)
+    this._writeFacts(true)
     this._escalation.tick(now)
     this._pacer.notePressure({ objectsPerSec: this._realm?.objectRate ?? 0, at: now })
   }
@@ -1286,7 +1330,7 @@ export class CollectorRuntime {
     try {
       chunk = this._queue.sealSegment(
         packed.segment,
-        { final: final && packed.rest, lost: this._lost, dropped: this._dropped() },
+        { final: final && packed.rest },
         packed,
         packed.rest,
       )
@@ -1324,6 +1368,7 @@ export class CollectorRuntime {
    */
   private _seal(final = false, beacon = false): Chunk | null {
     if (this._discarded) return null
+    this._writeFacts()
     const t = this.config.upload.byteThreshold
     let last: Chunk | null = null
     for (;;) {
@@ -1344,8 +1389,6 @@ export class CollectorRuntime {
       try {
         chunk = this._queue.sealFront(piece, {
           final: final && this._queue.pendingBytes <= piece,
-          lost: this._lost,
-          dropped: this._dropped(),
         })
       } catch (err) {
         this._onError(err)
@@ -1384,7 +1427,7 @@ export class CollectorRuntime {
   /**
    * Keep the outbox inside the storage quota. A body pushed out of memory is
    * still sent later if a stored copy exists; without one it is lost, and the
-   * next body says so.
+   * gap in the emitter's record numbers says so.
    */
   private _capOutbox(): void {
     let bytes = this._outboxBytes()
@@ -1392,9 +1435,6 @@ export class CollectorRuntime {
     while (bytes > cap && this._outbox.length > 1) {
       const dropped = this._outbox.shift() as Chunk
       bytes -= dropped.bytes.byteLength
-      if (this._isOwn(dropped) && this._store?.has(dropped.idempotencyKey) !== true) {
-        this._noteLost(dropped.seq)
-      }
     }
   }
 
@@ -1458,15 +1498,9 @@ export class CollectorRuntime {
     this._meter.noteBytes(c.level, c.bytes.byteLength)
   }
 
+  /** A body of this session: an earlier session of the same emitter shares its instance. */
   private _isOwn(c: Chunk): boolean {
-    return c.instanceId === this.instanceId
-  }
-
-  private _noteLost(seq: number): void {
-    this._lost.push(seq)
-    // Bounded. The list is cumulative on every body, and any body that arrives
-    // has already told the server about the older entries.
-    if (this._lost.length > 256) this._lost.shift()
+    return c.instanceId === this.instanceId && c.sessionId === this.config.sessionId
   }
 
   /* ── release ──────────────────────────────────────────────────────────── */
@@ -1508,7 +1542,6 @@ export class CollectorRuntime {
         this._retryDelay = 0
         const at = this._outbox.indexOf(chunk)
         if (at !== -1) this._outbox.splice(at, 1)
-        if (outcome.terminal && this._isOwn(chunk)) this._noteLost(chunk.seq)
         if (this._store !== null) await this._store.delete(chunk.idempotencyKey)
         if (!this._isOwn(chunk)) this._releaseInherited()
         continue

@@ -29,8 +29,9 @@ import { join, resolve } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { type Browser, type BrowserType, chromium, firefox, webkit } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { BODY_PREAMBLE_BYTES, readPreamble } from '../../envelope/body.js'
+import { readPreamble } from '../../envelope/body.js'
 import { readFrames } from '../../envelope/frame-writer.js'
+import { afterPreamble } from '../support/uploads.js'
 
 const PKG = resolve(__dirname, '..', '..', '..')
 const BUN = process.platform === 'win32' ? 'bun.exe' : 'bun'
@@ -53,7 +54,7 @@ let origin = ''
 function decode(bytes: Uint8Array): Body {
   const pre = readPreamble(bytes)
   if (pre === null) throw new Error('not a collector body')
-  let frames = bytes.subarray(BODY_PREAMBLE_BYTES)
+  let frames = afterPreamble(bytes)
   if (pre.gzipped) frames = new Uint8Array(gunzipSync(frames))
   const records: Body['records'] = []
   for (const f of readFrames(frames)) {

@@ -16,9 +16,15 @@
 
 import { describe, expect, it } from 'vitest'
 import { StreamDispatcher } from '../../decode/dispatch.js'
-import { TrackKeys } from '../../decode/track-key.js'
 import type { StreamChunk } from '../../types.js'
-import { DRAFT20_ADAPTER, fetchBytes, Recorder, subgroupBytes, subscribeBytes } from './vectors.js'
+import {
+  AscendingKeys,
+  DRAFT20_ADAPTER,
+  fetchBytes,
+  Recorder,
+  subgroupBytes,
+  subscribeBytes,
+} from './vectors.js'
 
 function chunk(over: Partial<StreamChunk> & { data: Uint8Array }): StreamChunk {
   return {
@@ -34,7 +40,7 @@ function chunk(over: Partial<StreamChunk> & { data: Uint8Array }): StreamChunk {
 
 function dispatcher() {
   const sink = new Recorder()
-  return { sink, d: new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink) }
+  return { sink, d: new StreamDispatcher(DRAFT20_ADAPTER, new AscendingKeys(), sink) }
 }
 
 describe('trackForStream', () => {

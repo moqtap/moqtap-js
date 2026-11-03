@@ -30,7 +30,6 @@ import type {
   RollupTrackWire,
 } from '../types.js'
 import { bucketKeyWire } from '../types.js'
-import type { GroupArrivals } from './arrivals.js'
 import { Histogram } from './histogram.js'
 
 /**
@@ -81,24 +80,6 @@ export const STALL_MULTIPLE = 3
  * established, nothing is judged.
  */
 export const STALL_FLOOR_MS = 100
-
-/**
- * A single group-id discontinuity larger than this is counted as one gap, not
- * as millions.
- *
- * Group ids are vi64 and a publisher may restart, wrap or randomise them; a raw
- * subtraction would put `2^62` into a counter that merges by addition and make
- * every fleet aggregate it touches useless. A discontinuity this large is a
- * re-keying, not a loss run.
- */
-export const MAX_GAP_RUN = 1_000_000
-
-/**
- * Missing group ranges a row lists per interval. Past it the rest are counted
- * in `gapRangesDropped`: ranges are rare on a healthy track, and a publisher
- * that skips groups as a matter of course is described by `groupGaps` alone.
- */
-export const MAX_GAP_RANGES = 16
 
 /**
  * Distinct reset codes a row lists per interval. Past it the rest are counted
@@ -240,16 +221,11 @@ export class TrackBucket {
   private payloadBytes = 0
   private headerBytes = 0
   private groups = 0
-  private groupGaps = 0
-  private outOfOrder = 0
   private duplicates = 0
   private statusObjects = 0
   private parseFailures = 0
   private blockedMs = 0
   private ackedBytes = 0
-  /** Missing group ranges, inclusive. Allocated only on a track that has one. */
-  private gapRanges: [bigint, bigint][] | undefined
-  private gapRangesDropped = 0
   /** Streams reset, by code. Allocated only on a track that has one. */
   private resets: Map<string, number> | undefined
   private firstSeen: Mono | undefined
@@ -271,15 +247,12 @@ export class TrackBucket {
   private curGroupFirstAt: Mono | undefined
   private curGroupLastAt: Mono = 0
   /** Direct-mapped recency window of `(group, object)` pairs. See `onObject`. */
-  private readonly dupGroups = new Float64Array(DUPLICATE_WINDOW)
-  private readonly dupObjects = new Float64Array(DUPLICATE_WINDOW)
+  private readonly dupGroups = new BigUint64Array(DUPLICATE_WINDOW)
+  private readonly dupObjects = new BigUint64Array(DUPLICATE_WINDOW)
   private readonly dupUsed = new Uint8Array(DUPLICATE_WINDOW)
-  private readonly arrivals: GroupArrivals | undefined
 
-  /** With `arrivals`, the track reports first-object arrival per group into it. */
-  constructor(key: BucketKey, opts: TrackBucketOptions = {}, arrivals?: GroupArrivals) {
+  constructor(key: BucketKey, opts: TrackBucketOptions = {}) {
     this.key = key
-    this.arrivals = arrivals
     this.medianWindow = new SlidingMedian(opts.medianWindow ?? MEDIAN_WINDOW)
     this.medianMinSamples = opts.medianMinSamples ?? MEDIAN_MIN_SAMPLES
     this.stallMultiple = opts.stallMultiple ?? STALL_MULTIPLE
@@ -417,7 +390,6 @@ export class TrackBucket {
     this.lastActivity = at
     if (this.firstSeen === undefined) this.firstSeen = at
     this.lastSeen = at
-    this.arrivals?.onObject(s.groupId, s.objectId, at)
 
     // `obj.sizeBytes` is the media object's size. Header bytes
     // are counted separately rather than folded in: the header is the
@@ -455,13 +427,6 @@ export class TrackBucket {
     const max = this.maxGroup
     if (max === undefined || s.groupId > max) {
       this.groups++
-      if (max !== undefined) {
-        const missing = s.groupId - max - 1n
-        if (missing > 0n) {
-          this.groupGaps += clampGapRun(missing)
-          this.noteGapRange(max + 1n, s.groupId - 1n)
-        }
-      }
       if (this.lastNewGroupAt !== undefined) {
         this.hist.groupCadenceMs.observe(at - this.lastNewGroupAt)
       }
@@ -476,19 +441,10 @@ export class TrackBucket {
       this.curGroupLastAt = at
       this.lastNewGroupAt = at
       this.maxGroup = s.groupId
-    } else if (s.groupId < max) {
-      // Group-level lateness only. Object-level reordering *within* a group is
-      // deliberately not counted: object ids ascend per subgroup, not per
-      // group, and `ObjectSample` carries no subgroup id, so every
-      // multi-subgroup track would report continuous reordering that is not
-      // happening. Under-reporting with no false positives beats the reverse
-      // for a number an operator alerts on.
-      this.outOfOrder++
-      // Deliberately not extending any span. A late object for a group that has
-      // already closed cannot reopen it without making the histogram depend on
-      // arrival order, and its lateness is already counted right here.
-    } else {
+    } else if (s.groupId === max) {
       // Still the open group. Its span grows until a higher group closes it.
+      // An object of a lower group extends no span: a closed group cannot
+      // reopen without the histogram depending on arrival order.
       this.curGroupLastAt = at
     }
 
@@ -497,9 +453,9 @@ export class TrackBucket {
     // close together, which is what this window is sized for. A duplicate
     // separated by more than DUPLICATE_WINDOW distinct objects is missed;
     // catching those needs per-object state, which the O(1) budget forbids.
-    const g = Number(s.groupId)
-    const o = Number(s.objectId)
-    const slot = (((g * 31 + o) | 0) >>> 0) % DUPLICATE_WINDOW
+    const g = s.groupId
+    const o = s.objectId
+    const slot = (Number(g & 0xffffn) * 31 + Number(o & 0xffffn)) & (DUPLICATE_WINDOW - 1)
     if (this.dupUsed[slot] === 1 && this.dupGroups[slot] === g && this.dupObjects[slot] === o) {
       this.duplicates++
     } else {
@@ -509,13 +465,6 @@ export class TrackBucket {
     }
   }
 
-  /** Rare enough to allocate: a gap is a loss, not a per-object event. */
-  private noteGapRange(from: bigint, to: bigint): void {
-    this.gapRanges ??= []
-    if (this.gapRanges.length >= MAX_GAP_RANGES) this.gapRangesDropped++
-    else this.gapRanges.push([from, to])
-  }
-
   /**
    * The interval row, and a reset of the interval state.
    *
@@ -523,45 +472,45 @@ export class TrackBucket {
    * ids are vi64), `JSON.stringify` throws on a bigint, and a `number` silently
    * loses precision past 2^53.
    *
-   * `start` is the interval's start, and `rq` the request bound to the key.
-   * Arrivals on a track bound to no request yet are not reported: they are
-   * forgotten, for the request that binds it to report.
+   * `rq` is the request bound to the key.
    */
-  drain(start: Mono = this.origin, rq?: RequestLinkWire): RollupTrackWire {
-    const row = this.row(start, rq, true)
-    if (this.unbound(rq)) this.arrivals?.forget()
-    else this.arrivals?.reset()
+  drain(rq?: RequestLinkWire): RollupTrackWire {
+    const row = this.row(rq)
     for (const kind of TRACK_HISTOGRAMS) this.hist[kind].reset()
     this.objects = 0
     this.payloadBytes = 0
     this.headerBytes = 0
     this.groups = 0
-    this.groupGaps = 0
-    this.outOfOrder = 0
     this.duplicates = 0
     this.statusObjects = 0
     this.parseFailures = 0
     this.blockedMs = 0
     this.ackedBytes = 0
-    this.gapRanges = undefined
-    this.gapRangesDropped = 0
     this.resets = undefined
     this.firstSeen = undefined
     return row
   }
 
   /** The interval row so far, leaving the interval open. */
-  peek(start: Mono = this.origin, rq?: RequestLinkWire): RollupTrackWire {
-    return this.row(start, rq, false)
+  peek(rq?: RequestLinkWire): RollupTrackWire {
+    return this.row(rq)
   }
 
-  /** No request binds the track. A shared alias is bound, by two requests. */
-  private unbound(rq: RequestLinkWire | undefined): boolean {
-    return rq === undefined && !this.sharedAlias
-  }
-
-  private row(start: Mono, rq: RequestLinkWire | undefined, closing: boolean): RollupTrackWire {
-    const ga = this.unbound(rq) ? undefined : this.arrivals?.field(start, this.origin, closing)
+  /**
+   * A receive track's objects, bytes, groups, duplicates and statuses are in
+   * its runs and marks, so its row carries only what those do not.
+   */
+  private row(rq: RequestLinkWire | undefined): RollupTrackWire {
+    const counts =
+      this.key.dir === 'rx'
+        ? {}
+        : {
+            objects: this.objects,
+            payloadBytes: this.payloadBytes,
+            groups: this.groups,
+            duplicates: this.duplicates,
+            statusObjects: this.statusObjects,
+          }
     const hist: Partial<Record<HistogramKind, HistogramWire>> = {}
     for (const kind of TRACK_HISTOGRAMS) {
       const w = this.hist[kind].encode()
@@ -572,35 +521,16 @@ export class TrackBucket {
       ...(this.sharedAlias ? { shared: true as const } : {}),
       firstSeen: (this.firstSeen ?? this.lastSeen) - this.origin,
       lastSeen: this.lastSeen - this.origin,
-      objects: this.objects,
-      payloadBytes: this.payloadBytes,
+      ...counts,
       headerBytes: this.headerBytes,
-      groups: this.groups,
-      groupGaps: this.groupGaps,
-      outOfOrder: this.outOfOrder,
-      duplicates: this.duplicates,
-      statusObjects: this.statusObjects,
       parseFailures: this.parseFailures,
       // Omitted rather than zero: every rx track would otherwise carry two
       // fields that can never be anything but 0, on every interval.
       ...(this.blockedMs > 0 ? { blockedMs: this.blockedMs } : {}),
       ...(this.ackedBytes > 0 ? { ackedBytes: this.ackedBytes } : {}),
-      ...(this.gapRanges !== undefined
-        ? {
-            gapRanges: this.gapRanges.map(
-              ([from, to]) => [from.toString(), to.toString()] as const,
-            ),
-          }
-        : {}),
-      ...(this.gapRangesDropped > 0 ? { gapRangesDropped: this.gapRangesDropped } : {}),
       ...(this.resets !== undefined ? { resets: Object.fromEntries(this.resets) } : {}),
       ...(rq !== undefined && !this.sharedAlias ? { rq } : {}),
-      ...(ga !== undefined ? { ga } : {}),
       hist,
     }
   }
-}
-
-function clampGapRun(missing: bigint): number {
-  return missing > BigInt(MAX_GAP_RUN) ? MAX_GAP_RUN : Number(missing)
 }

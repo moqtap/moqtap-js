@@ -756,7 +756,8 @@
     "size": "bun run scripts/size.ts",
     "smoke": "bun run scripts/smoke.ts",
     "codes": "bun run scripts/error-codes.ts",
-    "fixtures": "bun run scripts/sync-fixtures.ts"
+    "fixtures": "bun run scripts/sync-fixtures.ts",
+    "bench": "bun run scripts/bench-runs.ts"
   },
   "dependencies": {
     "@moqtap/codec": ">=0.13.4"

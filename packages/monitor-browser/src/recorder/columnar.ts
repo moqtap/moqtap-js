@@ -79,18 +79,16 @@ export function roundMs(v: number): number {
  * envelope: ingest receives "ms since this session started", never a raw
  * `performance.now()`, which is meaningless off the device.
  *
- * Group and object ids narrow to `number` here. They are `bigint` on the wire
- * (vi64, up to 2⁶²) and `FlightRecord.cols` declares `readonly number[]`, which
- * `JSON.stringify` requires — it throws on a bigint. Ids above 2⁵³ therefore
- * lose precision silently; the alternative, decimal strings as
- * `RollupTrackWire.key.v` uses, needs a type change this module may not make.
+ * Group and object ids are decimal strings, as `RollupTrackWire.key.v` is:
+ * they are u64, `JSON.stringify` throws on a bigint, and a number loses
+ * precision past 2⁵³.
  */
 export function encodeColumnar(rows: readonly ObjectTiming[], originMono: Mono = 0): ColumnarBlock {
   const n = rows.length
   const key: string[] = new Array(n)
   const at: number[] = new Array(n)
-  const group: number[] = new Array(n)
-  const object: number[] = new Array(n)
+  const group: string[] = new Array(n)
+  const object: string[] = new Array(n)
   const bytes: number[] = new Array(n)
   const deliveryMs: number[] = new Array(n)
 
@@ -101,8 +99,8 @@ export function encodeColumnar(rows: readonly ObjectTiming[], originMono: Mono =
     // three must agree byte for byte or ingest re-splits one track into several.
     key[i] = bucketKeyString(r.key)
     at[i] = roundMs(r.at - originMono)
-    group[i] = Number(r.groupId)
-    object[i] = Number(r.objectId)
+    group[i] = r.groupId.toString()
+    object[i] = r.objectId.toString()
     bytes[i] = r.bytes
     deliveryMs[i] = roundMs(r.deliveryMs)
   }

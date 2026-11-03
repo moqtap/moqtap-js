@@ -62,9 +62,10 @@ subscribe exchanges. Objects that arrived before `init()` are counted as `early.
   page or a linked worker constructs a `WebTransport`, whether or not it connects. It ends 30
   seconds after its last connection closes with no other attempted (`end` reason `idle`), when
   the page closes, or when you call `end()` or `newSession()`. The next `WebTransport` after that
-  begins a new session, with new IDs and the context set so far.
-- **Instance**: one session's recording in one page. A reload that passes the same `sessionId`
-  is a second instance of the same session.
+  begins a new session, with a new session ID and the context set so far.
+- **Instance**: one page load's recording, from `init()` on. Every session the page records has
+  the same instance ID. A reload is a new instance, and a reload that passes the same
+  `sessionId` is a second instance of that session.
 - **Connection**: one `WebTransport`, in the page or in a linked worker. A connection that fails
   to open is still reported, in the session its attempt began or joined.
 

@@ -19,7 +19,7 @@ import {
   linkMessage,
 } from '../../api/link.js'
 import { ProbeRuntime, type WorkerBuild } from '../../api/probe.js'
-import { crc32, readFrames } from '../../envelope/index.js'
+import { readFrames } from '../../envelope/index.js'
 import { flightRecorder } from '../../features/flight-recorder.js'
 import { FrameBuffer } from '../../flush/frame-buffer.js'
 import { installWebTransportHook } from '../../transport/index.js'
@@ -28,9 +28,6 @@ import { subgroupBytes } from '../decode/vectors.js'
 import { workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
 import { MockWebTransport } from '../transport/mocks.js'
-
-/** The largest compressed piece a probe forwards as one body (`api/probe.ts`). */
-const PIECE_MAX_BYTES = 48 * 1024
 
 beforeEach(() => {
   MockWebTransport.instances = []
@@ -45,10 +42,7 @@ function records(parts: readonly ForwardPart[]): EnvelopeRecord[] {
   const out: EnvelopeRecord[] = []
   const decoder = new TextDecoder()
   for (const p of parts) {
-    const bytes =
-      'deflate' in p
-        ? new Uint8Array(p.deflate, 0, p.byteLength)
-        : new Uint8Array(p.frames, 0, p.byteLength)
+    const bytes = new Uint8Array(p.frames, 0, p.byteLength)
     for (const f of readFrames(bytes)) {
       if (!f.raw) out.push(JSON.parse(decoder.decode(f.payload)) as EnvelopeRecord)
     }
@@ -89,6 +83,8 @@ describe("a worker's flight dump", () => {
       sessionId: 'sess',
       instanceId: 'inst',
       base: 0,
+      mono: 0,
+      connBase: 1 << 20,
       level: 'baseline',
       room: 8 * 1024 * 1024,
       config: { metrics, flightRecorder: fr, limits, privacy, upload, context },
@@ -106,19 +102,11 @@ describe("a worker's flight dump", () => {
     }
     const realm: { WebTransport?: unknown } = { WebTransport: MockWebTransport }
     const hook = installWebTransportHook(realm, null)
-    const probe = new ProbeRuntime(
-      linked,
-      port,
-      hook,
-      build,
-      { setTimer: () => 0, clearTimer: () => {}, onInternalError: (e) => errors.push(e) },
-      {
-        compressMinBytes: 1,
-        // The compressor stores rather than shrinks, so a piece weighs what its
-        // frames do and the test can read it back.
-        deflate: async (b) => ({ deflate: b.slice(), crc: crc32(b), size: b.byteLength }),
-      },
-    )
+    const probe = new ProbeRuntime(linked, port, hook, build, {
+      setTimer: () => 0,
+      clearTimer: () => {},
+      onInternalError: (e) => errors.push(e),
+    })
     probe.start()
     const forward = (): void => onmessage?.({ data: envelope({ t: 'forward' }) } as MessageEvent)
 
@@ -149,12 +137,12 @@ describe("a worker's flight dump", () => {
     // The page's own buffer: what `session.ts` appends a frames part into.
     const page = new FrameBuffer({ maxPendingBytes: 8 * upload.byteThreshold })
     for (const p of parts) {
-      if ('deflate' in p) expect(p.byteLength).toBeLessThanOrEqual(PIECE_MAX_BYTES)
-      else expect(page.append(new Uint8Array(p.frames, 0, p.byteLength), p.n)).toBe(true)
+      expect(page.append(new Uint8Array(p.frames, 0, p.byteLength), p.n)).toBe(true)
+      page.takeFrames()
     }
     const dump = records(parts).filter((r): r is FlightRecord => r.t === 'flight')
     expect(dump.length).toBeGreaterThan(1)
-    expect(dump.flatMap((r) => r.cols.object)).toEqual(objects.map((o) => Number(o.id)))
+    expect(dump.flatMap((r) => r.cols.object)).toEqual(objects.map((o) => o.id.toString()))
     expect(dump.every((r) => !r.truncated)).toBe(true)
     expect(after.every((f) => f.dropped === 0)).toBe(true)
     expect(errors).toEqual([])

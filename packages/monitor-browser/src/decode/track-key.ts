@@ -48,6 +48,7 @@ import type {
   AnyMessage,
   BucketKey,
   BucketKind,
+  DeliveryPath,
   Direction,
   ExchangeKind,
   Mono,
@@ -56,6 +57,7 @@ import type {
   TrackKeyResolver,
   TrackLiveness,
 } from '../types.js'
+import { RequestOrder } from './request-order.js'
 
 /**
  * The bucket cap's default; `Limits.maxBuckets` is where the api module
@@ -144,6 +146,7 @@ export class TrackKeys implements TrackKeyResolver {
   private refused = 0
   private setupSeen: { dir: Direction; at: Mono } | undefined
   private setupPaired = false
+  private readonly order = new RequestOrder()
 
   /** See {@link TrackKeysOptions.onShared}. Settable so the dispatcher can bridge. */
   onShared: ((key: BucketKey) => void) | undefined
@@ -205,9 +208,10 @@ export class TrackKeys implements TrackKeyResolver {
   /**
    * Read a decoded control message.
    *
-   * **Reads three things and nothing else**: the request id, the track alias and
-   * the message's own `type`. Reading a name or a namespace here would put it
-   * one field access from the wire and defeat the whole point of the raw key.
+   * **Reads the request id, the track alias and the message's own `type`**,
+   * and through {@link RequestOrder} the fetch type and group order values.
+   * Reading a name or a namespace here would put it one field access from the
+   * wire and defeat the whole point of the raw key.
    */
   applyControl(msg: AnyMessage, dir: Direction, streamId: number, at: Mono): void {
     const rid = requestIdOf(msg)
@@ -229,6 +233,8 @@ export class TrackKeys implements TrackKeyResolver {
         })
       }
     }
+
+    this.order.apply(msg, dir, streamId, rid, this.pending.get(streamId)?.req.requestId)
 
     const type = msg.type
     const alias = trackAliasOf(msg)
@@ -259,6 +265,14 @@ export class TrackKeys implements TrackKeyResolver {
 
   pendingFor(streamId: number): PendingRequest | undefined {
     return this.pending.get(streamId)?.req
+  }
+
+  fetchPath(dir: Direction, requestId: bigint): DeliveryPath | null {
+    return this.order.path(dir, requestId)
+  }
+
+  descending(dir: Direction, requestId: bigint): boolean | null {
+    return this.order.descending(dir, requestId)
   }
 
   /**

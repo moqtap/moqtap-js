@@ -41,6 +41,7 @@ import type { ByteRing, RingEntry } from '../ring/index.js'
 import {
   type BucketKey,
   type BucketKind,
+  type DeliveryPath,
   type DetailLevel,
   type Direction,
   type DraftAdapter,
@@ -572,6 +573,15 @@ export class ReplayKeys implements TrackKeyResolver {
     return undefined
   }
 
+  fetchPath(): DeliveryPath | null {
+    return null
+  }
+
+  /** With no control plane, a fetch stream is read in ascending group order. */
+  descending(): boolean {
+    return false
+  }
+
   private intern(
     m: Map<string, BucketKey>,
     dir: Direction,
@@ -791,14 +801,14 @@ export function sliceDump(
   const overhead = overheadBytes(r, id)
   const room = Math.max(1, sliceBytes - overhead)
   // Each column entry and its comma, as `JSON.stringify` writes them. Keys
-  // are `bucketKeyString` output: ASCII, so characters are bytes.
+  // and ids are ASCII strings, so characters are bytes.
   const cost = new Array<number>(n)
   for (let i = 0; i < n; i++) {
     cost[i] =
       JSON.stringify(c.key[i]).length +
       String(c.at[i]).length +
-      String(c.group[i]).length +
-      String(c.object[i]).length +
+      JSON.stringify(c.group[i]).length +
+      JSON.stringify(c.object[i]).length +
       String(c.bytes[i]).length +
       String(c.deliveryMs[i]).length +
       6

@@ -10,12 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import {
-  MAX_GAP_RANGES,
-  MAX_RESET_CODES,
-  OTHER_RESET_CODE,
-  SlidingMedian,
-} from '../../rollup/bucket.js'
+import { MAX_RESET_CODES, OTHER_RESET_CODE, SlidingMedian } from '../../rollup/bucket.js'
 import { CustomMetrics } from '../../rollup/custom-metrics.js'
 import { RollupEngine, type RollupEngineOptions } from '../../rollup/interval.js'
 import type {
@@ -80,8 +75,9 @@ function setup(o: Partial<RollupEngineOptions> = {}) {
   return { engine, sink, clock }
 }
 
+// A send track: its row keeps the counts a receive track's runs carry instead.
 const key = (o: Partial<BucketKey> = {}): BucketKey => ({
-  dir: 'rx',
+  dir: 'tx',
   kind: 'alias',
   id: 7n,
   epoch: 0,
@@ -91,7 +87,20 @@ const key = (o: Partial<BucketKey> = {}): BucketKey => ({
 const K = key()
 
 function obj(at: Mono, o: Partial<ObjectSample> = {}): ObjectSample {
-  return { key: K, groupId: 0n, objectId: 0n, headerBytes: 4, payloadBytes: 100, at, ...o }
+  return {
+    key: K,
+    groupId: 0n,
+    objectId: 0n,
+    headerBytes: 4,
+    payloadBytes: 100,
+    at,
+    path: 'sub_stream',
+    sub: 0n,
+    fo: false,
+    foKnown: false,
+    eog: false,
+    ...o,
+  }
 }
 
 function track(r: RollupRecord, i = 0): RollupTrackWire {
@@ -207,7 +216,7 @@ describe('the interval record', () => {
     expect(r.tracks.length).toBe(2)
 
     const a = track(r, 0)
-    expect(a.key).toEqual({ d: 'rx', k: 'alias', v: '7', e: 0 })
+    expect(a.key).toEqual({ d: 'tx', k: 'alias', v: '7', e: 0 })
     expect(a.objects).toBe(2)
     expect(a.payloadBytes).toBe(200)
     expect(a.headerBytes).toBe(8)
@@ -274,6 +283,19 @@ describe('the interval record', () => {
 })
 
 describe('per-track counting', () => {
+  it("leaves a receive track's objects, bytes, groups and statuses to its runs and marks", () => {
+    const { engine, sink } = setup()
+    const rx = key({ dir: 'rx' })
+    engine.onObject(obj(10, { key: rx }))
+    engine.onObject(obj(20, { key: rx, groupId: 1n }))
+    engine.tick(1_000)
+    const row = track(sink.rollups()[0]!)
+    for (const f of ['objects', 'payloadBytes', 'groups', 'duplicates', 'statusObjects']) {
+      expect(row).not.toHaveProperty(f)
+    }
+    expect(row.headerBytes).toBe(8)
+  })
+
   it('counts a group the first time its id exceeds every id seen', () => {
     const { engine, sink } = setup()
     engine.onObject(obj(1, { groupId: 0n }))
@@ -281,58 +303,6 @@ describe('per-track counting', () => {
     engine.onObject(obj(3, { groupId: 1n, objectId: 1n }))
     engine.tick(1_000)
     expect(track(sink.lastRollup()).groups).toBe(2)
-  })
-
-  it('counts the group ids that never arrived', () => {
-    const { engine, sink } = setup()
-    engine.onObject(obj(1, { groupId: 0n }))
-    engine.onObject(obj(2, { groupId: 3n }))
-    engine.tick(1_000)
-    const t = track(sink.lastRollup())
-    expect(t.groups).toBe(2)
-    expect(t.groupGaps).toBe(2)
-  })
-
-  it('lists the missing groups as ranges, both ends included, as decimal strings', () => {
-    const { engine, sink } = setup()
-    engine.onObject(obj(1, { groupId: 0n }))
-    engine.onObject(obj(2, { groupId: 3n }))
-    engine.onObject(obj(3, { groupId: 5n }))
-    engine.onObject(obj(4, { groupId: 2n ** 62n }))
-    engine.tick(1_000)
-    const t = track(sink.lastRollup())
-    expect(t.gapRanges).toEqual([
-      ['1', '2'],
-      ['4', '4'],
-      ['6', (2n ** 62n - 1n).toString()],
-    ])
-    expect(t.gapRangesDropped).toBeUndefined()
-    expect(JSON.parse(JSON.stringify(t)).gapRanges).toEqual(t.gapRanges)
-  })
-
-  it('lists at most 16 ranges an interval and counts the rest, then starts over', () => {
-    const { engine, sink } = setup()
-    for (let g = 0; g <= 40; g += 2) engine.onObject(obj(g + 1, { groupId: BigInt(g) }))
-    engine.tick(1_000)
-    const first = track(sink.lastRollup())
-    expect(first.groupGaps).toBe(20)
-    expect(first.gapRanges).toHaveLength(MAX_GAP_RANGES)
-    expect(first.gapRanges?.[0]).toEqual(['1', '1'])
-    expect(first.gapRangesDropped).toBe(20 - MAX_GAP_RANGES)
-
-    engine.onObject(obj(1_001, { groupId: 41n }))
-    engine.tick(2_000)
-    const second = track(sink.lastRollup())
-    expect(second.gapRanges).toBeUndefined()
-    expect(second.gapRangesDropped).toBeUndefined()
-  })
-
-  it('leaves the ranges off a track with no gap', () => {
-    const { engine, sink } = setup()
-    engine.onObject(obj(1, { groupId: 0n }))
-    engine.onObject(obj(2, { groupId: 1n }))
-    engine.tick(1_000)
-    expect(track(sink.lastRollup())).not.toHaveProperty('gapRanges')
   })
 
   it('counts stream resets by code, and reports a track whose only event was one', () => {
@@ -360,35 +330,6 @@ describe('per-track counting', () => {
     const resets = track(sink.lastRollup()).resets ?? {}
     expect(Object.keys(resets)).toHaveLength(MAX_RESET_CODES + 1)
     expect(resets[OTHER_RESET_CODE]).toBe(5)
-  })
-
-  it('clamps an absurd group-id discontinuity, which merges by addition downstream', () => {
-    const { engine, sink } = setup()
-    engine.onObject(obj(1, { groupId: 0n }))
-    engine.onObject(obj(2, { groupId: 2n ** 60n }))
-    engine.tick(1_000)
-    expect(track(sink.lastRollup()).groupGaps).toBe(1_000_000)
-  })
-
-  it('counts a group below the highest seen as late, not as new', () => {
-    const { engine, sink } = setup()
-    engine.onObject(obj(1, { groupId: 0n }))
-    engine.onObject(obj(2, { groupId: 1n }))
-    engine.onObject(obj(3, { groupId: 0n, objectId: 1n }))
-    engine.tick(1_000)
-    const t = track(sink.lastRollup())
-    expect(t.outOfOrder).toBe(1)
-    expect(t.groups).toBe(2)
-  })
-
-  it('does not call interleaved subgroups of one group out of order', () => {
-    // Object ids ascend per subgroup, not per group, and the counting decoder
-    // carries no subgroup id — so within-group ordering is deliberately not
-    // judged. The resulting under-report is documented in bucket.ts.
-    const { engine, sink } = setup()
-    for (const id of [0n, 5n, 1n, 6n, 2n]) engine.onObject(obj(1, { groupId: 0n, objectId: id }))
-    engine.tick(1_000)
-    expect(track(sink.lastRollup()).outOfOrder).toBe(0)
   })
 
   it('counts a repeated group/object pair as a duplicate', () => {

@@ -283,7 +283,8 @@ class PendingCollector implements Collector {
         contentId: contentId ?? '',
       }),
     })
-    const instanceId = mintId()
+    // One emitter per page load: a new session keeps the instance claim.
+    const instanceId = current.instanceId
     this.#config = config
     this.#identity = {
       sessionId,

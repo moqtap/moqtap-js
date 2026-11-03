@@ -15,7 +15,6 @@
 
 import { describe, expect, it } from 'vitest'
 import { StreamDispatcher } from '../../decode/dispatch.js'
-import { TrackKeys } from '../../decode/track-key.js'
 import { SUPPORTED_DRAFTS } from '../../draft/protocol.js'
 import type {
   BucketKey,
@@ -24,6 +23,7 @@ import type {
   ObjectSample,
   ParseFailureReason,
 } from '../../types.js'
+import { AscendingKeys } from '../decode/vectors.js'
 import {
   adapterFor,
   big,
@@ -69,7 +69,7 @@ function run(
       failures.push(r)
     },
   }
-  d = new StreamDispatcher(adapterFor(draft), new TrackKeys(), sink)
+  d = new StreamDispatcher(adapterFor(draft), new AscendingKeys(), sink)
   feed(d)
   return { seen, failures }
 }
@@ -111,7 +111,7 @@ describe.each(
           groupId: w.groupId,
           objectId: w.objectId,
           payloadLength: w.payloadLength,
-          status: w.status,
+          status: w.status === 0n ? undefined : w.status,
           priority: w.priority,
           subgroupId: w.subgroupId,
         })),
@@ -130,7 +130,7 @@ describe.each(
           groupId: w.groupId,
           objectId: w.objectId,
           payloadLength: w.payloadLength,
-          status: w.status,
+          status: w.status === 0n ? undefined : w.status,
           priority: w.priority,
           subgroupId: w.subgroupId,
         })),

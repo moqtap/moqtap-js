@@ -21,7 +21,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Chunk } from '../../flush/index.js'
 import {
+  clockEndpoint,
   DIRECTIVE_HEADER,
+  POP_HEADER,
   parseDirective,
   RECV_HEADER,
   SEND_HEADER,
@@ -82,15 +84,15 @@ const ok = (headers: Record<string, string> = {}): Response =>
 const status = (code: number, headers: Record<string, string> = {}): Response =>
   new Response(null, { status: code, headers })
 
-/** Wall times from `values`, with monotonic time moving with them. */
+/** Monotonic times from `values`, with wall time moving with them. */
 const lockstep = (values: number[]): ClockSource => {
   let last = 0
   return {
-    now: () => last,
-    wall: () => {
+    now: () => {
       last = values.shift() ?? last
       return last
     },
+    wall: () => last,
   }
 }
 
@@ -236,19 +238,23 @@ describe('Uploader.send, failure', () => {
 /* ── the clock handshake ────────────────────────────────────── */
 
 describe('Uploader, the clock exchange', () => {
-  it('folds every exchange in, and the window gives the one with the smallest bound', async () => {
+  it('folds every exchange in on the monotonic clock, and keeps the latest', async () => {
     const f = scripted([
-      ok({ [RECV_HEADER]: '1200', [SEND_HEADER]: '1210' }),
+      ok({ [RECV_HEADER]: '1200', [SEND_HEADER]: '1210', [POP_HEADER]: 'FRA' }),
       ok({ [RECV_HEADER]: '2050', [SEND_HEADER]: '2055' }),
-      ok({ [RECV_HEADER]: '3500', [SEND_HEADER]: '3510' }),
+      ok({ [RECV_HEADER]: '3500', [SEND_HEADER]: '3510', [POP_HEADER]: 'AMS' }),
     ])
     const u = uploaderWith(f.impl, { clock: lockstep([1_000, 1_400, 2_000, 2_100, 3_000, 4_000]) })
 
     await u.send(chunk(0))
     await u.send(chunk(1))
     await u.send(chunk(2))
-    // Round trips 390, 95 and 990 ms: the 95 ms one, 1.9 s old at the seal.
-    expect(u.clockSync.best(4_000, 4_000)).toEqual({ o: 2.5, r: 95, n: 3, a: 1.9 })
+    expect(u.clockSync.latest()).toEqual({
+      oUs: 5_000,
+      rUs: 990_000,
+      atUs: 4_000_000,
+      pop: 'AMS',
+    })
   })
 
   it('folds in an exchange whose answer was not a success', async () => {
@@ -258,17 +264,17 @@ describe('Uploader, the clock exchange', () => {
     ])
     const u = uploaderWith(f.impl, { clock: lockstep([1_000, 1_400, 2_000, 2_100]) })
     expect(await u.send(chunk())).toMatchObject({ ok: true })
-    expect(u.clockSync.samples).toBe(2)
+    expect(u.clockSync.latest()?.atUs).toBe(2_100_000)
   })
 
-  it('reports the server clock from the Date header, which never enters the window', async () => {
+  it('reports the server clock from the Date header, which is never a sample', async () => {
     const serverWall = Date.parse('Sat, 05 Sep 2026 12:00:00 GMT')
     const f = scripted([ok({ date: 'Sat, 05 Sep 2026 12:00:00 GMT' })])
     const u = uploaderWith(f.impl, { clock: lockstep([serverWall - 50, serverWall + 50]) })
 
     const out = await u.send(chunk())
     expect(out.serverWallMs).toBe(serverWall)
-    expect(u.clockSync.samples).toBe(0)
+    expect(u.clockSync.latest()).toBeUndefined()
   })
 
   it('reports no clock when the response carries no usable timestamp', async () => {
@@ -276,7 +282,36 @@ describe('Uploader, the clock exchange', () => {
     const u = uploaderWith(f.impl, { clock: lockstep([1_000, 1_400]) })
     const out = await u.send(chunk())
     expect(out.serverWallMs).toBeUndefined()
-    expect(u.clockSync.best(1_400, 1_400)).toBeUndefined()
+    expect(u.clockSync.latest()).toBeUndefined()
+  })
+
+  it('probes the clock beside the upload path, with no body', async () => {
+    const f = scripted([status(204, { [RECV_HEADER]: '1200', [SEND_HEADER]: '1200' })])
+    const u = uploaderWith(f.impl, { clock: lockstep([1_000, 1_010]) })
+    expect(await u.probe('i1')).toBe(true)
+    expect(f.calls).toHaveLength(1)
+    expect(f.calls[0]?.url).toBe('https://ingest.example/v1/clock?k=k-123&i=i1')
+    expect(f.calls[0]?.body).toBeUndefined()
+    expect(u.clockSync.latest()).toEqual({ oUs: 195_000, rUs: 10_000, atUs: 1_010_000 })
+  })
+
+  it('an exchange that spans a clock break gives no sample', async () => {
+    const f = scripted([ok({ [RECV_HEADER]: '1200', [SEND_HEADER]: '1210' })])
+    const u = uploaderWith(f.impl, { clock: lockstep([1_000, 1_400]) })
+    const sent = u.send(chunk())
+    u.clockSync.raise()
+    await sent
+    expect(u.clockSync.latest()).toBeUndefined()
+  })
+})
+
+describe('clockEndpoint', () => {
+  it('is the sibling of the ingest path, without its query', () => {
+    expect(clockEndpoint('https://moqgest.com/v1/ingest')).toBe('https://moqgest.com/v1/clock')
+    expect(clockEndpoint('https://proxy.example/moq/v1/ingest?x=1')).toBe(
+      'https://proxy.example/moq/v1/clock',
+    )
+    expect(clockEndpoint('not a url')).toBeNull()
   })
 })
 

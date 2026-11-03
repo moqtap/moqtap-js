@@ -138,8 +138,15 @@ describe('setContext()', () => {
         contentId: 'live/2',
         actorId: 'viewer-4',
         tags: { cdn: 'edge-1' },
+        rseq: expect.any(Number),
       },
-      { t: 'context', ts: expect.any(Number), lvl: 'baseline', tags: { experiment: 'b' } },
+      {
+        t: 'context',
+        ts: expect.any(Number),
+        lvl: 'baseline',
+        tags: { experiment: 'b' },
+        rseq: expect.any(Number),
+      },
     ])
     // After the setup record, which the instance's first body opens with.
     const order = all.map((r) => r.t)

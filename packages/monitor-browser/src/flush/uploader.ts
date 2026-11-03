@@ -20,6 +20,24 @@ import type { Chunk } from './idb.js'
 export const RECV_HEADER = 'x-moqtap-recv-ms'
 /** The header carrying the edge's send time (`t3`), in wall milliseconds. */
 export const SEND_HEADER = 'x-moqtap-send-ms'
+/** The header naming the ingest PoP that stamped `t2` and `t3`. */
+export const POP_HEADER = 'x-moqtap-pop'
+
+/**
+ * The clock exchange's endpoint: `clock` beside the upload path, so
+ * `https://moqgest.com/v1/ingest` probes `https://moqgest.com/v1/clock`.
+ * `null` when the endpoint is not a URL.
+ */
+export function clockEndpoint(endpoint: string): string | null {
+  try {
+    const u = new URL('clock', endpoint)
+    u.search = ''
+    u.hash = ''
+    return u.toString()
+  } catch {
+    return null
+  }
+}
 
 export interface UploaderOptions {
   readonly endpoint: string
@@ -33,11 +51,11 @@ export interface UploaderOptions {
    */
   readonly timeoutMs?: number
   readonly fetchImpl?: typeof fetch
-  /** Wall clock for `t1`/`t4`, and monotonic time at `t4` for the clock window. */
+  /** Monotonic time for `t1` and `t4`. */
   readonly clock?: ClockSource
   readonly sleep?: (ms: number) => Promise<void>
   readonly backoffMs?: (attempt: number) => number
-  /** Where exchanges are folded in, for the batch record's `clock`. Default: private. */
+  /** Where exchanges are folded in, for the body's `clk`. Default: private. */
   readonly clockSync?: ClockSync
   readonly headers?: Readonly<Record<string, string>>
   readonly onInternalError?: (err: unknown) => void
@@ -155,7 +173,8 @@ export class Uploader {
         if (outOfTime()) break
       }
       c.attempts += 1
-      const t1 = this._clock.wall()
+      const epoch = this._sync.epoch
+      const t1 = this._clock.now()
       const deadline = deadlineSignal(this._timeoutMs, signal)
       let res: Response
       try {
@@ -182,10 +201,9 @@ export class Uploader {
         // a leaked timer per upload would just move the interference.
         deadline.clear()
       }
-      const t4 = this._clock.wall()
-      const mono = this._clock.now()
+      const t4 = this._clock.now()
       lastStatus = res.status
-      const serverWallMs = this._note(res, t1, t4, mono)
+      const serverWallMs = this._note(res, t1, t4, epoch)
       if (res.ok) {
         const directive = this._directive(res)
         return {
@@ -240,17 +258,47 @@ export class Uploader {
    * Fold this exchange into the clock window when ingest stamped both times,
    * and return ingest's send time, else the one-second `Date` header.
    */
-  private _note(res: Response, t1: number, t4: number, mono: number): number | undefined {
+  private _note(res: Response, t1: number, t4: number, epoch: number): number | undefined {
     try {
       const t2 = numberFrom(res.headers.get(RECV_HEADER))
       const t3 = numberFrom(res.headers.get(SEND_HEADER))
-      if (t2 !== undefined && t3 !== undefined) this._sync.sample(t1, t2, t3, t4, mono)
+      if (t2 !== undefined && t3 !== undefined) {
+        this._sync.sample(t1, t2, t3, t4, epoch, res.headers.get(POP_HEADER))
+      }
       if (t3 !== undefined) return t3
       const parsed = Date.parse(res.headers.get('date') ?? '')
       return Number.isFinite(parsed) ? parsed : undefined
     } catch (err) {
       this._onError?.(err)
       return undefined
+    }
+  }
+
+  /**
+   * One clock exchange with no body, `POST /v1/clock`, so an epoch has a
+   * sample before its first body is sealed. One attempt, bounded by the
+   * upload timeout; never throws.
+   */
+  async probe(instanceId: string, signal?: AbortSignal): Promise<boolean> {
+    const doFetch = this._fetch
+    const endpoint = clockEndpoint(this._endpoint)
+    if (doFetch === undefined || endpoint === null) return false
+    const deadline = deadlineSignal(this._timeoutMs, signal)
+    try {
+      const epoch = this._sync.epoch
+      const t1 = this._clock.now()
+      const res = await doFetch(uploadUrl(endpoint, this._apiKey, undefined, instanceId), {
+        method: 'POST',
+        ...(deadline.signal !== undefined ? { signal: deadline.signal } : {}),
+      })
+      const t4 = this._clock.now()
+      this._note(res, t1, t4, epoch)
+      return res.ok
+    } catch (err) {
+      this._onError?.(err)
+      return false
+    } finally {
+      deadline.clear()
     }
   }
 

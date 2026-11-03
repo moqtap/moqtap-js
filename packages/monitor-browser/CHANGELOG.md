@@ -10,12 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Rollup tracks carry `rq`, the request they are delivered for, and receive
-  tracks carry `ga`, the first-object arrival of a sample of groups, at most
-  ten a second a track. New session counters: `ga.dropped`, `ga.late`.
-- The batch record carries `clock` `{o, r, n, a}`, the device's clock against
-  ingest's. Absent when no recent `fetch()` upload got
-  ingest's timestamped reply.
+- Every arrival is recorded, unsampled, as `run` records: per stream and
+  group, or per datagram track and group, each object's id and arrival time,
+  with FIRST_OBJECT, END_OF_GROUP and how the stream ended.
+- Non-Normal statuses, FETCH End-of-Range markers and Prior Group and Object
+  ID Gaps are sent as `mark` records.
+- A clock exchange, `POST /v1/clock`, at start and after a clock break.
+- Rollup tracks carry `rq`, the request they are delivered for.
+
+### Changed
+
+- **Breaking:** uploads are v2 bodies: an uncompressed preamble `{v, i, em,
+  seal}`, then the batch record with `clk`, `tail`, `conn` and `trk`. Every
+  record carries `rseq`; the batch record no longer carries `ts`, `wall`,
+  `dropped`, `lost` or `clock`.
+- **Breaking:** a page keeps one instance id from `init()` on; `newSession()`
+  changes the session id only, and body `seq` and `rseq` continue.
+- **Breaking:** a receive track's rollup row no longer carries `objects`,
+  `payloadBytes`, `groups`, `duplicates`, `statusObjects`, `groupGaps`,
+  `outOfOrder` or `gapRanges`.
+- **Breaking:** a page and its workers must use this release; workers forward
+  runs and frames uncompressed, and a worker the page counts gone is not
+  stood in for.
+- **Breaking:** a flight record's `cols.group` and `cols.object` are decimal
+  strings.
+- A zero-length object with status 0x0 is counted as an object, not a status.
+- From draft-18, a FETCH stream's Group ID Deltas follow the group order its
+  request settled.
+- Connection records, `ctrl` and `rollup` carry the connection ordinal `c`;
+  `ctrl` carries `sid` and `at_us`. A connection keeps its ordinal across
+  `newSession()`.
 
 ## [0.12.0] - 2026-10-28
 

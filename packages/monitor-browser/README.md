@@ -153,9 +153,10 @@ recorded as an escalation with `by.kind: 'hold'`.
   worker, whether or not it connects. It ends when its last connection has
   closed and no other is attempted within 30 s, when the page closes, or when
   you call `end()` or `newSession()`. The next `WebTransport` after that
-  begins a new session, with new ids and the context so far.
-- **Instance**: one session's recording in one page. A reload that passes the
-  same `sessionId` is a second instance of the same session.
+  begins a new session, with a new session id and the context so far.
+- **Instance**: one page load's recording, from `init()` on. Every session the
+  page records has the same instance id. A reload is a new instance, and a
+  reload that passes the same `sessionId` is a second instance of that session.
 - **Connection**: one WebTransport, in the page or in a linked worker. A
   connection that fails to open is still reported, in the session its attempt
   began or joined.

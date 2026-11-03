@@ -28,7 +28,7 @@ import type { BatchRecord, EnvelopeRecord, FlightRecord } from '../../types.js'
 import { publishBytes, subgroupBytes } from '../decode/vectors.js'
 import { attempt, workerBuild } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
-import { allRecords, of, recordingFetch } from '../support/uploads.js'
+import { allRecords, clockProbe, of, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -70,6 +70,8 @@ describe('a flight dump larger than the outbox has room for', () => {
     })
     const { posts, impl: answer } = recordingFetch()
     const impl = (async (url: string, init: RequestInit) => {
+      const clock = clockProbe(url)
+      if (clock !== undefined) return clock
       await outage
       return answer(url, init)
     }) as unknown as typeof fetch
@@ -119,7 +121,7 @@ describe('a flight dump larger than the outbox has room for', () => {
     const notes = all.filter((r) => r.t === 'note').map((r) => (r as { name: string }).name)
     expect(notes).toEqual(['held-0', 'held-1', 'held-2'])
     const batches = of(all, 'batch') as BatchRecord[]
-    expect(batches.flatMap((b) => b.lost ?? [])).toEqual([])
+    expect(batches.map((b) => b.seq)).toEqual(batches.map((_, i) => i))
 
     // What is kept is the end of the dump, the moments before the trigger.
     expectTail(all)
@@ -168,6 +170,8 @@ describe('a flight dump larger than the store has room for', () => {
     })
     const { posts, impl: answer } = recordingFetch()
     const impl = (async (url: string, init: RequestInit) => {
+      const clock = clockProbe(url)
+      if (clock !== undefined) return clock
       await outage
       return answer(url, init)
     }) as unknown as typeof fetch
@@ -230,6 +234,8 @@ describe("a linked worker's flight dump larger than the outbox has room for", ()
     })
     const { posts, impl: answer } = recordingFetch()
     const impl = (async (url: string, init: RequestInit) => {
+      const clock = clockProbe(url)
+      if (clock !== undefined) return clock
       await outage
       return answer(url, init)
     }) as unknown as typeof fetch
@@ -320,7 +326,7 @@ describe("a linked worker's flight dump larger than the outbox has room for", ()
     const notes = all.filter((r) => r.t === 'note').map((r) => (r as { name: string }).name)
     expect(notes).toEqual(['held-0', 'held-1', 'held-2'])
     const batches = of(all, 'batch') as BatchRecord[]
-    expect(batches.flatMap((b) => b.lost ?? [])).toEqual([])
+    expect(batches.map((b) => b.seq)).toEqual(batches.map((_, i) => i))
     expectTail(all)
     expect(errors).toEqual([])
   })

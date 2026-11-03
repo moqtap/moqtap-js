@@ -19,13 +19,7 @@ import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { envelope } from '../../api/link.js'
 import type { LinkEvent } from '../../api/session.js'
 import { initWorkerWith } from '../../api/worker.js'
-import {
-  BODY_PREAMBLE_BYTES,
-  FrameWriter,
-  readFrames,
-  readPreamble,
-  sha256Hex,
-} from '../../envelope/index.js'
+import { FrameWriter, readFrames, readPreamble, sha256Hex } from '../../envelope/index.js'
 import { type ChunkBackend, ChunkStore, MemoryBackend } from '../../flush/index.js'
 import type {
   BatchRecord,
@@ -36,6 +30,7 @@ import type {
 } from '../../types.js'
 import { attempt, init, workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
+import { afterPreamble, clockProbe } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -52,7 +47,7 @@ interface Received {
 async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
   const pre = readPreamble(body)
   expect(pre).not.toBeNull()
-  let frames = body.subarray(BODY_PREAMBLE_BYTES)
+  let frames = afterPreamble(body)
   if ((pre as { gzipped: boolean }).gzipped) {
     const ds = new DecompressionStream('gzip')
     const out = new Response(new Blob([frames as unknown as BlobPart]).stream().pipeThrough(ds))
@@ -84,6 +79,8 @@ function ingest(down: () => boolean = () => false): {
   return {
     received,
     fetchImpl: (async (url: string, req: RequestInit) => {
+      const clock = clockProbe(url)
+      if (clock !== undefined) return clock
       if (down()) throw new TypeError('network down')
       const body = req.body
       take(
@@ -128,7 +125,6 @@ function view(
     expect(batch.idempotencyKey).toBe(
       sha256Hex(`${batch.sessionId}:${batch.instanceId}:${batch.seq}`),
     )
-    expect(batch.lost ?? []).toEqual([])
     const first = byKey.get(r.key)
     if (first === undefined) byKey.set(r.key, r)
     else expect(r.records).toEqual(first.records)
@@ -361,7 +357,8 @@ describe('a worker’s hello that arrives while the page is still starting', () 
       ['w1', 'linked'],
       ['w2', 'linked'],
     ])
-    for (const r of net.received) expect((r.records[0] as BatchRecord).dropped).toBe(0)
+    for (const r of net.received)
+      expect((r.records[0] as BatchRecord).tail.pre_drop.records).toBe(0)
     a.close()
     b.close()
   })

@@ -26,6 +26,7 @@ import {
 import { TrackKeys } from '../../decode/track-key.js'
 import type { StreamChunk } from '../../types.js'
 import {
+  AscendingKeys,
   concatBytes,
   DRAFT20_ADAPTER,
   datagramBytes,
@@ -74,7 +75,7 @@ describe('sniffStream', () => {
 describe('StreamDispatcher', () => {
   it('routes each stream kind to its own counting decoder', () => {
     const sink = new Recorder()
-    const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink)
+    const d = new StreamDispatcher(DRAFT20_ADAPTER, new AscendingKeys(), sink)
 
     d.onStreamData(
       chunk({
@@ -104,7 +105,7 @@ describe('StreamDispatcher', () => {
 
   it('names the stream each object arrived on, and none on a datagram', () => {
     const sink = new Recorder()
-    const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink, { slackBytes: 64 })
+    const d = new StreamDispatcher(DRAFT20_ADAPTER, new AscendingKeys(), sink, { slackBytes: 64 })
 
     d.onStreamData(
       chunk({
@@ -135,7 +136,7 @@ describe('StreamDispatcher', () => {
 
   it('keeps the two directions of one bidi stream in separate framers', () => {
     const sink = new Recorder()
-    const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink)
+    const d = new StreamDispatcher(DRAFT20_ADAPTER, new AscendingKeys(), sink)
     // One synthetic stream id, two byte streams: the request out, the response
     // back. `StreamRegistry.next` assigns one id per stream, not one per side.
     d.onStreamData(
@@ -167,7 +168,7 @@ describe('StreamDispatcher', () => {
 
   it('feeds decoded control messages to the alias epoch map', () => {
     const sink = new Recorder()
-    const keys = new TrackKeys()
+    const keys = new AscendingKeys()
     const d = new StreamDispatcher(DRAFT20_ADAPTER, keys, sink)
 
     d.onStreamData(
@@ -208,7 +209,7 @@ describe('StreamDispatcher', () => {
 
   it('counts an unknown stream type once and then ignores the stream', () => {
     const sink = new Recorder()
-    const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink)
+    const d = new StreamDispatcher(DRAFT20_ADAPTER, new AscendingKeys(), sink)
     d.onStreamData(chunk({ streamId: 4, data: PADDING_STREAM }))
     d.onStreamData(chunk({ streamId: 4, data: filled(64) }))
     expect(sink.reasons).toEqual(['unknown-stream-type'])
@@ -217,7 +218,7 @@ describe('StreamDispatcher', () => {
 
   it('waits for a non-empty chunk before classifying a stream', () => {
     const sink = new Recorder()
-    const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink)
+    const d = new StreamDispatcher(DRAFT20_ADAPTER, new AscendingKeys(), sink)
     d.onStreamData(chunk({ streamId: 5, data: new Uint8Array(0) }))
     expect(d.openStreams).toBe(0)
     d.onStreamData(
@@ -231,7 +232,7 @@ describe('StreamDispatcher', () => {
 
   it('releases a stream on close', () => {
     const sink = new Recorder()
-    const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink)
+    const d = new StreamDispatcher(DRAFT20_ADAPTER, new AscendingKeys(), sink)
     d.onStreamData(
       chunk({
         streamId: 6,
@@ -245,7 +246,7 @@ describe('StreamDispatcher', () => {
 
   it('counts a malformed datagram without throwing into the page', () => {
     const sink = new Recorder()
-    const d = new StreamDispatcher(DRAFT20_ADAPTER, new TrackKeys(), sink)
+    const d = new StreamDispatcher(DRAFT20_ADAPTER, new AscendingKeys(), sink)
     // Type Flags bit 4 is reserved and MUST be zero (draft-20 §11.3.1).
     d.onDatagram({
       sessionId: 's',
@@ -376,7 +377,7 @@ describe('the bucket cap over a long session', () => {
 
   it('does not free an alias bucket, which the epoch map still owns', () => {
     const sink = new Recorder()
-    const keys = new TrackKeys()
+    const keys = new AscendingKeys()
     const d = new StreamDispatcher(DRAFT20_ADAPTER, keys, sink)
     d.onStreamData(
       chunk({
