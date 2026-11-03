@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty string clears a field. `DeliveryPath` gains `fetch_unseen`,
   `ObjectSample.path` is never `null`, a range in `MarkSample['what']` gains
   `first`, and `BatchRecord.conn[].draft` is optional.
+- Requires `@moqtap/codec` 0.15.0.
 - A shorter upload interval asked by Insight is taken up to 60 s, was 10 s,
   and never past `upload.intervalMs`.
 
