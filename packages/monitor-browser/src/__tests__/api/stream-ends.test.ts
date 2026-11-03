@@ -150,7 +150,7 @@ describe('a connection whose draft is not known', () => {
     await c.flush()
     await c.end()
     const batches = of(await allRecords(posts), 'batch')
-    expect(batches[0]?.conn).toEqual([{ c: 0, relay: 'https://relay.test:4443' }])
+    expect(batches[0]?.conn).toEqual([{ c: 0, relay: 'https://relay.test:4443/moq' }])
   })
 })
 

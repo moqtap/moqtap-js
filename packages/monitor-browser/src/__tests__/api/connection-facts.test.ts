@@ -299,7 +299,7 @@ describe('the bodies a session uploads, as one emitter', () => {
       [2n, 0, 'rx:alias:4:0'],
     ])
     const listed = batches.filter((b) => b.conn.length > 0)[0]?.conn
-    expect(listed).toEqual([{ c: 0, draft: 20, relay: 'https://relay.test:4443' }])
+    expect(listed).toEqual([{ c: 0, draft: 20, relay: 'https://relay.test:4443/moq' }])
     expect(of(all, 'conn-open')[0]).toMatchObject({ c: 0 })
     expect(of(all, 'ctrl').every((r) => r.c === 0 && typeof r.at_us === 'number')).toBe(true)
   })

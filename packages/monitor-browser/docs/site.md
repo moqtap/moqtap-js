@@ -112,7 +112,7 @@ Per session, it also records:
   [Privacy](#privacy)).
 - **Each connection's negotiated draft**, whether it was publishing, subscribing or both, why
   it closed, and who closed it: your code calling `close()`, the relay, or a local failure.
-- **Each connection's relay and options**: the relay's scheme, host and port, and the
+- **Each connection's relay and options**: the relay URL's scheme, host, port and path, and the
   `WebTransport` options the page passed, with server certificate hashes reduced to a count.
 - **Stream resets that came before the stream named a track**, counted per connection.
 
@@ -464,7 +464,7 @@ Insight can change three things in a running session, within these bounds:
 
 | What | When | Bounds |
 |---|---|---|
-| Shorter upload interval | someone has the session open in Insight, or the project's plan updates totals more often | 1 to 60 s, for at most 10 minutes at a time |
+| Shorter upload interval | someone has the session open in Insight, or the project's plan updates totals more often than `upload.intervalMs` | 1 to 60 s, for at most 10 minutes at a time |
 | Raised detail | a capture window in Insight covers the session's release, user or content | up to `headers+sizes`, for at most 30 minutes, within `budget.elevatedMinutes` |
 | Detail held at `baseline` | the workspace has used its recording minutes for the month | `baseline` only, for at most 10 minutes from each upload, renewed on every upload |
 
@@ -628,8 +628,8 @@ Uploaded:
 
 - Per-track counters and histograms, including missing group ranges and stream resets.
 - The session's control messages, with authorization token values masked.
-- Each connection's relay (scheme, host and port), the `WebTransport` options the page passed
-  (server certificate hashes as a count only), and who closed it.
+- Each connection's relay (scheme, host, port and path), the `WebTransport` options the page
+  passed (server certificate hashes as a count only), and who closed it.
 - Your `context` (including tags), custom metrics and annotations. `actorId` is hashed first
   when `privacy.hashActorId` is on.
 - While the level is above `baseline`: per-object header records (including subgroup and
@@ -640,6 +640,7 @@ Never uploaded:
 
 - **Object payloads.** The flight recorder's memory stays on the device. `headers+data` uploads
   nothing more than `headers+sizes`.
+- **The relay URL's query, fragment and userinfo.**
 - **Authorization token values.** Whether a token was sent, its type and its alias are kept, so
   a failed authentication can still be diagnosed. To send token values, set
   `privacy: { maskAuthParams: false }`. Only a real boolean `false` turns masking off; a string

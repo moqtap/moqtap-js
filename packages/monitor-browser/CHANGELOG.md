@@ -21,8 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ObjectSample.path` is never `null`, a range in `MarkSample['what']` gains
   `first`, and `BatchRecord.conn[].draft` is optional.
 - Requires `@moqtap/codec` 0.15.0.
-- A shorter upload interval asked by Insight is taken up to 60 s, was 10 s,
-  and never past `upload.intervalMs`.
+- An upload names each connection's relay by the URL's scheme, host, port
+  and normalised path, so latency is matched per relay path; the query,
+  fragment and userinfo are still dropped.
+- Insight may ask for an upload interval of up to 60 s, up from 10 s, and
+  never longer than `upload.intervalMs`.
 
 ### Added
 

@@ -83,6 +83,7 @@ import { levelIndex } from './defaults.js'
 import { DORMANT_DATAGRAM_STREAM_ID, type DormantState, drainDormant } from './dormant.js'
 import { type EarlyConnection, halfOf } from './early.js'
 import type { FlightRecorderFeature, RealmRecorder, Ring } from './features.js'
+import { relayOf } from './relay.js'
 
 /**
  * The droppable set, and the whole of it.
@@ -253,6 +254,8 @@ interface Connection {
   readonly c: number
   readonly session: InterceptedSession
   readonly origin: string
+  /** The capture contract's relay endpoint: origin and path. */
+  readonly relay: string
   readonly options: ConnOptions | undefined
   readonly contentId: string
   readonly rollup: RollupEngine
@@ -693,6 +696,7 @@ export class RealmObserver {
       c: ordinal,
       session: s,
       origin: originOf(s.url),
+      relay: relayOf(s.url),
       options: connOptionsOf(s.options),
       contentId: this._contentId,
       rollup,
@@ -720,7 +724,7 @@ export class RealmObserver {
     }
     sink.to = this._connectionSink(() => c, rollup)
     this._connections.set(s.id, c)
-    this._host.onConn?.(c.c, c.draft, c.origin)
+    this._host.onConn?.(c.c, c.draft, c.relay)
     if (carried !== undefined) this._host.onConnReady()
     // Stamped with the transport's own construction time, which precedes this
     // realm's start for a session replayed from the dormant hook.
@@ -1337,7 +1341,7 @@ export class RealmObserver {
     }
     c.adapter = result.adapter
     c.draft = result.draft
-    this._host.onConn?.(c.c, result.draft, c.origin)
+    this._host.onConn?.(c.c, result.draft, c.relay)
     c.dispatcher = new StreamDispatcher(result.adapter, c.keys, c.sink, {
       slackBytes: this._o.config.limits.maxHeaderSlackBytes,
       maskAuthParams: this._o.config.privacy.maskAuthParams,
