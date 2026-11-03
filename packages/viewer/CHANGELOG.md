@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Draft-23 traces name their control messages and REQUEST_ERROR codes.
+
 ## [0.4.0]
 
 - A flight dump sent in slices is shown as one dump, with stalls found across

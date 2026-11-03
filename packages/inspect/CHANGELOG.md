@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `errorName` names draft-23's session, REQUEST_ERROR, PUBLISH_DONE and stream reset codes.
+- `messageSpec(23, ...)` cites draft-23's GOAWAY (9.2) and REQUEST_ERROR (9.4).
+- `errorName(23, 'error_detail', type)`: a REQUEST_ERROR Error Detail type by name.
+
 ## [0.3.0] - 2026-10-30
 
 ### Added

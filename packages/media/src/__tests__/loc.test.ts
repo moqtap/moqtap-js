@@ -91,6 +91,28 @@ describe('transport object properties', () => {
     expect(isTransportObjectProperty(0x02n, '10')).toBe(false)
   })
 
+  it('reads draft-23 Table 15 as draft-22 does', () => {
+    for (const type of [0x02n, 0x06n, 0x0bn, 0x3cn, 0x3en, 0x9dn]) {
+      expect(isTransportObjectProperty(type, '23')).toBe(true)
+    }
+    for (const type of [0x04n, 0x0en, 0x22n, 0x30n, 0x10n]) {
+      expect(isTransportObjectProperty(type, '23')).toBe(false)
+    }
+    for (const type of [0x02n, 0x04n, 0x06n, 0x0bn, 0x0en, 0x22n, 0x30n, 0x9dn]) {
+      expect(isTransportTrackProperty(type, '23')).toBe(true)
+    }
+    for (const type of [0x3cn, 0x3en, 0x08n, 0x0dn, 0x0fn]) {
+      expect(isTransportTrackProperty(type, '23')).toBe(false)
+    }
+  })
+
+  it('counts grease in the Mandatory Track Property range as transport-defined', () => {
+    // draft-23 Section 3.7: "Grease values (Section 13) in this range are not
+    // Mandatory Track Properties."
+    expect(isTransportTrackProperty(0x4000n, '23')).toBe(false)
+    expect(isTransportTrackProperty(0x9dn + 0x7fn * 128n, '23')).toBe(true)
+  })
+
   it('treats grease types as transport from draft-17', () => {
     expect(isTransportObjectProperty(0x9dn, '17')).toBe(true)
     expect(isTransportObjectProperty(0x9dn + 0x7fn * 3n, '22')).toBe(true)
@@ -521,6 +543,17 @@ describe('decodeLocProperties', () => {
         profile: 'ietf-03',
         meanings: [
           'OBJECT_DELIVERY_TIMEOUT (draft-22 Section 10.2)',
+          'Key ID (Secure Objects type 0x2)',
+        ],
+      },
+    ])
+
+    const d23 = decodeLocProperties(block, { profile: 'ietf-03' }, { transportDraft: '23' })
+    expect(d23[2]!.ambiguous).toEqual([
+      {
+        profile: 'ietf-03',
+        meanings: [
+          'OBJECT_DELIVERY_TIMEOUT (draft-23 Section 10.2)',
           'Key ID (Secure Objects type 0x2)',
         ],
       },

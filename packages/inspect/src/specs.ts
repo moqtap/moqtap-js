@@ -135,6 +135,7 @@ const SECTIONS: Record<number, Record<string, readonly [string, number]>> = {
   20: { GOAWAY: ['10.4', 17], REQUEST_ERROR: ['10.6', 18] },
   21: { GOAWAY: ['9.2', 17], REQUEST_ERROR: ['9.4', 18] },
   22: { GOAWAY: ['9.2', 17], REQUEST_ERROR: ['9.4', 18] },
+  23: { GOAWAY: ['9.2', 17], REQUEST_ERROR: ['9.4', 18] },
 }
 
 /** The section of `draft` defining `message` (either case), or `null` when it defines none. */

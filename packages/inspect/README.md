@@ -6,7 +6,7 @@ large integers in full, the implementation each end names, and track aliases
 joined to the namespace and name the control plane gave them, error codes by
 name for the session's draft, requests paired with their responses, and the
 problems a session's control messages show. Works on the messages
-`@moqtap/codec` decodes, for drafts 07-22.
+`@moqtap/codec` decodes, for drafts 07-23.
 
 ## Install
 
@@ -140,9 +140,10 @@ acknowledged bytes. It returns `tracks`, one entry per track, and
 `intervals`, one per track per rollup interval. Durations are buckets on the
 collector's ladder: bucket `i` holds `[2^i, 2^(i+1))` ms.
 
-`errorName` reads `session` as the code a session closed with and
-`stream_reset` as a data stream's reset code. It never borrows a name from
-another draft: a code the draft does not define answers `null`.
+`errorName` reads `session` as the code a session closed with,
+`stream_reset` as a data stream's reset code, and from draft-23
+`error_detail` as the type of a REQUEST_ERROR Error Detail. It never borrows
+a name from another draft: a code the draft does not define answers `null`.
 
 ## License
 

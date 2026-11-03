@@ -2,6 +2,7 @@ import { createDraft07Codec } from '@moqtap/codec/draft07'
 import { createDraft14Codec } from '@moqtap/codec/draft14'
 import { createDraft17Codec } from '@moqtap/codec/draft17'
 import { createDraft22Codec } from '@moqtap/codec/draft22'
+import { createDraft23Codec } from '@moqtap/codec/draft23'
 import { describe, expect, it } from 'vitest'
 import { displayFields } from '../display.js'
 import { type ControlEvent, type InspectEvent, pairRequests, problems } from '../requests.js'
@@ -134,6 +135,67 @@ describe('pairRequests', () => {
         { request: b, response: err, rttMs: 20 },
       ])
     }
+  })
+
+  it('pairs a draft-23 FETCH with the REQUEST_OK that answers it', () => {
+    // draft-23 Section 9.3: "The REQUEST_OK message is sent in response to
+    // PUBLISH, FETCH, REQUEST_UPDATE, TRACK_STATUS, SUBSCRIBE_NAMESPACE,
+    // SUBSCRIBE_TRACKS and PUBLISH_NAMESPACE requests."
+    const codec = createDraft23Codec()
+    const fetch = control(
+      'fetch',
+      decoded(codec, {
+        type: 'fetch',
+        request_id: 2n,
+        track_namespace: ['live'],
+        track_name: 'video',
+        parameters: {},
+      }),
+      { direction: 'tx', streamId: 4, atMs: 0 },
+    )
+    const fetchOk = control(
+      'request_ok',
+      decoded(codec, {
+        type: 'request_ok',
+        parameters: { largest_object: { group: 5n, object: 3n } },
+        track_properties: {},
+      }),
+      { direction: 'rx', streamId: 4, atMs: 30 },
+    )
+    const updateOk = control(
+      'request_ok',
+      decoded(codec, { type: 'request_ok', parameters: {}, track_properties: {} }),
+      { direction: 'rx', streamId: 4, atMs: 60 },
+    )
+    expect(pairRequests([fetch, fetchOk, updateOk], { draft: 23 })).toEqual([
+      { request: fetch, response: fetchOk, rttMs: 30 },
+    ])
+  })
+
+  it('names a draft-23 REQUEST_ERROR code and links it to its FETCH', () => {
+    const codec = createDraft23Codec()
+    const fetch = control('fetch', { request_id: 2n }, { direction: 'tx', streamId: 4, atMs: 0 })
+    const err = control(
+      'request_error',
+      decoded(codec, {
+        type: 'request_error',
+        error_code: 0xan,
+        retry_interval: 1001n,
+        reason_phrase: 'no stream credit',
+        error_details: {},
+      }),
+      { direction: 'rx', streamId: 4, atMs: 12 },
+    )
+    expect(problems([fetch, err], { pendingMs: 5000, draft: 23 })).toMatchObject([
+      {
+        id: 'session.error',
+        spec: { revision: '23', section: '9.4' },
+        code: '10',
+        codeName: 'UNAVAILABLE',
+        reason: 'no stream credit',
+        request: fetch,
+      },
+    ])
   })
 
   it('does not pair by stream before draft-17, where every request shares one', () => {

@@ -30,6 +30,14 @@ describe('messageSpec', () => {
       'https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-22#section-9.2',
     )
   })
+
+  it('pins draft-23 to its own revision', () => {
+    const ref = messageSpec(23, 'REQUEST_ERROR')!
+    expect(ref).toEqual({ ...messageSpec(22, 'REQUEST_ERROR'), revision: '23' })
+    expect(specUrl(messageSpec(23, 'goaway')!)).toBe(
+      'https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-23#section-9.2',
+    )
+  })
 })
 
 describe('problem ids and refs', () => {

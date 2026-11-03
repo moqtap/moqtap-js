@@ -39,6 +39,7 @@ export type TransportDraft =
   | '20'
   | '21'
   | '22'
+  | '23'
 
 export type LocMeaning =
   | 'capture-timestamp'

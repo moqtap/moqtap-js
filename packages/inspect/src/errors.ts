@@ -131,14 +131,22 @@ import {
   RequestErrorCode as RequestError22,
   SessionTerminationCode as Session22,
 } from '@moqtap/codec/draft22'
+import {
+  DataStreamResetCode as DataStreamReset23,
+  ErrorDetailType as ErrorDetail23,
+  PublishDoneCode as PublishDone23,
+  RequestErrorCode as RequestError23,
+  SessionTerminationCode as Session23,
+} from '@moqtap/codec/draft23'
 
 type Registry = Readonly<Record<string, bigint>>
 
 /**
  * The registry each message's code is drawn from, by message name, per draft.
  *
- * Two names are not messages: `session` is the code a session closes with
- * and `stream_reset` the code a data stream is reset with. Messages that carry
+ * Three names are not messages: `session` is the code a session closes with,
+ * `stream_reset` the code a data stream is reset with, and `error_detail` the
+ * type of a REQUEST_ERROR Error Detail (draft-23 on). Messages that carry
  * a code with no registry in the codec (TRACK_STATUS_ERROR on drafts 13 and
  * 14, the *_CANCEL messages) are left out, so their codes have no name.
  */
@@ -265,6 +273,13 @@ const REGISTRIES: Readonly<Record<number, Readonly<Record<string, Registry>>>> =
     request_error: RequestError22,
     publish_done: PublishDone22,
   },
+  23: {
+    session: Session23,
+    stream_reset: DataStreamReset23,
+    request_error: RequestError23,
+    publish_done: PublishDone23,
+    error_detail: ErrorDetail23,
+  },
 }
 
 /** `TrackDoesNotExist` as the drafts write it: `TRACK_DOES_NOT_EXIST`. */
@@ -278,10 +293,10 @@ function specName(key: string): string {
  *
  * `messageName` is the message carrying the code, in either case:
  * `SUBSCRIBE_ERROR`, `REQUEST_ERROR`, `PUBLISH_DONE` and the like. `session`
- * names the code a session closed with and `stream_reset` a data stream's
- * reset code. A `null` draft, a draft the codec does not carry, a message with
- * no registry in that draft and a code its registry does not hold all answer
- * `null`.
+ * names the code a session closed with, `stream_reset` a data stream's reset
+ * code and `error_detail` an Error Detail type. A `null` draft, a draft the
+ * codec does not carry, a message with no registry in that draft and a code
+ * its registry does not hold all answer `null`.
  */
 export function errorName(
   draft: number | null,

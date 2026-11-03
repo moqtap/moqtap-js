@@ -3462,5 +3462,207 @@
       "section": "9.4",
       "specPath": "/spec/draft-22/request_error"
     }
+  ],
+  "23": [
+    {
+      "value": 1,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SETUP for version 00",
+      "section": null,
+      "specPath": null
+    },
+    {
+      "value": 64,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP for <= 10",
+      "section": null,
+      "specPath": null
+    },
+    {
+      "value": 65,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP for <= 10",
+      "section": null,
+      "specPath": null
+    },
+    {
+      "value": 32,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "CLIENT_SETUP in <= 16",
+      "section": null,
+      "specPath": null
+    },
+    {
+      "value": 33,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "SERVER_SETUP in <= 16",
+      "section": null,
+      "specPath": null
+    },
+    {
+      "value": 12032,
+      "name": "SETUP",
+      "reserved": false,
+      "note": null,
+      "section": "9.1",
+      "specPath": "/spec/draft-23/setup"
+    },
+    {
+      "value": 16,
+      "name": "GOAWAY",
+      "reserved": false,
+      "note": null,
+      "section": "9.2",
+      "specPath": "/spec/draft-23/goaway"
+    },
+    {
+      "value": 3,
+      "name": "SUBSCRIBE",
+      "reserved": false,
+      "note": null,
+      "section": "9.6",
+      "specPath": "/spec/draft-23/subscribe"
+    },
+    {
+      "value": 4,
+      "name": "SUBSCRIBE_OK",
+      "reserved": false,
+      "note": null,
+      "section": "9.7",
+      "specPath": "/spec/draft-23/subscribe_ok"
+    },
+    {
+      "value": 34,
+      "name": "PUBLISH_STATE_NOTIFY",
+      "reserved": false,
+      "note": null,
+      "section": "9.10",
+      "specPath": "/spec/draft-23/publish_state_notify"
+    },
+    {
+      "value": 29,
+      "name": "PUBLISH",
+      "reserved": false,
+      "note": null,
+      "section": "9.8",
+      "specPath": "/spec/draft-23/publish"
+    },
+    {
+      "value": 30,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "PUBLISH_OK in <= 17",
+      "section": null,
+      "specPath": null
+    },
+    {
+      "value": 11,
+      "name": "PUBLISH_DONE",
+      "reserved": false,
+      "note": null,
+      "section": "9.9",
+      "specPath": "/spec/draft-23/publish_done"
+    },
+    {
+      "value": 22,
+      "name": "FETCH",
+      "reserved": false,
+      "note": null,
+      "section": "9.11",
+      "specPath": "/spec/draft-23/fetch-2"
+    },
+    {
+      "value": 24,
+      "name": "RESERVED",
+      "reserved": true,
+      "note": "FETCH_OK in <= 22",
+      "section": null,
+      "specPath": null
+    },
+    {
+      "value": 13,
+      "name": "TRACK_STATUS",
+      "reserved": false,
+      "note": null,
+      "section": "9.12",
+      "specPath": "/spec/draft-23/track_status"
+    },
+    {
+      "value": 6,
+      "name": "PUBLISH_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "section": "9.13",
+      "specPath": "/spec/draft-23/publish_namespace"
+    },
+    {
+      "value": 80,
+      "name": "SUBSCRIBE_NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "section": "9.14",
+      "specPath": "/spec/draft-23/subscribe_namespace"
+    },
+    {
+      "value": 81,
+      "name": "SUBSCRIBE_TRACKS",
+      "reserved": false,
+      "note": null,
+      "section": "9.17",
+      "specPath": "/spec/draft-23/subscribe_tracks"
+    },
+    {
+      "value": 8,
+      "name": "NAMESPACE",
+      "reserved": false,
+      "note": null,
+      "section": "9.15",
+      "specPath": "/spec/draft-23/namespace"
+    },
+    {
+      "value": 14,
+      "name": "NAMESPACE_DONE",
+      "reserved": false,
+      "note": null,
+      "section": "9.16",
+      "specPath": "/spec/draft-23/namespace_done"
+    },
+    {
+      "value": 15,
+      "name": "PUBLISH_SKIPPED",
+      "reserved": false,
+      "note": null,
+      "section": "9.18",
+      "specPath": "/spec/draft-23/publish_skipped"
+    },
+    {
+      "value": 2,
+      "name": "REQUEST_UPDATE",
+      "reserved": false,
+      "note": null,
+      "section": "9.5",
+      "specPath": "/spec/draft-23/request_update"
+    },
+    {
+      "value": 7,
+      "name": "REQUEST_OK",
+      "reserved": false,
+      "note": null,
+      "section": "9.3",
+      "specPath": "/spec/draft-23/request_ok"
+    },
+    {
+      "value": 5,
+      "name": "REQUEST_ERROR",
+      "reserved": false,
+      "note": null,
+      "section": "9.4",
+      "specPath": "/spec/draft-23/request_error"
+    }
   ]
 }

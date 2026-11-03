@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (types):** `TransportDraft` gains `'23'`, so an exhaustive `switch` over it
+  needs the new case.
+
+### Added
+
+- `transportDraft: '23'`: draft-23's Object and Track property types, which are draft-22's.
+
 ## [0.4.0] - 2026-11-03
 
 ### Changed

@@ -412,11 +412,11 @@ import {
   resolveProfile,
 } from '@moqtap/media/loc'
 
-const types = locPropertyTypes(object.properties, '22')
-const resolution = resolveProfile(possibleProfiles(types, '22'))
+const types = locPropertyTypes(object.properties, '23')
+const resolution = resolveProfile(possibleProfiles(types, '23'))
 // { profile: 'ietf-05' }, or { candidates: ['ietf-04', 'ietf-05'] }
 
-decodeLocProperties(object.properties, resolution, { transportDraft: '22', videoCodec: 'avc1.64001F' })
+decodeLocProperties(object.properties, resolution, { transportDraft: '23', videoCodec: 'avc1.64001F' })
 // [{ type: 16n, raw: 8100000n, name: 'Timestamp', meaning: 'timestamp',
 //    decoded: { kind: 'timestamp', value: 8100000n, timescales: [90000n] } }, ...]
 ```
@@ -455,7 +455,7 @@ Only read a track as LOC when its catalog `packaging` is `"loc"`, or the user sa
 | `resolveProfile(possible, pinned?)` | `{ profile }` or `{ candidates }`. |
 | `decodeLocProperties(properties, resolution, options?)` | One result per property, in order, with Immutable Properties' contents after it. |
 | `decodeLocTrackProperties(properties, resolution, options?)` | The same for a track's Track Properties (draft-16 Track Extensions), reading only what the profile defines at Track scope. |
-| `isTransportObjectProperty(type, transportDraft)` | Whether the transport draft (`'08'` to `'22'`) defines the type at Object scope. |
+| `isTransportObjectProperty(type, transportDraft)` | Whether the transport draft (`'08'` to `'23'`) defines the type at Object scope. |
 | `isTransportTrackProperty(type, transportDraft)` | Whether the transport draft defines the type as a Track property. |
 | `decodeFrameMarkingBytes(bytes)`, `decodeFrameMarkingVarint(value)` | RFC 9626 Frame Marking readings, or `null`. |
 | `decodeAudioLevel(value)` | RFC 6464 level, dBov and voice activity, or `null` above `0xFF`. |
@@ -477,7 +477,7 @@ Each result has the `type` and the `raw` value or bytes, and:
 - `ambiguous`: the meanings per profile, when they differ or one profile gives the type two
   (0x06 in ietf-02). The value is left raw. When the candidates agree on the meaning but not on
   whether the value is within the stated size (0x04 of 2^29 under ietf-00/01 and ietf-02), each
-  entry carries that profile's `error`, if any. On drafts 19 to 22, 0x02 and 0x06 are also
+  entry carries that profile's `error`, if any. On drafts 19 to 23, 0x02 and 0x06 are also
   OBJECT_DELIVERY_TIMEOUT and SUBGROUP_DELIVERY_TIMEOUT. When a profile of the resolution
   defines the type where it was seen, such as the ietf-03 Timestamp at 0x06 or the Secure
   Objects Key ID at 0x02 inside Immutable Properties, both readings are listed. These types do

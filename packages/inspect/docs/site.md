@@ -1,6 +1,6 @@
 ---
 title: "@moqtap/inspect"
-description: Make decoded MoQT control messages readable. Track names, error code names, request pairing and session problems for drafts 07–22.
+description: Make decoded MoQT control messages readable. Track names, error code names, request pairing and session problems for drafts 07–23.
 version: 0.3.0
 ---
 
@@ -25,7 +25,7 @@ decodes and turns them into what a person debugging a session wants to read:
 - **Rollup delivery**: each track's delivery figures from the rollups in a
   [`@moqtap/monitor-browser`](/npm-packages/moqtap-monitor-browser/) trace.
 
-Supports **drafts 07 through 22**. Works in Node.js, Bun, Deno and browsers. Every result is
+Supports **drafts 07 through 23**. Works in Node.js, Bun, Deno and browsers. Every result is
 plain data, so it survives `postMessage` and `JSON.stringify`.
 
 ## Installation
@@ -124,8 +124,9 @@ string.
 
 `errorName(draft, message, code)` returns a code's name in that draft's registry, or `null`. It
 never borrows a name from another draft: a code the draft does not define answers `null`. Pass
-`session` as the message for the code a session closed with, and `stream_reset` for a data
-stream's reset code.
+`session` as the message for the code a session closed with, `stream_reset` for a data
+stream's reset code, and from draft-23 `error_detail` for the type of a REQUEST_ERROR Error
+Detail.
 
 `codeLabel(code, name, draft)` formats the result for display: `TRACK_DOES_NOT_EXIST (0x4)`, or
 `0x4, unknown for draft-14`.

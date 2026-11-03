@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { byId, draftOf, type MessageDef } from '../drafts'
+import messageTables from '../data/message-tables.json'
+import { byId, draftOf, type MessageDef, type MessageTables } from '../drafts'
 import {
   asShown,
   bytes,
@@ -47,6 +48,21 @@ describe('draftOf', () => {
 describe('byId', () => {
   it('indexes by wire value', () => {
     expect(byId([def(3, 'SUBSCRIBE')]).get(3)?.name).toBe('SUBSCRIBE')
+  })
+
+  it('reads 0x18 as FETCH_OK on draft-22 and as reserved on draft-23', () => {
+    const tables = messageTables as unknown as MessageTables
+    expect(draftOf('moqt-23', tables)).toBe(23)
+    expect(byId(tables[22]!).get(0x18)).toMatchObject({ name: 'FETCH_OK', reserved: false })
+    expect(byId(tables[23]!).get(0x18)).toMatchObject({
+      name: 'RESERVED',
+      reserved: true,
+      note: 'FETCH_OK in <= 22',
+    })
+    expect(byId(tables[23]!).get(0x07)).toMatchObject({
+      name: 'REQUEST_OK',
+      specPath: '/spec/draft-23/request_ok',
+    })
   })
 })
 

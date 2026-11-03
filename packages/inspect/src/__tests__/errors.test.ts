@@ -28,6 +28,32 @@ describe('errorName', () => {
     expect(errorName(14, 'stream_reset', 2)).toBe('DELIVERY_TIMEOUT')
   })
 
+  it('reads the draft-23 registries', () => {
+    expect(errorName(22, 'session', 0x6)).toBe('KEY_VALUE_FORMATTING_ERROR')
+    expect(errorName(23, 'session', 0x6)).toBe('MALFORMED_KEY_VALUE')
+    expect(errorName(23, 'session', 0x200n)).toBe('INVALID_STREAM_HEADER')
+    expect(errorName(23, 'session', 0x303)).toBe('UNEXPECTED_MESSAGE')
+    expect(errorName(23, 'session', 0x401)).toBe('FIELD_LENGTH_EXCEEDED')
+    expect(errorName(22, 'session', 0x303)).toBeNull()
+    expect(errorName(23, 'REQUEST_ERROR', 0xa)).toBe('UNAVAILABLE')
+    expect(errorName(23, 'PUBLISH_DONE', 7)).toBe('EXPIRED_AUTH_TOKEN')
+    expect(errorName(22, 'PUBLISH_DONE', 7)).toBeNull()
+  })
+
+  it('names draft-23 Error Detail types, and no draft before it', () => {
+    expect(errorName(23, 'error_detail', 0x1)).toBe('REDIRECT')
+    expect(errorName(23, 'ERROR_DETAIL', 0x2n)).toBe('UNSUPPORTED_PROPERTY')
+    expect(errorName(23, 'error_detail', 0x9d)).toBeNull()
+    expect(errorName(22, 'error_detail', 0x1)).toBeNull()
+  })
+
+  it('drops the codes draft-23 removed', () => {
+    expect(errorName(22, 'REQUEST_ERROR', 0x30)).toBe('PREFIX_OVERLAP')
+    expect(errorName(23, 'REQUEST_ERROR', 0x30)).toBeNull()
+    expect(errorName(22, 'stream_reset', 0x6)).toBe('UNKNOWN_OBJECT_STATUS')
+    expect(errorName(23, 'stream_reset', 0x6)).toBeNull()
+  })
+
   it('answers null rather than guess', () => {
     expect(errorName(null, 'SUBSCRIBE_ERROR', 0)).toBeNull()
     expect(errorName(99, 'SUBSCRIBE_ERROR', 0)).toBeNull()
