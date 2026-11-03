@@ -282,7 +282,7 @@ describe('draft-20 encoder specifics', () => {
   })
 })
 
-describe('draft-20 SUBSCRIBE_TRACKS parameter scope (Sections 10.2.1 and 10.20.1)', () => {
+describe('draft-20 SUBSCRIBE_TRACKS parameter scope (Section 10.2.1, Section 10.20.1)', () => {
   function subscribeTracksHex(paramsHex: string): string {
     const payload = `01010a636f6e666572656e6365${paramsHex}`
     return `51${(payload.length / 2).toString(16).padStart(4, '0')}${payload}`

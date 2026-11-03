@@ -150,8 +150,8 @@ function hasTrackProperties(props: Draft23TrackProperties): boolean {
  * Hold a decoded REQUEST_OK to the lists of draft-23 Section 9.3 for the
  * response it is. The frame does not say which response that is, so the codec
  * cannot; the session state machine calls this once the request stream has
- * told it. A parameter outside the list closes with INVALID_PARAMETER (Section
- * 9.19.1).
+ * told it. A parameter outside the list closes with INVALID_PARAMETER
+ * (Section 9.19.1).
  */
 export function checkRequestOk(
   kind: RequestOkKind,

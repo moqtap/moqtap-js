@@ -9,8 +9,8 @@ export interface UnknownParam {
 
 /**
  * Token structure, draft-23 Section 8.9, Figure 5. Carried by the
- * AUTHORIZATION TOKEN parameter (Section 9.19.2) and Setup Option (Section
- * 9.1.4).
+ * AUTHORIZATION TOKEN parameter (Section 9.19.2) and Setup Option
+ * (Section 9.1.4).
  */
 export interface AuthorizationToken {
   readonly alias_type: bigint // 0=DELETE, 1=REGISTER, 2=USE_ALIAS, 3=USE_VALUE
@@ -66,7 +66,7 @@ export interface LocationFilter {
   readonly end_object?: bigint
 }
 
-// Range Filter (0x25-0x29), draft-23 Sections 3.3.2 and 8.6.
+// Range Filter (0x25-0x29), draft-23 Section 3.3.2, Section 8.6.
 export interface RangeFilterRange {
   readonly start: bigint
   readonly end?: bigint // omitted on the final Range = open-ended (no upper bound)
@@ -275,8 +275,8 @@ export interface Draft23PublishNamespace extends Draft23BaseMessage {
   readonly request_id: bigint
   /**
    * The field draft-23 Section 9.13 names Track Namespace Prefix: "A Track
-   * Namespace as defined in Section 8.7, matched as a prefix (see Section
-   * 2.4.2)". Keyed `track_namespace` so that consumers read every draft alike.
+   * Namespace as defined in Section 8.7, matched as a prefix (see
+   * Section 2.4.2)". Keyed `track_namespace` so that consumers read every draft alike.
    */
   readonly track_namespace: string[]
   readonly parameters: Draft23Params

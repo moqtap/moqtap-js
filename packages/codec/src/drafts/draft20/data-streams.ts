@@ -31,7 +31,7 @@ const FETCH_MARKER_NON_EXISTENT = 0x8c
 /** End of Unknown Range. */
 const FETCH_MARKER_UNKNOWN = 0x10c
 /**
- * End of Timed-Out Range — NEW in draft-20 (Sections 11.4.4, 11.4.4.2).
+ * End of Timed-Out Range — NEW in draft-20 (Section 11.4.4, Section 11.4.4.2).
  *
  * Every Object between the last serialized Object, if any, and this Location
  * inclusive timed out: the relay's FILL_TIMEOUT budget ran out. draft-19

@@ -150,8 +150,9 @@ describe('encodeObjectProperties', () => {
 
 describe('draft-23 property blocks', () => {
   it('read and write exactly as draft-22 blocks do', () => {
-    // Section 8.3 of both drafts defines the same Key-Value-Pair: delta Types
-    // and a 2^16-1 value cap, with Immutable Properties at 0xB (Section 10.7).
+    // draft-22 Section 8.3 and draft-23 Section 8.3 define the same Key-Value-Pair:
+    // delta Types and a 2^16-1 value cap, with Immutable Properties at 0xB
+    // (draft-22 Section 10.7, draft-23 Section 10.7).
     for (const hex of [
       '0d02cafe2f02',
       '0d01aa0001bb',

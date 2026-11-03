@@ -504,7 +504,7 @@ describe('draft-22 LOCATION_FILTER is led by its Location Filter Type', () => {
   })
 })
 
-describe('draft-22 SUBSCRIBE_TRACKS parameter scope (Sections 9.20.1 and 3.6.2)', () => {
+describe('draft-22 SUBSCRIBE_TRACKS parameter scope (Section 9.20.1, Section 3.6.2)', () => {
   function subscribeTracksHex(paramsHex: string): string {
     const payload = `01010a636f6e666572656e6365${paramsHex}`
     return `51${(payload.length / 2).toString(16).padStart(4, '0')}${payload}`

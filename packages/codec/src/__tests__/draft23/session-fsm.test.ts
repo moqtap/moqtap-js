@@ -64,7 +64,7 @@ function closeCodeOf(result: ReturnType<ReturnType<typeof ready>['send']>): bigi
   return result.ok ? undefined : result.violation.closeCode
 }
 
-describe('draft-23 REQUEST_OK as FETCH_OK and REQUEST_UPDATE_OK (Sections 1.5, 3.2 and 9.5)', () => {
+describe('draft-23 REQUEST_OK as FETCH_OK and REQUEST_UPDATE_OK (Section 1.5, Section 3.2, Section 9.5)', () => {
   it('reads the first REQUEST_OK on a FETCH stream as FETCH_OK', () => {
     const fsm = ready()
     fsm.send(fetch(2n))
@@ -209,7 +209,7 @@ describe('draft-23 REQUEST_UPDATE (Section 9.5)', () => {
   })
 })
 
-describe('draft-23 fill fetch streams (Sections 3.4 and 3.4.1)', () => {
+describe('draft-23 fill fetch streams (Section 3.4, Section 3.4.1)', () => {
   it('opens one when SUBSCRIBE carries FILL_PARAMETERS', () => {
     const fsm = ready()
     const result = fsm.send(subscribe(1n, { fill_parameters: {} }))
@@ -376,7 +376,7 @@ describe('draft-23 GOAWAY (Section 9.2)', () => {
   })
 })
 
-describe('draft-23 SETUP (Sections 9.1.4 and 9.1.8)', () => {
+describe('draft-23 SETUP (Section 9.1.4, Section 9.1.8)', () => {
   it('closes with ROLE_VIOLATION when a server receives DELETE or USE_ALIAS', () => {
     for (const alias_type of [0n, 2n]) {
       const fsm = createDraft23SessionState('server')

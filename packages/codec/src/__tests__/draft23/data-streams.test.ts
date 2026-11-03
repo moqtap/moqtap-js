@@ -65,7 +65,7 @@ describe('draft-23 data stream vector corpus', () => {
  *    greater close with INVALID_STREAM_HEADER.
  *  - Section 11.4.1: "If an endpoint receives any other value greater than
  *    127, it MUST close the session with MALFORMED_OBJECT."
- *  - Sections 11.4.1.1 and 11.4.2.1: an ID above 2^64-1 closes with
+ *  - Section 11.4.1.1, Section 11.4.2.1: an ID above 2^64-1 closes with
  *    DELTA_ENCODING_OVERFLOW.
  *  - Section 11.1.2: Properties on an Object whose status is not Normal close
  *    with INVALID_OBJECT_STATUS.
@@ -169,13 +169,9 @@ for (const { file, data: vectorFile } of vectorEntries) {
 }
 
 /**
- * Which decoder a vector belongs to.
- *
- * The published files all set `decoded.stream_type`, but an error vector has no
- * `decoded` block at all, so the file name is the fallback. Guessing from the
- * first byte would be wrong for exactly the vectors that matter here — the
- * whole point of `reserved-bit-4-set` is that its first byte is not a valid
- * SUBGROUP_HEADER.
+ * Which decoder a vector belongs to: its `decoded.stream_type`, or the file name
+ * for an error vector, which has no `decoded` block. The first byte is no guide:
+ * `reserved-bit-4-set` starts with an invalid SUBGROUP_HEADER byte.
  */
 function getStreamType(
   file: string,
@@ -465,7 +461,7 @@ describe('draft-23 Mandatory Track Properties on an Object (Section 3.7)', () =>
   })
 })
 
-describe('draft-23 Track Properties in control messages (Sections 8.4 and 10.7)', () => {
+describe('draft-23 Track Properties in control messages (Section 8.4, Section 10.7)', () => {
   function trackPropertiesOf(hex: string) {
     const result = codec.decodeMessage(hexToBytes(hex))
     if (!result.ok) throw result.error

@@ -95,7 +95,7 @@ export function encodeObjectProperties(props: readonly ObjectPropertyInit[]): Ui
   return w.finish()
 }
 
-// ─── Malformed Tracks from Object Properties (draft-23 Sections 8.4, 10, 12.1) ─
+// ─── Malformed Tracks from Object Properties (draft-23 Section 8.4, Section 10, Section 12.1) ─
 
 /** Track-only Properties, draft-23 Section 16.8, Table 15. */
 const TRACK_ONLY_PROPERTIES: ReadonlySet<bigint> = new Set([0x04n, 0x0en, 0x22n, 0x30n])
@@ -246,8 +246,8 @@ export function malformedTrackReason(stream: Draft23DataStream): string | null {
  *
  *  - Section 8.4: "A Track or Object MUST NOT contain more than one instance
  *    of the Property. An endpoint that supports a Property and receives more
- *    instances of it than allowed MUST treat the Track as malformed". Section
- *    10.7: "When looking for the value of a property, processors MUST search
+ *    instances of it than allowed MUST treat the Track as malformed".
+ *    Section 10.7: "When looking for the value of a property, processors MUST search
  *    both the mutable properties and the contents of Immutable Properties", so
  *    both count.
  *  - Section 8.4: "An endpoint that supports a Property and receives it outside
@@ -296,8 +296,8 @@ const OBJECT_STATUSES: ReadonlySet<bigint> = new Set([0x0n, 0x3n, 0x4n])
 
 /**
  * draft-23 Section 11.1.1: "If an endpoint receives any other value, it SHOULD
- * close the session with INVALID_OBJECT_STATUS (Section 12.2)." Section
- * 11.1.2: "If an endpoint receives properties on an Object with status that is
+ * close the session with INVALID_OBJECT_STATUS (Section 12.2)."
+ * Section 11.1.2: "If an endpoint receives properties on an Object with status that is
  * not Normal, it MUST close the session with INVALID_OBJECT_STATUS."
  */
 function checkObjectStatus(status: bigint, hasProperties: boolean, offset: number): void {
@@ -473,8 +473,8 @@ export function encodeDatagram(dg: DatagramObject): Uint8Array {
 }
 
 /**
- * The value to write into an Object's Object ID Delta slot, draft-23 Section
- * 11.4.1.1: "When the Group ID Delta field is present, the Object ID is the
+ * The value to write into an Object's Object ID Delta slot,
+ * draft-23 Section 11.4.1.1: "When the Group ID Delta field is present, the Object ID is the
  * value of Object ID Delta if present. When the Group ID Delta field is not
  * present, the Object ID is the prior Object's ID plus the Object ID Delta + 2
  * if present."
@@ -519,8 +519,8 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
         w.writeVarInt(groupDelta)
         w.writeVarInt(groupDelta === 0n ? obj.objectId - prevObjectId - 1n : obj.objectId)
       }
-      // Object Payload Length stays: Figure 29 makes it mandatory and Section
-      // 11.4.2 does not list it among the absent fields. Written as 0.
+      // Object Payload Length stays: Figure 29 makes it mandatory and
+      // Section 11.4.2 does not list it among the absent fields. Written as 0.
       w.writeVarInt(BigInt(obj.payloadLength))
     } else {
       if (flags & 0x08) {
@@ -864,8 +864,8 @@ function newFetchObjectState(): FetchObjectState {
 }
 
 /**
- * An Object flag that refers to a prior field which does not exist. Section
- * 11.4.1.1: "If the first Object in the FETCH response uses a flag that
+ * An Object flag that refers to a prior field which does not exist.
+ * Section 11.4.1.1: "If the first Object in the FETCH response uses a flag that
  * references fields in the prior Object, the Subscriber MUST close the session
  * with MALFORMED_OBJECT." Section 11.4.2.2 says the same of the prior Subgroup
  * ID and Priority after an End of Range indicator with no Object before it.

@@ -169,8 +169,8 @@ function writeKvpEntries(
 }
 
 /**
- * A known Key-Value-Pair whose value does not match its Type. draft-23 Section
- * 8.3: "If a receiver understands a Type, and the following Value or
+ * A known Key-Value-Pair whose value does not match its Type.
+ * draft-23 Section 8.3: "If a receiver understands a Type, and the following Value or
  * Length/Value does not match the serialization defined by that Type, the
  * receiver MUST close the session with MALFORMED_KEY_VALUE."
  */
@@ -277,8 +277,8 @@ function decodeMaxControlMessageSize(bytes: Uint8Array, offset: number): bigint 
  * first message either endpoint sends, so the only aliases it can refer to are
  * those an earlier option of the same SETUP registers. draft-23 Section 8.9:
  * "The receiver of a message referencing an Alias that is not currently
- * registered MUST reject the message with UNKNOWN_AUTH_TOKEN_ALIAS." Section
- * 9.1.4: "If a server receives Alias Type DELETE (0x0) or USE_ALIAS (0x2) in a
+ * registered MUST reject the message with UNKNOWN_AUTH_TOKEN_ALIAS."
+ * Section 9.1.4: "If a server receives Alias Type DELETE (0x0) or USE_ALIAS (0x2) in a
  * SETUP message, it MUST close the session with ROLE_VIOLATION." The code
  * depends on the receiver's role, so without `role` it is left unnamed.
  */
@@ -456,7 +456,7 @@ function decodeAuthorizationToken(r: BufferReader, offset: number): Authorizatio
   }
 }
 
-// ─── Track Namespace and Track Name (draft-23 Sections 2.4.1 and 8.7) ───────
+// ─── Track Namespace and Track Name (draft-23 Section 2.4.1, Section 8.7) ──
 
 /** draft-23 Section 8.7: "The maximum total length of a Full Track Name is 4,096 bytes." */
 const MAX_FULL_TRACK_NAME_LENGTH = 4096
@@ -616,8 +616,8 @@ const PARAM_INCLUDE_PROPERTIES = 0x35n
 const PARAM_SUBSCRIBE_TRACKS_ID = 0x36n
 
 /**
- * The scope key for the parameters inside FILL_PARAMETERS. draft-23 Section
- * 9.19.15: "The value of FILL_PARAMETERS is a separate parameter scope.
+ * The scope key for the parameters inside FILL_PARAMETERS.
+ * draft-23 Section 9.19.15: "The value of FILL_PARAMETERS is a separate parameter scope.
  * Parameters inside it are not considered to appear in the enclosing message
  * for the purposes of Section 9.19, so a Parameter Type MAY appear both in the
  * message and inside FILL_PARAMETERS."
@@ -626,8 +626,8 @@ const FILL_SCOPE = 'fill_parameters'
 
 /**
  * A Message Parameter failure. Each one closes the session with
- * INVALID_PARAMETER unless the draft names another code; see draft-23 Section
- * 12.2: "INVALID_PARAMETER (0x305): A Message Parameter (Section 9.19) is
+ * INVALID_PARAMETER unless the draft names another code; see
+ * draft-23 Section 12.2: "INVALID_PARAMETER (0x305): A Message Parameter (Section 9.19) is
  * unknown, duplicated, not allowed in the message, or has a value outside its
  * allowed range."
  */
@@ -639,7 +639,7 @@ function invalidParameter(
   return fail('INVALID_PARAMETER', close, message, offset)
 }
 
-// ─── Range Filters (draft-23 Sections 3.3.2 and 8.6) ────────────────────────
+// ─── Range Filters (draft-23 Section 3.3.2, Section 8.6) ────────────────────────
 // SetID (8), an optional Property Type (vi64) for the Object and Track
 // Property filters, then delta-encoded inclusive Start/End pairs, the last End
 // optional. "When Length is 0, there is no filter and no further fields are
@@ -814,8 +814,8 @@ function decodeLocationFilter(reader: BufferReader): LocationFilter {
 
 /**
  * Which messages each Message Parameter may appear in, read out of draft-23's
- * per-parameter definitions (Sections 9.19.2 to 9.19.22), which agree with the
- * per-message lists of Sections 9.3 to 9.18. Section 9.19.1: "If a parameter
+ * per-parameter definitions (Section 9.19.2 to Section 9.19.22), which agree with the
+ * per-message lists of Section 9.3 to Section 9.18. Section 9.19.1: "If a parameter
  * appears in some other type of message, the receiving endpoint MUST close the
  * session with INVALID_PARAMETER."
  *
@@ -1065,8 +1065,8 @@ function encodeParams(params: Draft23Params, writer: BufferWriter, messageType: 
     push(PARAM_NEW_GROUP_REQUEST, (w) => w.writeVarInt(v))
   }
   if (params.track_namespace_prefix !== undefined) {
-    // Section 9.19.20: "uses the Track Namespace encoding described in Section
-    // 8.7", which states its own field count; there is no byte length.
+    // Section 9.19.20: "uses the Track Namespace encoding described in
+    // Section 8.7", which states its own field count; there is no byte length.
     const prefix = params.track_namespace_prefix
     push(PARAM_TRACK_NAMESPACE_PREFIX, (w) => writeNamespace(w, prefix))
   }
@@ -1224,7 +1224,7 @@ function decodeParams(reader: BufferReader, messageType: string): Draft23Params 
   return result
 }
 
-// ─── Track Properties (draft-23 Sections 8.4 and 10) ────────────────────────
+// ─── Track Properties (draft-23 Section 8.4, Section 10) ────────────────────────
 
 const TPROP_OBJECT_DELIVERY_TIMEOUT = 0x02n
 const TPROP_MAX_CACHE_DURATION = 0x04n

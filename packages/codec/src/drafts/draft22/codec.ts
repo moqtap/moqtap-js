@@ -255,7 +255,7 @@ function encodeAuthorizationToken(token: AuthorizationToken, w: BufferWriter): v
   if (aliasType === 1 || aliasType === 3) {
     // REGISTER, USE_VALUE: token_type + token_value present. The Token Value is
     // NOT length-prefixed inside the Token structure; it consumes the remainder
-    // of the outer length-prefixed buffer (draft-22 Sections 8.9 and 9.20.2).
+    // of the outer length-prefixed buffer (draft-22 Section 8.9, Section 9.20.2).
     w.writeVarInt(token.token_type ?? 0n)
     const tv = token.token_value ?? new Uint8Array(0)
     w.writeBytes(tv)

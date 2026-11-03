@@ -111,8 +111,8 @@ export const ErrorDetailType = {
 export type ErrorDetailTypeValue = (typeof ErrorDetailType)[keyof typeof ErrorDetailType]
 
 /**
- * The category a session termination code's range gives it, draft-23 Section
- * 12.2: "Codes from 0x200 to 0x4FF are organized into ranges by category:",
+ * The category a session termination code's range gives it,
+ * draft-23 Section 12.2: "Codes from 0x200 to 0x4FF are organized into ranges by category:",
  * "0x200-0x2FF: Data stream and datagram errors", "0x300-0x3FF: Control stream
  * and control message errors", "0x400-0x4FF: Errors that can occur in either",
  * and "The values reserved for greasing (Section 13) that fall within these

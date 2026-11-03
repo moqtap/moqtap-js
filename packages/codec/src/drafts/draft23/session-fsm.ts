@@ -83,8 +83,8 @@ function other(side: Side): Side {
 interface SubscriptionMeta {
   publisherSide: PublisherSide
   /**
-   * Whether the subscription is paused (Section 3.1.1): PAUSED (Section
-   * 9.19.18) 1 pauses it and 0 resumes it. "If the parameter is omitted from
+   * Whether the subscription is paused (Section 3.1.1): PAUSED
+   * (Section 9.19.18) 1 pauses it and 0 resumes it. "If the parameter is omitted from
    * any other message, the default value is 0." It gates fill fetch streams.
    */
   pausedState: 0 | 1
@@ -461,8 +461,8 @@ export class Draft23SessionFSM {
    *
    *  - "If a server receives a GOAWAY with a non-zero New Session URI Length it
    *    MUST close the session with ROLE_VIOLATION."
-   *  - "The endpoint MUST close the session with UNEXPECTED_MESSAGE (Section
-   *    12.2) if it receives more than one GOAWAY on the control stream or on a
+   *  - "The endpoint MUST close the session with UNEXPECTED_MESSAGE
+   *    (Section 12.2) if it receives more than one GOAWAY on the control stream or on a
    *    single request stream."
    *  - "Only the receiver of a request can send GOAWAY on its request stream.
    *    If the receiver of a request receives a GOAWAY on that request stream,
@@ -622,8 +622,8 @@ export class Draft23SessionFSM {
   }
 
   /**
-   * Open a fill fetch stream if this message asked for one. draft-23 Section
-   * 3.4.1: "A publisher opens a fill fetch stream when it processes a SUBSCRIBE
+   * Open a fill fetch stream if this message asked for one.
+   * draft-23 Section 3.4.1: "A publisher opens a fill fetch stream when it processes a SUBSCRIBE
    * or REQUEST_UPDATE, or sends a PUBLISH, that carries FILL_PARAMETERS while
    * the subscription is not paused (see Section 3.1.1). * FILL_PARAMETERS
    * carried while the subscription is paused opens no fill fetch stream.
@@ -1113,8 +1113,8 @@ export class Draft23SessionFSM {
     if (err) return fail(err)
 
     // draft-23 Section 9.4.2: receivers "MUST ignore a known Error Detail type
-    // that accompanies an Error Code it is not defined for", and Section
-    // 9.4.2.1: the REDIRECT Error Detail "accompanies Error Code REDIRECT".
+    // that accompanies an Error Code it is not defined for", and
+    // Section 9.4.2.1: the REDIRECT Error Detail "accompanies Error Code REDIRECT".
     const redirect =
       message.error_code === RequestErrorCode.Redirect ? message.error_details.redirect : undefined
     const serverReceives =

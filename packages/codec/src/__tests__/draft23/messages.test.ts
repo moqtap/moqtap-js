@@ -411,7 +411,7 @@ describe('draft-23 MAX_CONTROL_MESSAGE_SIZE (Section 9.1.8)', () => {
   })
 })
 
-describe('draft-23 SETUP Authorization Token aliases (Sections 8.9 and 9.1.4)', () => {
+describe('draft-23 SETUP Authorization Token aliases (Section 8.9, Section 9.1.4)', () => {
   // The corpus vector with-auth-token-delete: DELETE of alias 0.
   const deleteUnregistered = 'af000403020000'
   // REGISTER alias 5 (token type 0, value "a"), then DELETE alias 5.
@@ -443,7 +443,7 @@ describe('draft-23 Key-Value-Pairs (Section 8.3)', () => {
     expect(decodeError(`af000b0400${'ff'.repeat(9)}`).closeCode).toBe(Close.DeltaEncodingOverflow)
   })
 
-  it('refuses out-of-range Track Property values with MALFORMED_KEY_VALUE (Sections 10.4-10.6)', () => {
+  it('refuses out-of-range Track Property values with MALFORMED_KEY_VALUE (Section 10.4, Section 10.5, Section 10.6)', () => {
     // SUBSCRIBE_OK, alias 0, no parameters, then one Track Property.
     expect(decodeError('040500000e8100').closeCode).toBe(Close.MalformedKeyValue)
     expect(decodeError('040400002203').closeCode).toBe(Close.MalformedKeyValue)
@@ -451,7 +451,7 @@ describe('draft-23 Key-Value-Pairs (Section 8.3)', () => {
   })
 })
 
-describe('draft-23 Track Namespace and Track Name (Sections 2.4.1 and 8.7)', () => {
+describe('draft-23 Track Namespace and Track Name (Section 2.4.1, Section 8.7)', () => {
   it('refuses an empty namespace field with INVALID_TRACK_NAMESPACE', () => {
     // SUBSCRIBE_NAMESPACE, Request ID 1, namespace of one empty field.
     expect(decodeError('500401010000').closeCode).toBe(Close.InvalidTrackNamespace)
