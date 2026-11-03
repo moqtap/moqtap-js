@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { createDraft12Codec } from '../../drafts/draft12/codec.js'
-import type { DatagramObject, FetchStream, SubgroupStream } from '../../drafts/draft12/types.js'
+import { createDraft12Codec, malformedTrackReason } from '../../drafts/draft12/codec.js'
+import type {
+  DatagramObject,
+  Draft12DataStream,
+  FetchStream,
+  SubgroupStream,
+} from '../../drafts/draft12/types.js'
 import { bytesToHex, hexToBytes, loadVectorDir } from '../helpers.js'
 
 const codec = createDraft12Codec()
@@ -19,7 +24,11 @@ for (const { file, data: vectorFile } of vectorEntries) {
           it('should fail to decode', () => {
             const streamType = getStreamType(messageType, vector)
             const result = codec.decodeDataStream(streamType, bytes)
-            expect(result.ok).toBe(false)
+            // A Track whose Prior Group ID Gap makes it malformed
+            // (draft-12 Section 10.1) is refused too.
+            expect(
+              !result.ok || malformedTrackReason(result.value as Draft12DataStream) !== null,
+            ).toBe(true)
           })
         } else if (vector.decoded) {
           const decoded = vector.decoded
@@ -31,6 +40,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
             if (!result.ok) return
 
             assertDataStreamMatch(result.value, decoded, streamType)
+            expect(malformedTrackReason(result.value as Draft12DataStream)).toBeNull()
           })
 
           if (vector.canonical !== false) {

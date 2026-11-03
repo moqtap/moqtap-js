@@ -157,6 +157,8 @@ On draft-23, `malformedTrackReason(stream)` checks the Object Properties of a de
 
 On drafts 14 to 22, `malformedTrackReason(stream)` checks only the Prior Group ID Gap and Prior Object ID Gap: one larger than the Group or Object ID, one an Object carries twice, or two Objects of one Group with different Prior Group ID Gaps.
 
+On drafts 11 to 13, `malformedTrackReason(stream)` checks the Prior Group ID Gap (0x40): one larger than the Group ID, or two Objects of one Group with different Prior Group ID Gaps.
+
 ### VarInt
 
 `@moqtap/codec/draft07` exports the variable-length integer helpers:

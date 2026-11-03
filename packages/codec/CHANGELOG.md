@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [Unreleased]
+
+### Added
+
+- Drafts 11-13: `malformedTrackReason`, which reports a Prior Group ID Gap larger
+  than the Group ID, or two different Prior Group ID Gaps within a Group.
+
 ## [0.15.0] - 2026-11-03
 
 ### Changed

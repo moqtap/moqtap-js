@@ -996,6 +996,7 @@ export {
   encodeFetchStream,
   encodeObjectProperties,
   encodeSubgroupStream,
+  malformedTrackReason,
 } from './data-streams.js'
 
 export function createStreamDecoder(): TransformStream<Uint8Array, Draft11Message> {

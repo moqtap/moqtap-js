@@ -61,6 +61,71 @@ export function decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectPr
   }
 }
 
+const EXTENSION_PRIOR_GROUP_ID_GAP = 0x40n
+
+/**
+ * Why an Object's Prior Group ID Gap makes its Track malformed, or null, with
+ * `earlier` the Prior Group ID Gaps that earlier Objects of the same Group
+ * carried. draft-12 Section 10.1: "A track with a Group that contains more
+ * than one Object with different values for Prior Group ID Gap or has a Prior
+ * Group ID Gap larger than the Group ID is considered malformed."
+ *
+ * The draft does not limit an Object to one Prior Group ID Gap, so each one is
+ * checked. "If an endpoint receives an Object with a Group ID within a
+ * previously communicated gap it also treats the track as malformed" needs
+ * Objects received earlier and is the receiver's to check.
+ */
+function priorGroupGapMalformed(
+  block: Uint8Array | undefined,
+  groupId: bigint,
+  earlier: ReadonlySet<bigint>,
+): { reason: string } | { gaps: bigint[] } {
+  if (block === undefined || block.byteLength === 0) return { gaps: [] }
+  const decoded = decodeObjectProperties(block)
+  if (!decoded.ok) return { gaps: [] }
+
+  const gaps: bigint[] = []
+  for (const p of decoded.value) {
+    if (p.type === EXTENSION_PRIOR_GROUP_ID_GAP && p.value !== undefined) gaps.push(p.value)
+  }
+  for (const gap of gaps) {
+    if (gap > groupId) {
+      return { reason: `Prior Group ID Gap ${gap} is larger than Group ID ${groupId}` }
+    }
+    for (const prior of earlier) {
+      if (prior !== gap) {
+        return { reason: `Group ${groupId} carries Prior Group ID Gap ${prior} and ${gap}` }
+      }
+    }
+  }
+  return { gaps }
+}
+
+/**
+ * Why the Prior Group ID Gaps on a decoded subgroup stream, datagram or fetch
+ * stream make the Track malformed, or null. See {@link priorGroupGapMalformed}
+ * for the conditions. A malformed Track is not a decode failure:
+ * draft-12 Section 2.5, "When a subscriber detects a Malformed Track, it MUST
+ * UNSUBSCRIBE from the Track and SHOULD deliver an error to the application".
+ */
+export function malformedTrackReason(stream: Draft12DataStream): string | null {
+  if (stream.type === 'datagram') {
+    const r = priorGroupGapMalformed(stream.extensionData, stream.groupId, new Set())
+    return 'reason' in r ? r.reason : null
+  }
+  const seen = new Map<bigint, Set<bigint>>()
+  for (const obj of stream.objects) {
+    const groupId =
+      stream.type === 'subgroup' ? stream.groupId : (obj as FetchObjectPayload).groupId
+    const earlier = seen.get(groupId) ?? new Set<bigint>()
+    const r = priorGroupGapMalformed(obj.extensionData, groupId, earlier)
+    if ('reason' in r) return r.reason
+    for (const gap of r.gaps) earlier.add(gap)
+    seen.set(groupId, earlier)
+  }
+  return null
+}
+
 /** Encode Extension Headers into a block to carry as an Object's `extensionData`. */
 export function encodeObjectProperties(props: readonly ObjectPropertyInit[]): Uint8Array {
   const w = new BufferWriter(32)
