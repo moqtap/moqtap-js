@@ -106,6 +106,7 @@ export type {
   LocPropertyType,
   LocResolution,
   LocValueEncoding,
+  LocValueError,
   NalFraming,
   TransportDraft,
   VideoConfig,

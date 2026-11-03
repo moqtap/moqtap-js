@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A track that fits `ietf-04` now also fits `ietf-05`, and resolves to both unless it carries
+  a Codec String.
+
+### Added
+
+- LOC profile `ietf-05` (draft-ietf-moq-loc-05): ietf-04's property types and Codec String
+  (0x11), read as `{ kind: 'codec-string', codec }`.
+- `LocValueError`, with `invalid_encoding` for a Codec String that is not UTF-8.
+
 ## [0.3.0] - 2026-10-30
 
 ### Added

@@ -1,6 +1,6 @@
 /**
  * LOC (Low Overhead Media Container): object properties and H.264/H.265 payload
- * framing, per draft-ietf-moq-loc-00 to -04 and draft-mzanaty-moq-loc-05.
+ * framing, per draft-ietf-moq-loc-00 to -05 and draft-mzanaty-moq-loc-05.
  *
  * The drafts assign property IDs differently, so a track is read under the
  * profiles its property IDs allow, or under one the caller pins.
@@ -11,13 +11,14 @@ import { H264_IDR, H264_KNOWN, isH265Irap, isKnownH265 } from './nal'
 // ─── Profiles ────────────────────────────────────────────────────────
 
 /** ietf-00 and ietf-01 are wire-identical and form one profile. */
-export type LocProfile = 'ietf-00/01' | 'ietf-02' | 'ietf-03' | 'ietf-04' | 'mzanaty-05'
+export type LocProfile = 'ietf-00/01' | 'ietf-02' | 'ietf-03' | 'ietf-04' | 'ietf-05' | 'mzanaty-05'
 
 export const LOC_PROFILES: readonly LocProfile[] = [
   'ietf-00/01',
   'ietf-02',
   'ietf-03',
   'ietf-04',
+  'ietf-05',
   'mzanaty-05',
 ]
 
@@ -47,6 +48,7 @@ export type LocMeaning =
   | 'video-config'
   | 'audio-level'
   | 'audio-config'
+  | 'codec-string'
   | 'secure-objects-key-id'
 
 /**
@@ -278,6 +280,18 @@ const IETF_04: LocPropertyDefinition[] = [
   SECURE_OBJECTS_KEY_ID,
 ]
 
+const IETF_05: LocPropertyDefinition[] = [
+  ...IETF_04,
+  {
+    id: 0x11,
+    name: 'Codec String',
+    meaning: 'codec-string',
+    encoding: 'bytes',
+    section: '2.3.1.3, 6.1',
+    scope: 'Track, Object',
+  },
+]
+
 // mzanaty-05 2.3 inverts the parity rule: even IDs carry a length and bytes.
 const MZANATY_05: LocPropertyDefinition[] = [
   {
@@ -330,6 +344,11 @@ const PROFILES: Record<LocProfile, Omit<LocProfileDescription, 'profile'>> = {
     drafts: ['draft-ietf-moq-loc-04'],
     transportReferences: ['draft-ietf-moq-transport-19'],
     properties: IETF_04,
+  },
+  'ietf-05': {
+    drafts: ['draft-ietf-moq-loc-05'],
+    transportReferences: ['draft-ietf-moq-transport-23'],
+    properties: IETF_05,
   },
   'mzanaty-05': {
     drafts: ['draft-mzanaty-moq-loc-05'],
@@ -540,6 +559,8 @@ export type LocDecoded =
   | { kind: 'video-frame-marking'; candidates: FrameMarking[] }
   | ({ kind: 'audio-level' } & AudioLevel)
   | { kind: 'video-config'; config: VideoConfig }
+  /** The codec string the UTF-8 bytes spell (LOC-05 2.3.1.3) */
+  | { kind: 'codec-string'; codec: string }
 
 export interface LocPropertyResult {
   type: bigint
@@ -557,9 +578,11 @@ export interface LocPropertyResult {
   uninterpreted?: true
   /**
    * The value is outside what the draft states: `invalid_length` for an odd
-   * type's length, `out_of_range` for an even type's value
+   * type's length, `out_of_range` for an even type's value, `invalid_encoding`
+   * for an odd type's bytes not in the encoding the draft states (a Codec
+   * String that is not UTF-8)
    */
-  error?: 'invalid_length' | 'out_of_range'
+  error?: LocValueError
   /**
    * The meanings per profile, when they differ or a profile gives two, or
    * when the profiles agree on the meaning but not on whether the value is
@@ -569,12 +592,15 @@ export interface LocPropertyResult {
   ambiguous?: LocMeanings[]
 }
 
+/** How a value is outside what the draft states */
+export type LocValueError = 'invalid_length' | 'out_of_range' | 'invalid_encoding'
+
 /** The names a profile gives one property type; empty when it defines none */
 export interface LocMeanings {
   profile: LocProfile
   meanings: string[]
   /** The value is outside what this profile states */
-  error?: 'invalid_length' | 'out_of_range'
+  error?: LocValueError
 }
 
 export interface DecodeLocOptions {
@@ -756,7 +782,8 @@ export interface DecodeLocTrackOptions {
  * Decode a track's Track Properties (draft-16 Track Extensions) under a
  * resolution, as {@link decodeLocProperties} does an object's. Only the
  * properties a profile defines at Track scope (LOC-04 6.1: Timescale, Video
- * Config, Audio Config; LOC-02, LOC-03 6.1: Timescale) are read as LOC.
+ * Config, Audio Config; LOC-05 6.1: those and Codec String; LOC-02, LOC-03 6.1:
+ * Timescale) are read as LOC.
  */
 export function decodeLocTrackProperties(
   properties: readonly LocPropertyInput[],
@@ -855,10 +882,27 @@ function decodeInto(
         if (config !== null) decoded = { kind: 'video-config', config }
         break
       }
+      case 'codec-string': {
+        const codec = utf8(raw)
+        if (codec === null) {
+          result.error = 'invalid_encoding'
+          return
+        }
+        decoded = { kind: 'codec-string', codec }
+        break
+      }
     }
   }
   if (decoded === null) result.uninterpreted = true
   else if (decoded !== undefined) result.decoded = decoded
+}
+
+function utf8(bytes: Uint8Array): string | null {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+  } catch {
+    return null
+  }
 }
 
 // ─── Frame Marking (RFC 9626 Section 3) ──────────────────────────────
@@ -880,7 +924,7 @@ function frameMarking(octets: number[]): FrameMarking {
 }
 
 /**
- * Frame Marking carried with a length (ietf-03/04): the length gives the form.
+ * Frame Marking carried with a length (ietf-03 to -05): the length gives the form.
  * One octet reads as S E I D B TID, which also covers the short form (3.2),
  * whose low bits are zero. Null for any length but 1 to 3.
  */
@@ -1023,7 +1067,7 @@ export type LocPayloadFraming = NalFraming | { framing: 'ambiguous'; candidates:
  * 3 bytes a MAY only on a track that never uses length prefixes or a Video
  * Config, which one payload cannot show.
  *
- * The payload is read from its first byte. Under ietf-02..04 an object payload
+ * The payload is read from its first byte. Under ietf-02..05 an object payload
  * may begin with LOC Private Properties, whose framing those drafts do not
  * specify outside Secure Objects.
  */

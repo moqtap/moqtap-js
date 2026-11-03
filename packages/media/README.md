@@ -399,7 +399,7 @@ when the payload is not UTF-8 or not JSON.
 
 ## LOC: `@moqtap/media/loc`
 
-LOC object properties under draft-ietf-moq-loc-00 to -04 and draft-mzanaty-moq-loc-05, and the
+LOC object properties under draft-ietf-moq-loc-00 to -05 and draft-mzanaty-moq-loc-05, and the
 NAL unit framing of H.264 and H.265 LOC payloads. Properties are given as `@moqtap/codec`
 reads them: `{ type, value }` for an even type, `{ type, bytes }` for an odd one, and
 `properties` inside Immutable Properties.
@@ -414,7 +414,7 @@ import {
 
 const types = locPropertyTypes(object.properties, '22')
 const resolution = resolveProfile(possibleProfiles(types, '22'))
-// { profile: 'ietf-04' }, or { candidates: ['ietf-03', 'ietf-04'] }
+// { profile: 'ietf-05' }, or { candidates: ['ietf-04', 'ietf-05'] }
 
 decodeLocProperties(object.properties, resolution, { transportDraft: '22', videoCodec: 'avc1.64001F' })
 // [{ type: 16n, raw: 8100000n, name: 'Timestamp', meaning: 'timestamp',
@@ -432,15 +432,17 @@ profile:
 | `ietf-02` | draft-ietf-moq-loc-02 |
 | `ietf-03` | draft-ietf-moq-loc-03 |
 | `ietf-04` | draft-ietf-moq-loc-04 |
-| `mzanaty-05` | draft-mzanaty-moq-loc-05, the draft MSF-00 cites |
+| `ietf-05` | draft-ietf-moq-loc-05: ietf-04's types and Codec String (0x11) |
+| `mzanaty-05` | draft-mzanaty-moq-loc-05, the draft MSF-00 cites; an individual draft that preceded draft-ietf-moq-loc-00 |
 
 A profile is possible for a track when it defines every property type seen on the track's
 objects, where it was seen, leaving out the types the transport draft defines at Object scope.
-The Secure Objects Key ID (0x02 in ietf-02 to -04) counts only inside Immutable Properties.
+The Secure Objects Key ID (0x02 in ietf-02 to -05) counts only inside Immutable Properties.
 `resolveProfile` gives the profile when exactly one is possible, or when one is pinned.
 Otherwise it gives the candidates, and a property is decoded only when every candidate gives its
 type the same meaning and encoding, and the same verdict on whether its value is within the
-stated size.
+stated size. ietf-05 defines every ietf-04 type, so a track that fits ietf-04 also fits ietf-05.
+A Codec String (0x11) rules out ietf-04.
 
 Only read a track as LOC when its catalog `packaging` is `"loc"`, or the user says so.
 
@@ -483,19 +485,21 @@ Each result has the `type` and the `raw` value or bytes, and:
 - `uninterpreted`: the draft allows the value but defines no reading for it, such as Frame
   Marking of 4 bytes, or any mzanaty-05 value, whose declared encodings the transport cannot
   carry.
-- `error`: `invalid_length` or `out_of_range`, when the value is outside what the draft states.
+- `error`: `invalid_length`, `out_of_range` or `invalid_encoding` (a Codec String that is not
+  UTF-8), when the value is outside what the draft states.
 
 Readings:
 
 - **Timestamp** carries `timescales`, every distinct Timescale known for the object: from the
   object and from the `trackTimescales` option. Empty means wall-clock microseconds since the
   Unix epoch. Capture Timestamp (ietf-00/01) is always wall-clock microseconds.
-- **Video Frame Marking** gives `candidates`. Under ietf-03/04 the length gives the form, so
+- **Video Frame Marking** gives `candidates`. Under ietf-03 to -05 the length gives the form, so
   there is one. Under ietf-00/01/02 the value is a varint that does not say which form was
   sent, so a value below 2^16 fits several and all are given.
 - **Audio Level** gives `level` (0 to 127), `dBov` and `voiceActivity` (the V bit).
 - **Video Config** is decoded when the `videoCodec` option is an H.264 or H.265 codec string.
   Audio Config is named but not decoded.
+- **Codec String** (ietf-05) gives `codec`, the string its UTF-8 bytes spell.
 
 ### Payloads
 
@@ -505,7 +509,7 @@ is a start code. A reading with 3-byte start codes carries `threeByteStartCodes`
 fit both framings give `{ framing: 'ambiguous', candidates }`; bytes that fit neither give
 `null`.
 
-The payload is read from its first byte. Under ietf-02 to -04 an object payload can begin with
+The payload is read from its first byte. Under ietf-02 to -05 an object payload can begin with
 LOC Private Properties, whose framing those drafts leave unspecified outside Secure Objects.
 
 ## License

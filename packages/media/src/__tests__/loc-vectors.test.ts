@@ -55,7 +55,7 @@ interface PropertyVector {
   value?: string
   value_hex?: string
   decoded?: Decoded
-  error?: 'invalid_length' | 'out_of_range'
+  error?: 'invalid_length' | 'out_of_range' | 'invalid_encoding'
 }
 
 interface VectorFile {
@@ -73,6 +73,7 @@ const PROFILES: Record<string, Record<string, LocProfile>> = {
     draft02: 'ietf-02',
     draft03: 'ietf-03',
     draft04: 'ietf-04',
+    draft05: 'ietf-05',
   },
   'mzanaty-loc': { draft05: 'mzanaty-05' },
 }
@@ -174,6 +175,8 @@ function asVector(r: LocPropertyResult): Pick<PropertyVector, 'decoded' | 'error
         : { decoded: { name, candidates: d.candidates.map(frameMarkingFields) } }
     case 'audio-level':
       return { decoded: { name, voice_activity: d.voiceActivity, level: String(d.level) } }
+    case 'codec-string':
+      return { decoded: { name, codec: d.codec } }
     default:
       return { decoded: { name } }
   }
@@ -192,9 +195,10 @@ describe('LOC vectors', () => {
       'loc/draft02': 17,
       'loc/draft03': 31,
       'loc/draft04': 29,
+      'loc/draft05': 36,
       'mzanaty-loc/draft05': 5,
     })
-    expect(files.reduce((n, f) => n + f.vectors.length, 0)).toBe(122)
+    expect(files.reduce((n, f) => n + f.vectors.length, 0)).toBe(158)
   })
 
   for (const file of files) {

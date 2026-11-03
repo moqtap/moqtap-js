@@ -24,8 +24,31 @@ function bytes(hex: string): Uint8Array {
 }
 
 describe('profiles', () => {
-  it('lists five profiles', () => {
-    expect(LOC_PROFILES).toEqual(['ietf-00/01', 'ietf-02', 'ietf-03', 'ietf-04', 'mzanaty-05'])
+  it('lists six profiles', () => {
+    expect(LOC_PROFILES).toEqual([
+      'ietf-00/01',
+      'ietf-02',
+      'ietf-03',
+      'ietf-04',
+      'ietf-05',
+      'mzanaty-05',
+    ])
+  })
+
+  it('gives ietf-05 the ietf-04 types and Codec String', () => {
+    const p = describeProfile('ietf-05')
+    expect(p.drafts).toEqual(['draft-ietf-moq-loc-05'])
+    expect(p.transportReferences).toEqual(['draft-ietf-moq-transport-23'])
+    const ids = (profile: 'ietf-04' | 'ietf-05') =>
+      describeProfile(profile).properties.map((d) => d.id)
+    expect(ids('ietf-05')).toEqual([...ids('ietf-04'), 0x11])
+    expect(p.properties.find((d) => d.id === 0x11)).toMatchObject({
+      name: 'Codec String',
+      meaning: 'codec-string',
+      encoding: 'bytes',
+      section: '2.3.1.3, 6.1',
+      scope: 'Track, Object',
+    })
   })
 
   it('describes a profile as plain data', () => {
@@ -118,9 +141,9 @@ const top = (...types: bigint[]) => types.map((type) => ({ type, immutable: fals
 
 describe('possibleProfiles', () => {
   it('keeps the profiles that define every type', () => {
-    expect(possibleProfiles(top(0x10n, 0x09n, 0x08n), '22')).toEqual(['ietf-04'])
+    expect(possibleProfiles(top(0x10n, 0x09n, 0x08n), '22')).toEqual(['ietf-04', 'ietf-05'])
     expect(possibleProfiles(top(0x04n, 0x0dn), '16')).toEqual(['ietf-00/01', 'ietf-02'])
-    expect(possibleProfiles(top(0x0cn, 0x0fn), '18')).toEqual(['ietf-03', 'ietf-04'])
+    expect(possibleProfiles(top(0x0cn, 0x0fn), '18')).toEqual(['ietf-03', 'ietf-04', 'ietf-05'])
   })
 
   it('counts the Secure Objects Key ID only inside Immutable Properties', () => {
@@ -129,6 +152,7 @@ describe('possibleProfiles', () => {
       'ietf-02',
       'ietf-03',
       'ietf-04',
+      'ietf-05',
     ])
     expect(possibleProfiles(top(0x02n, 0x04n, 0x0dn), '16')).toEqual(['ietf-00/01'])
   })
@@ -140,9 +164,14 @@ describe('possibleProfiles', () => {
 
   it('removes transport-owned types first', () => {
     // 0x06 is SUBGROUP_DELIVERY_TIMEOUT on objects from draft-19
-    expect(possibleProfiles(top(0x06n, 0x0cn), '19')).toEqual(['ietf-03', 'ietf-04'])
+    expect(possibleProfiles(top(0x06n, 0x0cn), '19')).toEqual(['ietf-03', 'ietf-04', 'ietf-05'])
     expect(possibleProfiles(top(0x06n, 0x0cn), '18')).toEqual(['ietf-03'])
-    expect(possibleProfiles(top(0x0bn, 0x10n), '17')).toEqual(['ietf-04', 'mzanaty-05'])
+    expect(possibleProfiles(top(0x0bn, 0x10n), '17')).toEqual(['ietf-04', 'ietf-05', 'mzanaty-05'])
+  })
+
+  it('settles on ietf-05 once a Codec String is seen', () => {
+    expect(possibleProfiles(top(0x10n, 0x11n), '22')).toEqual(['ietf-05'])
+    expect(possibleProfiles(top(0x11n))).toEqual(['ietf-05'])
   })
 
   it('gives no profile for a type none defines', () => {
@@ -200,6 +229,36 @@ describe('decodeLocProperties', () => {
       dBov: -30,
       voiceActivity: true,
     })
+  })
+
+  it('reads a Codec String as UTF-8 and refuses bytes that are not', () => {
+    const text = (s: string) => new TextEncoder().encode(s)
+    const out = decodeLocProperties(
+      [
+        { type: 0x11n, bytes: text('avc1.64001f') },
+        { type: 0x11n, bytes: bytes('61 76 ff 31') },
+        { type: 0x11n, bytes: new Uint8Array() },
+      ],
+      { profile: 'ietf-05' },
+      { transportDraft: '22' },
+    )
+    expect(out[0]).toMatchObject({
+      name: 'Codec String',
+      meaning: 'codec-string',
+      decoded: { kind: 'codec-string', codec: 'avc1.64001f' },
+    })
+    expect(out[1]).toMatchObject({ name: 'Codec String', error: 'invalid_encoding' })
+    expect(out[1]!.decoded).toBeUndefined()
+    expect(out[2]!.decoded).toEqual({ kind: 'codec-string', codec: '' })
+  })
+
+  it('reads a Codec String among the Track Properties', () => {
+    const out = decodeLocTrackProperties(
+      [{ type: 0x11n, bytes: new TextEncoder().encode('opus') }],
+      { profile: 'ietf-05' },
+      { transportDraft: '22' },
+    )
+    expect(out[0]!.decoded).toEqual({ kind: 'codec-string', codec: 'opus' })
   })
 
   it('takes the Timescale from the track and lists conflicting ones', () => {
