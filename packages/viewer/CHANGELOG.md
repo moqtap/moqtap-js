@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-11-03
 
-- Draft-23 traces name their control messages and REQUEST_ERROR codes.
+- Draft-23 traces name their control messages and error codes.
 
 ## [0.4.0]
 

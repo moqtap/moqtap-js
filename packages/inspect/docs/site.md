@@ -1,7 +1,7 @@
 ---
 title: "@moqtap/inspect"
 description: Make decoded MoQT control messages readable. Track names, error code names, request pairing and session problems for drafts 07–23.
-version: 0.3.0
+version: 0.4.0
 ---
 
 **Make decoded MoQT control messages readable.**

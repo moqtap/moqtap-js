@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
-## [Unreleased]
+## [0.15.0] - 2026-11-03
 
 ### Changed
 
@@ -16,32 +16,17 @@ This file starts at 0.9.0. Earlier releases are in the git history.
 
 ### Added
 
-- draft-23, as `@moqtap/codec/draft23` and `createCodec({ draft: '23' })`.
-- Draft-23 framing: the Message Length is a varint. `encodeMessage`,
-  `decodeMessage` and `createStreamDecoder` take an optional
-  `{ maxControlMessageSize, role }`. SETUP is always held to 65535.
-- Draft-23 parameters and options: MAX_CONTROL_MESSAGE_SIZE (0x09), PAUSED
-  (0x11) in place of FORWARD, SUBSCRIBE_TRACKS_ID (0x36), count-prefixed
-  FILL_PARAMETERS, and NAMESPACE `parameters`.
-- Draft-23 REQUEST_ERROR `error_details` (REDIRECT, UNSUPPORTED_PROPERTY) in
-  place of `redirect`.
-- Draft-23 FETCH is answered by REQUEST_OK, and 0x18 is an unknown type.
-- Draft-23 fetch streams: End of Group (0x80), End of Track (0x81), End of Gone
-  Range (0x40C), delta-encoded End of Range indicators, and the Object ID
-  Delta + 2.
-- Draft-23 registries: session termination codes 0x200-0x401, UNAVAILABLE,
-  PUBLISH_DONE EXPIRED_AUTH_TOKEN and `ErrorDetailType`. 0x6 is
-  `MalformedKeyValue` (draft-22: `KeyValueFormattingError`). PREFIX_OVERLAP and
-  UNKNOWN_OBJECT_STATUS are gone.
-- Draft-23 helpers: `checkRequestOk`, `checkRequestUpdate`,
-  `malformedTrackReason`, `malformedTrackPropertiesReason` and
-  `sessionTerminationCategory`.
+- draft-23, as `@moqtap/codec/draft23` and `createCodec({ draft: '23' })`, with its
+  session state machine, registries and the helpers `checkRequestOk`,
+  `checkRequestUpdate`, `malformedTrackReason`, `malformedTrackPropertiesReason` and
+  `sessionTerminationCategory`. Its `encodeMessage`, `decodeMessage` and
+  `createStreamDecoder` take an optional `{ maxControlMessageSize, role }`.
 - `DecodeError.closeCode` and `ProtocolViolation.closeCode`: the session
   termination code the draft names, set by the draft-23 decoder and session
   state machine.
 - Drafts 14-22: `malformedTrackReason`, which reports a Prior Group ID Gap or Prior
-  Object ID Gap larger than the Group or Object ID, a repeated gap, or two gaps
-  that differ within a Group.
+  Object ID Gap larger than the Group or Object ID, either gap twice on one Object,
+  or two different Prior Group ID Gaps within a Group.
 
 ### Fixed
 

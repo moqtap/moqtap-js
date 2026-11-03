@@ -5,13 +5,18 @@ All notable changes to `@moqtap/inspect` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-03
+
+### Changed
+
+- **Breaking:** the `@moqtap/codec` peer range is `>=0.15.0` (was `>=0.13.2`), for its
+  draft-23 registries.
 
 ### Added
 
-- `errorName` names draft-23's session, REQUEST_ERROR, PUBLISH_DONE and stream reset codes.
-- `messageSpec(23, ...)` cites draft-23's GOAWAY (9.2) and REQUEST_ERROR (9.4).
-- `errorName(23, 'error_detail', type)`: a REQUEST_ERROR Error Detail type by name.
+- Draft-23: `errorName` names its session, REQUEST_ERROR, PUBLISH_DONE and stream reset
+  codes and, as `error_detail`, its REQUEST_ERROR Error Detail types. `messageSpec(23, ...)`
+  cites its GOAWAY (9.2) and REQUEST_ERROR (9.4).
 
 ## [0.3.0] - 2026-10-30
 
