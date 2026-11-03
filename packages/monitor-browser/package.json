@@ -1,6 +1,6 @@
 {
   "name": "@moqtap/monitor-browser",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "MoQT browser monitor — dormant WebTransport hook, counting decoder, and metered upload envelope",
   "type": "module",
   "license": "FSL-1.1-MIT",

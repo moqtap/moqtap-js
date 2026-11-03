@@ -8,15 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Every arrival is recorded, unsampled, as `run` records: per stream and
-  group, or per datagram track and group, each object's id and arrival time,
-  with FIRST_OBJECT, END_OF_GROUP and how the stream ended.
-- Non-Normal statuses, FETCH End-of-Range markers and Prior Group and Object
-  ID Gaps are sent as `mark` records.
-- A clock exchange, `POST /v1/clock`, at start and after a clock break.
-- Rollup tracks carry `rq`, the request they are delivered for.
+## [0.13.0] - 2026-11-03
 
 ### Changed
 
@@ -40,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Connection records, `ctrl` and `rollup` carry the connection ordinal `c`;
   `ctrl` carries `sid` and `at_us`. A connection keeps its ordinal across
   `newSession()`.
+
+### Added
+
+- Every arrival is recorded, unsampled, as `run` records: per stream and
+  group, or per datagram track and group, each object's id and arrival time,
+  with FIRST_OBJECT, END_OF_GROUP and how the stream ended.
+- Non-Normal statuses, FETCH End-of-Range markers and Prior Group and Object
+  ID Gaps are sent as `mark` records.
+- A clock exchange, `POST /v1/clock`, at start and after a clock break.
+- Rollup tracks carry `rq`, the request they are delivered for.
 
 ## [0.12.0] - 2026-10-28
 

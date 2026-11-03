@@ -1,7 +1,7 @@
 ---
 title: "@moqtap/monitor-browser"
 description: Measure MoQT delivery health from real viewers' browsers. Per-track stalls, gaps, cadence and control latency, with no change to your player code.
-version: 0.12.0
+version: 0.13.0
 ---
 
 **Measure MoQT delivery health from real viewers' browsers.**
