@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking (types):** `SupportedDraft` gains `23`, and `MarkSample['what']`
   gains `{ end: 'group' | 'track' }`, so an exhaustive `switch` over either
   needs the new case.
+- A shorter upload interval asked by Insight is taken up to 60 s, was 10 s,
+  and never past `upload.intervalMs`.
 
 ### Added
 

@@ -128,11 +128,11 @@ If uploads fall behind, `hdr` records are dropped first, and the session's
 
 Insight can change three things while a session runs, within these bounds:
 
-| What                      | When                                                           | Bounds                                                                             |
-| ------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| a shorter interval        | someone has the session open in the dashboard                  | 1 to 10 s, for at most 10 minutes at a time                                        |
-| raised detail             | a capture window covers the session's release, user or content | up to `headers+sizes`, for at most 30 minutes, within `budget.elevatedMinutes`     |
-| detail held at `baseline` | the workspace has used its recording minutes for the month     | `baseline` only, for at most 10 minutes from each upload, repeated on every upload |
+| What                      | When                                                                                           | Bounds                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| a shorter interval        | someone has the session open in the dashboard, or the project's plan updates totals more often | 1 to 60 s, for at most 10 minutes at a time                                        |
+| raised detail             | a capture window covers the session's release, user or content                                 | up to `headers+sizes`, for at most 30 minutes, within `budget.elevatedMinutes`     |
+| detail held at `baseline` | the workspace has used its recording minutes for the month                                     | `baseline` only, for at most 10 minutes from each upload, repeated on every upload |
 
 Raised detail is recorded as a `remote` escalation and counts toward recording
 minutes. `resolve()` does not close it; `escalate()` takes it over.

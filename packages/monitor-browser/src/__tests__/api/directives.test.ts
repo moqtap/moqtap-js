@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import {
   DIRECTIVE_ELEVATE_MAX_SPAN_MS,
+  DIRECTIVE_FLUSH_MAX_MS,
   DIRECTIVE_FLUSH_MAX_SPAN_MS,
   DIRECTIVE_FLUSH_MIN_MS,
   DIRECTIVE_HEADER,
@@ -118,6 +119,25 @@ describe('flushMs: someone is watching the session', () => {
     expect(t.asked).not.toContain(50)
     expect(t.asked).not.toContain(3_600_000)
     await c.end()
+  })
+
+  it('takes an interval up to the default upload interval, and never longer', async () => {
+    const asks = [
+      [20_000, 20_000],
+      [600_000, DIRECTIVE_FLUSH_MAX_MS],
+    ] as const
+    for (const [ask, taken] of asks) {
+      const { impl } = answering(() => ({ flushMs: ask, until: SERVER_NOW + 60_000 }))
+      const t = timers()
+      const c = init(base(), { ...quiet, fetchImpl: impl, ...t.ports })
+      await settle()
+      attempt()
+      c.annotate('x')
+      await c.flush()
+      expect(t.asked).toContain(taken)
+      expect(t.asked.filter((ms) => ms === ask && ask !== taken)).toEqual([])
+      await c.end()
+    }
   })
 
   it('does nothing with an end already past', async () => {

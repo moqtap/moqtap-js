@@ -1853,7 +1853,8 @@ export interface UploadOutcome {
  * are the server's wall clock, in epoch milliseconds.
  *
  *  - `flushMs`: seal and upload this often until `until`, while someone is
- *    watching the session. 1 to 10 s, for at most 10 minutes.
+ *    watching the session or ingest updates the project's totals more often.
+ *    1 to 60 s, never longer than `upload.intervalMs`, for at most 10 minutes.
  *  - `elevate`: raise detail to `level` until `until`, as `escalate()` would,
  *    for a capture window someone opened. At most `headers+sizes`, for at most
  *    30 minutes, and within `budget.elevatedMinutes`.

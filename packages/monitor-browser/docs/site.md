@@ -460,7 +460,7 @@ Insight can change three things in a running session, within these bounds:
 
 | What | When | Bounds |
 |---|---|---|
-| Shorter upload interval | someone has the session open in Insight | 1 to 10 s, for at most 10 minutes at a time |
+| Shorter upload interval | someone has the session open in Insight, or the project's plan updates totals more often | 1 to 60 s, for at most 10 minutes at a time |
 | Raised detail | a capture window in Insight covers the session's release, user or content | up to `headers+sizes`, for at most 30 minutes, within `budget.elevatedMinutes` |
 | Detail held at `baseline` | the workspace has used its recording minutes for the month | `baseline` only, for at most 10 minutes from each upload, renewed on every upload |
 

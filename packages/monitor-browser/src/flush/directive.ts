@@ -10,9 +10,9 @@ import { DETAIL_LEVELS, type DetailLevel, type Directive } from '../types.js'
 /** The response header carrying a {@link Directive}, as JSON. */
 export const DIRECTIVE_HEADER = 'x-moqtap-directive'
 
-/** The shortest and longest seal interval `flushMs` may ask for. */
+/** The shortest and longest seal interval `flushMs` may ask for: up to the default upload interval. */
 export const DIRECTIVE_FLUSH_MIN_MS = 1_000
-export const DIRECTIVE_FLUSH_MAX_MS = 10_000
+export const DIRECTIVE_FLUSH_MAX_MS = 60_000
 
 /** The longest a `flushMs` holds, from the response that asked for it. */
 export const DIRECTIVE_FLUSH_MAX_SPAN_MS = 10 * 60_000
