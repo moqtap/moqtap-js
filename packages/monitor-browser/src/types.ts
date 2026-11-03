@@ -34,7 +34,7 @@
  *  - `trackAliasOf`/`requestIdOf` are reachable only through the root entry,
  *    which statically imports every draft. They must be copied, never
  *    imported; only the per-draft entries `@moqtap/codec/draft07` through
- *    `@moqtap/codec/draft22` may be imported -- never the root or
+ *    `@moqtap/codec/draft23` may be imported -- never the root or
  *    `@moqtap/codec/session` -- and only through static literal specifiers.
  *  - `MoqtBufferReader` is exported from no public subpath, so
  *    {@link VarintReader} is the collector's own.
@@ -312,6 +312,7 @@ export type SupportedDraft =
   | 20
   | 21
   | 22
+  | 23
 
 /**
  * Any decoded control message, from any draft.
@@ -483,9 +484,9 @@ export interface DraftAdapter {
    * End offset of the control frame starting at `i`, or {@link NEED} when the
    * buffer does not hold all of it yet.
    *
-   * Per draft because the length field differs: a varint in drafts 07-10, a
-   * 16-bit big-endian field from draft-11. A framer that assumes the second
-   * silently mis-frames every control message on the four oldest drafts, so the
+   * Per draft because the length field differs: a varint in drafts 07-10 and
+   * from 23, a 16-bit big-endian field in 11-22. A framer that assumes one
+   * silently mis-frames every control message on the others, so the
    * question belongs to the adapter, where a new draft has to answer it.
    */
   controlFrameEnd(b: Uint8Array, i: number): number | Need
@@ -601,11 +602,13 @@ export interface ObjectHeaderInfo {
   /** Offset of the next object's first byte: payload skipped, never viewed. */
   readonly next: number
   /**
-   * An End-of-Range marker on a fetch stream: a statement that a range of
-   * objects does not exist, is unknown or timed out. Not an object.
+   * An indicator on a fetch stream, not an object: an End-of-Range marker (a
+   * range of objects does not exist, is unknown, timed out or is gone), or,
+   * from draft-23, End of Group or End of Track. Those two report the ended
+   * group and Object ID 2^64-1, the prior Object ID they leave.
    */
   readonly marker?: true
-  /** The marker's Serialization Flags: 0x8C, 0x10C or 0x20C. */
+  /** The marker's Serialization Flags: 0x8C, 0x10C, 0x20C, 0x40C, 0x80 or 0x81. */
   readonly markerFlags?: number
   /** Where the object's property block lies in the walked buffer, when it has one. */
   readonly propsStart?: number
@@ -817,11 +820,20 @@ export type DeliveryPath = 'sub_stream' | 'datagram' | 'fetch' | 'fetch_joining'
 /** What a path said about objects other than by delivering them, as on the wire. */
 export interface MarkSample {
   readonly key: BucketKey
-  /** A non-Normal Object Status, a FETCH End-of-Range marker, or a gap property. */
+  /**
+   * A non-Normal Object Status, a FETCH End-of-Range marker, a gap property,
+   * or a FETCH End of Group or End of Track indicator (draft-23 on), whose
+   * `groupId`/`objectId` are the Object it follows.
+   *
+   * An End-of-Range marker's `groupId`/`objectId` are the entry before it, or
+   * its own end when it opens the stream. After End of Group or End of Track
+   * that entry is {G, 2^64-1}.
+   */
   readonly what:
     | { readonly status: bigint }
     | { readonly range: number; readonly g2: bigint; readonly o2: bigint }
     | { readonly gap: 'group' | 'object'; readonly n: bigint }
+    | { readonly end: 'group' | 'track' }
   readonly groupId: bigint
   readonly objectId: bigint
   readonly path: DeliveryPath

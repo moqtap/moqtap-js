@@ -113,11 +113,24 @@ export function statusKind(code: bigint, draft: SupportedDraft): MarkKind {
   }
 }
 
-const RANGE_KINDS: ReadonlyMap<number, MarkKind> = new Map([
-  [0x8c, 'rng_nx'],
-  [0x10c, 'rng_unk'],
-  [0x20c, 'rng_to'],
-])
+/** A FETCH End-of-Range marker as a mark kind, by the connection's draft. */
+export function rangeKind(flags: number, draft: SupportedDraft): MarkKind | undefined {
+  switch (flags) {
+    case 0x8c:
+      return draft >= 16 ? 'rng_nx' : undefined
+    case 0x10c:
+      return draft >= 16 ? 'rng_unk' : undefined
+    case 0x20c:
+      return draft >= 20 ? 'rng_to' : undefined
+    case 0x40c:
+      return draft >= 23 ? 'rng_gone' : undefined
+    default:
+      return undefined
+  }
+}
+
+/** The largest Object ID. */
+const MAX_U64 = 0xffff_ffff_ffff_ffffn
 
 export class RunRecorder {
   private readonly streams = new Map<number, Map<number, StreamFlow>>()
@@ -241,7 +254,10 @@ export class RunRecorder {
     }
   }
 
-  /** A status object, a FETCH range marker or a gap property, on a connection of `draft`. */
+  /**
+   * A status object, a FETCH range marker, a gap property, or a FETCH End of
+   * Group or End of Track, on a connection of `draft`.
+   */
   onMark(c: number, draft: SupportedDraft, m: MarkSample | ObjectSample): void {
     if (m.key.dir !== 'rx' || m.path === null) return
     const tUs = (m.at - this.origin) * 1000
@@ -262,8 +278,15 @@ export class RunRecorder {
         kind === 'status_unknown' ? { ...base, kind, n: w.status } : { ...base, kind },
       )
     } else if ('range' in w) {
-      const kind = RANGE_KINDS.get(w.range)
+      const kind = rangeKind(w.range, draft)
       if (kind !== undefined) this.marks.push({ ...base, kind, g2: w.g2, o2: w.o2 })
+    } else if ('end' in w) {
+      // The run holding {G, O} ends the group. End of Track also says no
+      // Location past {G, O} exists, which is End of Track at {G, O + 1}.
+      this.endGroup(c, sid, m.groupId, m.objectId)
+      if (w.end === 'track' && m.objectId < MAX_U64) {
+        this.marks.push({ ...base, kind: 'eot', o: m.objectId + 1n })
+      }
     } else {
       this.marks.push({ ...base, kind: w.gap === 'group' ? 'pgg' : 'pog', n: w.n })
     }
@@ -336,6 +359,32 @@ export class RunRecorder {
       this.byFlow.set(r.flow, r)
     }
     for (const m of t.marks) this.marks.push(m)
+  }
+
+  /** The stream's run whose last object is {g, o} ends its group. */
+  private endGroup(c: number, sid: number, g: bigint, o: bigint): void {
+    const f = this.streams.get(c)?.get(sid)
+    if (f === undefined) return
+    const run = f.run
+    if (run !== null) {
+      if (run.g === g && run.last === o) run.eog = true
+      return
+    }
+    // Taken at a forward: the end travels alone, as a run of no objects.
+    const t = f.taken
+    if (t === null || !this.forwards || t.g !== g || t.last !== o) return
+    this.done.push({
+      ...t,
+      ids: null,
+      n: 0,
+      osub: t.osub === null ? null : [],
+      times: [],
+      b: 0,
+      cont: true,
+      eog: true,
+      end: 'open',
+      rc: null,
+    })
   }
 
   private close(run: RecordedRun): void {
@@ -473,7 +522,12 @@ function append(run: RecordedRun, id: bigint, t: number, bytes: number): void {
 }
 
 /** The stream ended in `end`, `run` its last run. A stream that failed (`gone`) has no end. */
-function endRun(run: RecordedRun, f: StreamFlow, end: 'fin' | 'reset' | 'gone', code?: number): void {
+function endRun(
+  run: RecordedRun,
+  f: StreamFlow,
+  end: 'fin' | 'reset' | 'gone',
+  code?: number,
+): void {
   if (end !== 'gone') run.end = end
   if (end === 'fin' && f.eog && run.path === 'sub_stream') run.eog = true
   if (end === 'reset') run.rc = BigInt(code ?? 0)

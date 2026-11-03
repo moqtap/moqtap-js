@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (types):** `SupportedDraft` gains `23`, and `MarkSample['what']`
+  gains `{ end: 'group' | 'track' }`, so an exhaustive `switch` over either
+  needs the new case.
+
+### Added
+
+- Draft-23, with the `@moqtap/monitor-browser/draft23` entry and its `/thin`,
+  `/worker`, `/thin/worker` and `/decoder` variants.
+- The `rng_gone` mark, for a FETCH End of Gone Range (draft-23).
+- A FETCH End of Group or End of Track (draft-23) sets `eog` on the run whose
+  last object it follows. End of Track is also an `eot` mark at the next
+  Object ID.
+
+### Fixed
+
+- A fill stream under a PUBLISH follows the PUBLISH's GROUP_ORDER when its
+  FILL_PARAMETERS state none.
+- A fetch stream that decodes a Group or Object ID above 2^64-1 no longer
+  counts objects under that ID; from draft-20 it is reported as
+  `fetch-desync`.
+
 ## [0.13.0] - 2026-11-03
 
 ### Changed

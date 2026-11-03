@@ -555,12 +555,12 @@ injected `<script>`, `blob:` worker or runtime chunk loading.
 
 ## Entry points
 
-MoQT's wire format differs between drafts. The collector supports **drafts 07 through 22**. Your
+MoQT's wire format differs between drafts. The collector supports **drafts 07 through 23**. Your
 bundle holds the drafts and features you import and nothing else. If your relays use one draft,
 import that draft's entry:
 
 ```typescript
-import { init } from '@moqtap/monitor-browser/draft22'
+import { init } from '@moqtap/monitor-browser/draft23'
 ```
 
 Every entry has the same API and installs the wrapper on import. Use the same draft in the page
@@ -574,13 +574,13 @@ and `gzip -9` (`bun run size` in the package):
 
 | What the browser downloads | gzipped |
 |---|---:|
-| `@moqtap/monitor-browser`: every draft, every feature | 72.3 KB |
-| `@moqtap/monitor-browser/draftNN`: one draft, every feature | 52.7–55.2 KB |
-| `@moqtap/monitor-browser/draftNN/thin`: one draft, no optional feature | 40.1–42.7 KB |
-| `compose({ features: [workers] })`: a page whose connections are in a worker | 19.6 KB |
-| `@moqtap/monitor-browser/worker`: every draft, in a worker | 51.2 KB |
-| `@moqtap/monitor-browser/draftNN/worker`: one draft, in a worker | 32–34.5 KB |
-| `@moqtap/monitor-browser/draftNN/thin/worker`: one draft, no flight recorder | 27.6–30.1 KB |
+| `@moqtap/monitor-browser`: every draft, every feature | 84.3 KB |
+| `@moqtap/monitor-browser/draftNN`: one draft, every feature | 61.3–65.4 KB |
+| `@moqtap/monitor-browser/draftNN/thin`: one draft, no optional feature | 49.2–53.2 KB |
+| `compose({ features: [workers] })`: a page whose connections are in a worker | 25.2 KB |
+| `@moqtap/monitor-browser/worker`: every draft, in a worker | 59.4 KB |
+| `@moqtap/monitor-browser/draftNN/worker`: one draft, in a worker | 36.7–40.8 KB |
+| `@moqtap/monitor-browser/draftNN/thin/worker`: one draft, no flight recorder | 32.3–36.4 KB |
 
 The optional features are:
 

@@ -32,6 +32,8 @@ import { draft21 as d21 } from './draft21/decoder.js'
 import { adapter as draft21 } from './draft21/index.js'
 import { draft22 as d22 } from './draft22/decoder.js'
 import { adapter as draft22 } from './draft22/index.js'
+import { draft23 as d23 } from './draft23/decoder.js'
+import { adapter as draft23 } from './draft23/index.js'
 
 /** Every supported draft's adapter: what the root entry is built with. */
 export const ALL_ADAPTERS: readonly DraftAdapter[] = /*#__PURE__*/ Object.freeze([
@@ -51,6 +53,7 @@ export const ALL_ADAPTERS: readonly DraftAdapter[] = /*#__PURE__*/ Object.freeze
   draft20,
   draft21,
   draft22,
+  draft23,
 ])
 
 /** Every draft, with the observation that runs it, for `compose()`. */
@@ -71,4 +74,5 @@ export const ALL_DRAFTS: readonly Draft[] = /*#__PURE__*/ Object.freeze([
   d20,
   d21,
   d22,
+  d23,
 ])

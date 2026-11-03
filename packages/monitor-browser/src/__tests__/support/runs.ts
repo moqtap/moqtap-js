@@ -159,7 +159,8 @@ export function decodeMarks(raw: Uint8Array, n: number, baseUs: number): Decoded
     const ti = rd.u()
     const g = rd.big()
     const o = rd.big()
-    const range = kind === 'rng_nx' || kind === 'rng_unk' || kind === 'rng_to'
+    const range =
+      kind === 'rng_nx' || kind === 'rng_unk' || kind === 'rng_to' || kind === 'rng_gone'
     const g2 = range ? rd.big() : null
     const o2 = range ? rd.big() : null
     const hasN = kind === 'pgg' || kind === 'pog' || kind === 'status_unknown'

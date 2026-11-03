@@ -3,15 +3,17 @@
  * names, and in which group order its stream runs.
  *
  * A fetch stream answers a FETCH (standalone, or joining in drafts 08-19) or,
- * from draft-20, the SUBSCRIBE or REQUEST_UPDATE that asked for a fill. From
- * draft-18 its Group ID Deltas count in the stream's group order, taken from
- * the first present of: FILL_PARAMETERS in the REQUEST_UPDATE or SUBSCRIBE that
- * started the fill; GROUP_ORDER in SUBSCRIBE, SUBSCRIBE_TRACKS or FETCH;
- * DEFAULT_PUBLISHER_GROUP_ORDER in SUBSCRIBE_OK or PUBLISH; the default,
- * Ascending.
+ * from draft-20, the SUBSCRIBE or REQUEST_UPDATE that asked for a fill, and
+ * from draft-23 a PUBLISH that carries FILL_PARAMETERS. From draft-18 its
+ * Group ID Deltas count in the stream's group order, taken from the first
+ * present of: FILL_PARAMETERS in the REQUEST_UPDATE, SUBSCRIBE or PUBLISH that
+ * started the fill; GROUP_ORDER in SUBSCRIBE, SUBSCRIBE_TRACKS, PUBLISH or
+ * FETCH; DEFAULT_PUBLISHER_GROUP_ORDER in SUBSCRIBE_OK or PUBLISH; the
+ * default, Ascending.
  *
  * Reads message types, request ids, the fetch type and group order values.
- * Nothing else.
+ * Nothing else. The codec decodes FILL_PARAMETERS in each draft's own form, a
+ * byte length through draft-22 and a parameter count from draft-23.
  */
 
 import type { AnyMessage, DeliveryPath, Direction } from '../types.js'
@@ -21,6 +23,8 @@ const DESCENDING = 2
 
 interface Request {
   readonly path: DeliveryPath
+  /** A PUBLISH: its fill stream travels the same way it did. */
+  readonly publish: boolean
   /** Group order from the request itself; 0 when it states none. */
   readonly own: number
   /** The subscription a REQUEST_UPDATE belongs to. */
@@ -72,14 +76,20 @@ export class RequestOrder {
           orderOf(field(fill, 'group_order')) ||
           orderOf(field(params, 'group_order')) ||
           orderOf(msg.group_order)
-        this.add(dir, requestId, streamId, { path: 'fill', own, parent: undefined, answered: 0 })
+        this.add(dir, requestId, streamId, {
+          path: 'fill',
+          publish: false,
+          own,
+          parent: undefined,
+          answered: 0,
+        })
         return
       }
       case 'request_update': {
         if (requestId === undefined) return
         const parent = this.byStream.get(streamId)
         const own = orderOf(field(field(params, 'fill_parameters'), 'group_order'))
-        this.add(dir, requestId, -1, { path: 'fill', own, parent, answered: 0 })
+        this.add(dir, requestId, -1, { path: 'fill', publish: false, own, parent, answered: 0 })
         return
       }
       case 'fetch': {
@@ -89,6 +99,7 @@ export class RequestOrder {
         const own = orderOf(field(params, 'group_order')) || orderOf(msg.group_order)
         this.add(dir, requestId, streamId, {
           path: joining ? 'fetch_joining' : 'fetch',
+          publish: false,
           own: own || ASCENDING,
           parent: undefined,
           answered: ASCENDING,
@@ -110,7 +121,10 @@ export class RequestOrder {
         if (requestId === undefined) return
         this.add(dir, requestId, streamId, {
           path: 'fill',
-          own: 0,
+          publish: true,
+          own:
+            orderOf(field(field(params, 'fill_parameters'), 'group_order')) ||
+            orderOf(field(params, 'group_order')),
           parent: undefined,
           answered:
             orderOf(field(msg.track_properties, 'default_publisher_group_order')) || ASCENDING,
@@ -134,8 +148,16 @@ export class RequestOrder {
     return settled === 0 ? null : settled === DESCENDING
   }
 
+  /**
+   * A fetch stream names a request its receiver sent, or a PUBLISH its sender
+   * sent: draft-23 Section 3.4, "The FETCH_HEADER on the fill fetch stream
+   * carries the subscription's Request ID for an initial fill".
+   */
   private sent(streamDir: Direction, requestId: bigint): Request | undefined {
-    return (streamDir === 'rx' ? this.tx : this.rx).get(requestId)
+    const asked = (streamDir === 'rx' ? this.tx : this.rx).get(requestId)
+    if (asked !== undefined) return asked
+    const own = (streamDir === 'rx' ? this.rx : this.tx).get(requestId)
+    return own?.publish === true ? own : undefined
   }
 
   private add(dir: Direction, id: bigint, streamId: number, r: Request): void {

@@ -37,6 +37,7 @@ export const MARK_KINDS = [
   'pgg',
   'pog',
   'status_unknown',
+  'rng_gone',
 ] as const
 export type MarkKind = (typeof MARK_KINDS)[number]
 
@@ -61,7 +62,10 @@ export interface RunInput {
   readonly fo?: boolean
   /** A subgroup stream on draft 18 or later, where FIRST_OBJECT exists. */
   readonly foKnown?: boolean
-  /** The run ends the group: EOG header bit and FIN, or the datagram flag. */
+  /**
+   * The run ends the group: EOG header bit and FIN, the datagram flag, or a
+   * FETCH End of Group or End of Track indicator after its last object.
+   */
   readonly eog?: boolean
   /** Default: `na` for a datagram, `open` for a stream. */
   readonly end?: RunEnd
@@ -104,7 +108,8 @@ export interface MarkInput {
   readonly sid?: bigint
 }
 
-const isRange = (k: MarkKind) => k === 'rng_nx' || k === 'rng_unk' || k === 'rng_to'
+const isRange = (k: MarkKind) =>
+  k === 'rng_nx' || k === 'rng_unk' || k === 'rng_to' || k === 'rng_gone'
 const hasN = (k: MarkKind) => k === 'pgg' || k === 'pog' || k === 'status_unknown'
 export const isFetchPath = (p: DeliveryPath) =>
   p === 'fetch' || p === 'fetch_joining' || p === 'fill'

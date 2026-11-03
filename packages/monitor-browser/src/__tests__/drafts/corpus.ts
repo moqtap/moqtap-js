@@ -61,8 +61,10 @@ export interface Expected {
   readonly objectId?: bigint
   readonly payloadLength?: number
   readonly status?: bigint
-  /** An End-of-Range marker on a fetch stream: walked, never counted. */
+  /** An indicator on a fetch stream: walked, never counted. */
   readonly marker: boolean
+  /** End of Group or End of Track (draft-23 on), which carries no field. */
+  readonly end: boolean
   /** Publisher Priority, or -1 where the corpus states none. */
   readonly priority: number
   /** Subgroup ID, or `null` where the object has none. */
@@ -108,6 +110,7 @@ export function expectedObjects(decoded: Record<string, unknown>, header?: Expec
       payloadLength: num(o.payload_length),
       groupId: big(o.group_id) ?? header?.groupId,
       marker: flags >= 0x80,
+      end: flags === 0x80 || flags === 0x81,
       priority: header?.priority ?? num(o.publisher_priority) ?? -1,
       subgroupId: header === undefined ? (big(o.subgroup_id) ?? null) : header.subgroupId,
     }
@@ -122,6 +125,7 @@ export function expectedHeader(decoded: Record<string, unknown>): Expected {
   return {
     groupId: big(decoded.group_id) as bigint,
     marker: false,
+    end: false,
     priority: num(decoded.publisher_priority) ?? -1,
     subgroupId: big(decoded.subgroup_id) ?? null,
   }

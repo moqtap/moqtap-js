@@ -55,6 +55,9 @@ import type {
   SubgroupHeaderInfo,
 } from '../types.js'
 
+/** The largest Group or Object ID. */
+const MAX_U64 = 0xffff_ffff_ffff_ffffn
+
 /** A varint reader: buffer and offset in, value and next offset out. */
 export type VarintFn = (b: Uint8Array, i: number) => VarintValue | Need
 
@@ -107,10 +110,11 @@ export interface WalkDialect {
    */
   readonly controlOpener: number
   /**
-   * Control frame length framing: a varint (drafts 07-10) or a 16-bit
-   * big-endian field (drafts 11 on). `draft08/codec.ts` reads a varint payload
-   * length; `draft11/codec.ts` reads two bytes and combines them. Reading one as
-   * the other truncates or over-reads every control frame on the session.
+   * Control frame length framing: a varint (drafts 07-10, and 23 on) or a
+   * 16-bit big-endian field (drafts 11-22). `draft08/codec.ts` reads a varint
+   * payload length; `draft11/codec.ts` reads two bytes and combines them.
+   * Reading one as the other truncates or over-reads every control frame on
+   * the session. draft-23 Section 9, Figure 6: "Message Length (vi64)".
    */
   readonly controlLengthIsVarint: boolean
 
@@ -198,7 +202,7 @@ export interface WalkDialect {
    * End-of-Range marker values. Empty for draft-15, which reserves the top two
    * flag bits and has no markers at all; `0x8C` Non-Existent and `0x10C` Unknown
    * for 16-19; draft-20 adds `0x20C` Timed-Out and moves the FILL_TIMEOUT
-   * outcome onto it.
+   * outcome onto it; draft-23 adds `0x40C` Gone.
    */
   readonly fetchMarkers: ReadonlySet<number>
   /** Flag bit 6 selects DATAGRAM mode, which omits the Subgroup ID (16 on). */
@@ -219,7 +223,8 @@ export interface WalkDialect {
   readonly fetchGroupIsAbsolute: boolean
   /**
    * On an End-of-Range marker, the Group ID is absolute (16-19) rather than
-   * delta-resolved (20 on).
+   * delta-resolved (20 on: as an object's in 20-22, by
+   * {@link markerIdsAreRangeDeltas} from 23).
    *
    * Separate from {@link fetchGroupIsAbsolute} because draft-20 changed the two
    * independently: ordinary objects went to deltas at draft-18, markers at
@@ -233,6 +238,30 @@ export interface WalkDialect {
    * object, `prior + delta` when it is not.
    */
   readonly fetchObjectIdIsAbsolute: boolean
+  /**
+   * Added to `prior + delta` when a fetch object has an Object ID Delta and no
+   * Group ID Delta: 0 for 20-22, 2 from draft-23. draft-23 Section 11.4.1.1:
+   * "When the Group ID Delta field is not present, the Object ID is the prior
+   * Object's ID plus the Object ID Delta + 2 if present."
+   */
+  readonly fetchObjectIdDeltaBias: bigint
+  /**
+   * End-of-Range IDs decode by their own rule (23 on). draft-23 Section
+   * 11.4.2.1: "For subsequent indicators, the Group ID is the prior Group ID
+   * plus Group ID Delta for Ascending Group Order, or minus Group ID Delta for
+   * Descending Group Order. If Group ID Delta is zero, the Object ID is the
+   * prior Object ID plus Object ID Delta + 1. When Group ID Delta is nonzero,
+   * the Object ID Delta field contains the absolute Object ID in the new
+   * Group." No `+ 1` on the group, unlike an object's.
+   */
+  readonly markerIdsAreRangeDeltas: boolean
+  /**
+   * End of Group (`0x80`) and End of Track (`0x81`), from draft-23; empty
+   * before. draft-23 Section 11.4.2.2: "When Serialization Flags is 0x80 (End
+   * of Group) or 0x81 (End of Track), no other fields are present. [...] The
+   * prior Object ID becomes 2^64-1."
+   */
+  readonly fetchEndIndicators: ReadonlySet<number>
 
   /* ── datagrams ────────────────────────────────────────────────────────── */
 
@@ -541,7 +570,8 @@ function readPlainFetchObject(
  *  - `>= 0x80` — an End-of-Range marker. Group ID, Object ID and an Object
  *    Payload Length encoded as 0 (the length field IS present; omitting a field
  *    the figure marks mandatory is what desynchronises a fetch stream).
- *    Draft-15 has no markers and reserves these bits.
+ *    Draft-15 has no markers and reserves these bits. From draft-23 also End of
+ *    Group and End of Track, which carry no field at all.
  *  - bit 6 set — DATAGRAM mode: no Subgroup ID field. Draft-15 reserves this bit
  *    too.
  *  - otherwise — subgroup mode, where flag bits 0-1 encode the Subgroup ID as
@@ -560,7 +590,7 @@ function readFlaggedFetchObject(
     const f = d.readVarint(b, p)
     if (f === NEED) return NEED
     p = f.next
-    // Markers reach 0x20C, so this is genuinely a varint and not a byte.
+    // Markers reach 0x40C, so this is genuinely a varint and not a byte.
     if (f.value > 0xffffn) return NEED
     flags = Number(f.value)
   } else {
@@ -577,19 +607,42 @@ function readFlaggedFetchObject(
   let objectId = prev.prevObjectId + 1n
 
   if (flags >= 0x80) {
+    if (d.fetchEndIndicators.has(flags)) {
+      // No prior Object to end: the first entry cannot be one.
+      if (prev.first) return NEED
+      // Reported as the cursor it leaves: the ended group, Object ID 2^64-1.
+      prev.prevObjectId = MAX_U64
+      return {
+        objectId: MAX_U64,
+        groupId: prev.prevGroupId,
+        payloadLength: 0,
+        headerBytes: p - i,
+        next: p,
+        marker: true,
+        markerFlags: flags,
+      }
+    }
     if (!d.fetchMarkers.has(flags)) return NEED
 
     const gd = d.readVarint(b, p)
     if (gd === NEED) return NEED
     p = gd.next
-    const mg = d.markerGroupIsAbsolute ? gd.value : resolveGroup(prev, gd.value)
+    const mg = d.markerGroupIsAbsolute
+      ? gd.value
+      : d.markerIdsAreRangeDeltas
+        ? rangeGroup(prev, gd.value)
+        : resolveGroup(prev, gd.value)
     if (mg === NEED) return NEED
     groupId = mg
 
     const od = d.readVarint(b, p)
     if (od === NEED) return NEED
     p = od.next
-    objectId = od.value
+    objectId =
+      d.markerIdsAreRangeDeltas && !prev.first && gd.value === 0n
+        ? prev.prevObjectId + od.value + 1n
+        : od.value
+    if (groupId < 0n || groupId > MAX_U64 || objectId > MAX_U64) return NEED
 
     const len = d.readVarint(b, p)
     if (len === NEED) return NEED
@@ -647,10 +700,13 @@ function readFlaggedFetchObject(
       ? od.value
       : groupIdPresent
         ? od.value
-        : prev.prevObjectId + od.value
+        : prev.prevObjectId + od.value + d.fetchObjectIdDeltaBias
   } else if (prev.first && !datagramMode) {
     return NEED
   }
+  // Past 2^64-1 is DELTA_ENCODING_OVERFLOW from draft-23 (PROTOCOL_VIOLATION
+  // before), e.g. an implicit `prior + 1` straight after End of Group.
+  if (groupId < 0n || groupId > MAX_U64 || objectId > MAX_U64) return NEED
 
   // Absent, the priority is the prior object's.
   let priority = prev.prevPriority
@@ -686,6 +742,20 @@ function readFlaggedFetchObject(
   prev.hadSubgroup = !datagramMode
   const info = finishFetchObject(prev, i, p, groupId, objectId, payloadLength)
   return status === undefined ? info : { ...info, status }
+}
+
+/**
+ * An End-of-Range Group ID Delta from draft-23: absolute on the first entry,
+ * else `prior ± delta`. A zero delta needs no group order.
+ */
+function rangeGroup(prev: ObjectCursor, delta: bigint): bigint | Need {
+  if (prev.first) return delta
+  if (delta === 0n) return prev.prevGroupId
+  if (prev.descending === null) {
+    prev.orderMissing = true
+    return NEED
+  }
+  return prev.descending ? prev.prevGroupId - delta : prev.prevGroupId + delta
 }
 
 /**
@@ -783,8 +853,8 @@ export type ControlDecodeResult =
  * buffer does not yet hold all of it.
  *
  * Control frames are `varint type` + length + payload throughout, but the length
- * field is a varint in drafts 07-10 and a 16-bit big-endian field from draft-11
- * ({@link WalkDialect.controlLengthIsVarint}); reading one as the other
+ * field is a varint in drafts 07-10 and from 23, and a 16-bit big-endian field
+ * in 11-22 ({@link WalkDialect.controlLengthIsVarint}); reading one as the other
  * mis-frames every control message on the session.
  */
 export function controlFrameEnd(d: WalkDialect, b: Uint8Array, i: number): number | Need {

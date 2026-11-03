@@ -44,7 +44,7 @@ import type { AnyMessage, ExchangeKind, SupportedDraft } from '../types.js'
  * every draft, is never reachable from any collector module.
  */
 export const SUPPORTED_DRAFTS: readonly SupportedDraft[] = /*#__PURE__*/ Object.freeze([
-  22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7,
+  23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7,
 ])
 
 /**
@@ -76,6 +76,7 @@ export const PROTOCOL_STRINGS: Readonly<Record<SupportedDraft, string>> =
     20: 'moqt-20',
     21: 'moqt-21',
     22: 'moqt-22',
+    23: 'moqt-23',
   })
 
 /**
@@ -95,6 +96,7 @@ const DRAFT_OF_PROTOCOL: ReadonlyMap<string, SupportedDraft> = new Map([
   ['moqt-20', 20 as SupportedDraft],
   ['moqt-21', 21 as SupportedDraft],
   ['moqt-22', 22 as SupportedDraft],
+  ['moqt-23', 23 as SupportedDraft],
 ])
 
 /**
@@ -147,6 +149,7 @@ const DRAFT_OF_VERSION: ReadonlyMap<bigint, SupportedDraft> = new Map([
   [0xff000014n, 20 as SupportedDraft],
   [0xff000015n, 21 as SupportedDraft],
   [0xff000016n, 22 as SupportedDraft],
+  [0xff000017n, 23 as SupportedDraft],
 ])
 
 /** First defined value among several spellings of one field. */

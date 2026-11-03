@@ -133,9 +133,19 @@ describe.each(
       const cursor = newCursor()
       let p = head.next
       for (const [i, w] of want.entries()) {
+        const priorGroup = cursor.prevGroupId
         const got = a.readFetchObject(b, p, cursor)
         expect(got, `object ${i} did not parse`).not.toBe(NEED)
         if (got === NEED) return
+        if (w.end) {
+          // No field on the wire: the walk reports the group it ends and the
+          // prior Object ID it leaves, 2^64-1.
+          expect(got.marker, `object ${i} marker`).toBe(true)
+          expect(got.groupId, `object ${i} group`).toBe(priorGroup)
+          expect(got.objectId, `object ${i} id`).toBe(2n ** 64n - 1n)
+          p = got.next
+          continue
+        }
         expect(got.objectId, `object ${i} id`).toBe(w.objectId)
         expect(got.groupId, `object ${i} group`).toBe(w.groupId)
         expect(got.payloadLength, `object ${i} payload length`).toBe(w.payloadLength)

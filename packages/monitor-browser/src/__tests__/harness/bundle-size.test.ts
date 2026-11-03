@@ -94,32 +94,32 @@ const FORBIDDEN_CODEC_IMPORTS = ['encodeMessage', 'encodeSubgroupStream', 'encod
  */
 const CEILING_GZ = {
   /** `.`: every draft, every feature. */
-  root: 81_500,
+  root: 87_000,
   /** `./draftNN`: one draft, every feature. */
-  draft: 64_500,
+  draft: 67_500,
   /** `./draftNN/thin`: one draft, no optional feature. */
-  thin: 52_000,
+  thin: 55_000,
   /** `compose({ features: [workers] })`: a page whose transports live in its workers. */
   linked: 26_000,
   /**
    * `compose({ features: [workers, escalation, persistence] })` built for
    * es2019 and es2020, where `#` members cost WeakMap helpers.
    */
-  es2019: 33_000,
-  es2020: 31_500,
+  es2019: 33_500,
+  es2020: 32_000,
   /** `./worker`: every draft and the flight recorder. */
-  worker: 56_000,
+  worker: 61_500,
   /** `./draftNN/worker`. */
-  draftWorker: 39_500,
+  draftWorker: 42_000,
   /** `./draftNN/thin/worker`. */
-  thinWorker: 34_500,
+  thinWorker: 37_500,
 } as const
 
 /**
  * What each draft adds: the collector's adapter plus the codec decoder it
- * imports, "4–9 KB per negotiated draft".
+ * imports: 4–10 KB per negotiated draft.
  */
-const DRAFT_CEILING_GZ = 9 * 1024
+const DRAFT_CEILING_GZ = 10 * 1024
 
 const nn = (d: number): string => (d < 10 ? `0${d}` : `${d}`)
 const DRAFTS = SUPPORTED_DRAFTS.map(nn)

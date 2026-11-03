@@ -30,6 +30,7 @@
 
 import { exchangeKindOf, requestIdOf } from '../draft/protocol.js'
 import type {
+  AnyMessage,
   BucketKey,
   ControlFrameEvent,
   CountingSink,
@@ -44,7 +45,7 @@ import type {
   StreamChunk,
   StreamKind,
 } from '../types.js'
-import { ControlFramer } from './control-framer.js'
+import { ControlFramer, type ControlLimit } from './control-framer.js'
 import { countDatagram } from './datagram-counter.js'
 import { FetchCounter } from './fetch-counter.js'
 import { SubgroupCounter } from './subgroup-counter.js'
@@ -109,6 +110,12 @@ export interface DispatcherOptions {
   readonly maskAuthParams?: boolean
 }
 
+/** The first draft whose control Length is a vi64 bounded by MAX_CONTROL_MESSAGE_SIZE. */
+export const CONTROL_SIZE_OPTION_FROM = 23
+
+/** draft-23 Section 9.1.8: "If not present, the default value is 65535." */
+const DEFAULT_MAX_CONTROL_MESSAGE_SIZE = 65535
+
 export class StreamDispatcher {
   /** Keyed by `streamId * 2 + directionBit`: see the header's point 1. */
   private readonly streams = new Map<number, Entry>()
@@ -117,6 +124,8 @@ export class StreamDispatcher {
   private readonly observeLatency: ((kind: ExchangeKind, ms: number) => void) | undefined
   private readonly slackBytes: number | undefined
   private readonly maskAuthParams: boolean
+  /** By the direction frames travel; `null` before {@link CONTROL_SIZE_OPTION_FROM}. */
+  private readonly limits: Readonly<Record<Direction, ControlLimit>> | null
   /** The datagram being counted, for {@link fieldsOf}. */
   private readonly datagram: { priority: number; subgroupId: null } = {
     priority: -1,
@@ -131,6 +140,13 @@ export class StreamDispatcher {
   ) {
     this.slackBytes = opts?.slackBytes
     this.maskAuthParams = opts?.maskAuthParams ?? true
+    this.limits =
+      a.draft >= CONTROL_SIZE_OPTION_FROM
+        ? {
+            tx: { maxBodyBytes: DEFAULT_MAX_CONTROL_MESSAGE_SIZE },
+            rx: { maxBodyBytes: DEFAULT_MAX_CONTROL_MESSAGE_SIZE },
+          }
+        : null
     const ext = sink as CountingSink & RollupExtensions
     this.observeLatency =
       typeof ext.observeControlLatency === 'function'
@@ -235,6 +251,7 @@ export class StreamDispatcher {
             this.a,
             this.controlSink(),
             this.maskAuthParams,
+            this.limits?.[c.direction],
           ),
         }
       case 'subgroup':
@@ -267,6 +284,7 @@ export class StreamDispatcher {
     const keys = this.keys
     const observe = this.observeLatency
     const holding = this.holding
+    const limits = this.limits
     return {
       onObject(s: ObjectSample): void {
         outer.onObject(s)
@@ -274,6 +292,7 @@ export class StreamDispatcher {
       onControlFrame(e): void {
         const msg = e.message
         if (msg !== null) {
+          if (limits !== null && msg.type === 'setup') raiseLimit(limits, msg, e.dir)
           keys.applyControl(msg, e.dir, e.streamId, e.at)
           // A draft-17+ response carries no request id at all, so "no id"
           // is exactly how a response is recognised, and the stream is what ties
@@ -297,6 +316,23 @@ export class StreamDispatcher {
 }
 
 const DIRECTIONS: readonly Direction[] = ['tx', 'rx']
+
+/**
+ * A SETUP sent in `dir` states what its sender will receive: draft-23 Section
+ * 9.1.8, "the maximum length, in bytes, of a control message the endpoint is
+ * willing to receive".
+ */
+function raiseLimit(
+  limits: Readonly<Record<Direction, ControlLimit>>,
+  setup: AnyMessage,
+  dir: Direction,
+): void {
+  const v = (setup.options as { max_control_message_size?: unknown } | undefined)
+    ?.max_control_message_size
+  if (typeof v !== 'bigint' || v < BigInt(DEFAULT_MAX_CONTROL_MESSAGE_SIZE)) return
+  const n = v > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(v)
+  limits[dir === 'tx' ? 'rx' : 'tx'].maxBodyBytes = n
+}
 
 function slot(streamId: number, dir: Direction): number {
   return streamId * 2 + (dir === 'tx' ? 0 : 1)

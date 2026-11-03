@@ -237,15 +237,15 @@ test fixture. It deletes every stored upload as well.
 
 ## Entry points
 
-Drafts 07 through 22. Your bundle holds the drafts and features you import and
+Drafts 07 through 23. Your bundle holds the drafts and features you import and
 nothing else. Pick the entry that matches your player:
 
 | Import                                 | Drafts | Features  | Gzipped      |
 | -------------------------------------- | ------ | --------- | ------------ |
-| `@moqtap/monitor-browser`              | all    | all       | 73.6 KB      |
-| `@moqtap/monitor-browser/draftNN`      | one    | all       | 54.4–56.9 KB |
-| `@moqtap/monitor-browser/draftNN/thin` | one    | none      | 41.9–44.3 KB |
-| `compose({ features: [workers] })`     | none   | `workers` | 19.9 KB      |
+| `@moqtap/monitor-browser`              | all    | all       | 84.3 KB      |
+| `@moqtap/monitor-browser/draftNN`      | one    | all       | 61.3–65.4 KB |
+| `@moqtap/monitor-browser/draftNN/thin` | one    | none      | 49.2–53.2 KB |
+| `compose({ features: [workers] })`     | none   | `workers` | 25.2 KB      |
 
 ```typescript
 import { init } from '@moqtap/monitor-browser/draft14'
@@ -374,9 +374,9 @@ storage and session:
 
 | Import                                        | Drafts | Flight recorder | Gzipped      |
 | --------------------------------------------- | ------ | --------------- | ------------ |
-| `@moqtap/monitor-browser/worker`              | all    | yes             | 52.4 KB      |
-| `@moqtap/monitor-browser/draftNN/worker`      | one    | yes             | 33.4–35.9 KB |
-| `@moqtap/monitor-browser/draftNN/thin/worker` | one    | no              | 29.0–31.5 KB |
+| `@moqtap/monitor-browser/worker`              | all    | yes             | 59.4 KB      |
+| `@moqtap/monitor-browser/draftNN/worker`      | one    | yes             | 36.7–40.8 KB |
+| `@moqtap/monitor-browser/draftNN/thin/worker` | one    | no              | 32.3–36.4 KB |
 
 When every connection lives in the worker, pair one of these with a page that
 imports no draft, as in [Compose your own](#compose-your-own). Like every

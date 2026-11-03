@@ -2,12 +2,12 @@
  * The control plane, framed by hand.
  *
  * Every message on a control or request stream is
- * `Message Type (vi64) + Message Length (16) + Message Body`, in every draft
- * this package supports — draft-20 §10, Figure 3, matching the codec's own
- * `decodeMessage` and `encodeMessage` (`drafts/draft20/codec.ts`). **That fixed shape is the
- * entire reason this file exists**: the framer can measure a frame it cannot
- * decode, so an unknown or extension codepoint is counted, shipped raw and
- * skipped rather than ending the control plane for the session.
+ * `Message Type + Message Length + Message Body` in every draft this package
+ * supports, the Length a varint in 07-10, 16 bits in 11-22 (draft-20 §10,
+ * Figure 3) and a vi64 from draft-23 (Section 9, Figure 6). **That shape is
+ * the entire reason this file exists**: the framer can measure a frame it
+ * cannot decode, so an unknown or extension codepoint is counted, shipped raw
+ * and skipped rather than ending the control plane for the session.
  *
  * The codec's own `createStreamDecoder` cannot do that: it calls
  * `controller.error()` on `UNKNOWN_MESSAGE_TYPE` (`drafts/draft20/codec.ts`),
@@ -33,7 +33,8 @@ import type { ControlRedaction, CountingSink, Direction, DraftAdapter, Mono } fr
 import { NEED } from '../types.js'
 
 /**
- * The largest frame the wire can express, and therefore the buffering bound.
+ * The largest frame the wire can express through draft-22, and therefore the
+ * buffering bound.
  *
  * The Message Length field is a fixed **16 bits**, so a frame is at most
  * `9 (the longest vi64 type) + 2 + 65535` bytes, and the format itself bounds
@@ -44,14 +45,33 @@ import { NEED } from '../types.js'
 export const MAX_CONTROL_FRAME_BYTES = 9 + 2 + 0xffff
 
 /**
+ * From draft-23 the receiver's MAX_CONTROL_MESSAGE_SIZE bounds the body
+ * instead. draft-23 Section 9.1.8: "The value is encoded as a variable-length
+ * integer and MUST be at least 65535. If not present, the default value is
+ * 65535." Shared by the framers of one direction, and raised by the dispatcher
+ * when the receiving endpoint's SETUP states more.
+ */
+export interface ControlLimit {
+  maxBodyBytes: number
+}
+
+/** A vi64 type, a vi64 length, and the body. */
+const frameBound = (l: ControlLimit) => 9 + 9 + l.maxBodyBytes
+
+/**
  * Hand-rolled control framing over an arriving byte stream.
  *
  * Every complete frame is handed to the sink as its exact bytes — type field
  * through payload end — whether or not it decoded.
  */
 export class ControlFramer {
-  /** An incomplete frame carried across a chunk boundary, and nothing else. */
+  /**
+   * An incomplete frame carried across a chunk boundary, and nothing else: its
+   * first {@link held} bytes. Grown by doubling, and never written over once a
+   * frame has been handed on from it.
+   */
   private carry: Uint8Array | null = null
+  private held = 0
   private dead = false
   private closed = false
   private count = 0
@@ -71,6 +91,8 @@ export class ControlFramer {
      * than the leaky one.
      */
     private readonly mask = true,
+    /** Present from draft-23, for frames travelling in `dir`. */
+    private readonly limit?: ControlLimit,
   ) {}
 
   /** Frames completed on this stream so far. */
@@ -105,9 +127,9 @@ export class ControlFramer {
     return this.redactionFailed
   }
 
-  /** Bytes held across a chunk boundary. Never above {@link MAX_CONTROL_FRAME_BYTES}. */
+  /** Bytes held across a chunk boundary: never above the frame bound. */
   get bufferedBytes(): number {
-    return this.carry === null ? 0 : this.carry.length
+    return this.carry === null ? 0 : this.held
   }
 
   /** True once the stream was abandoned as unframeable. */
@@ -118,23 +140,39 @@ export class ControlFramer {
   push(chunk: Uint8Array, at: Mono): void {
     if (this.dead || this.closed || chunk.length === 0) return
 
-    const carry = this.carry
+    let carry = this.carry
     let buf: Uint8Array
     if (carry === null) {
       buf = chunk
     } else {
-      buf = new Uint8Array(carry.length + chunk.length)
-      buf.set(carry, 0)
-      buf.set(chunk, carry.length)
+      const n = this.held + chunk.length
+      if (n > carry.length) {
+        const grown = new Uint8Array(Math.max(n, carry.length * 2))
+        grown.set(carry.subarray(0, this.held), 0)
+        carry = grown
+        this.carry = grown
+      }
+      carry.set(chunk, this.held)
+      buf = carry.subarray(0, n)
     }
 
+    const bound = this.limit === undefined ? MAX_CONTROL_FRAME_BYTES : frameBound(this.limit)
     let i = 0
     while (i < buf.length) {
-      // Per draft, not inline: the length field is a varint in drafts 07-10 and
-      // a 16-bit big-endian field from draft-11, and reading one as the other
-      // mis-frames every control message on the session rather than failing.
+      // Per draft, not inline: the length field is a varint in drafts 07-10
+      // and from 23, and a 16-bit big-endian field in 11-22, and reading one as
+      // the other mis-frames every control message on the session rather than
+      // failing.
       const end = this.adapter.controlFrameEnd(buf, i)
       if (end === NEED) break
+      // Refused on its declared length, before any of it is held. draft-23
+      // Section 9: "If an endpoint receives a control message with a length
+      // larger than its MAX_CONTROL_MESSAGE_SIZE, it MUST close the session
+      // with FIELD_LENGTH_EXCEEDED."
+      if (end - i > bound) {
+        this.fail()
+        return
+      }
       if (end > buf.length) break
       // A borrowed view, exactly as `ControlFrameEvent.bytes` documents: the
       // sink copies if it retains, and the baseline sink writes it straight
@@ -145,22 +183,29 @@ export class ControlFramer {
 
     if (i >= buf.length) {
       this.carry = null
+      this.held = 0
       return
     }
     const tail = buf.subarray(i)
-    if (tail.length > MAX_CONTROL_FRAME_BYTES) {
-      // From draft-11 this is unreachable against a conforming peer: the length
-      // field is 16 bits, so an incomplete frame is smaller than this by
-      // construction. **Drafts 07-10 frame the length as a varint**, where it
-      // is reachable and is the bound that stops a bad or hostile length from
-      // buffering the page to death. Either way "bounded" has to be true of the
-      // code and not only of the format.
+    if (tail.length > bound) {
+      // Reached only by a varint length too large to read (drafts 07-10 and
+      // from 23); a readable one over the bound was refused above. This is the
+      // bound that stops a bad or hostile length from buffering the page to
+      // death, and "bounded" has to be true of the code and not only of the
+      // format.
       this.fail()
       return
     }
+    if (carry !== null && i === 0) {
+      // Still the one incomplete frame, already in place.
+      this.held = buf.length
+      return
+    }
     // Copy: `chunk` is a borrowed view onto the page's own buffer and the page
-    // may write through it on its next frame (`StreamChunk.data`).
+    // may write through it on its next frame (`StreamChunk.data`); frames
+    // already handed on from the old carry keep it unchanged.
     this.carry = tail.slice()
+    this.held = tail.length
   }
 
   /**
@@ -173,6 +218,7 @@ export class ControlFramer {
   end(): void {
     this.closed = true
     this.carry = null
+    this.held = 0
   }
 
   private emit(raw: Uint8Array, at: Mono): void {
@@ -235,6 +281,7 @@ export class ControlFramer {
   private fail(): void {
     this.dead = true
     this.carry = null
+    this.held = 0
     this.sink.onParseFailure(null, 'malformed-control')
   }
 }

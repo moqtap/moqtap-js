@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { MAX_OPEN_FLOWS, RunRecorder, runIds, statusKind } from '../../rollup/runs.js'
+import { MAX_OPEN_FLOWS, RunRecorder, rangeKind, runIds, statusKind } from '../../rollup/runs.js'
 import type { BucketKey, MarkSample, ObjectSample } from '../../types.js'
 
 const ALIAS: BucketKey = Object.freeze({ dir: 'rx', kind: 'alias', id: 4n, epoch: 0 })
@@ -247,6 +247,74 @@ describe('marks', () => {
       ['rng_to', 13n, 0n, 13n, 9n, undefined, 'fetch', 5],
       ['pog', 13n, 0n, undefined, undefined, 2n, 'datagram', 5],
     ])
+  })
+})
+
+describe('draft-23 fetch indicators', () => {
+  const fetchObj = (g: bigint, o: bigint, at: number): ObjectSample =>
+    obj(g, o, at, { key: FETCH, path: 'fetch', sub: 0n, foKnown: false })
+  const end = (what: 'group' | 'track', g: bigint, o: bigint): MarkSample => ({
+    key: FETCH,
+    what: { end: what },
+    groupId: g,
+    objectId: o,
+    path: 'fetch',
+    streamId: 3,
+    at: 9,
+  })
+
+  it('maps End-of-Range markers by the connection’s draft, End of Gone Range from 23', () => {
+    expect(rangeKind(0x8c, 16)).toBe('rng_nx')
+    expect(rangeKind(0x10c, 23)).toBe('rng_unk')
+    expect(rangeKind(0x20c, 19)).toBeUndefined()
+    expect(rangeKind(0x20c, 20)).toBe('rng_to')
+    expect(rangeKind(0x40c, 22)).toBeUndefined()
+    expect(rangeKind(0x40c, 23)).toBe('rng_gone')
+    expect(rangeKind(0x80, 23)).toBeUndefined()
+  })
+
+  it('ends the group on the run holding the Object End of Group follows', () => {
+    const r = new RunRecorder(0)
+    r.onObject(0, fetchObj(5n, 0n, 1))
+    r.onObject(0, fetchObj(5n, 1n, 2))
+    r.onMark(0, 23, end('group', 5n, 1n))
+    r.onObject(0, fetchObj(6n, 0n, 3))
+    r.onStreamEnd(0, 3, 'fin')
+    const { runs, marks } = r.take()
+    expect(runs.map((x) => [x.g, x.eog, x.end])).toEqual([
+      [5n, true, 'open'],
+      [6n, false, 'fin'],
+    ])
+    expect(marks).toEqual([])
+  })
+
+  it('ends the group on End of Track, and marks End of Track past its Object', () => {
+    const r = new RunRecorder(0)
+    r.onObject(0, fetchObj(9n, 4n, 1))
+    r.onMark(0, 23, end('track', 9n, 4n))
+    const { runs, marks } = r.take()
+    expect(runs[0]?.eog).toBe(true)
+    expect(marks.map((m) => [m.kind, m.g, m.o, m.path, m.sid])).toEqual([
+      ['eot', 9n, 5n, 'fetch', 3],
+    ])
+  })
+
+  it('leaves a run whose last Object is another alone', () => {
+    const r = new RunRecorder(0)
+    r.onObject(0, fetchObj(5n, 0n, 1))
+    r.onMark(0, 23, end('group', 5n, 3n))
+    expect(r.take().runs[0]?.eog).toBe(false)
+  })
+
+  it('carries a worker’s End of Group across a forward to the run it ends', () => {
+    const worker = new RunRecorder(0, undefined, true)
+    const page = new RunRecorder(0)
+    worker.onObject(9, fetchObj(5n, 0n, 1))
+    page.absorb(worker.take())
+    worker.onMark(9, 23, end('group', 5n, 0n))
+    page.absorb(worker.take())
+    const { runs } = page.take()
+    expect(runs.map((x) => [x.g, x.n, x.eog])).toEqual([[5n, 1, true]])
   })
 })
 

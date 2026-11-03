@@ -21,7 +21,8 @@
  * stream.
  *
  * The walk is draft-20's, and right from draft-20 on (see
- * {@link FETCH_HAND_WALK_FROM}). Every older draft differs somewhere a value
+ * {@link FETCH_HAND_WALK_FROM}), with draft-23's indicators and ID rules from
+ * {@link FETCH_INDICATORS_FROM}. Every older draft differs somewhere a value
  * depends on: absolute Group IDs (15-17), absolute marker Group IDs (16-19),
  * absolute Object IDs (15-19), an Object Status (15), no Serialization Flags at
  * all (07-14). Its stream is walked by its adapter instead.
@@ -76,16 +77,33 @@ export function readFetchHeader(
 /** The first draft whose fetch streams {@link readFetchObject} reads correctly. */
 export const FETCH_HAND_WALK_FROM = 20
 
+/** The first draft with End of Group, End of Track and End of Gone Range. */
+export const FETCH_INDICATORS_FROM = 23
+
+const END_OF_GROUP = 0x80
+const END_OF_TRACK = 0x81
+
+/** draft-23 Table 8's End of Range values. */
+const END_OF_RANGE: ReadonlySet<number> = new Set([0x8c, 0x10c, 0x20c, 0x40c])
+
+/** The largest Group or Object ID. */
+const MAX_U64 = 0xffff_ffff_ffff_ffffn
+
 /**
  * Walk one record on a fetch stream, draft-20 Section 11.4.4.
  *
- * `marker` marks an End-of-Range marker (Section 11.4.4.2): a statement that a
- * range of Objects does not exist, is unknown, or timed out. Counting one as an
- * object would inflate every object rate on the track; its bytes are still
- * attributed, see {@link FetchCounter}.
+ * `marker` marks an indicator, not an Object: an End-of-Range marker (draft-20
+ * Section 11.4.4.2, draft-23 Section 11.4.2), a statement that a range of
+ * Objects does not exist, is unknown, timed out or is gone; or, from draft-23,
+ * End of Group or End of Track (draft-23 Section 11.4.2.2). Counting one as an
+ * object would inflate every object rate on the track; see {@link FetchCounter}
+ * for its bytes.
  *
  * The cursor's Subgroup ID and priority move only on a complete object, and
  * never on a marker, which has neither.
+ *
+ * `indicators` reads draft-23's rules: its Table 8 indicators and the Object
+ * ID Delta `+ 2`.
  */
 export function readFetchObject(
   v: VarintReader,
@@ -93,6 +111,7 @@ export function readFetchObject(
   i: number,
   prev: ObjectCursor,
   slack: number,
+  indicators = false,
 ): ObjectHeaderInfo | Need | Desync {
   const f = v.read(b, i)
   if (f === NEED) return NEED
@@ -106,23 +125,76 @@ export function readFetchObject(
   let objectId = prev.prevObjectId + 1n
 
   if (flags >= 0x80) {
-    // End-of-Range marker. Section 11.4.4.2: Group ID Delta, Object ID Delta
+    // End-of-Range marker. draft-20 Section 11.4.4.2: Group ID Delta, Object ID Delta
     // and a Payload Length encoded as 0, and no Subgroup ID or Priority of its
     // own. Draft-19 has two such markers and draft-20 three (0x8C, 0x10C and
-    // draft-20's new 0x20C); the walk accepts any value at or above 0x80
-    // because the *layout* is what it needs and a counting decoder that
-    // enforced the enumeration would abandon a stream over a codepoint a later
-    // draft adds — the failure mode a withheld adapter exists to avoid.
+    // draft-20's new 0x20C); through draft-22 the walk accepts any value at or
+    // above 0x80 because the *layout* is what it needs and a counting decoder
+    // that enforced the enumeration would abandon a stream over a codepoint a
+    // later draft adds — the failure mode a withheld adapter exists to avoid.
+    if (indicators) {
+      // draft-23 Section 11.4.2.2: "When Serialization Flags is 0x80 (End of
+      // Group) or 0x81 (End of Track), no other fields are present. The prior
+      // Object is the last Object in its Group, or in the Track, respectively.
+      // End of Track also indicates End of Group. The prior Object ID becomes
+      // 2^64-1." Reported as the cursor it leaves. As the first entry it names
+      // a prior Object that does not exist.
+      if (flags === END_OF_GROUP || flags === END_OF_TRACK) {
+        if (prev.first) return DESYNC
+        return {
+          objectId: MAX_U64,
+          groupId,
+          payloadLength: 0,
+          headerBytes: p - i,
+          next: p,
+          marker: true,
+          markerFlags: flags,
+        }
+      }
+      // draft-23 Section 11.4.1: "If an endpoint receives any other value
+      // greater than 127, it MUST close the session with MALFORMED_OBJECT."
+      if (!END_OF_RANGE.has(flags)) return DESYNC
+    }
     const g = v.read(b, p)
     if (g === NEED) return NEED
     p = g.next
-    const mg = groupFrom(prev, g.value)
-    if (mg === NEED) return NEED
-    groupId = mg
     const o = v.read(b, p)
     if (o === NEED) return NEED
     p = o.next
     objectId = o.value
+    if (!indicators) {
+      const mg = groupFrom(prev, g.value)
+      if (mg === NEED) return NEED
+      groupId = mg
+    } else if (prev.first) {
+      groupId = g.value
+    } else if (g.value === 0n) {
+      // draft-23 Section 11.4.2.1: "If this End of Range indicator is the
+      // first entry after the FETCH_HEADER, both fields encode absolute IDs.
+      // [...] For subsequent indicators, the Group ID is the prior Group ID
+      // plus Group ID Delta for Ascending Group Order, or minus Group ID Delta
+      // for Descending Group Order. If Group ID Delta is zero, the Object ID is
+      // the prior Object ID plus Object ID Delta + 1. When Group ID Delta is
+      // nonzero, the Object ID Delta field contains the absolute Object ID in
+      // the new Group."
+      // Ambiguous straight after End of Group or End of Track: Section
+      // 11.4.2.1 takes the prior IDs from "the most recent preceding Object or
+      // End of Range indicator", while Section 11.4.2.2 says "The prior Object
+      // ID becomes 2^64-1". The second is read, as the codec does, so a zero
+      // Group ID Delta there overflows.
+      objectId = prev.prevObjectId + o.value + 1n
+    } else if (prev.descending === null) {
+      prev.orderMissing = true
+      return NEED
+    } else {
+      groupId = prev.descending ? groupId - g.value : groupId + g.value
+    }
+    // draft-23 Section 11.4.2.1: "If either decoded ID is less than zero or
+    // greater than 2^64-1, the Subscriber MUST close the Session with
+    // DELTA_ENCODING_OVERFLOW."
+    if (groupId < 0n || groupId > MAX_U64 || objectId > MAX_U64) return DESYNC
+    // The Object Payload Length stays: draft-23 Figure 29 makes it mandatory
+    // and Section 11.4.2 does not list it among the absent fields.
     const len = v.read(b, p)
     if (len === NEED) return NEED
     p = len.next
@@ -151,6 +223,7 @@ export function readFetchObject(
     p = g.next
     const og = groupFrom(prev, g.value)
     if (og === NEED) return NEED
+    if (og < 0n || og > MAX_U64) return DESYNC
     groupId = og
   } else if (prev.first) {
     // Section 11.4.4: the first object on a fetch stream must carry both ids.
@@ -182,10 +255,16 @@ export function readFetchObject(
     const o = v.read(b, p)
     if (o === NEED) return NEED
     p = o.next
-    objectId = groupIdPresent ? o.value : prev.prevObjectId + o.value
+    // draft-23 Section 11.4.1.1: "When the Group ID Delta field is not
+    // present, the Object ID is the prior Object's ID plus the Object ID Delta
+    // + 2 if present." Drafts 20-22 add the delta alone.
+    objectId = groupIdPresent ? o.value : prev.prevObjectId + o.value + (indicators ? 2n : 0n)
   } else if (prev.first) {
     return DESYNC
   }
+  // Past 2^64-1, e.g. an implicit `prior + 1` right after End of Group:
+  // DELTA_ENCODING_OVERFLOW from draft-23, PROTOCOL_VIOLATION before.
+  if (objectId > MAX_U64) return DESYNC
 
   // Absent, the priority is the prior object's.
   let priority = prev.prevPriority
@@ -267,6 +346,10 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
   private readonly draft: DraftAdapter['draft']
   /** Set for a draft before {@link FETCH_HAND_WALK_FROM}: its adapter walks the stream. */
   private readonly older: DraftAdapter | null
+  /** Draft-23's indicators and ID rules: {@link FETCH_INDICATORS_FROM}. */
+  private readonly indicators: boolean
+  /** The last entry walked was an Object, not an indicator. */
+  private afterObject = false
   /** Chunks held while the group order is unknown; `null` once it is known or not needed. */
   private held: { chunk: Uint8Array; at: Mono }[] | null
   private heldBytes = 0
@@ -283,6 +366,7 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
     this.v = a.varint
     this.draft = a.draft
     this.older = a.draft < FETCH_HAND_WALK_FROM ? a : null
+    this.indicators = a.draft >= FETCH_INDICATORS_FROM
     this.held = a.draft >= FETCH_ORDER_FROM ? [] : null
   }
 
@@ -387,7 +471,7 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
       const priorObject = this.cursor.prevObjectId
       const o =
         this.older === null
-          ? readFetchObject(this.v, b, i, this.cursor, this.slack)
+          ? readFetchObject(this.v, b, i, this.cursor, this.slack, this.indicators)
           : this.older.readFetchObject(b, i, this.cursor)
       if (o === NEED) {
         if (this.cursor.orderMissing) return { consumed: i, skip: 0, desync: true }
@@ -395,18 +479,32 @@ export class FetchCounter extends DataStreamCounter implements ObjectHeaderField
       }
       if (o === DESYNC) return { consumed: i, skip: 0, desync: true }
 
+      const flags = o.markerFlags ?? 0
       if (o.marker === true) {
-        // A marker is not an object. Its bytes ride along on the next real one
-        // so the track's byte total still balances against the wire.
+        // A marker is not an object. Its bytes ride along on the next real one;
+        // with none after it they go uncounted, as does the End of Group that
+        // draft-23 puts after the last Object.
         this.pendingHeaderBytes += o.headerBytes
-        const from = priorFirst ? o : { groupId: priorGroup, objectId: priorObject }
-        this.mark(o, at, { range: o.markerFlags ?? 0, g2: o.groupId, o2: o.objectId }, from)
+        const prior = { groupId: priorGroup, objectId: priorObject }
+        if (this.indicators && (flags === END_OF_GROUP || flags === END_OF_TRACK)) {
+          // Only straight after an Object: after an End of Range the draft
+          // does not say which Object ends the group.
+          if (this.afterObject) {
+            this.mark(o, at, { end: flags === END_OF_TRACK ? 'track' : 'group' }, prior)
+          }
+        } else {
+          const from = priorFirst ? o : prior
+          this.mark(o, at, { range: flags, g2: o.groupId, o2: o.objectId }, from)
+        }
       } else {
         this.emit(o, at)
         if (o.propsStart !== undefined) this.gaps(b, o, at)
       }
-      // Section 11.4.4.2: prior Group ID and prior Object ID come FROM a marker,
-      // so the cursor advances for markers too.
+      this.afterObject = o.marker !== true
+      // draft-20 Section 11.4.4.2: "Prior Group ID and prior Object ID: The
+      // values from the End of Range indicator", so the cursor advances for
+      // markers too. draft-23 Section 11.4.2.2, after End of Group or End of
+      // Track: "The prior Object ID becomes 2^64-1."
       this.cursor.first = false
       this.cursor.prevObjectId = o.objectId
       this.cursor.prevGroupId = o.groupId
