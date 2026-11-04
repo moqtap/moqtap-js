@@ -15,11 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   playback. A `sessionId` key is reported as unknown (`MQ1112`), `MQ1113` is
   retired, `EndRecord['reason']` loses `new-session`, `SetupRecord` loses
   `startTs`, and `ResolvedConfig` loses `idSource`.
-- **Breaking:** at `object` timing a run states each object's start, last
-  payload byte and payload size, in place of the run's byte count and last
-  payload byte; at `group` timing it carries those two as before. Objects
-  the page sends are recorded as runs too, under their sent track key, and
-  are not counted in a body's received totals.
 - **Breaking:** a session is the tab's: its id is kept in `sessionStorage`
   (`moqtap:session`), so a reload continues it, and each body states where
   the id came from (`ss`). The storage is read only when the first
@@ -57,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Each object received or sent is reported with when it started and ended
+  and its size; objects the page sends are now reported too.
 - A `bw` record: each connection's bytes received and sent per second,
   including those before `init()`.
 - Draft-23, with the `@moqtap/monitor-browser/draft23` entry and its `/thin`,
