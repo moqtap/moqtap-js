@@ -59,7 +59,7 @@
       },
       "devDependencies": {
         "@moqtap/codec": "workspace:*",
-        "@moqtap/test-vectors": "^0.19.0",
+        "@moqtap/test-vectors": "^0.24.0",
         "@types/node": "^24.13.3",
         "playwright-core": "1.62.1",
         "tsup": "^8.0.0",
@@ -429,7 +429,5 @@
     "@moqtap/collector/@moqtap/monitor-browser": ["@moqtap/monitor-browser@0.12.0", "", { "dependencies": { "@moqtap/codec": ">=0.13.4" } }, "sha512-UC6UelbaU7oHuhzOKLc2m745wBrrMb8z95cFIAPUJtzq0tGkPXeSNEAdnTcPAmJUgJfncCFhAIYVHY2pdcnuGw=="],
 
     "@moqtap/media/@moqtap/test-vectors": ["@moqtap/test-vectors@0.23.0", "", {}, "sha512-rkkpnUKadNsuCFxL5dpmt3JoHX550HgSqjeH1Ouffz1LQNllcAML36COvFmCHvOaVuhPOCctQFH5j4bVXO36uw=="],
-
-    "@moqtap/monitor-browser/@moqtap/test-vectors": ["@moqtap/test-vectors@0.19.0", "", {}, "sha512-hLKYC/C/ck/eMrv703BlAtx9lQIFyedfU9V5udGxwTATPVoz3SSZm1S42TguERJ7X0ipoafmV+rnrdGAYoG+3Q=="],
   }
 }
