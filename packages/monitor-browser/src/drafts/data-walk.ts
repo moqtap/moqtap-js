@@ -222,17 +222,6 @@ export interface WalkDialect {
    */
   readonly fetchGroupIsAbsolute: boolean
   /**
-   * On an End-of-Range marker, the Group ID and Object ID are absolute (16-22)
-   * rather than delta-resolved by {@link markerIdsAreRangeDeltas} (23 on).
-   * draft-20 Section 11.4.4.2: "the Group ID and Object ID fields are present";
-   * the delta rules of draft-20 Section 11.4.4.1 cover only Objects.
-   *
-   * Separate from {@link fetchGroupIsAbsolute} because the drafts changed the
-   * two independently: ordinary objects went to deltas at draft-18, markers at
-   * draft-23.
-   */
-  readonly markerGroupIsAbsolute: boolean
-  /**
    * A fetch object's Object ID field is an absolute Object ID (15-17).
    *
    * From draft-18 it is an Object ID Delta: absolute when a Group ID Delta is
@@ -249,13 +238,17 @@ export interface WalkDialect {
    */
   readonly fetchObjectIdDeltaBias: bigint
   /**
-   * End-of-Range IDs decode by their own rule (23 on). draft-23 Section
-   * 11.4.2.1: "For subsequent indicators, the Group ID is the prior Group ID
-   * plus Group ID Delta for Ascending Group Order, or minus Group ID Delta for
-   * Descending Group Order. If Group ID Delta is zero, the Object ID is the
-   * prior Object ID plus Object ID Delta + 1. When Group ID Delta is nonzero,
-   * the Object ID Delta field contains the absolute Object ID in the new
-   * Group." No `+ 1` on the group, unlike an object's.
+   * End-of-Range IDs decode by their own rule (23 on); before, they are
+   * absolute (16-22). draft-20 Section 11.4.4.2: "the Group ID and Object ID
+   * fields are present"; the delta rules of draft-20 Section 11.4.4.1 cover
+   * only Objects. Separate from {@link fetchGroupIsAbsolute}: ordinary objects
+   * went to deltas at draft-18, markers at draft-23.
+   * draft-23 Section 11.4.2.1: "For subsequent indicators, the Group ID is the
+   * prior Group ID plus Group ID Delta for Ascending Group Order, or minus
+   * Group ID Delta for Descending Group Order. If Group ID Delta is zero, the
+   * Object ID is the prior Object ID plus Object ID Delta + 1. When Group ID
+   * Delta is nonzero, the Object ID Delta field contains the absolute Object
+   * ID in the new Group." No `+ 1` on the group, unlike an object's.
    */
   readonly markerIdsAreRangeDeltas: boolean
   /**
@@ -635,11 +628,7 @@ function readFlaggedFetchObject(
     const gd = d.readVarint(b, p)
     if (gd === NEED) return NEED
     p = gd.next
-    const mg = d.markerGroupIsAbsolute
-      ? gd.value
-      : d.markerIdsAreRangeDeltas
-        ? rangeGroup(prev, gd.value)
-        : resolveGroup(prev, gd.value)
+    const mg = d.markerIdsAreRangeDeltas ? rangeGroup(prev, gd.value) : gd.value
     if (mg === NEED) return NEED
     groupId = mg
 
