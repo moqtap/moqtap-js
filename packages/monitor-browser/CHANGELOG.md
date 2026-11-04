@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   range begins at the request's start.
 - `MQ1115`: an `actorId`, `contentId`, `environment` or `release` longer than
   256 characters is left out.
+- `upload.timing`: `'object'` (the default) or `'group'`, one time per run of
+  objects, which Insight may also ask for. `MQ1116` reports any other value.
 
 ### Fixed
 

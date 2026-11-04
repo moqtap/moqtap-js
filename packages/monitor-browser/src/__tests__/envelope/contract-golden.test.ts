@@ -45,6 +45,7 @@ interface Spec {
   readonly conn: readonly BodyConn[]
   readonly trk: readonly BodyTrack[]
   readonly records: readonly Record_[]
+  readonly timing?: 'object' | 'group'
 }
 
 function build(p: Spec): Uint8Array {
@@ -77,13 +78,14 @@ function build(p: Spec): Uint8Array {
       },
       conn: p.conn,
       trk: p.trk,
+      ...(p.timing === undefined ? {} : { timing: p.timing }),
     }),
   )
   p.records.forEach((r, i) => {
     const rseq = first + i
     if (r.kind === 'run') {
       frames.json({ t: 'run', v: 2, n: r.runs.length, rseq } as unknown as EnvelopeRecord)
-      frames.raw(encodeRuns(BASE, r.runs))
+      frames.raw(encodeRuns(BASE, r.runs, p.timing))
     } else if (r.kind === 'mark') {
       frames.json({ t: 'mark', v: 1, n: r.marks.length, rseq } as unknown as EnvelopeRecord)
       frames.raw(encodeMarks(BASE, r.marks))
@@ -571,6 +573,8 @@ interface ManifestEntry {
 const manifest = JSON.parse(readFileSync(join(DIR, 'manifest.json'), 'utf8')) as {
   readonly fixtures: readonly ManifestEntry[]
 }
+
+SPECS['group-timing'] = { ...SPECS.basic!, timing: 'group' }
 
 describe('v2 viewer goldens', () => {
   it('rebuilds every accepted fixture, and only those', () => {

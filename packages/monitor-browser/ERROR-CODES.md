@@ -122,6 +122,12 @@ A supplied `sessionId` must be at most 128 UTF-8 bytes, well-formed UTF-16 (no u
 
 *Value carried:* its length, in characters.
 
+### `MQ1116` — expected a timing: object or group
+
+`upload.timing` must be `object` (each object's time, the default) or `group` (one time per run of objects). Anything else is reported and `object` is used.
+
+*Value carried:* the rejected value, JSON-encoded.
+
 ## 2xxx — envelope — framing, body, idempotency, gzip
 
 ### `MQ2001` — frame payload exceeds what a 31-bit length can carry

@@ -95,7 +95,13 @@ class Reader {
 const isFetch = (p: string) =>
   p === 'fetch' || p === 'fetch_joining' || p === 'fill' || p === 'fetch_unseen'
 
-export function decodeRuns(raw: Uint8Array, n: number, baseUs: number): DecodedRun[] {
+/** At `group` timing a run carries no `dt`. */
+export function decodeRuns(
+  raw: Uint8Array,
+  n: number,
+  baseUs: number,
+  timing: 'object' | 'group' = 'object',
+): DecodedRun[] {
   const rd = new Reader(raw)
   const lastG = new Map<number, bigint>()
   let lastSid = 0n
@@ -133,7 +139,7 @@ export function decodeRuns(raw: Uint8Array, n: number, baseUs: number): DecodedR
     const t0Us = lastT0 + rd.t()
     lastT0 = t0Us
     const dt: number[] = []
-    for (let i = 1; i < count; i++) dt.push(rd.t())
+    for (let i = 1; i < count && timing === 'object'; i++) dt.push(rd.t())
     const b = rd.u()
     const end = RUN_ENDS[(fl >> 5) & 3]!
     const rc = end === 'reset' ? rd.big() : null
@@ -216,6 +222,7 @@ export interface BodyFacts {
   readonly runs: DecodedRun[]
   readonly marks: DecodedMark[]
   readonly ends: DecodedEnd[]
+  readonly timing: 'object' | 'group'
 }
 
 async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
@@ -235,6 +242,7 @@ export async function factsOf(body: Uint8Array): Promise<BodyFacts> {
   const batch = JSON.parse(decoder.decode(list[0]!.payload)) as {
     clk: { base_us: number }
     trk: BodyFacts['trk']
+    timing?: 'group'
   }
   const runs: DecodedRun[] = []
   const marks: DecodedMark[] = []
@@ -244,11 +252,13 @@ export async function factsOf(body: Uint8Array): Promise<BodyFacts> {
     if (f.raw) continue
     const r = JSON.parse(decoder.decode(f.payload)) as { t: string; n: number }
     const raw = list[i + 1]
-    if (r.t === 'run') runs.push(...decodeRuns(raw!.payload, r.n, batch.clk.base_us))
+    if (r.t === 'run') {
+      runs.push(...decodeRuns(raw!.payload, r.n, batch.clk.base_us, batch.timing ?? 'object'))
+    }
     if (r.t === 'mark') marks.push(...decodeMarks(raw!.payload, r.n, batch.clk.base_us))
     if (r.t === 'stream-end') ends.push(...decodeEnds(raw!.payload, r.n, batch.clk.base_us))
   }
-  return { trk: batch.trk, runs, marks, ends }
+  return { trk: batch.trk, runs, marks, ends, timing: batch.timing ?? 'object' }
 }
 
 /** Every run and mark in every body, with each run's track key resolved. */

@@ -25,7 +25,13 @@ import {
   runIds,
   type Taken,
 } from '../rollup/runs.js'
-import { type BucketKey, bucketKeyString, bucketKeyWire, type SupportedDraft } from '../types.js'
+import {
+  type BucketKey,
+  bucketKeyString,
+  bucketKeyWire,
+  type SupportedDraft,
+  type Timing,
+} from '../types.js'
 import { ClockSync } from './clock-sync.js'
 
 /** Entries one `run`, `mark` or `stream-end` record holds at most. */
@@ -72,6 +78,8 @@ export class Emitter {
   private _conn = 0
   /** Ordinals of the hooked sessions still open, kept across the page's sessions. */
   private readonly _connIds = new Map<string, number>()
+  /** The timing ingest last stated, kept across the page's sessions. */
+  directedTiming: Timing | undefined
 
   constructor(instanceId: string, startUs: number, clock: ClockSync = new ClockSync()) {
     this.instanceId = instanceId
@@ -341,6 +349,7 @@ export function encodeFacts(
     conns: ReadonlySet<number>,
   ) => boolean = () => true,
   full: () => void = () => {},
+  timing: Timing = 'object',
 ): void {
   const each = <T extends Entry>(
     list: readonly T[],
@@ -374,6 +383,7 @@ export function encodeFacts(
       rseq,
       RECORD_BASE_US,
       part.map((r) => runInput(r, e.trackId(r.key, ti), c)),
+      timing,
     ),
   )
   each(t.marks, (w, rseq, part, ti, c) =>

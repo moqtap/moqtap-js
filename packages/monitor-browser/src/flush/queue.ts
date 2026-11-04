@@ -18,7 +18,13 @@ import {
   writePreamble,
 } from '../envelope/index.js'
 import type { Taken } from '../rollup/runs.js'
-import { type BucketKey, bucketKeyString, type ClockSource, type DetailLevel } from '../types.js'
+import {
+  type BucketKey,
+  bucketKeyString,
+  type ClockSource,
+  type DetailLevel,
+  type Timing,
+} from '../types.js'
 import {
   type Emitter,
   encodeFacts,
@@ -62,6 +68,8 @@ export interface FlushQueueOptions extends Omit<FrameBufferOptions, 'rseq' | 'on
   readonly droppedRecords?: () => number
   /** The integrator's offset to UTC as of now, read at each seal. */
   readonly appClock?: () => AppOffset | undefined
+  /** The timing records are encoded at, read as each is buffered. */
+  readonly timing?: () => Timing
 }
 
 /** An offset to UTC, µs: `utc − mono`, its bound, and the mono µs it was read at. */
@@ -109,6 +117,9 @@ export class FlushQueue extends FrameBuffer {
   private readonly _sealMs: () => number
   private readonly _dropped: () => number
   private readonly _appClock: () => AppOffset | undefined
+  private readonly _timing: () => Timing
+  /** The timing of the buffered records: a body holds one. */
+  private _bufTiming: Timing = 'object'
 
   constructor(opts: FlushQueueOptions) {
     super({
@@ -123,6 +134,7 @@ export class FlushQueue extends FrameBuffer {
     this._sealMs = opts.sealMs ?? (() => 60_000)
     this._dropped = opts.droppedRecords ?? (() => this.droppedRecords)
     this._appClock = opts.appClock ?? (() => undefined)
+    this._timing = opts.timing ?? (() => 'object')
   }
 
   /** The number the next seal will take. Bodies so far are `0 … nextSeq - 1`. */
@@ -142,6 +154,10 @@ export class FlushQueue extends FrameBuffer {
   writeFacts(t: Taken, full: () => void = () => {}): void {
     if (t.runs.length === 0 && t.marks.length === 0 && t.ends.length === 0) return
     const e = this._emitter
+    const timing = this._timing()
+    // A body holds records of one timing: what is buffered at another is sealed first.
+    if (timing !== this._bufTiming && this.records > 0) full()
+    if (this.records === 0) this._bufTiming = timing
     e.noteTotals(t.runs)
     encodeFacts(
       e,
@@ -152,6 +168,7 @@ export class FlushQueue extends FrameBuffer {
       },
       (part, conns) => this._room(part, conns),
       full,
+      this._bufTiming,
     )
   }
 
@@ -262,6 +279,7 @@ export class FlushQueue extends FrameBuffer {
         },
         conn: e.bodyConns(refs.c),
         trk: e.bodyTracks(refs.ti),
+        timing: this._bufTiming,
       }),
     )
     const preamble = preambleFrame({

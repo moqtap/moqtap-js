@@ -62,6 +62,7 @@
                 "relay": "https://relay-a.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -255,6 +256,7 @@
                 "relay": "https://relay-a.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -570,6 +572,7 @@
                 "relay": "https://relay-a.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -694,6 +697,7 @@
                 "relay": "https://relay-c.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -898,6 +902,7 @@
                 "relay": "https://relay-a.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -1046,6 +1051,7 @@
                 "relay": "https://relay-a.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -1262,6 +1268,7 @@
                 "relay": "https://relay-a.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -1381,6 +1388,7 @@
                 "relay": "https://relay-b.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -1549,6 +1557,7 @@
                 "relay": "https://relay-a.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -1661,6 +1670,7 @@
                 "relay": "https://relay-a.example.net"
               }
             ],
+            "timing": "object",
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
@@ -1742,6 +1752,190 @@
           ],
           "marks": [],
           "records": [],
+          "idents": [],
+          "streamEnds": []
+        }
+      }
+    },
+    {
+      "name": "group-timing",
+      "note": "The basic body at group timing: the batch record's timing, and each run's t0 and tl with no per-object dt.",
+      "file": "group-timing.bin",
+      "bodyBytes": 904,
+      "expect": {
+        "ok": true
+      },
+      "read": {
+        "ok": true,
+        "body": {
+          "side": "viewer",
+          "preamble": {
+            "v": 2,
+            "i": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "em": [
+              {
+                "first": 0,
+                "n": 2
+              }
+            ],
+            "seal": {
+              "seq": 0,
+              "fromUs": 7200000000,
+              "throughUs": 7215000000,
+              "ms": 15000
+            }
+          },
+          "batch": {
+            "v": 2,
+            "instanceId": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "seq": 0,
+            "idempotencyKey": "f3382ccd1be03893c514d90799d5f2ebd777b4ca76de3692c639a9c3ba3335c0",
+            "final": false,
+            "clk": {
+              "baseUs": 7200000000,
+              "epoch": 0,
+              "resUs": 5,
+              "sample": {
+                "oUs": 1761688800041500,
+                "rUs": 18250,
+                "atUs": 7198000000,
+                "pop": "LHR"
+              },
+              "app": null
+            },
+            "tail": {
+              "lastRseq": 1,
+              "preDrop": {
+                "records": 0,
+                "objects": 0
+              },
+              "conn": []
+            },
+            "conns": [
+              {
+                "c": 0,
+                "draft": 20,
+                "relay": "https://relay-a.example.net"
+              }
+            ],
+            "timing": "group",
+            "t": "batch",
+            "sessionId": "sess_8c41f2d0",
+            "lvl": "baseline",
+            "tracks": [
+              {
+                "id": 0,
+                "key": {
+                  "dir": "rx",
+                  "kind": "alias",
+                  "id": "1",
+                  "epoch": 0
+                }
+              },
+              {
+                "id": 1,
+                "key": {
+                  "dir": "rx",
+                  "kind": "alias",
+                  "id": "2",
+                  "epoch": 0
+                }
+              }
+            ]
+          },
+          "runs": [
+            {
+              "rseq": 1,
+              "entries": [
+                {
+                  "cont": false,
+                  "xid": false,
+                  "fo": true,
+                  "foKnown": true,
+                  "eog": true,
+                  "end": "fin",
+                  "gs": false,
+                  "c": 0,
+                  "ti": 0,
+                  "g": "100",
+                  "path": "sub_stream",
+                  "sub": "0",
+                  "sid": "3",
+                  "o0": "0",
+                  "n": 8,
+                  "oid": null,
+                  "osub": null,
+                  "t0Us": 7200045100,
+                  "dt": [],
+                  "b": 41210,
+                  "rc": null,
+                  "tl": 2342
+                },
+                {
+                  "cont": false,
+                  "xid": false,
+                  "fo": true,
+                  "foKnown": true,
+                  "eog": false,
+                  "end": "fin",
+                  "gs": false,
+                  "c": 0,
+                  "ti": 1,
+                  "g": "100",
+                  "path": "sub_stream",
+                  "sub": "0",
+                  "sid": "7",
+                  "o0": "0",
+                  "n": 13,
+                  "oid": null,
+                  "osub": null,
+                  "t0Us": 7200046000,
+                  "dt": [],
+                  "b": 2080,
+                  "rc": null,
+                  "tl": 2400
+                },
+                {
+                  "cont": false,
+                  "xid": false,
+                  "fo": true,
+                  "foKnown": true,
+                  "eog": false,
+                  "end": "open",
+                  "gs": false,
+                  "c": 0,
+                  "ti": 0,
+                  "g": "101",
+                  "path": "sub_stream",
+                  "sub": "0",
+                  "sid": "11",
+                  "o0": "0",
+                  "n": 2,
+                  "oid": null,
+                  "osub": null,
+                  "t0Us": 7200311900,
+                  "dt": [],
+                  "b": 9870,
+                  "rc": null,
+                  "tl": 333
+                }
+              ]
+            }
+          ],
+          "marks": [],
+          "records": [
+            {
+              "rseq": 0,
+              "t": "ctrl",
+              "record": {
+                "t": "ctrl",
+                "c": 0,
+                "dir": "tx",
+                "rseq": 0
+              },
+              "raw": ["0300050102030405"]
+            }
+          ],
           "idents": [],
           "streamEnds": []
         }

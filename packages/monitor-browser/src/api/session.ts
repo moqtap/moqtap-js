@@ -389,6 +389,10 @@ export class CollectorRuntime {
       maxPendingBytes: () => this._cap(),
       onInternalError: this._onError,
       appClock: () => this._appOffset(),
+      timing: () => {
+        const own = config.upload.timing
+        return this._emitter.directedTiming === 'group' ? 'group' : own
+      },
     })
     this._schedule = new FlushSchedule({
       onFlush: () => this._sealNow(true),
@@ -531,6 +535,9 @@ export class CollectorRuntime {
       clockSync: this._emitter.clock,
       ...(ports.fetchImpl !== undefined ? { fetchImpl: ports.fetchImpl } : {}),
       onInternalError: this._onError,
+      onTiming: (t) => {
+        this._emitter.directedTiming = t
+      },
     })
     this._pacer = new ReleasePacer({
       // The pacer shapes only the DELAY between releases; it can never seal

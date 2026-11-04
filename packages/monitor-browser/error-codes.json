@@ -116,6 +116,11 @@
       "value": "its length, in characters",
       "detail": "`actorId` (as sent, after `privacy.hashActorId`), `contentId`, `environment` and `release` take at most 256 characters. A longer one is left out, never cut: at `init()` the default is used, and in `setContext()` the session keeps the value it had."
     },
+    "MQ1116": {
+      "summary": "expected a timing: object or group",
+      "value": "the rejected value, JSON-encoded",
+      "detail": "`upload.timing` must be `object` (each object's time, the default) or `group` (one time per run of objects). Anything else is reported and `object` is used."
+    },
     "MQ2001": {
       "summary": "frame payload exceeds what a 31-bit length can carry",
       "value": "the payload length in bytes",

@@ -518,6 +518,7 @@ init({
 | `upload.maxAttempts` | `5` | Attempts per upload round. An upload that runs out of attempts stays queued and is retried. |
 | `upload.timeoutMs` | `10000` | How long one upload request may go unanswered. |
 | `upload.drainDeadlineMs` | `2000` | How long `flush()` and `end()` wait for uploads to finish. |
+| `upload.timing` | `'object'` | `'object'` sends each object's arrival time; `'group'` sends one time per run of objects, which uploads less. Insight may switch it to `'group'`, but never switches your `'group'` to `'object'`. |
 | `storage.quotaBytes` | `8388608` | Space in IndexedDB for data waiting to upload. |
 | `privacy.maskAuthParams` | `true` | Mask authorization tokens before anything is stored or sent. |
 | `privacy.hashActorId` | `false` | Send a hash of `actorId` instead of the value. |

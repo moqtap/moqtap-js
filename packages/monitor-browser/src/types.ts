@@ -1146,7 +1146,16 @@ export interface UploadConfig {
   readonly drainDeadlineMs: number
   /** The cap on a `sendBeacon` payload. */
   readonly beaconMaxBytes: number
+  /**
+   * How uploads time objects: `object`, each object's arrival (the default),
+   * or `group`, one time per run of objects, which uploads less. Ingest may
+   * ask for `group`; it never raises `group` to `object`.
+   */
+  readonly timing: Timing
 }
+
+/** How an upload times objects: per object, or per run of objects. */
+export type Timing = 'object' | 'group'
 
 /** The IndexedDB backlog, sized by what is waiting to upload. */
 export interface StorageConfig {
@@ -1375,6 +1384,8 @@ export interface BatchRecord {
   /** Each connection the body references; `draft` once the monitor has seen it. */
   readonly conn: readonly { readonly c: number; readonly draft?: number; readonly relay: string }[]
   readonly trk: readonly { readonly id: number; readonly key: RollupTrackWire['key'] }[]
+  /** Present at `group` timing: the body's runs carry no per-object times. */
+  readonly timing?: 'group'
 }
 
 /** Sent once per instance, in its first body. */
@@ -1923,6 +1934,8 @@ export interface UploadOutcome {
  *    recording minutes for the month are used up. Every raise is refused while
  *    it lasts, and a raised level drops to `baseline` at the next rollup interval
  *    (`metrics.intervalMs`).
+ *  - `timing`: `object` or `group`, stated on the clock exchange and on
+ *    accepted uploads; a `group` here overrides an `upload.timing` of `object`.
  */
 export interface Directive {
   readonly flushMs?: number
@@ -1933,6 +1946,7 @@ export interface Directive {
     readonly reason: string
   }
   readonly hold?: { readonly until: number }
+  readonly timing?: Timing
 }
 
 /**

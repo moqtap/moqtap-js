@@ -1,4 +1,4 @@
-import type { ClockSource, Directive, UploadOutcome } from '../types.js'
+import type { ClockSource, Directive, Timing, UploadOutcome } from '../types.js'
 import { BEACON_MAX_BYTES, UPLOAD_CONTENT_TYPE, uploadUrl } from './beacon.js'
 import { ClockSync } from './clock-sync.js'
 import { deadlineSignal, sleepUntil } from './deadline.js'
@@ -59,6 +59,8 @@ export interface UploaderOptions {
   readonly clockSync?: ClockSync
   readonly headers?: Readonly<Record<string, string>>
   readonly onInternalError?: (err: unknown) => void
+  /** Called with the `timing` an accepted upload or a clock exchange states. */
+  readonly onTiming?: (timing: Timing) => void
 }
 
 const DEFAULT_MAX_ATTEMPTS = 5
@@ -102,6 +104,7 @@ export class Uploader {
   private readonly _sync: ClockSync
   private readonly _headers: Readonly<Record<string, string>>
   private readonly _onError: ((err: unknown) => void) | undefined
+  private readonly _onTiming: ((timing: Timing) => void) | undefined
   private _terminalDrops = 0
   private _retries = 0
 
@@ -119,6 +122,7 @@ export class Uploader {
     this._sync = o.clockSync ?? new ClockSync()
     this._headers = o.headers ?? {}
     this._onError = o.onInternalError
+    this._onTiming = o.onTiming
   }
 
   /** The exchanges so far. */
@@ -206,6 +210,7 @@ export class Uploader {
       const serverWallMs = this._note(res, t1, t4, epoch)
       if (res.ok) {
         const directive = this._directive(res)
+        if (directive?.timing !== undefined) this._onTiming?.(directive.timing)
         return {
           ok: true,
           status: res.status,
@@ -293,6 +298,8 @@ export class Uploader {
       })
       const t4 = this._clock.now()
       this._note(res, t1, t4, epoch)
+      const timing = res.ok ? this._directive(res)?.timing : undefined
+      if (timing !== undefined) this._onTiming?.(timing)
       return res.ok
     } catch (err) {
       this._onError?.(err)

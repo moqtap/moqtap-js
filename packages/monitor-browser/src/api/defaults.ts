@@ -81,6 +81,7 @@ export const DEFAULT_UPLOAD: UploadConfig = /*#__PURE__*/ Object.freeze({
   timeoutMs: 10_000,
   drainDeadlineMs: 2_000,
   beaconMaxBytes: 64 * 1024,
+  timing: 'object',
 })
 
 /** One line per {@link UploadConfig} key. */
@@ -100,6 +101,7 @@ export const UPLOAD_PROVENANCE: { readonly [K in keyof UploadConfig]: string } =
       'The bound a per-request timeout cannot give: maxAttempts requests at timeoutMs each, plus backoff, is minutes, and `flush()` and `end()` are awaited by the page. Guess, pending field data — 2 s is what a teardown can absorb. Expiry is not loss: the chunk stays queued and is retried.',
     beaconMaxBytes:
       'sendBeacon caps around 64 KB and is best-effort. Platform-imposed, not chosen.',
+    timing: 'Each object is timed by default. Group timing uploads less; Insight may ask for it.',
   })
 
 /** The rollup. */

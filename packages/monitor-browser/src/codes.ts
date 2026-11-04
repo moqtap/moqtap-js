@@ -59,6 +59,8 @@ export const MQ1113 = 'MQ1113'
 export const MQ1114 = 'MQ1114'
 /** A context value longer than 256 characters was left out. */
 export const MQ1115 = 'MQ1115'
+/** `upload.timing` is neither `object` nor `group`. The default is used. */
+export const MQ1116 = 'MQ1116'
 
 /* ── 2xxx — envelope ─────────────────────────────────────────────────────── */
 

@@ -58,6 +58,7 @@ export function parseDirective(raw: string | null): Directive | undefined {
     until?: number
     elevate?: NonNullable<Directive['elevate']>
     hold?: NonNullable<Directive['hold']>
+    timing?: NonNullable<Directive['timing']>
   } = {}
   if (finite(o.flushMs)) {
     out.flushMs = o.flushMs
@@ -86,7 +87,11 @@ export function parseDirective(raw: string | null): Directive | undefined {
     const { until } = h as Record<string, unknown>
     if (finite(until)) out.hold = { until }
   }
-  return out.flushMs === undefined && out.elevate === undefined && out.hold === undefined
+  if (o.timing === 'object' || o.timing === 'group') out.timing = o.timing
+  return out.flushMs === undefined &&
+    out.elevate === undefined &&
+    out.hold === undefined &&
+    out.timing === undefined
     ? undefined
     : out
 }

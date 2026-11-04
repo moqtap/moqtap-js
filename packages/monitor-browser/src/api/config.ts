@@ -32,6 +32,7 @@ import {
   MQ1113,
   MQ1114,
   MQ1115,
+  MQ1116,
 } from '../codes.js'
 import { sha256Hex } from '../envelope/sha256.js'
 import {
@@ -45,6 +46,7 @@ import {
   type PrivacyConfig,
   type ResolvedConfig,
   type StorageConfig,
+  type Timing,
   type TriggerConfig,
   type UploadConfig,
 } from '../types.js'
@@ -488,7 +490,15 @@ function uploadOf(v: unknown, report: (p: ConfigProblem) => void): UploadConfig 
     timeoutMs: posInt(u.timeoutMs, d.timeoutMs, 'upload.timeoutMs', report),
     drainDeadlineMs: posInt(u.drainDeadlineMs, d.drainDeadlineMs, 'upload.drainDeadlineMs', report),
     beaconMaxBytes: posInt(u.beaconMaxBytes, d.beaconMaxBytes, 'upload.beaconMaxBytes', report),
+    timing: timingOf(u.timing, d.timing, report),
   })
+}
+
+function timingOf(v: unknown, d: Timing, report: (p: ConfigProblem) => void): Timing {
+  if (v === undefined) return d
+  if (v === 'object' || v === 'group') return v
+  report({ key: 'upload.timing', code: MQ1116, got: JSON.stringify(v) })
+  return d
 }
 
 function flightRecorderOf(v: unknown, report: (p: ConfigProblem) => void): FlightRecorderConfig {

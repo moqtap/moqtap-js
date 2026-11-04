@@ -4,7 +4,7 @@
  * a JSON frame, gzipped or not. A `run` or `mark` record is one JSON
  * descriptor followed by one raw frame of LEB128 columns:
  *
- *     run         fl c ti g path [sk [sub]] [sid] o0 n [oid…] [osub…] t0 dt… b [rc] tl
+ *     run         fl c ti g path [sk [sub]] [sid] o0 n [oid…] [osub…] t0 [dt…] b [rc] tl
  *     mark        kind c ti g o [g2 o2] [n] t path [sid]
  *     stream-end  fl c ti path sid [g [o]] t [rc]
  *
@@ -12,10 +12,10 @@
  * first from 0), `sid` a `z` delta from the previous stream run's (the first
  * from 0), and `t0`/`t` a `t` delta from the previous entry's (the first from
  * the body's `clk.base_us`). A stream end's `sid` is absolute. Every time is
- * device mono µs, floored.
+ * device mono µs, floored. A body at `group` timing writes no `dt`.
  */
 
-import type { BatchRecord, EnvelopeRecord } from '../types.js'
+import type { BatchRecord, EnvelopeRecord, Timing } from '../types.js'
 import { FrameWriter } from './frame-writer.js'
 import { LebWriter } from './leb.js'
 
@@ -133,7 +133,11 @@ function quantum(us: number, t0: number): number {
   return q
 }
 
-export function encodeRuns(baseUs: number, runs: readonly RunInput[]): Uint8Array {
+export function encodeRuns(
+  baseUs: number,
+  runs: readonly RunInput[],
+  timing: Timing = 'object',
+): Uint8Array {
   const w = new LebWriter(runs.length * 24)
   const lastG = new Map<number, bigint>()
   let lastSid = 0n
@@ -199,7 +203,7 @@ export function encodeRuns(baseUs: number, runs: readonly RunInput[]): Uint8Arra
     w.t(t0 - lastT0)
     lastT0 = t0
     let q = 0
-    for (let i = 1; i < n; i++) {
+    for (let i = 1; i < n && timing === 'object'; i++) {
       const qi = quantum(Math.floor(r.timesUs[i] as number), t0)
       w.t(qi - q)
       q = qi
@@ -295,8 +299,9 @@ export function writeRunRecord(
   rseq: number,
   baseUs: number,
   runs: readonly RunInput[],
+  timing: Timing = 'object',
 ): void {
-  const raw = encodeRuns(baseUs, runs)
+  const raw = encodeRuns(baseUs, runs, timing)
   w.json({ t: 'run', v: 2, n: runs.length, rseq } as unknown as EnvelopeRecord)
   w.raw(raw)
 }
@@ -448,6 +453,7 @@ export interface BatchV2 {
   readonly tail: BodyTail
   readonly conn: readonly BodyConn[]
   readonly trk: readonly BodyTrack[]
+  readonly timing?: Timing
 }
 
 /** The batch record's JSON, fields in the order the reference writer puts them. */
@@ -489,6 +495,7 @@ export function batchJson(b: BatchV2): BatchRecord {
         : { c: c.c, draft: c.draft, relay: c.relay },
     ),
     trk: b.trk.map((t) => ({ id: t.id, key: { d: t.key.d, k: t.key.k, v: t.key.v, e: t.key.e } })),
+    ...(b.timing === 'group' ? { timing: 'group' as const } : {}),
   }
 }
 
