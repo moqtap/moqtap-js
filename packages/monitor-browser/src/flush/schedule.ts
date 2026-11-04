@@ -39,6 +39,8 @@ export interface FlushScheduleOptions {
   /** The steady interval once the early phase is over. Default `DEFAULT_UPLOAD.intervalMs`. */
   readonly intervalMs?: number
   readonly timers?: TimerSource
+  /** Monotonic now, ms, for the times a body states its next seal at. Default `performance.now()`. */
+  readonly now?: () => Mono
   readonly onInternalError?: (err: unknown) => void
 }
 
@@ -56,8 +58,15 @@ export class FlushSchedule {
   private readonly _early: readonly number[]
   private readonly _intervalMs: number
   private readonly _timers: TimerSource
+  private readonly _now: () => Mono
 
   private _handles: unknown[] = []
+  /** When each pending ready or early seal is due. */
+  private readonly _earlyAt = new Map<unknown, Mono>()
+  /** When the interval seal is due. */
+  private _intervalAt: Mono | undefined
+  /** The next seal a body stated: no re-arm moves the interval past it. */
+  private _promised: Mono | undefined
   private _intervalHandle: unknown
   private _byteHandle: unknown
   /** A shorter interval ingest asked for, until its timer ends it. */
@@ -78,6 +87,19 @@ export class FlushSchedule {
       .sort((a, b) => a - b)
     this._intervalMs = Math.max(1, o.intervalMs ?? DEFAULT_UPLOAD.intervalMs)
     this._timers = o.timers ?? platformTimers
+    this._now = o.now ?? (() => performance.now())
+  }
+
+  /**
+   * When the next seal is due, stated by the body being sealed now; no later
+   * change of interval moves it past this. Undefined once stopped.
+   */
+  promiseNext(): Mono | undefined {
+    if (!this._started || this._stopped) return undefined
+    let at = this._intervalAt
+    for (const t of this._earlyAt.values()) if (at === undefined || t < at) at = t
+    if (at !== undefined) this._promised = at
+    return at
   }
 
   /** Monotonic time the schedule was armed. Every offset below is relative to it. */
@@ -111,7 +133,9 @@ export class FlushSchedule {
     this._readied = true
     for (const h of this._handles) this._timers.clearTimer(h)
     this._handles = []
+    this._earlyAt.clear()
     this._intervalHandle = undefined
+    this._intervalAt = undefined
     this._arm(nowMono)
   }
 
@@ -121,9 +145,11 @@ export class FlushSchedule {
     for (const at of this._early) this._after(at, 'early')
     const lastEarly = this._early.length > 0 ? (this._early[this._early.length - 1] as number) : 0
     this._intervalHandle = this._timers.setTimer(() => {
-      this._fire('interval')
+      this._promised = undefined
       this._rearmInterval()
+      this._fire('interval')
     }, lastEarly + this._intervalMs)
+    this._intervalAt = this._now() + lastEarly + this._intervalMs
     this._handles.push(this._intervalHandle)
   }
 
@@ -149,11 +175,13 @@ export class FlushSchedule {
     if (!this._started || this._stopped || this._byteHandle !== undefined) return
     this._byteHandle = this._timers.setTimer(() => {
       this._byteHandle = undefined
-      this._fire('bytes')
       // "every 60 s **or** every 32 KB accumulated, whichever comes first" —
       // a byte seal restarts the interval, or a session at the threshold would
-      // seal twice in quick succession every minute.
+      // seal twice in quick succession every minute. Restarted first, so the
+      // body states the seal after it.
+      this._promised = undefined
       this._rearmInterval()
+      this._fire('bytes')
     }, 0)
   }
 
@@ -201,6 +229,8 @@ export class FlushSchedule {
     this._stopped = true
     for (const h of this._handles) this._timers.clearTimer(h)
     this._handles = []
+    this._earlyAt.clear()
+    this._intervalAt = undefined
     if (this._shortHandle !== undefined) {
       this._timers.clearTimer(this._shortHandle)
       this._shortHandle = undefined
@@ -213,7 +243,11 @@ export class FlushSchedule {
   }
 
   private _after(ms: number, reason: SealReason): void {
-    const h = this._timers.setTimer(() => this._fire(reason), ms)
+    const h = this._timers.setTimer(() => {
+      this._earlyAt.delete(h)
+      this._fire(reason)
+    }, ms)
+    this._earlyAt.set(h, this._now() + ms)
     this._handles.push(h)
   }
 
@@ -223,10 +257,17 @@ export class FlushSchedule {
       this._timers.clearTimer(this._intervalHandle)
       this._handles = this._handles.filter((h) => h !== this._intervalHandle)
     }
+    const now = this._now()
+    let ms = this._shortMs ?? this._intervalMs
+    const p = this._promised
+    if (p !== undefined && p > now) ms = Math.min(ms, p - now)
     this._intervalHandle = this._timers.setTimer(() => {
-      this._fire('interval')
+      // The promised seal is this one: the next is stated by its body.
+      this._promised = undefined
       this._rearmInterval()
-    }, this._shortMs ?? this._intervalMs)
+      this._fire('interval')
+    }, ms)
+    this._intervalAt = now + ms
     this._handles.push(this._intervalHandle)
   }
 

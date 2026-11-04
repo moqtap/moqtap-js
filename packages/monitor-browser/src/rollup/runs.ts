@@ -64,6 +64,40 @@ export interface RecordedRun {
   eog: boolean
   end: RunEnd
   rc: bigint | null
+  /** The record and entry it was encoded as, once it was. */
+  ref?: RunRef
+}
+
+/** A run's place in the emitter's records: entry `j` of record `rseq`. */
+export interface RunRef {
+  readonly rseq: number
+  readonly j: number
+}
+
+/**
+ * The last payload byte of a run's last object, which was still arriving
+ * when the run was taken: `ref` once the run is encoded, else its flow and
+ * last id name it.
+ */
+export interface LateEnd {
+  readonly c: number
+  readonly flow: string
+  readonly o: bigint
+  readonly tUs: number
+  readonly ref?: RunRef
+}
+
+/** A run whose last object can still take a later end. */
+type Endable = Pick<RecordedRun, 'c' | 'flow' | 'last' | 'ref'>
+
+/** A worker's stream run the page took open: what a later end of its last object needs. */
+interface SealedRun {
+  readonly c: number
+  readonly flow: string
+  readonly last: bigint
+  ref?: RunRef
+  /** The run until its record is read off it. */
+  run: RecordedRun | null
 }
 
 /** One mark as received. */
@@ -106,6 +140,8 @@ export interface Taken {
   readonly dropped?: number
   /** Bytes per connection, direction and second. */
   readonly bw?: BwEntry[]
+  /** Later ends of objects still arriving when their run was taken. */
+  readonly runEnds?: LateEnd[]
 }
 
 /** A stream end that closes a group, for the rollup's group span. */
@@ -184,6 +220,12 @@ export class RunRecorder {
   private byFlow = new Map<string, RecordedRun>()
   private marks: RecordedMark[] = []
   private ends: RecordedEnd[] = []
+  /** Taken runs whose last object went on arriving, with its latest byte's time. */
+  private late = new Map<Endable, number>()
+  /** This recorder takes a worker's forwards. */
+  private absorbs = false
+  /** By stream: a forwarded run taken open, while the stream has nothing later. */
+  private readonly sealed = new Map<string, SealedRun>()
   private readonly totals = new Map<number, { objects: number; bytes: number }>()
   /** Arrivals no run could hold: objects of an unseen request's stream whose group is not known. */
   droppedObjects = 0
@@ -235,12 +277,21 @@ export class RunRecorder {
     else this.stream(c, s.streamId, s, t)
   }
 
-  /** More of the open run's last object's payload crossed the stream. */
+  /**
+   * More of the open run's last object's payload crossed the stream. When a
+   * take already took that run, the object's end goes out on its own.
+   */
   onPayload(c: number, sid: number, at: Mono): void {
-    const run = this.streams.get(c)?.get(sid)?.run
-    if (run == null) return
-    run.tl = (at - this.origin) * 1000
-    run.ends[run.n - 1] = run.tl
+    const f = this.streams.get(c)?.get(sid)
+    if (f === undefined) return
+    const t = (at - this.origin) * 1000
+    const run = f.run
+    if (run !== null) {
+      run.tl = t
+      run.ends[run.n - 1] = t
+    } else if (f.taken !== null) {
+      this.late.set(f.taken, t)
+    }
   }
 
   /**
@@ -388,10 +439,41 @@ export class RunRecorder {
     const kept = hold ? this.done.filter((r) => r.end === 'open') : []
     const runs = hold ? this.done.filter((r) => r.end !== 'open') : this.done
     const bw = this.bw.take()
-    const out = { runs, marks: this.marks, ends: this.ends, ...(bw.length > 0 ? { bw } : {}) }
+    for (const s of this.sealed.values()) settle(s)
+    const runEnds: LateEnd[] = []
+    for (const [run, tUs] of this.late) {
+      runEnds.push({
+        c: run.c,
+        flow: run.flow,
+        o: run.last,
+        tUs,
+        ...(run.ref !== undefined ? { ref: run.ref } : {}),
+      })
+    }
+    const out = {
+      runs,
+      marks: this.marks,
+      ends: this.ends,
+      ...(bw.length > 0 ? { bw } : {}),
+      ...(runEnds.length > 0 ? { runEnds } : {}),
+    }
+    if (this.absorbs) {
+      for (const r of runs) {
+        if (r.sid < 0) continue
+        const k = `${r.c}:${r.sid}`
+        this.sealed.delete(k)
+        if (r.end === 'open') this.sealed.set(k, { c: r.c, flow: r.flow, last: r.last, run: r })
+      }
+    }
+    let over = this.sealed.size - MAX_OPEN_FLOWS
+    for (const flow of this.sealed.keys()) {
+      if (over-- <= 0) break
+      this.sealed.delete(flow)
+    }
     this.done = kept
     this.marks = []
     this.ends = []
+    this.late = new Map()
     this.byFlow = new Map(kept.map((r) => [r.flow, r]))
     return out
   }
@@ -403,8 +485,13 @@ export class RunRecorder {
    * forwards and is sealed once.
    */
   absorb(t: Taken): void {
+    this.absorbs = true
     if (t.bw !== undefined) this.bw.absorb(t.bw)
+    // Before this forward's runs: a later run of the flow is no longer the one ended.
+    for (const e of t.runEnds ?? []) this.absorbEnd(e)
     for (const r of t.runs) {
+      // A next object started on the stream: the sealed run's end is final.
+      if (r.sid >= 0) this.sealed.delete(`${r.c}:${r.sid}`)
       const prior = r.cont ? this.byFlow.get(r.flow) : undefined
       if (prior !== undefined && (prior.end === 'open' || prior.end === 'na')) {
         join(prior, r)
@@ -415,6 +502,7 @@ export class RunRecorder {
     }
     for (const m of t.marks) this.marks.push(m)
     for (const e of t.ends) {
+      this.sealed.delete(`${e.c}:${e.sid}`)
       const prior = e.g === null ? undefined : this.byFlow.get(`${e.c}:${e.sid}:${e.g}`)
       if (prior !== undefined && prior.end === 'open' && prior.last === e.o) {
         if (e.end !== 'none') {
@@ -426,6 +514,24 @@ export class RunRecorder {
       }
       this.ends.push(e)
     }
+  }
+
+  /**
+   * A forwarded later end: the run of this interval it was joined into takes
+   * it; a run already taken states it in a record of its own.
+   */
+  private absorbEnd(e: LateEnd): void {
+    const here = this.byFlow.get(e.flow)
+    if (here !== undefined && here.last === e.o && here.ref === undefined) {
+      here.tl = e.tUs
+      here.ends[here.n - 1] = e.tUs
+      return
+    }
+    const s = this.sealed.get(streamOf(e.flow))
+    if (s === undefined || s.flow !== e.flow || s.last !== e.o) return
+    settle(s)
+    // Keyed by the run, so a take states each run's end once, the latest.
+    this.late.set(s, e.tUs)
   }
 
   /** The stream's run whose last object is {g, o} ends its group. */
@@ -607,6 +713,18 @@ function append(run: RecordedRun, id: bigint, t: number, bytes: number): void {
   run.sizes.push(bytes)
   run.b += bytes
   run.tl = t
+}
+
+/** A stream flow's `c:sid`, its `c:sid:g` less the group. */
+function streamOf(flow: string): string {
+  return flow.slice(0, flow.lastIndexOf(':'))
+}
+
+/** Reads the sealed run's record off it, once it was encoded, and lets the run go. */
+function settle(s: SealedRun): void {
+  if (s.run === null) return
+  if (s.run.ref !== undefined) s.ref = s.run.ref
+  s.run = null
 }
 
 /** The stream ended in `end`, `run` its last run. A stream that failed (`gone`) has no end. */

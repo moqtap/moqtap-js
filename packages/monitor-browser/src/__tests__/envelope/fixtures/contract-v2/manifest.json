@@ -5,7 +5,7 @@
       "name": "basic",
       "note": "Subgroup stream runs on draft 20: FIRST_OBJECT known, EOG with FIN, a run open at seal, tl, and a ctrl record keeping its raw control bytes.",
       "file": "basic.bin",
-      "bodyBytes": 984,
+      "bodyBytes": 1005,
       "expect": {
         "ok": true
       },
@@ -26,7 +26,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -189,6 +190,7 @@
           ],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -199,7 +201,7 @@
       "name": "zero-length-normal",
       "note": "Zero-length Normal objects are arrivals with 0 bytes, per draft family (8, 14, 20), on a subgroup stream, as datagrams and on FETCH; no mark is written for them.",
       "file": "zero-length-normal.bin",
-      "bodyBytes": 1046,
+      "bodyBytes": 1067,
       "expect": {
         "ok": true
       },
@@ -220,7 +222,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -537,6 +540,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -547,7 +551,7 @@
       "name": "datagram-arrival-order",
       "note": "A datagram run keeps arrival order: ids 5, 3, 4, 9 are signed deltas, a repeat is kept, EOG flag set.",
       "file": "datagram-arrival-order.bin",
-      "bodyBytes": 757,
+      "bodyBytes": 778,
       "expect": {
         "ok": true
       },
@@ -568,7 +572,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -658,6 +663,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -668,7 +674,7 @@
       "name": "fetch-paths",
       "note": "A standalone FETCH stream carrying groups 11 then 10 (descending order), a joining FETCH on draft 14, a fill on draft 22 with a datagram-flagged object.",
       "file": "fetch-paths.bin",
-      "bodyBytes": 1042,
+      "bodyBytes": 1063,
       "expect": {
         "ok": true
       },
@@ -689,7 +695,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -885,6 +892,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -895,7 +903,7 @@
       "name": "reset-cont-negative",
       "note": "A reset run with its code, a cont run open at seal, times going backward (negative dt, negative tl), a seq 2 body.",
       "file": "reset-cont-negative.bin",
-      "bodyBytes": 770,
+      "bodyBytes": 791,
       "expect": {
         "ok": true
       },
@@ -916,7 +924,8 @@
               "seq": 2,
               "fromUs": 7230000000,
               "throughUs": 7245000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7260000000
             }
           },
           "batch": {
@@ -1032,6 +1041,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -1042,7 +1052,7 @@
       "name": "marks",
       "note": "Marks as received: FETCH range markers (non-existent after the previous entry at {10, 0}; timed out as the first entry of its stream, so from the request start), Prior Group and Object ID Gaps, an undefined status, End of Track (22); End of Track and Group, Does Not Exist (8); End of Subgroup (7); a datagram mark has no stream id.",
       "file": "marks.bin",
-      "bodyBytes": 979,
+      "bodyBytes": 1000,
       "expect": {
         "ok": true
       },
@@ -1063,7 +1073,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -1263,6 +1274,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -1273,7 +1285,7 @@
       "name": "u64-ids",
       "note": "u64 everywhere: an alias of 2^64-1, group 2^64-1, a large stream id and subgroup id.",
       "file": "u64-ids.bin",
-      "bodyBytes": 790,
+      "bodyBytes": 811,
       "expect": {
         "ok": true
       },
@@ -1294,7 +1306,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -1384,6 +1397,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -1394,7 +1408,7 @@
       "name": "stream-ends",
       "note": "Stream ends no run carries: a FIN after the run was sealed, EOG + FIN on a subgroup stream with no object (draft 20), a reset FETCH stream with no object, a FETCH End of Group alone and then a FIN on draft 23.",
       "file": "stream-ends.bin",
-      "bodyBytes": 940,
+      "bodyBytes": 961,
       "expect": {
         "ok": true
       },
@@ -1415,7 +1429,8 @@
               "seq": 1,
               "fromUs": 7215000000,
               "throughUs": 7230000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7245000000
             }
           },
           "batch": {
@@ -1562,6 +1577,7 @@
               ]
             }
           ],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -1572,7 +1588,7 @@
       "name": "ident",
       "note": "A session's identity: the first ident carries every field it has, a later one what setContext set (actor, one tag added), an empty content clears it.",
       "file": "ident.bin",
-      "bodyBytes": 927,
+      "bodyBytes": 948,
       "expect": {
         "ok": true
       },
@@ -1593,7 +1609,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -1674,6 +1691,7 @@
             }
           ],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -1684,7 +1702,7 @@
       "name": "unknown-draft-unseen-fetch",
       "note": "A connection whose draft the monitor did not see: no per-draft check applies. A FETCH stream on draft 14 whose request the monitor did not see: path fetch_unseen, ids as decoded.",
       "file": "unknown-draft-unseen-fetch.bin",
-      "bodyBytes": 872,
+      "bodyBytes": 893,
       "expect": {
         "ok": true
       },
@@ -1705,7 +1723,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -1835,6 +1854,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -1845,7 +1865,7 @@
       "name": "bw-seconds",
       "note": "Bytes per connection, direction and device second: received and sent on two connections, a second at the seal's edge, and a pre total of bytes before init() that no second places. The id was read from the tab's storage.",
       "file": "bw-seconds.bin",
-      "bodyBytes": 779,
+      "bodyBytes": 800,
       "expect": {
         "ok": true
       },
@@ -1866,7 +1886,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -1919,6 +1940,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [
             {
               "rseq": 0,
@@ -1953,7 +1975,7 @@
       "name": "sent-objects",
       "note": "Objects the page sent and objects it received on one connection: a run on a sent alias and one on a received alias, each object with its start, its last payload byte and its size.",
       "file": "sent-objects.bin",
-      "bodyBytes": 827,
+      "bodyBytes": 848,
       "expect": {
         "ok": true
       },
@@ -1974,7 +1996,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -2099,6 +2122,100 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
+        }
+      }
+    },
+    {
+      "name": "run-ends",
+      "note": "The body after sent-objects: the last object of its open run (record 0, entry 1) was still arriving at that seal, and its last payload byte is stated here.",
+      "file": "run-ends.bin",
+      "bodyBytes": 709,
+      "expect": {
+        "ok": true
+      },
+      "read": {
+        "ok": true,
+        "body": {
+          "side": "viewer",
+          "preamble": {
+            "v": 2,
+            "i": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "em": [
+              {
+                "first": 1,
+                "n": 1
+              }
+            ],
+            "seal": {
+              "seq": 1,
+              "fromUs": 7215000000,
+              "throughUs": 7230000000,
+              "ms": 15000,
+              "nextUs": 7245000000
+            }
+          },
+          "batch": {
+            "v": 2,
+            "instanceId": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "seq": 1,
+            "idempotencyKey": "fadb2acde24a2fb932a602a9316478828f4e56abb3f5725c948d128f37d8f995",
+            "final": false,
+            "clk": {
+              "baseUs": 7200000000,
+              "epoch": 0,
+              "resUs": 5,
+              "sample": {
+                "oUs": 1761688800041500,
+                "rUs": 18250,
+                "atUs": 7198000000,
+                "pop": "LHR"
+              },
+              "app": null
+            },
+            "tail": {
+              "lastRseq": 1,
+              "preDrop": {
+                "records": 0,
+                "objects": 0
+              },
+              "conn": []
+            },
+            "conns": [
+              {
+                "c": 0,
+                "draft": 20,
+                "relay": "https://relay-a.example.net/"
+              }
+            ],
+            "timing": "object",
+            "t": "batch",
+            "sessionId": "sess_8c41f2d0",
+            "lvl": "baseline",
+            "tracks": [],
+            "ss": null
+          },
+          "runs": [],
+          "marks": [],
+          "records": [],
+          "idents": [],
+          "streamEnds": [],
+          "runEnds": [
+            {
+              "rseq": 1,
+              "entries": [
+                {
+                  "c": 0,
+                  "r": 0,
+                  "j": 1,
+                  "eUs": 7200058000
+                }
+              ]
+            }
+          ],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -2109,7 +2226,7 @@
       "name": "conn-ends",
       "note": "v2 conn-open and conn-close with device times, one per cause: closed by the relay with its code and reason, failed before it was ready, the page ending, and a terminated worker, each with the monitor counters. The id was minted and written.",
       "file": "conn-ends.bin",
-      "bodyBytes": 2062,
+      "bodyBytes": 2083,
       "expect": {
         "ok": true
       },
@@ -2130,7 +2247,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -2193,6 +2311,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [
             {
@@ -2317,7 +2436,7 @@
       "name": "group-timing",
       "note": "The basic body at group timing: the batch record's timing, and each run's t0, payload bytes and tl with no per-object start, end or size.",
       "file": "group-timing.bin",
-      "bodyBytes": 905,
+      "bodyBytes": 926,
       "expect": {
         "ok": true
       },
@@ -2338,7 +2457,8 @@
               "seq": 0,
               "fromUs": 7200000000,
               "throughUs": 7215000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7230000000
             }
           },
           "batch": {
@@ -2501,6 +2621,7 @@
           ],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -2511,7 +2632,7 @@
       "name": "raised",
       "note": "A later body (seq 1) sealed at raised detail (lvl headers).",
       "file": "raised.bin",
-      "bodyBytes": 756,
+      "bodyBytes": 777,
       "expect": {
         "ok": true
       },
@@ -2532,7 +2653,8 @@
               "seq": 1,
               "fromUs": 7215000000,
               "throughUs": 7230000000,
-              "ms": 15000
+              "ms": 15000,
+              "nextUs": 7245000000
             }
           },
           "batch": {
@@ -2622,6 +2744,7 @@
           "records": [],
           "idents": [],
           "streamEnds": [],
+          "runEnds": [],
           "bw": [],
           "connOpens": [],
           "connCloses": []
@@ -2632,7 +2755,7 @@
       "name": "refuse-stream-end-eog-reset",
       "note": "EOG on a subgroup stream that was reset: a reset loses the end of group.",
       "file": "refuse-stream-end-eog-reset.bin",
-      "bodyBytes": 744,
+      "bodyBytes": 765,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2646,7 +2769,21 @@
       "name": "refuse-fetch-eog-before-23",
       "note": "A FETCH End of Group stream end on draft 20, which has no such marker.",
       "file": "refuse-fetch-eog-before-23.bin",
-      "bodyBytes": 744,
+      "bodyBytes": 765,
+      "expect": {
+        "ok": false,
+        "reason": "bad-record"
+      },
+      "read": {
+        "ok": false,
+        "reason": "bad-record"
+      }
+    },
+    {
+      "name": "refuse-run-end-not-earlier",
+      "note": "A run-end naming a record that is not earlier than its own.",
+      "file": "refuse-run-end-not-earlier.bin",
+      "bodyBytes": 759,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2660,7 +2797,7 @@
       "name": "refuse-pace",
       "note": "A pace record in a viewer body.",
       "file": "refuse-pace.bin",
-      "bodyBytes": 736,
+      "bodyBytes": 757,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2674,7 +2811,7 @@
       "name": "refuse-gs",
       "note": "gs on a viewer run: only the source knows a group start.",
       "file": "refuse-gs.bin",
-      "bodyBytes": 742,
+      "bodyBytes": 763,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2688,7 +2825,7 @@
       "name": "refuse-fo-known-on-datagram",
       "note": "fo_known on a datagram run.",
       "file": "refuse-fo-known-on-datagram.bin",
-      "bodyBytes": 740,
+      "bodyBytes": 761,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2702,7 +2839,7 @@
       "name": "refuse-datagram-subgroup",
       "note": "A datagram run carrying a subgroup id.",
       "file": "refuse-datagram-subgroup.bin",
-      "bodyBytes": 740,
+      "bodyBytes": 761,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2716,7 +2853,7 @@
       "name": "refuse-fo-known-before-18",
       "note": "fo_known on draft 14, which has no FIRST_OBJECT bit.",
       "file": "refuse-fo-known-before-18.bin",
-      "bodyBytes": 742,
+      "bodyBytes": 763,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2730,7 +2867,7 @@
       "name": "refuse-fill-before-20",
       "note": "A fill stream on draft 14.",
       "file": "refuse-fill-before-20.bin",
-      "bodyBytes": 742,
+      "bodyBytes": 763,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2744,7 +2881,7 @@
       "name": "refuse-joining-fetch-after-19",
       "note": "A joining FETCH on draft 20, which removed it.",
       "file": "refuse-joining-fetch-after-19.bin",
-      "bodyBytes": 742,
+      "bodyBytes": 763,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2758,7 +2895,7 @@
       "name": "refuse-datagram-eog-before-12",
       "note": "A datagram END_OF_GROUP on draft 11, which has no such flag.",
       "file": "refuse-datagram-eog-before-12.bin",
-      "bodyBytes": 740,
+      "bodyBytes": 761,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2772,7 +2909,7 @@
       "name": "refuse-bad-ss",
       "note": "ss names no source of the browsing-session id: it is stored, new or page, or absent.",
       "file": "refuse-bad-ss.bin",
-      "bodyBytes": 696,
+      "bodyBytes": 717,
       "expect": {
         "ok": false,
         "reason": "no-batch-record"
@@ -2786,7 +2923,7 @@
       "name": "refuse-bw-undeclared-conn",
       "note": "A bw entry names a connection the body does not list.",
       "file": "refuse-bw-undeclared-conn.bin",
-      "bodyBytes": 733,
+      "bodyBytes": 754,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2800,7 +2937,7 @@
       "name": "refuse-bw-zero-second",
       "note": "A bw second with no bytes: only seconds with bytes are listed.",
       "file": "refuse-bw-zero-second.bin",
-      "bodyBytes": 735,
+      "bodyBytes": 756,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2814,7 +2951,7 @@
       "name": "refuse-instance-mismatch",
       "note": "The batch record names another instance than the preamble.",
       "file": "refuse-instance-mismatch.bin",
-      "bodyBytes": 654,
+      "bodyBytes": 675,
       "expect": {
         "ok": false,
         "reason": "bad-instance-id"
@@ -2828,7 +2965,7 @@
       "name": "refuse-source-body",
       "note": "A source body posted to the viewer path.",
       "file": "refuse-source-body.bin",
-      "bodyBytes": 1353,
+      "bodyBytes": 1374,
       "expect": {
         "ok": false,
         "reason": "wrong-path"

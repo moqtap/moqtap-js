@@ -15,12 +15,14 @@ import {
   type StreamEndInput,
   writeBwRecord,
   writeMarkRecord,
+  writeRunEndRecord,
   writeRunRecord,
   writeStreamEndRecord,
 } from '../envelope/contract.js'
 import { FrameWriter } from '../envelope/frame-writer.js'
 import type { BwEntry } from '../rollup/bw.js'
 import {
+  type LateEnd,
   type RecordedEnd,
   type RecordedMark,
   type RecordedRun,
@@ -389,15 +391,19 @@ export function encodeFacts(
       put({ frames: w.take(), count, records: [{ rseq, refs: { ti, c } }] })
     }
   }
-  each(t.runs, (w, rseq, part, ti, c) =>
+  each(t.runs, (w, rseq, part, ti, c) => {
     writeRunRecord(
       w,
       rseq,
       RECORD_BASE_US,
       part.map((r) => runInput(r, e.trackId(r.key, ti), c)),
       timing,
-    ),
-  )
+    )
+    // A later end of a run's last object names the record and entry it went in.
+    part.forEach((r, j) => {
+      r.ref = { rseq, j }
+    })
+  })
   each(t.marks, (w, rseq, part, ti, c) =>
     writeMarkRecord(
       w,
@@ -414,6 +420,29 @@ export function encodeFacts(
       part.map((x) => endInput(x, e.trackId(x.key, ti), c)),
     ),
   )
+  const late = (t.runEnds ?? []).filter((x) => x.ref !== undefined)
+  for (let i = 0; i < late.length; ) {
+    const c = new Set<number>()
+    let j = i
+    for (; j < late.length && j - i < MAX_RECORD_ENTRIES; j++) {
+      const x = (late[j] as LateEnd).c
+      if (!c.has(x) && c.size === MAX_BODY_CONNS) break
+      c.add(x)
+    }
+    const part = late.slice(i, j)
+    i = j
+    if (!room([], c)) full()
+    const w = new FrameWriter({ initialBytes: 64 })
+    const rseq = e.takeRseq()
+    writeRunEndRecord(
+      w,
+      rseq,
+      RECORD_BASE_US,
+      part.map((x) => ({ c: x.c, r: x.ref!.rseq, j: x.ref!.j, eUs: x.tUs })),
+    )
+    const count = w.frameCount
+    put({ frames: w.take(), count, records: [{ rseq, refs: { ti: new Set(), c } }] })
+  }
   const bw = t.bw ?? []
   for (let i = 0; i < bw.length; ) {
     // A record names no more connections than a body lists.

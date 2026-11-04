@@ -314,7 +314,8 @@ export class ProbeRuntime {
       taken.marks.length > 0 ||
       taken.ends.length > 0 ||
       taken.dropped > 0 ||
-      taken.bw !== undefined
+      taken.bw !== undefined ||
+      taken.runEnds !== undefined
     const hasFrames = this._buffer.frameCount > 0
     const closed = this._rollups
     const brk = this._brk

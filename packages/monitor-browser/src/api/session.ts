@@ -369,6 +369,7 @@ export class CollectorRuntime {
       clock: this._clock,
       level: () => this._escalation.level,
       sealMs: () => this._schedule.sealMs,
+      nextSeal: () => this._schedule.promiseNext(),
       droppedRecords: () => this._emitter.droppedRecords + this._dropped(),
       maxPendingBytes: () => this._cap(),
       onInternalError: this._onError,
@@ -383,6 +384,7 @@ export class CollectorRuntime {
       byteThreshold: config.upload.byteThreshold,
       earlyFlushesMs: config.upload.earlyFlushesMs,
       intervalMs: config.upload.intervalMs,
+      now: () => this._clock.now(),
       ...(ports.setTimer !== undefined && ports.clearTimer !== undefined
         ? { timers: { setTimer: ports.setTimer, clearTimer: ports.clearTimer } }
         : {}),

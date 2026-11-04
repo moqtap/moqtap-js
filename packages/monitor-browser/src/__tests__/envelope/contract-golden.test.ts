@@ -15,10 +15,12 @@ import {
   contractBody,
   encodeBw,
   encodeMarks,
+  encodeRunEnds,
   encodeRuns,
   encodeStreamEnds,
   type MarkInput,
   preambleFrame,
+  type RunEndInput,
   type RunInput,
   type StreamEndInput,
   withRseq,
@@ -41,6 +43,7 @@ type Record_ =
   | { readonly kind: 'mark'; readonly marks: readonly MarkInput[] }
   | { readonly kind: 'stream-end'; readonly ends: readonly StreamEndInput[] }
   | { readonly kind: 'bw'; readonly entries: readonly BwInput[] }
+  | { readonly kind: 'run-end'; readonly ends: readonly RunEndInput[] }
   | { readonly kind: 'json'; readonly json: Record<string, unknown>; readonly raw: Uint8Array[] }
 
 interface Spec {
@@ -102,6 +105,9 @@ function build(p: Spec): Uint8Array {
     } else if (r.kind === 'bw') {
       frames.json({ t: 'bw', v: 1, n: r.entries.length, rseq } as unknown as EnvelopeRecord)
       frames.raw(encodeBw(BASE, r.entries))
+    } else if (r.kind === 'run-end') {
+      frames.json({ t: 'run-end', v: 1, n: r.ends.length, rseq } as unknown as EnvelopeRecord)
+      frames.raw(encodeRunEnds(BASE, r.ends))
     } else {
       const one = new FrameWriter()
       one.json(r.json as unknown as EnvelopeRecord)
@@ -122,6 +128,7 @@ function build(p: Spec): Uint8Array {
       fromUs: BASE + seq * SEAL_MS * 1000,
       throughUs: BASE + (seq + 1) * SEAL_MS * 1000,
       ms: SEAL_MS,
+      nextUs: BASE + (seq + 2) * SEAL_MS * 1000,
     },
   })
   return contractBody(preamble, frames.take(), false)
@@ -704,6 +711,14 @@ SPECS['sent-objects'] = {
   ],
 }
 
+SPECS['run-ends'] = {
+  seq: 1,
+  first: 1,
+  conn: [VCONN],
+  trk: [],
+  records: [{ kind: 'run-end', ends: [{ c: 0, r: 0, j: 1, eUs: BASE + 58_000.7 }] }],
+}
+
 SPECS['conn-ends'] = {
   conn: [
     VCONN,
@@ -816,6 +831,8 @@ describe('v2 viewer goldens', () => {
       const ends = spec.records.flatMap((r) => (r.kind === 'stream-end' ? r.ends : []))
       const bw = spec.records.flatMap((r) => (r.kind === 'bw' ? r.entries : []))
       expect(facts.bw).toEqual(bw.map((e) => ({ c: e.c, sent: e.sent, pre: e.pre, secs: e.secs })))
+      const late = spec.records.flatMap((r) => (r.kind === 'run-end' ? r.ends : []))
+      expect(facts.runEnds).toEqual(late.map((e) => ({ ...e, eUs: Math.floor(e.eUs) })))
       expect(facts.ends.map((e) => [e.end, e.eog, e.path, e.sid, e.g, e.o, e.tUs, e.rc])).toEqual(
         ends.map((e) => [
           e.end,

@@ -35,7 +35,7 @@ import {
 import { openSegment } from '../../envelope/open-segment.js'
 import type { Chunk as FlushChunk, FlushScheduleOptions, TimerSource } from '../../flush/index.js'
 import { compress, Emitter, FlushQueue, FlushSchedule } from '../../flush/index.js'
-import type { Taken } from '../../rollup/runs.js'
+import { RunRecorder, type Taken } from '../../rollup/runs.js'
 import type {
   BatchRecord,
   ClockSource,
@@ -185,7 +185,8 @@ describe('FlushQueue.seal', () => {
 
   it('opens with the preamble: the claim, the rseq ranges and the sealed interval', async () => {
     const clock = clockAt(2_500)
-    const q = queue({ clock, sealMs: () => 15_000 })
+    let next: number | undefined = 17_500.25
+    const q = queue({ clock, sealMs: () => 15_000, nextSeal: () => next })
     q.json(note('a'))
     q.json(note('b'))
     const first = await decodeBody((q.seal() as FlushChunk).bytes)
@@ -193,10 +194,12 @@ describe('FlushQueue.seal', () => {
       v: 2,
       i: 'i1',
       em: [[0, 2]],
-      seal: { seq: 0, from_us: 0, through_us: 2_500_000, ms: 15_000 },
+      seal: { seq: 0, from_us: 0, through_us: 2_500_000, ms: 15_000, next_us: 17_500_250 },
     })
     expect(first.records.slice(1).map((r) => ('rseq' in r ? r.rseq : undefined))).toEqual([0, 1])
     clock.t = 4_000
+    // Nothing scheduled: the body after it is sealed at once.
+    next = undefined
     q.json(note('c'))
     const second = await decodeBody((q.seal() as FlushChunk).bytes)
     expect(second.head.em).toEqual([[2, 1]])
@@ -205,7 +208,11 @@ describe('FlushQueue.seal', () => {
       from_us: 2_500_000,
       through_us: 4_000_000,
       ms: 15_000,
+      next_us: 4_000_000,
     })
+    q.json(note('d'))
+    const last = await decodeBody((q.seal({ final: true }) as FlushChunk).bytes)
+    expect(last.head.seal).not.toHaveProperty('next_us')
   })
 
   it('marks the final body', async () => {
@@ -341,6 +348,73 @@ describe('FlushQueue.seal', () => {
     // Everything sealed: the next body lists it no more.
     q.json(note('after'))
     expect((await batchOf(q.seal() as FlushChunk)).conn).toEqual([])
+  })
+
+  it('names the record and entry a run went in when its last object ends in a later body', async () => {
+    const rec = new RunRecorder(0)
+    const key = Object.freeze({ dir: 'rx' as const, kind: 'alias' as const, id: 4n, epoch: 0 })
+    const sample = (o: bigint, at: number) => ({
+      key,
+      groupId: 7n,
+      objectId: o,
+      headerBytes: 2,
+      payloadBytes: 5_000,
+      streamId: 3,
+      at,
+      path: 'sub_stream' as const,
+      sub: 0n,
+      fo: false,
+      foKnown: true,
+      eog: false,
+    })
+    const e = new Emitter('i1', 0)
+    e.noteConn(0, 20, 'https://relay.example')
+    const q = new FlushQueue({ sessionId: 's1', emitter: e })
+    q.json(note('first'))
+    rec.onObject(0, sample(0n, 1))
+    rec.onObject(0, { ...sample(0n, 2), streamId: 5 })
+    q.writeFacts(rec.take())
+    const first = await factsOf((q.seal() as FlushChunk).bytes)
+    expect(first.runRecords).toEqual([{ rseq: 1, n: 2 }])
+    rec.onPayload(0, 5, 9.5)
+    q.writeFacts(rec.take())
+    const second = await factsOf((q.seal() as FlushChunk).bytes)
+    expect(second.runEnds).toEqual([{ c: 0, r: 1, j: 1, eUs: 9_500 }])
+  })
+
+  it('states a forwarded run’s later end once in a body, however many forwards restate it', async () => {
+    const worker = new RunRecorder(0)
+    const page = new RunRecorder(0)
+    const key = Object.freeze({ dir: 'rx' as const, kind: 'alias' as const, id: 4n, epoch: 0 })
+    worker.onObject(0, {
+      key,
+      groupId: 7n,
+      objectId: 0n,
+      headerBytes: 2,
+      payloadBytes: 50_000,
+      streamId: 3,
+      at: 1,
+      path: 'sub_stream',
+      sub: 0n,
+      fo: false,
+      foKnown: true,
+      eog: false,
+    })
+    const e = new Emitter('i1', 0)
+    e.noteConn(0, 20, 'https://relay.example')
+    const q = new FlushQueue({ sessionId: 's1', emitter: e })
+    q.json(note('first'))
+    page.absorb(worker.take())
+    q.writeFacts(page.take())
+    const first = await factsOf((q.seal() as FlushChunk).bytes)
+    expect(first.runRecords).toEqual([{ rseq: 1, n: 1 }])
+    for (const at of [4, 8, 12.5]) {
+      worker.onPayload(0, 3, at)
+      page.absorb(worker.take())
+    }
+    q.writeFacts(page.take())
+    const second = await factsOf((q.seal() as FlushChunk).bytes)
+    expect(second.runEnds).toEqual([{ c: 0, r: 1, j: 0, eUs: 12_500 }])
   })
 
   it('frees a track id once no buffered record names it, so ids stay small over a long page', async () => {
@@ -953,6 +1027,41 @@ describe('FlushSchedule.shorten, while ingest asks for a live view', () => {
     schedule.shorten(10_000, 30_000)
     timers.advance(9_000)
     expect(fired.filter((r) => r === 'interval')).toHaveLength(3)
+  })
+
+  it("states each seal's next one, kept past a lapse and a longer interval", () => {
+    const timers = new FakeTimers()
+    const stated: [number, number | undefined][] = []
+    const schedule: FlushSchedule = new FlushSchedule({
+      onFlush: () => stated.push([timers.now, schedule.promiseNext()]),
+      byteThreshold: 32 * 1024,
+      earlyFlushesMs: [],
+      timers,
+      now: () => timers.now,
+    })
+    schedule.start(0)
+    timers.advance(0)
+    expect(stated).toEqual([[0, 60_000]])
+    schedule.shorten(2_000, 7_000)
+    timers.advance(6_000)
+    // Stated at 6 s, the seal at 8 s holds though the short interval lapses at 7 s.
+    expect(stated.slice(1)).toEqual([
+      [2_000, 4_000],
+      [4_000, 6_000],
+      [6_000, 8_000],
+    ])
+    timers.advance(2_000)
+    expect(stated.at(-1)).toEqual([8_000, 68_000])
+    schedule.shorten(2_000, 60_000)
+    timers.advance(2_000)
+    expect(stated.at(-1)).toEqual([10_000, 12_000])
+    // A longer interval asked now would seal at 16 s: the stated 12 s holds.
+    timers.advance(1_000)
+    schedule.shorten(5_000, 60_000)
+    timers.advance(1_000)
+    expect(stated.at(-1)).toEqual([12_000, 17_000])
+    schedule.stop()
+    expect(schedule.promiseNext()).toBeUndefined()
   })
 
   it('does nothing once stopped, and leaves no timer behind', () => {

@@ -70,6 +70,99 @@ describe('stream runs', () => {
     ])
   })
 
+  it('states the later end of an object still arriving at a take, once per take, latest byte', () => {
+    const r = new RunRecorder(0)
+    r.onObject(0, obj(7n, 0n, 1, { payloadBytes: 5_000 }))
+    r.onPayload(0, 3, 2)
+    const first = r.take()
+    expect(first.runs[0]!.ends).toEqual([2_000])
+    expect(first.runEnds).toBeUndefined()
+    // Encoded as entry 1 of record 4.
+    first.runs[0]!.ref = { rseq: 4, j: 1 }
+    r.onPayload(0, 3, 3)
+    r.onPayload(0, 3, 6)
+    expect(r.take().runEnds).toEqual([
+      { c: 0, flow: '0:3:7', o: 0n, tUs: 6_000, ref: { rseq: 4, j: 1 } },
+    ])
+    // Still arriving across a second take: stated again.
+    r.onPayload(0, 3, 9)
+    expect(r.take().runEnds).toEqual([
+      { c: 0, flow: '0:3:7', o: 0n, tUs: 9_000, ref: { rseq: 4, j: 1 } },
+    ])
+    // A next object starts its own run: the earlier one gets no more ends.
+    r.onObject(0, obj(7n, 1n, 10))
+    r.onPayload(0, 3, 11)
+    const last = r.take()
+    expect(last.runEnds).toBeUndefined()
+    expect(last.runs[0]!.ends).toEqual([11_000])
+  })
+
+  it('takes a worker’s later end into the page’s run, or states it for one already sealed', () => {
+    const worker = new RunRecorder(0)
+    const page = new RunRecorder(0)
+    worker.onObject(0, obj(7n, 0n, 1, { payloadBytes: 5_000 }))
+    page.absorb(worker.take())
+    worker.onPayload(0, 3, 4)
+    // The page has not sealed: its run takes the end.
+    page.absorb(worker.take())
+    const sealed = page.take()
+    expect(sealed.runs[0]!.ends).toEqual([4_000])
+    expect(sealed.runEnds).toBeUndefined()
+    sealed.runs[0]!.ref = { rseq: 2, j: 0 }
+    worker.onPayload(0, 3, 8)
+    page.absorb(worker.take())
+    expect(page.take().runEnds).toEqual([
+      { c: 0, flow: '0:3:7', o: 0n, tUs: 8_000, ref: { rseq: 2, j: 0 } },
+    ])
+  })
+
+  it('states a sealed run’s end once per take, the latest, across worker forwards', () => {
+    const worker = new RunRecorder(0)
+    const page = new RunRecorder(0)
+    worker.onObject(0, obj(7n, 0n, 1, { payloadBytes: 50_000 }))
+    page.absorb(worker.take())
+    page.take().runs[0]!.ref = { rseq: 2, j: 0 }
+    for (const at of [4, 8, 12]) {
+      worker.onPayload(0, 3, at)
+      page.absorb(worker.take())
+    }
+    expect(page.take().runEnds).toEqual([
+      { c: 0, flow: '0:3:7', o: 0n, tUs: 12_000, ref: { rseq: 2, j: 0 } },
+    ])
+    worker.onPayload(0, 3, 14)
+    page.absorb(worker.take())
+    worker.onPayload(0, 3, 15)
+    page.absorb(worker.take())
+    expect(page.take().runEnds).toEqual([
+      { c: 0, flow: '0:3:7', o: 0n, tUs: 15_000, ref: { rseq: 2, j: 0 } },
+    ])
+  })
+
+  it('takes no worker end for a sealed run once its stream moved on', () => {
+    const worker = new RunRecorder(0)
+    const page = new RunRecorder(0)
+    worker.onObject(0, obj(7n, 0n, 1, { payloadBytes: 50_000 }))
+    page.absorb(worker.take())
+    page.take().runs[0]!.ref = { rseq: 2, j: 0 }
+    // The same forward states the end, then a next object: the end still counts.
+    worker.onPayload(0, 3, 4)
+    const late = worker.take()
+    worker.onObject(0, obj(7n, 1n, 5))
+    page.absorb({ ...late, runs: worker.take().runs })
+    const t = page.take()
+    expect(t.runEnds).toEqual([{ c: 0, flow: '0:3:7', o: 0n, tUs: 4_000, ref: { rseq: 2, j: 0 } }])
+    // A replayed end of the earlier run is not taken: the stream has a later object.
+    page.absorb({ runs: [], marks: [], ends: [], runEnds: late.runEnds ?? [] })
+    expect(page.take().runEnds).toBeUndefined()
+  })
+
+  it('keeps no sealed runs in a recorder that takes no forwards', () => {
+    const r = new RunRecorder(0)
+    r.onObject(0, obj(7n, 0n, 1))
+    r.take()
+    expect((r as unknown as { sealed: Map<string, unknown> }).sealed.size).toBe(0)
+  })
+
   it('takes FIRST_OBJECT on the stream’s first run only, and EOG at FIN only', () => {
     const r = new RunRecorder(0)
     r.onObject(0, obj(7n, 0n, 1, { fo: true, eog: true }))

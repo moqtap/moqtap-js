@@ -350,6 +350,43 @@ export function writeStreamEndRecord(
   w.raw(raw)
 }
 
+/**
+ * The last payload byte of an object still arriving when its run was sealed:
+ * the run is entry `j` of the earlier `run` record `r`, the object its last.
+ */
+export interface RunEndInput {
+  readonly c: number
+  readonly r: number
+  readonly j: number
+  readonly eUs: number
+}
+
+/** `run-end` entries: `c r j e`, `e` a `t` from the previous entry's, the first from `baseUs`. */
+export function encodeRunEnds(baseUs: number, ends: readonly RunEndInput[]): Uint8Array {
+  const w = new LebWriter(ends.length * 8)
+  let lastT = Math.floor(baseUs)
+  for (const e of ends) {
+    w.u(e.c)
+    w.u(e.r)
+    w.u(e.j)
+    const t = Math.floor(e.eUs)
+    w.t(t - lastT)
+    lastT = t
+  }
+  return w.bytes()
+}
+
+export function writeRunEndRecord(
+  w: FrameWriter,
+  rseq: number,
+  baseUs: number,
+  ends: readonly RunEndInput[],
+): void {
+  const raw = encodeRunEnds(baseUs, ends)
+  w.json({ t: 'run-end', v: 1, n: ends.length, rseq } as unknown as EnvelopeRecord)
+  w.raw(raw)
+}
+
 /** One connection's bytes in one direction: per device mono second, and those no second places. */
 export interface BwInput {
   readonly c: number
@@ -410,6 +447,8 @@ export interface SealInterval {
   readonly throughUs: number
   /** The seal interval in force, ms. */
   readonly ms: number
+  /** Device mono µs the next seal is due; absent from a final body. */
+  readonly nextUs?: number
 }
 
 export interface ContractPreamble {
@@ -454,6 +493,7 @@ export function preambleFrame(p: ContractPreamble): Uint8Array {
       from_us: p.seal.fromUs,
       through_us: p.seal.throughUs,
       ms: p.seal.ms,
+      ...(p.seal.nextUs === undefined ? {} : { next_us: p.seal.nextUs }),
     },
   } as unknown as EnvelopeRecord)
   return w.take()

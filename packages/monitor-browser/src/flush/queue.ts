@@ -65,6 +65,11 @@ export interface FlushQueueOptions extends Omit<FrameBufferOptions, 'rseq' | 'on
   readonly level?: () => DetailLevel
   /** The seal interval in force, ms. */
   readonly sealMs?: () => number
+  /**
+   * Monotonic ms the next seal is due, read once per body; undefined when
+   * nothing is scheduled, as when the body after it is sealed at once.
+   */
+  readonly nextSeal?: () => number | undefined
   /** Records dropped on the device before encoding, cumulative. */
   readonly droppedRecords?: () => number
   /** The integrator's offset to UTC as of now, read at each seal. */
@@ -121,6 +126,7 @@ export class FlushQueue extends FrameBuffer {
   private readonly _clock: ClockSource
   private readonly _level: () => DetailLevel
   private readonly _sealMs: () => number
+  private readonly _nextSeal: () => number | undefined
   private readonly _dropped: () => number
   private readonly _appClock: () => AppOffset | undefined
   private readonly _timing: () => Timing
@@ -139,6 +145,7 @@ export class FlushQueue extends FrameBuffer {
     this._clock = opts.clock ?? platformClock
     this._level = opts.level ?? (() => 'baseline')
     this._sealMs = opts.sealMs ?? (() => 60_000)
+    this._nextSeal = opts.nextSeal ?? (() => undefined)
     this._dropped = opts.droppedRecords ?? (() => this.droppedRecords)
     this._appClock = opts.appClock ?? (() => undefined)
     this._timing = opts.timing ?? (() => 'object')
@@ -164,7 +171,8 @@ export class FlushQueue extends FrameBuffer {
       t.runs.length === 0 &&
       t.marks.length === 0 &&
       t.ends.length === 0 &&
-      (t.bw === undefined || t.bw.length === 0)
+      (t.bw === undefined || t.bw.length === 0) &&
+      (t.runEnds === undefined || t.runEnds.length === 0)
     ) {
       return
     }
@@ -301,9 +309,21 @@ export class FlushQueue extends FrameBuffer {
     const preamble = preambleFrame({
       i: e.instanceId,
       em: rseqRanges(this.rseqsOf(records)),
-      seal: { seq, fromUs, throughUs, ms: this._sealMs() },
+      seal: {
+        seq,
+        fromUs,
+        throughUs,
+        ms: this._sealMs(),
+        ...(o.final === true ? {} : { nextUs: this._nextUs(throughUs) }),
+      },
     })
     return { seq, key, preamble, frames: w.take() }
+  }
+
+  /** When the body after one sealed through `throughUs` is due, µs. */
+  private _nextUs(throughUs: number): number {
+    const next = this._nextSeal()
+    return next === undefined ? throughUs : Math.max(throughUs, Math.floor(next * 1000))
   }
 
   private _chunk(head: Head, gzipped: boolean, ...parts: Uint8Array[]): Chunk {

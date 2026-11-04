@@ -264,12 +264,39 @@ export function decodeBw(raw: Uint8Array, n: number, baseUs: number): DecodedBw[
   return out
 }
 
+/** A later end of an earlier run's last object. */
+export interface DecodedRunEnd {
+  readonly c: number
+  readonly r: number
+  readonly j: number
+  readonly eUs: number
+}
+
+export function decodeRunEnds(raw: Uint8Array, n: number, baseUs: number): DecodedRunEnd[] {
+  const r = new Reader(raw)
+  const out: DecodedRunEnd[] = []
+  let t = Math.floor(baseUs)
+  for (let k = 0; k < n; k++) {
+    const c = r.u()
+    const run = r.u()
+    const j = r.u()
+    t += r.t()
+    out.push({ c, r: run, j, eUs: t })
+  }
+  if (!r.done) throw new RangeError('trailing run-end bytes')
+  return out
+}
+
 export interface BodyFacts {
   readonly trk: readonly { id: number; key: { d: string; k: string; v: string; e: number } }[]
   readonly runs: DecodedRun[]
   readonly marks: DecodedMark[]
   readonly ends: DecodedEnd[]
   readonly bw: DecodedBw[]
+  readonly runEnds: DecodedRunEnd[]
+  /** Each run record's rseq and entry count, in body order. */
+  readonly runRecords: { readonly rseq: number; readonly n: number }[]
+  readonly next?: number
   readonly timing: 'object' | 'group'
 }
 
@@ -296,19 +323,49 @@ export async function factsOf(body: Uint8Array): Promise<BodyFacts> {
   const marks: DecodedMark[] = []
   const ends: DecodedEnd[] = []
   const bw: DecodedBw[] = []
+  const runEnds: DecodedRunEnd[] = []
+  const runRecords: { rseq: number; n: number }[] = []
   for (let i = 1; i < list.length; i++) {
     const f = list[i]!
     if (f.raw) continue
-    const r = JSON.parse(decoder.decode(f.payload)) as { t: string; n: number }
+    const r = JSON.parse(decoder.decode(f.payload)) as { t: string; n: number; rseq: number }
     const raw = list[i + 1]
+    if (r.t === 'run-end') runEnds.push(...decodeRunEnds(raw!.payload, r.n, batch.clk.base_us))
     if (r.t === 'run') {
+      runRecords.push({ rseq: r.rseq, n: r.n })
       runs.push(...decodeRuns(raw!.payload, r.n, batch.clk.base_us, batch.timing ?? 'object'))
     }
     if (r.t === 'mark') marks.push(...decodeMarks(raw!.payload, r.n, batch.clk.base_us))
     if (r.t === 'stream-end') ends.push(...decodeEnds(raw!.payload, r.n, batch.clk.base_us))
     if (r.t === 'bw') bw.push(...decodeBw(raw!.payload, r.n, batch.clk.base_us))
   }
-  return { trk: batch.trk, runs, marks, ends, bw, timing: batch.timing ?? 'object' }
+  const next = preambleSeal(body).next_us
+  return {
+    trk: batch.trk,
+    runs,
+    marks,
+    ends,
+    bw,
+    runEnds,
+    runRecords,
+    ...(next === undefined ? {} : { next }),
+    timing: batch.timing ?? 'object',
+  }
+}
+
+/** The body's preamble `seal`. */
+export function preambleSeal(body: Uint8Array): {
+  seq: number
+  from_us: number
+  through_us: number
+  ms: number
+  next_us?: number
+} {
+  const len = new DataView(body.buffer, body.byteOffset + BODY_PREAMBLE_BYTES, 4).getUint32(0)
+  const json = new TextDecoder().decode(
+    body.subarray(BODY_PREAMBLE_BYTES + 4, BODY_PREAMBLE_BYTES + 4 + (len & 0x7fffffff)),
+  )
+  return (JSON.parse(json) as { seal: ReturnType<typeof preambleSeal> }).seal
 }
 
 /** Every run and mark in every body, with each run's track key resolved. */

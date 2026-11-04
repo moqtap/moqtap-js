@@ -53,7 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Each object received or sent is reported with when it started and ended
-  and its size; objects the page sends are now reported too.
+  and its size. An object still arriving when its upload is sealed has its
+  end stated in a later upload (`run-end`).
+- Each upload but the last states when the next one is due (`seal.next_us`).
 - A `bw` record: each connection's bytes received and sent per second,
   including those before `init()`.
 - Draft-23, with the `@moqtap/monitor-browser/draft23` entry and its `/thin`,
