@@ -280,6 +280,7 @@ export class FlushQueue extends FrameBuffer {
         conn: e.bodyConns(refs.c),
         trk: e.bodyTracks(refs.ti),
         timing: this._bufTiming,
+        cont: e.cont,
       }),
     )
     const preamble = preambleFrame({

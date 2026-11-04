@@ -1386,6 +1386,12 @@ export interface BatchRecord {
   readonly trk: readonly { readonly id: number; readonly key: RollupTrackWire['key'] }[]
   /** Present at `group` timing: the body's runs carry no per-object times. */
   readonly timing?: 'group'
+  /**
+   * Present when no scheduled seal since the emitter's previous body found
+   * nothing to send, so the time between the two bodies' records was
+   * captured without a silence. Never on the emitter's first body.
+   */
+  readonly cont?: true
 }
 
 /** Sent once per instance, in its first body. */

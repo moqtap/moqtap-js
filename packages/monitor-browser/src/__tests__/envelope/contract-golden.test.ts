@@ -46,6 +46,8 @@ interface Spec {
   readonly trk: readonly BodyTrack[]
   readonly records: readonly Record_[]
   readonly timing?: 'object' | 'group'
+  readonly lvl?: string
+  readonly cont?: boolean
 }
 
 function build(p: Spec): Uint8Array {
@@ -59,7 +61,7 @@ function build(p: Spec): Uint8Array {
       seq,
       idempotencyKey: idempotencyKey(SESSION, INSTANCE, seq),
       final: false,
-      lvl: 'baseline',
+      lvl: p.lvl ?? 'baseline',
       clk: {
         baseUs: BASE,
         epoch: 0,
@@ -79,6 +81,7 @@ function build(p: Spec): Uint8Array {
       conn: p.conn,
       trk: p.trk,
       ...(p.timing === undefined ? {} : { timing: p.timing }),
+      ...(p.cont === undefined ? {} : { cont: p.cont }),
     }),
   )
   p.records.forEach((r, i) => {
@@ -575,6 +578,34 @@ const manifest = JSON.parse(readFileSync(join(DIR, 'manifest.json'), 'utf8')) as
 }
 
 SPECS['group-timing'] = { ...SPECS.basic!, timing: 'group' }
+SPECS.cont = {
+  seq: 1,
+  first: 2,
+  lvl: 'headers',
+  cont: true,
+  conn: [VCONN],
+  trk: [alias(0, '1')],
+  records: [
+    {
+      kind: 'run',
+      runs: [
+        {
+          c: 0,
+          ti: 0,
+          g: 102n,
+          path: 'sub_stream',
+          sub: 0n,
+          sid: 15n,
+          ids: ids(0n, 3),
+          timesUs: times(BASE + 15_020_000, 33_333, 3),
+          b: 7_400,
+          fo: true,
+          foKnown: true,
+        },
+      ],
+    },
+  ],
+}
 
 describe('v2 viewer goldens', () => {
   it('rebuilds every accepted fixture, and only those', () => {

@@ -657,11 +657,11 @@ session.
 Baseline collection is always on and does not use recording minutes.
 
 Your plan's monthly recording minutes count two things, on Insight's clock. The first is the
-time covered by the records of each upload sent above `baseline`, so a stretch in which the page
-sent nothing above `baseline` never counts. The second is the time someone watches the session
-live in Insight, whether or not the page sends anything meanwhile. A month's total counts whole
-minutes, rounded down. `budget.elevatedMinutes` caps elevated time per session, and a session
-lasts as long as the page.
+time the uploads sent above `baseline` cover: the span of each upload's records, and the time
+from one upload to the next, unless an upload fell due between them and found nothing to send.
+The second is the time someone watches the session live in Insight, whether or not the page
+sends anything meanwhile. A month's total counts whole minutes, rounded down.
+`budget.elevatedMinutes` caps elevated time per session, and a session lasts as long as the page.
 Nothing over a plan's limits is charged; the limits per plan are on the
 [pricing page](/pricing#compare).
 

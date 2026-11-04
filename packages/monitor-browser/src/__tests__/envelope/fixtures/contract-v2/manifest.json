@@ -85,7 +85,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [
             {
@@ -279,7 +280,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [
             {
@@ -586,7 +588,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [
             {
@@ -729,7 +732,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [
             {
@@ -916,7 +920,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [
             {
@@ -1074,7 +1079,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [],
           "marks": [
@@ -1282,7 +1288,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [
             {
@@ -1420,7 +1427,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [],
           "marks": [],
@@ -1561,7 +1569,8 @@
             "t": "batch",
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
-            "tracks": []
+            "tracks": [],
+            "cont": false
           },
           "runs": [],
           "marks": [],
@@ -1693,7 +1702,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [
             {
@@ -1841,7 +1851,8 @@
                   "epoch": 0
                 }
               }
-            ]
+            ],
+            "cont": false
           },
           "runs": [
             {
@@ -1936,6 +1947,122 @@
               "raw": ["0300050102030405"]
             }
           ],
+          "idents": [],
+          "streamEnds": []
+        }
+      }
+    },
+    {
+      "name": "cont",
+      "note": "A body sealed at raised detail that continues the emitter's previous body: no scheduled seal between them found nothing to send.",
+      "file": "cont.bin",
+      "bodyBytes": 762,
+      "expect": {
+        "ok": true
+      },
+      "read": {
+        "ok": true,
+        "body": {
+          "side": "viewer",
+          "preamble": {
+            "v": 2,
+            "i": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "em": [
+              {
+                "first": 2,
+                "n": 1
+              }
+            ],
+            "seal": {
+              "seq": 1,
+              "fromUs": 7215000000,
+              "throughUs": 7230000000,
+              "ms": 15000
+            }
+          },
+          "batch": {
+            "v": 2,
+            "instanceId": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "seq": 1,
+            "idempotencyKey": "fadb2acde24a2fb932a602a9316478828f4e56abb3f5725c948d128f37d8f995",
+            "final": false,
+            "clk": {
+              "baseUs": 7200000000,
+              "epoch": 0,
+              "resUs": 5,
+              "sample": {
+                "oUs": 1761688800041500,
+                "rUs": 18250,
+                "atUs": 7198000000,
+                "pop": "LHR"
+              },
+              "app": null
+            },
+            "tail": {
+              "lastRseq": 2,
+              "preDrop": {
+                "records": 0,
+                "objects": 0
+              },
+              "conn": []
+            },
+            "conns": [
+              {
+                "c": 0,
+                "draft": 20,
+                "relay": "https://relay-a.example.net"
+              }
+            ],
+            "timing": "object",
+            "t": "batch",
+            "sessionId": "sess_8c41f2d0",
+            "lvl": "headers",
+            "tracks": [
+              {
+                "id": 0,
+                "key": {
+                  "dir": "rx",
+                  "kind": "alias",
+                  "id": "1",
+                  "epoch": 0
+                }
+              }
+            ],
+            "cont": true
+          },
+          "runs": [
+            {
+              "rseq": 2,
+              "entries": [
+                {
+                  "cont": false,
+                  "xid": false,
+                  "fo": true,
+                  "foKnown": true,
+                  "eog": false,
+                  "end": "open",
+                  "gs": false,
+                  "c": 0,
+                  "ti": 0,
+                  "g": "102",
+                  "path": "sub_stream",
+                  "sub": "0",
+                  "sid": "15",
+                  "o0": "0",
+                  "n": 3,
+                  "oid": null,
+                  "osub": null,
+                  "t0Us": 7215020000,
+                  "dt": [333, 333],
+                  "b": 7400,
+                  "rc": null,
+                  "tl": 666
+                }
+              ]
+            }
+          ],
+          "marks": [],
+          "records": [],
           "idents": [],
           "streamEnds": []
         }
@@ -2079,6 +2206,34 @@
       "read": {
         "ok": false,
         "reason": "bad-record"
+      }
+    },
+    {
+      "name": "refuse-cont-first",
+      "note": "cont on an emitter's first body, which has no previous body to continue.",
+      "file": "refuse-cont-first.bin",
+      "bodyBytes": 696,
+      "expect": {
+        "ok": false,
+        "reason": "no-batch-record"
+      },
+      "read": {
+        "ok": false,
+        "reason": "no-batch-record"
+      }
+    },
+    {
+      "name": "refuse-cont-false",
+      "note": "cont written as false: it is true or absent.",
+      "file": "refuse-cont-false.bin",
+      "bodyBytes": 697,
+      "expect": {
+        "ok": false,
+        "reason": "no-batch-record"
+      },
+      "read": {
+        "ok": false,
+        "reason": "no-batch-record"
       }
     },
     {

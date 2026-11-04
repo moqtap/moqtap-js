@@ -1372,6 +1372,7 @@ export class CollectorRuntime {
     try {
       if (tick) this._tick()
       if (this._seal() !== null) void this._drain()
+      else if (tick && this._queue.frameCount === 0) this._emitter.noteQuiet()
     } catch (err) {
       this._onError(err)
     }

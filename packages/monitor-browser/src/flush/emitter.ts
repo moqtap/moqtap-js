@@ -60,6 +60,8 @@ export class Emitter {
   readonly instanceId: string
   readonly clock: ClockSync
   private _seq = 0
+  private _quiet = false
+  private _cont = false
   private _rseq = 0
   private _through: number
   private readonly _conns = new Map<number, Conn>()
@@ -92,8 +94,24 @@ export class Emitter {
     return this._seq
   }
 
+  /**
+   * Take the next body's number, and whether that body continues the one
+   * before it: there is one, and no scheduled seal since found nothing.
+   */
   takeSeq(): number {
+    this._cont = this._seq > 0 && !this._quiet
+    this._quiet = false
     return this._seq++
+  }
+
+  /** Whether the body last numbered continues the one before it. */
+  get cont(): boolean {
+    return this._cont
+  }
+
+  /** A scheduled seal found nothing to send: the next body starts after a silence. */
+  noteQuiet(): void {
+    this._quiet = true
   }
 
   /**
