@@ -116,7 +116,7 @@ Every threshold is a config key with a recorded default. Read the defaults from
 window that `resolve()` closes, and a flight-recorder trigger raises it to
 `headers` for the window it opens. Time above `baseline` counts toward the
 workspace's recording minutes for the month; `budget.elevatedMinutes` limits
-how many one session uses.
+how many one page load uses.
 
 | Level           | Uploads                                                                                                                        |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------ |

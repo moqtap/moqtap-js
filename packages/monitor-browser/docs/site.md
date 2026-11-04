@@ -511,7 +511,7 @@ init({
 | `flightRecorder.depth` | `'32MB'` | Memory the recorder may use, per page or worker that opens a `WebTransport`. |
 | `flightRecorder.triggers` | none | `stall`, `cadence`. All off unless listed. |
 | `flightRecorder.windowMs` | `15000` | How long a trigger's capture window stays open without `resolve()`. |
-| `budget.elevatedMinutes` | `60` | Elevated time allowed per session. When it's used up the session drops to `baseline` and refuses further escalation. |
+| `budget.elevatedMinutes` | `60` | Elevated time allowed per session, which lasts as long as the page. When it's used up the session drops to `baseline` and refuses further escalation. |
 | `upload.intervalMs` | `60000` | Upload at least this often. |
 | `upload.byteThreshold` | `32768` | Upload early once this many bytes are waiting. While detail is raised they are counted gzipped, and one upload holds at most 64 times this uncompressed. |
 | `upload.earlyFlushesMs` | `[45000]` | Extra uploads at these offsets after the session begins. |
@@ -656,10 +656,12 @@ session.
 
 Baseline collection is always on and does not use recording minutes.
 
-Time above `baseline` counts toward your plan's monthly recording minutes: the time that the
-records of each upload sent above `baseline` cover, on Insight's clock, so time in which the page
-sent nothing never counts. Watching a session live in Insight counts too. A month's total counts
-whole minutes, rounded down. `budget.elevatedMinutes` caps elevated time per session.
+Your plan's monthly recording minutes count two things, on Insight's clock. The first is the
+time covered by the records of each upload sent above `baseline`, so a stretch in which the page
+sent nothing above `baseline` never counts. The second is the time someone watches the session
+live in Insight, whether or not the page sends anything meanwhile. A month's total counts whole
+minutes, rounded down. `budget.elevatedMinutes` caps elevated time per session, and a session
+lasts as long as the page.
 Nothing over a plan's limits is charged; the limits per plan are on the
 [pricing page](/pricing#compare).
 
