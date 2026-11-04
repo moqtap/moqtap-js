@@ -53,7 +53,7 @@ import {
   subscribeBytes,
 } from '../decode/vectors.js'
 import { attempt, init, workerBuild } from '../support/init.js'
-import { allFacts } from '../support/runs.js'
+import { allFacts, type DecodedBw, factsOf } from '../support/runs.js'
 import { settle, until } from '../support/settle.js'
 import { afterPreamble, clockProbe } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
@@ -1255,6 +1255,27 @@ describe('a linked worker that falls silent', () => {
     w.port()?.close()
   })
 
+  it('uploads the bytes per second a worker forwarded, on its connection', async () => {
+    const w = await silentWorker()
+    forward(w.port(), [], [open()], {
+      ...piece(4n, 0n, 2, false),
+      bw: [
+        { c: W_CONN, sent: false, secs: [[3, 1_200]], pre: 40 },
+        { c: W_CONN, sent: true, secs: [[3, 90]], pre: 0 },
+      ],
+    })
+    await settle(10)
+    await w.c.end()
+
+    const bw: DecodedBw[] = []
+    for (const p of w.posts) bw.push(...(await factsOf(p.body)).bw)
+    expect(bw.filter((e) => e.c === W_CONN)).toEqual([
+      { c: W_CONN, sent: false, secs: [[3, 1_200]], pre: 40 },
+      { c: W_CONN, sent: true, secs: [[3, 90]], pre: 0 },
+    ])
+    w.port()?.close()
+  })
+
   it('lists a worker’s connection under its relay, path and all', async () => {
     const w = await silentWorker()
     forward(w.port(), [], [open()], piece(4n, 0n, 2, false))
@@ -1584,8 +1605,10 @@ describe('the page going away', () => {
     // The session's first body went out as it began; these two follow it.
     expect(bodies).toHaveLength(2)
     const [endBody, tail] = bodies
-    // The connection still being attempted is closed by the end.
+    // The connection still being attempted ends with the page.
     expect(endBody?.map((r) => r.t)).toEqual(['batch', 'conn-close', 'end'])
+    expect(endBody?.[1]).toMatchObject({ cause: 'page-end' })
+    expect(endBody?.[1]).not.toHaveProperty('by')
     expect(endBody?.[2]).toMatchObject({ reason: 'unload', finalSeq: 2 })
     expect(endBody?.[0]).toMatchObject({ seq: 2, final: true })
     expect(tail?.[0]).toMatchObject({ seq: 1 })
@@ -1648,6 +1671,7 @@ describe('the page going away', () => {
     const { bodies } = await beaconed(true, (c) => c.annotate('before-freeze'))
     const all = bodies.flat()
     expect(all.some((r) => r.t === 'end')).toBe(false)
+    expect(of(all, 'conn-close')).toEqual([])
     expect(of(all, 'life').map((l) => l.ev)).toEqual(['frozen'])
   })
 

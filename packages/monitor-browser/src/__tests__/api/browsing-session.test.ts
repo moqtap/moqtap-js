@@ -252,6 +252,18 @@ describe('bandwidth', () => {
     const out = await wt.createUnidirectionalStream()
     const writer = (out as unknown as WritableStream<Uint8Array>).getWriter()
     await writer.write(new Uint8Array(7))
+    // The control stream, each way, and a datagram each way.
+    const ctrl = await wt.createBidirectionalStream()
+    const ctrlOut = (ctrl.writable as WritableStream<Uint8Array>).getWriter()
+    await ctrlOut.write(new Uint8Array(30))
+    const ctrlIn = (ctrl.readable as ReadableStream<Uint8Array>).getReader()
+    ctrl.inbound.push(new Uint8Array(20))
+    await ctrlIn.read()
+    const dgIn = (wt.datagrams.readable as ReadableStream<Uint8Array>).getReader()
+    wt.datagramsIn.push(new Uint8Array(5))
+    await dgIn.read()
+    const dgOut = (wt.datagrams.writable as WritableStream<Uint8Array>).getWriter()
+    await dgOut.write(new Uint8Array(3))
     await settle(2)
     await c.end()
 
@@ -261,8 +273,8 @@ describe('bandwidth', () => {
       bw
         .filter((e) => e.sent === sent)
         .reduce((n, e) => n + e.pre + e.secs.reduce((m, [, b]) => m + b, 0), 0)
-    expect(total(false)).toBe(bytes.byteLength)
-    expect(total(true)).toBe(7)
+    expect(total(false)).toBe(bytes.byteLength + 20 + 5)
+    expect(total(true)).toBe(7 + 30 + 3)
     for (const e of bw) {
       expect(e.c).toBe(0)
       const seconds = e.secs.map(([i]) => i)

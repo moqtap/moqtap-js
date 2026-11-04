@@ -15,6 +15,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  EARLY_BW_SECONDS,
   EARLY_CONTROL_CONNECTION_BYTES,
   EARLY_CONTROL_REALM_BYTES,
   EarlyBuffer,
@@ -122,5 +123,28 @@ describe('object data before the session', () => {
     b.onStream(chunk('s1', 5, 10, { control: false, bidi: false }))
     b.onStreamClose('s1', 3)
     expect([...(b.take().get('s1')?.skip ?? [])]).toEqual(['5/rx'])
+  })
+})
+
+describe('bytes per second before the session', () => {
+  it('places the first seconds it saw, per direction, and counts later ones unplaced', () => {
+    const b = new EarlyBuffer()
+    for (let i = 0; i <= EARLY_BW_SECONDS; i++) {
+      b.onStream(chunk('s1', 3, 2, { control: false, bidi: false, at: i * 1000 }))
+    }
+    // A second already placed still takes its bytes.
+    b.onStream(chunk('s1', 3, 5, { control: false, bidi: false, at: 0 }))
+    b.onStream(chunk('s1', 2, 4, { direction: 'tx', at: 9_999_000 }))
+    b.onDatagram('s1', 3, true, (EARLY_BW_SECONDS + 1) * 1000)
+    const bw = b.take().get('s1')!.bw
+    expect(bw.rx.size).toBe(EARLY_BW_SECONDS)
+    expect(bw.rx.get(0)).toBe(7)
+    expect(bw.rx.has(EARLY_BW_SECONDS)).toBe(false)
+    expect(bw.preRx).toBe(2)
+    expect([...bw.tx]).toEqual([
+      [9_999, 4],
+      [EARLY_BW_SECONDS + 1, 3],
+    ])
+    expect(bw.preTx).toBe(0)
   })
 })
