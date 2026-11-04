@@ -459,9 +459,9 @@ export const v2HeadersLevelFlow: Trace = {
     },
     {
       // A datagram carries its group on the stream-opened event, because there
-      // is no subgroup stream to hang it off. Note that `"sid"` here names a
-      // stream a datagram never opened, which is why a stream id alone cannot
-      // identify a flow.
+      // is no subgroup stream to hang it off. Its `"sid"` of 12 is below 2^62,
+      // which SPEC.md "`"sid"` — the stream ID" forbids a writer for a
+      // datagram; readers must still accept it.
       type: 'stream-opened',
       seq: 3,
       timestamp: 300,
@@ -696,7 +696,9 @@ export const v2StreamHeaderBytes: Trace = {
     },
     {
       // Datagram type 0x00, alias 9, group 2^32 (draft-18's five-byte varint),
-      // object 3, priority 0x80. Stream 0 by convention.
+      // object 3, priority 0x80. On stream 0, as writers put datagrams before
+      // SPEC.md "`"sid"` — the stream ID"; kept as a case readers must still
+      // accept.
       type: 'stream-opened',
       seq: 3,
       timestamp: 300,
@@ -732,6 +734,74 @@ export const v2StreamHeaderBytes: Trace = {
   ],
 }
 
+/** The first datagram ID SPEC.md "`"sid"` — the stream ID" allows: 2^62. */
+const DATAGRAM_SID = 1n << 62n
+
+const datagramOpened = (seq: number, timestamp: number, streamId: bigint, hdr: number[]) =>
+  ({
+    type: 'stream-opened',
+    seq,
+    timestamp,
+    streamId,
+    direction: 1,
+    streamType: 1,
+    trackAlias: 9n,
+    groupId: 8n,
+    headerRaw: new Uint8Array(hdr),
+  }) as const
+
+const objectHeader = (seq: number, timestamp: number, streamId: bigint, g: bigint, o: bigint) =>
+  ({
+    type: 'object-header',
+    seq,
+    timestamp,
+    streamId,
+    groupId: g,
+    objectId: o,
+    publisherPriority: 128,
+    objectStatus: 0,
+  }) as const
+
+const objectPayload = (seq: number, timestamp: number, streamId: bigint, g: bigint, o: bigint) =>
+  ({ type: 'object-payload', seq, timestamp, streamId, groupId: g, objectId: o, size: 4 }) as const
+
+/**
+ * Datagrams as SPEC.md "`"sid"` — the stream ID" has a writer record them:
+ * each on a `"sid"` of its own from 2^62, shared by its Event 1, Event 3 and
+ * Event 4, beside a subgroup stream on a real stream ID.
+ */
+export const v2DatagramSids: Trace = {
+  header: {
+    protocol: 'moq-transport-18',
+    perspective: 'observer',
+    detail: 'headers+sizes',
+    startTime: START_TIME,
+    sessionId: 'v2-datagram-sids',
+  },
+  events: [
+    {
+      type: 'stream-opened',
+      seq: 0,
+      timestamp: 100,
+      streamId: 7n,
+      direction: 1,
+      streamType: 0,
+      trackAlias: 9n,
+      subgroupId: 2n,
+    },
+    objectHeader(1, 150, 7n, 7n, 0n),
+    objectPayload(2, 150, 7n, 7n, 0n),
+    // Datagram type 0x00, alias 9, group 8, object 0, priority 0x80.
+    datagramOpened(3, 200, DATAGRAM_SID, [0x00, 0x09, 0x08, 0x00, 0x80]),
+    objectHeader(4, 200, DATAGRAM_SID, 8n, 0n),
+    objectPayload(5, 200, DATAGRAM_SID, 8n, 0n),
+    // The next datagram of the same group takes the next ID.
+    datagramOpened(6, 300, DATAGRAM_SID + 1n, [0x00, 0x09, 0x08, 0x01, 0x80]),
+    objectHeader(7, 300, DATAGRAM_SID + 1n, 8n, 1n),
+    objectPayload(8, 300, DATAGRAM_SID + 1n, 8n, 1n),
+  ],
+}
+
 /** Every single-segment case both implementations author, by directory name. */
 export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v1-basic': v1Basic,
@@ -744,6 +814,7 @@ export const AUTHORED_CASES: Readonly<Record<string, Trace>> = {
   'v2-header-extra': v2HeaderExtra,
   'v2-error-with-raw': v2ErrorWithRaw,
   'v2-stream-header-bytes': v2StreamHeaderBytes,
+  'v2-datagram-sids': v2DatagramSids,
 }
 
 /** Cases whose file is a segmented stream rather than a single trace. */

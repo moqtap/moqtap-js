@@ -244,6 +244,10 @@ export function controlMessageFields(message: unknown): Record<string, unknown> 
 
 export interface StreamOpenedEvent extends BaseEvent {
   readonly type: 'stream-opened'
+  /**
+   * For a datagram, an ID of its own at or above 2^62; older traces use 0.
+   * Tell a datagram by `streamType`, never by this value. SPEC.md "`"sid"` — the stream ID".
+   */
   readonly streamId: bigint
   readonly direction: 0 | 1
   readonly streamType: 0 | 1 | 2

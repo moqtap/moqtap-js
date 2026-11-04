@@ -165,7 +165,7 @@ reader rule outranks the writer rule.
 
 | Key     | Type    | Detail Level | Description                                              |
 | ------- | ------- | ------------ | -------------------------------------------------------- |
-| `"sid"` | integer | `headers`+   | QUIC stream ID                                           |
+| `"sid"` | integer | `headers`+   | Stream ID. See [below](#sid--the-stream-id).             |
 | `"d"`   | integer | `headers`+   | Direction: `0` = outgoing, `1` = incoming                |
 | `"st"`  | integer | `headers`+   | Stream type: `0` = subgroup, `1` = datagram, `2` = fetch |
 | `"ta"`  | integer | `headers`+   | Track alias the stream carries. Optional.                |
@@ -173,6 +173,21 @@ reader rule outranks the writer rule.
 | `"fri"` | integer | `headers`+   | Fetch request ID. Optional; only meaningful when `st == 2`. |
 | `"g"`   | integer | `headers`+   | Group ID. Optional; only meaningful when `st == 1`.       |
 | `"hdr"` | byte string | `headers`+ | The stream's header as the wire carried it. **Optional.** See [below](#hdr--the-header-bytes). |
+
+#### `"sid"` — the stream ID
+
+On every event type that carries it, `"sid"` is the QUIC stream ID. A recorder
+that cannot see QUIC stream IDs, such as one on the WebTransport API, MUST
+assign its own: one per stream, unique within the trace, and below 2^62.
+
+A datagram travels on no stream. A writer MUST give each datagram's Event 1,
+and the Event 3 and Event 4 for its object, the same `"sid"`: at least 2^62,
+and used by no other stream or datagram in the trace. QUIC stream IDs stop
+below 2^62 (RFC 9000 Section 2.1), so this ID never names a real stream.
+
+A reader MUST identify a datagram by `"st": 1`, never by the value of `"sid"`.
+Traces written before this rule give every datagram `"sid": 0`, the ID of a
+real stream, and remain readable.
 
 #### Why these four keys exist
 
@@ -255,7 +270,7 @@ silently.
 
 | Key     | Type    | Detail Level | Description                  |
 | ------- | ------- | ------------ | ---------------------------- |
-| `"sid"` | integer | `headers`+   | QUIC stream ID               |
+| `"sid"` | integer | `headers`+   | Stream ID, as on [Event 1](#sid--the-stream-id) |
 | `"ec"`  | integer | `headers`+   | Error code (0 = clean close) |
 
 ### Event 3: Object Header
@@ -264,7 +279,7 @@ Object header events and object payload events (event 4) for the same object sha
 
 | Key     | Type    | Detail Level | Description                                                                |
 | ------- | ------- | ------------ | -------------------------------------------------------------------------- |
-| `"sid"` | integer | `headers`+   | Stream ID this object arrived on                                           |
+| `"sid"` | integer | `headers`+   | Stream ID this object arrived on, as on [Event 1](#sid--the-stream-id)     |
 | `"g"`   | integer | `headers`+   | Group ID                                                                   |
 | `"o"`   | integer | `headers`+   | Object ID                                                                  |
 | `"pp"`  | integer | `headers`+   | Publisher priority                                                         |
@@ -290,7 +305,7 @@ block with the codec for the session's draft.
 
 | Key     | Type        | Detail Level     | Description                                                |
 | ------- | ----------- | ---------------- | ---------------------------------------------------------- |
-| `"sid"` | integer     | `headers+sizes`+ | Stream ID                                                  |
+| `"sid"` | integer     | `headers+sizes`+ | Stream ID, as on [Event 1](#sid--the-stream-id)            |
 | `"g"`   | integer     | `headers+sizes`+ | Group ID                                                   |
 | `"o"`   | integer     | `headers+sizes`+ | Object ID                                                  |
 | `"sz"`  | integer     | `headers+sizes`+ | Payload size in bytes                                      |
@@ -1097,6 +1112,7 @@ Implementations MAY batch multiple events into one object for efficiency at high
 - **Unknown event types, perspectives and detail levels must be tolerated, not rejected.**
 - **Unrecognised keys must survive a read-modify-write.**
 - **Key preservation in the header**: the header map, `"segment"` and `"sampling"` each keep their own store. See [Unrecognised keys in the header](#unrecognised-keys-in-the-header).
+- **Each datagram gets its own `"sid"`**, at least 2^62 and unique within the trace, where writers used `0`. Readers identify a datagram by `"st": 1`. A recorder without QUIC stream IDs assigns its own, below 2^62. See [`"sid"` — the stream ID](#sid--the-stream-id).
 - **Event 6 can carry the bytes behind the error** — `"sid"`, `"ek"`, a `"rawlen"` gated at `"headers+sizes"` and a `"raw"` gated at `"full"`, with a normative 4096-byte cap and a one-per-flow latch. See [Event 6](#event-6-error).
 - Event `"n"` and `"t"` clarified as **segment-local** in segmented traces.
 - **Non-droppable event types rule** added to the Sampling section.

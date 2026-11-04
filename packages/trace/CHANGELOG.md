@@ -12,6 +12,13 @@ in it describes 0.3.0 — the last version anyone can install.
 
 ## [Unreleased]
 
+### Changed
+
+- SPEC.md gives each datagram its own `"sid"`, at least 2^62 and unique within
+  the trace, instead of `0`. Readers identify a datagram by `streamType` 1;
+  traces with datagrams on stream 0 still read. A recorder without QUIC stream
+  IDs assigns its own, below 2^62. The API is unchanged.
+
 ## [0.6.0] - 2026-10-30
 
 ### Added

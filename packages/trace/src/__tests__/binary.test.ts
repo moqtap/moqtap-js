@@ -893,6 +893,39 @@ describe('unrecognised keys on a recognised event type', () => {
   })
 })
 
+// SPEC.md "`"sid"` — the stream ID"
+describe('the stream ID of a datagram', () => {
+  const datagram = (sid: bigint | number, g: number): Record<string, unknown>[] => [
+    { n: 0, t: 0, e: 1, sid, d: 1, st: 1, ta: 3, g },
+    { n: 1, t: 1, e: 3, sid, g, o: 0, pp: 128, os: 0 },
+    { n: 2, t: 2, e: 4, sid, g, o: 0, sz: 10 },
+  ]
+
+  const datagramIds = (trace: Trace): bigint[] =>
+    trace.events.flatMap((e) =>
+      e.type === 'stream-opened' && e.streamType === 1 ? [e.streamId] : [],
+    )
+
+  it('reads a trace written before the rule, with every datagram on stream 0', () => {
+    const trace = readMoqtrace(fileWithEventMaps(...datagram(0, 5), ...datagram(0, 6)))
+    expect(trace.events).toHaveLength(6)
+    expect(datagramIds(trace)).toEqual([0n, 0n])
+    expect(trace.events.every((e) => 'streamId' in e && e.streamId === 0n)).toBe(true)
+  })
+
+  it('reads and writes back one ID per datagram from 2^62 up', () => {
+    const base = 1n << 62n
+    const bytes = fileWithEventMaps(...datagram(base, 5), ...datagram(base + 1n, 6))
+    const trace = readMoqtrace(bytes)
+    expect(trace.events).toHaveLength(6)
+    expect(datagramIds(trace)).toEqual([base, base + 1n])
+    const [, header, payload] = trace.events
+    expect(header?.type === 'object-header' && header.streamId).toBe(base)
+    expect(payload?.type === 'object-payload' && payload.streamId).toBe(base)
+    expect(readMoqtrace(writeMoqtrace(trace)).events).toEqual(trace.events)
+  })
+})
+
 describe('the stream-header identifiers on a stream-opened event', () => {
   const opened: StreamOpenedEvent = {
     type: 'stream-opened',
