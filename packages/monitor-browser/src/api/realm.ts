@@ -149,6 +149,8 @@ export interface RealmHost {
   onTrigger(e: TriggerEvent): void
   /** A connection's draft is known, or known to be unusable: the first upload is worth making. */
   onConnReady(): void
+  /** A connection is closing: nothing of its close is written yet. */
+  onConnClosing?(): void
   /** A connection closed and its last records are written. */
   onConnClosed(): void
   /** The control plane outran the collector. The realm has already stopped observing. */
@@ -763,6 +765,10 @@ export class RealmObserver {
   onSessionClose(sessionId: string, _reason: string, at: Mono, info?: SessionCloseInfo): void {
     const c = this._connections.get(sessionId)
     if (c === undefined) return
+    // A page that slept may learn of the close first: a clock break is found
+    // before the close's records are written.
+    this._host.clockCheck?.()
+    this._host.onConnClosing?.()
     // A pre-15 connection that closes before SETUP named its version carries
     // no `degraded`: nothing showed the version to be one this build can't read.
     this._close(c, at, info ?? { cause: 'closed' })

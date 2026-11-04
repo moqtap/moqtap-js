@@ -468,7 +468,8 @@ export class CollectorRuntime {
                 if (build.features.flightRecorder === undefined) this._triggersUnrunnable()
                 this._schedule.ready(this._clock.now())
               },
-              onConnClosed: () => this._sealNow(false),
+              onConnClosing: () => this._connClosing(),
+              onConnClosed: () => this._connClosed(),
               onOverrun: () => this._overrun(),
               onPressure: (p) => this._pacer.notePressure(p),
               onBytes: (n) => this._buffered(n),
@@ -1031,6 +1032,8 @@ export class CollectorRuntime {
       },
       connReady: () => self._schedule.ready(self._clock.now()),
       sealNow: () => self._sealNow(false),
+      connClosing: () => self._connClosing(),
+      connClosed: () => self._connClosed(),
       annotate: (name, data, conn) => self.annotate(name, data, conn),
       observe: (name, value, labels) => self.observe(name, value, labels),
       escalate: (level, reason) => self.escalate(level, reason),
@@ -1092,6 +1095,8 @@ export class CollectorRuntime {
   private _clockBreak(): void {
     if (this._ended) return
     this._sealNow(false)
+    // No body is joined across a break: the time across it is on neither clock.
+    this._emitter.noteQuiet()
     this._emitter.clock.raise()
     this._probeClock()
   }
@@ -1361,6 +1366,25 @@ export class CollectorRuntime {
    */
   private _levelChanged(): void {
     if (!this._packs() && this._queue.frameCount > 0) this._schedule.due()
+    if (this._escalation.level === 'baseline') this._emitter.noteQuiet()
+  }
+
+  /**
+   * A connection is closing: what came before goes in a body of its own, and
+   * the close starts a new one, since a page that slept learns of the close
+   * only on waking.
+   */
+  private _connClosing(): void {
+    if (this._ended) return
+    this._sealNow(false)
+    this._emitter.noteQuiet()
+  }
+
+  /** A connection closed: with none left open, capture has stopped. */
+  private _connClosed(): void {
+    if (this._ended) return
+    this._sealNow(false)
+    if (!this._emitter.anyOpen) this._emitter.noteQuiet()
   }
 
   /**
@@ -1392,11 +1416,13 @@ export class CollectorRuntime {
   /**
    * A seal the schedule or a connection close asked for, then send. `tick`
    * closes the open rollup intervals first; a close has already written its
-   * connection's last one.
+   * connection's last one. A page that slept may run this first on waking, so
+   * a clock break is found before anything is written.
    */
   private _sealNow(tick: boolean): void {
     if (this._ended) return
     try {
+      this._clockCheck()
       if (tick) this._tick()
       if (this._seal() !== null) void this._drain()
       else if (tick && this._queue.frameCount === 0) this._emitter.noteQuiet()
@@ -1773,9 +1799,18 @@ export class CollectorRuntime {
       if ((e as { persisted?: boolean }).persisted === true) this._pageshow()
     })
     on('visibilitychange', () => this._visibility())
+    on('freeze', () => this._freeze())
     on('online', () => {
       void this._drain()
     })
+  }
+
+  /** The page is frozen: nothing runs until it resumes, so what it holds is sealed now. */
+  private _freeze(): void {
+    if (this._ended || this._armed) return
+    this._tick()
+    if (this._seal(false, true) !== null) void this._drain()
+    this._emitter.noteQuiet()
   }
 
   private _visibility(): void {
@@ -1823,6 +1858,7 @@ export class CollectorRuntime {
       this._tick()
       this._writeLife('frozen')
       this._seal(false, true)
+      this._emitter.noteQuiet()
       this._beaconOutbox([])
       this._beaconed.clear()
       return

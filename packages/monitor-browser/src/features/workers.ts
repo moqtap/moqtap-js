@@ -332,6 +332,7 @@ class Links implements WorkerLinks {
         [],
       )
     }
+    if (gone.length > 0) owner.connClosing()
     if (m.ready && !link.ready) {
       link.ready = true
       owner.connReady()
@@ -343,7 +344,10 @@ class Links implements WorkerLinks {
       }
     }
     // Closed once its last records are in: a seal on the way must still list it.
-    if (gone.length > 0) owner.noteConns([], gone)
+    if (gone.length > 0) {
+      owner.noteConns([], gone)
+      owner.connClosed()
+    }
     if (m.brk === true) owner.clockBreak()
     if (typeof m.seq === 'number' && m.seq > link.seq) link.seq = m.seq
     this._tellRoom(link)
@@ -369,9 +373,10 @@ class Links implements WorkerLinks {
     if ((link.state !== 'linked' && link.state !== 'silent') || owner.ended) return
     link.state = 'gone'
     owner.writeLink(link.id, 'gone')
+    owner.connClosing()
     this._closeForwarded(link, 'worker-gone')
     link.conns = []
-    owner.sealNow()
+    owner.connClosed()
   }
 
   /** Report a link's open connections closed, from its last forward. */

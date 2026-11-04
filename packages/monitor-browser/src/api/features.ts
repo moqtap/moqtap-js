@@ -191,6 +191,10 @@ export interface LinkOwner {
   clockBreak(): void
   connReady(): void
   sealNow(): void
+  /** A probe's connection is closing: seal what came before, so its close starts a new body. */
+  connClosing(): void
+  /** A probe's connection closed and its last records are in. */
+  connClosed(): void
   annotate(name: string, data: unknown, conn?: string): void
   observe(name: string, value: number, labels?: Record<string, string>): void
   escalate(level: DetailLevel, reason?: string): void

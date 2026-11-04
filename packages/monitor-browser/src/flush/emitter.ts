@@ -106,7 +106,7 @@ export class Emitter {
 
   /**
    * Take the next body's number, and whether that body continues the one
-   * before it: there is one, and no scheduled seal since found nothing.
+   * before it: there is one, and nothing since showed capture stopped.
    */
   takeSeq(): number {
     this._cont = this._seq > 0 && !this._quiet
@@ -119,7 +119,11 @@ export class Emitter {
     return this._cont
   }
 
-  /** A scheduled seal found nothing to send: the next body starts after a silence. */
+  /**
+   * Capture stopped, or may have: a scheduled seal found nothing, the page
+   * froze, the clock broke, a connection closed or detail went back to
+   * baseline. The next body starts after a silence.
+   */
   noteQuiet(): void {
     this._quiet = true
   }
@@ -227,6 +231,12 @@ export class Emitter {
     }
     this._conns.delete(c)
     this._conns.set(c, { draft: known?.draft ?? draft, relay, open: true, listed: false })
+  }
+
+  /** Whether a connection the bodies list is still open. */
+  get anyOpen(): boolean {
+    for (const k of this._conns.values()) if (k.open) return true
+    return false
   }
 
   noteConnClosed(c: number): void {
