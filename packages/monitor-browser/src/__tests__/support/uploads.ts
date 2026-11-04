@@ -73,8 +73,8 @@ export function preambleOf(body: Uint8Array): {
   return JSON.parse(new TextDecoder().decode(new Uint8Array(body.buffer, at, n)))
 }
 
-/** Every JSON record in one uploaded body, ungzipped if its preamble says so. */
-export async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
+/** Every frame in one uploaded body, ungzipped if its preamble says so. */
+export async function framesOf(body: Uint8Array): Promise<{ raw: boolean; payload: Uint8Array }[]> {
   const pre = readPreamble(body) as { gzipped: boolean }
   let frames = afterPreamble(body)
   if (pre.gzipped) {
@@ -82,9 +82,14 @@ export async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
     const out = new Response(new Blob([frames as unknown as BlobPart]).stream().pipeThrough(ds))
     frames = new Uint8Array(await out.arrayBuffer())
   }
+  return [...readFrames(frames)]
+}
+
+/** Every JSON record in one uploaded body. */
+export async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
   const decoder = new TextDecoder()
   const out: EnvelopeRecord[] = []
-  for (const f of readFrames(frames)) {
+  for (const f of await framesOf(body)) {
     if (!f.raw) out.push(JSON.parse(decoder.decode(f.payload)) as EnvelopeRecord)
   }
   return out

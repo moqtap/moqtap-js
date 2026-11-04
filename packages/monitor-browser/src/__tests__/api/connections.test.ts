@@ -3,19 +3,21 @@
  * connection per video to the same relay and path, one connection reused
  * across videos, one connection per stream on its own path, other relays,
  * and the same namespace on several relays and paths, in turn or at once.
- * Every body keeps the page's one session and instance, every connection
- * keeps its own ordinal and relay, and no connection's objects are lost or
- * merged into another's.
+ * Between videos the viewer browses with no connection open, longer than
+ * any timer the page sets. Every body keeps the page's one session and
+ * instance, every connection keeps its own ordinal, relay, requests and
+ * runs, and no connection's objects are lost or merged into another's.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import type { CollectorConfig } from '../../types.js'
-import { subgroupBytes } from '../decode/vectors.js'
+import { subgroupBytes, subscribeBytes, subscribeOkBytes } from '../decode/vectors.js'
 import { init } from '../support/init.js'
 import { allFacts } from '../support/runs.js'
 import { settle } from '../support/settle.js'
-import { allRecords, of, type Post, recordingFetch } from '../support/uploads.js'
+import { manualTimers } from '../support/timers.js'
+import { allRecords, framesOf, of, type Post, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -44,11 +46,42 @@ interface Conn {
   readonly uni: ReadableStreamDefaultReader<ReadableStream<Uint8Array>>
 }
 
+/** A page whose timers the test runs. */
+function page() {
+  const { posts, impl } = recordingFetch()
+  const timers = manualTimers()
+  const m = init(config, { ...quiet, fetchImpl: impl, ...timers })
+  return { posts, timers, m }
+}
+
+/** The viewer browsing with nothing open: every timer the page set runs out, several times over. */
+async function browse(timers: ReturnType<typeof manualTimers>): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    timers.runAll()
+    await settle(5)
+  }
+}
+
 async function open(url: string): Promise<Conn> {
   const wt = new (g.WebTransport as Ctor)(url)
   await wt.open('moqt-20')
   await settle(5)
   return { wt, uni: wt.incomingUnidirectionalStreams.getReader() }
+}
+
+/** The page's SUBSCRIBE to `moqtap/test` `name` on its own stream, answered with `alias`. */
+async function subscribe(c: Conn, requestId: bigint, name: string, alias: bigint): Promise<void> {
+  const bidi = (await c.wt.createBidirectionalStream()) as unknown as {
+    readable: ReadableStream<Uint8Array>
+    writable: WritableStream<Uint8Array>
+    inbound: { push(b: Uint8Array): void; close(): void }
+  }
+  const writer = bidi.writable.getWriter()
+  await writer.write(subscribeBytes(requestId, name))
+  bidi.inbound.push(subscribeOkBytes(alias))
+  const reader = bidi.readable.getReader()
+  await reader.read()
+  await settle(5)
 }
 
 /** One subgroup stream of `alias`'s group `group`, two objects, read to its FIN. */
@@ -75,15 +108,40 @@ async function close(c: Conn): Promise<void> {
   await settle(5)
 }
 
-/** The page's sessions and instances, each connection's relay, and every run's (c, g). */
+const hex = (b: Uint8Array): string => [...b].map((x) => x.toString(16).padStart(2, '0')).join('')
+
+/** Each control frame sent, as `[c, dir, streamId, bytes]`: the record and the raw frame after it. */
+async function ctrlFrames(posts: readonly Post[]): Promise<[number, string, number, string][]> {
+  const out: [number, string, number, string][] = []
+  const decoder = new TextDecoder()
+  for (const p of posts) {
+    let pending: { c?: number; dir: string; streamId: number } | null = null
+    for (const f of await framesOf(p.body)) {
+      if (f.raw) {
+        if (pending !== null)
+          out.push([pending.c ?? -1, pending.dir, pending.streamId, hex(f.payload)])
+        pending = null
+        continue
+      }
+      const r = JSON.parse(decoder.decode(f.payload)) as { t: string }
+      pending =
+        r.t === 'ctrl' ? (r as unknown as { c?: number; dir: string; streamId: number }) : null
+    }
+  }
+  return out.sort()
+}
+
+/** The page's sessions and instances, each connection's relay, and every run's (c, key, g, objects). */
 async function seen(posts: readonly Post[]) {
-  const batches = of(await allRecords(posts), 'batch')
+  const all = await allRecords(posts)
+  const batches = of(all, 'batch')
   const relays = new Map<number, string>()
   for (const b of batches) for (const c of b.conn) relays.set(c.c, c.relay)
   const { runs } = await allFacts(posts.map((p) => p.body))
   return {
     sessions: new Set(batches.map((b) => b.sessionId)),
     instances: new Set(batches.map((b) => b.instanceId)),
+    ends: of(all, 'end').map((e) => e.reason),
     relays: [...relays].sort(([a], [b]) => a - b),
     runs: runs.map((r) => [r.c, r.key, r.g, r.ids.length]).sort(),
   }
@@ -91,22 +149,33 @@ async function seen(posts: readonly Post[]) {
 
 const twoObjects = (c: number, alias: bigint, g: bigint) => [c, `rx:alias:${alias}:0`, g, 2]
 
+/** SUBSCRIBE out and SUBSCRIBE_OK back on connection `c`, as its control frames. */
+const exchange = (c: number, sid: number, requestId: bigint, name: string, alias: bigint) => [
+  [c, 'rx', sid, hex(subscribeOkBytes(alias))],
+  [c, 'tx', sid, hex(subscribeBytes(requestId, name))],
+]
+
+/** The stream id of the page's first bidirectional stream on a connection. */
+const FIRST_BIDI = 0
+
 describe('one session across every connection the page opens', () => {
-  it('a new WebTransport per video, to the same relay and path', async () => {
-    const { posts, impl } = recordingFetch()
-    const m = init(config, { ...quiet, fetchImpl: impl })
+  it('a new WebTransport per video, to the same relay and path, with browsing between', async () => {
+    const { posts, timers, m } = page()
     await settle()
     for (let video = 0; video < 3; video++) {
       const c = await open('https://relay.test/moq')
+      await subscribe(c, 0n, 'video', 4n)
       await group(c, 4n, BigInt(video))
       await m.flush()
       await close(c)
+      await browse(timers)
     }
     const id = m.ids()
     await m.end()
     const s = await seen(posts)
     expect(s.sessions).toEqual(new Set([id.sessionId]))
     expect(s.instances.size).toBe(1)
+    expect(s.ends).toEqual(['app'])
     expect(s.relays).toEqual([
       [0, 'https://relay.test/moq'],
       [1, 'https://relay.test/moq'],
@@ -115,16 +184,19 @@ describe('one session across every connection the page opens', () => {
     expect(s.runs).toEqual(
       [twoObjects(0, 4n, 0n), twoObjects(1, 4n, 1n), twoObjects(2, 4n, 2n)].sort(),
     )
+    expect(await ctrlFrames(posts)).toEqual(
+      [0, 1, 2].flatMap((c) => exchange(c, FIRST_BIDI, 0n, 'video', 4n)).sort(),
+    )
   })
 
-  it('one connection reused across videos', async () => {
-    const { posts, impl } = recordingFetch()
-    const m = init(config, { ...quiet, fetchImpl: impl })
+  it('one connection reused across videos, with browsing between', async () => {
+    const { posts, timers, m } = page()
     await settle()
     const c = await open('https://relay.test/moq')
     for (let video = 0; video < 3; video++) {
       await group(c, BigInt(4 + video), 0n)
       await m.flush()
+      await browse(timers)
     }
     await close(c)
     const id = m.ids()
@@ -132,6 +204,7 @@ describe('one session across every connection the page opens', () => {
     const s = await seen(posts)
     expect(s.sessions).toEqual(new Set([id.sessionId]))
     expect(s.instances.size).toBe(1)
+    expect(s.ends).toEqual(['app'])
     expect(s.relays).toEqual([[0, 'https://relay.test/moq']])
     expect(s.runs).toEqual(
       [twoObjects(0, 4n, 0n), twoObjects(0, 5n, 0n), twoObjects(0, 6n, 0n)].sort(),
@@ -139,11 +212,12 @@ describe('one session across every connection the page opens', () => {
   })
 
   it('one connection per stream, each on its own path, at once', async () => {
-    const { posts, impl } = recordingFetch()
-    const m = init(config, { ...quiet, fetchImpl: impl })
+    const { posts, m } = page()
     await settle()
     const video = await open('https://relay.test/moq/video')
     const audio = await open('https://relay.test/moq/audio')
+    await subscribe(video, 0n, 'video', 4n)
+    await subscribe(audio, 0n, 'audio', 4n)
     await group(video, 4n, 0n)
     await group(audio, 4n, 0n)
     await group(video, 4n, 1n)
@@ -167,12 +241,17 @@ describe('one session across every connection the page opens', () => {
         twoObjects(1, 4n, 1n),
       ].sort(),
     )
+    expect(await ctrlFrames(posts)).toEqual(
+      [
+        ...exchange(0, FIRST_BIDI, 0n, 'video', 4n),
+        ...exchange(1, FIRST_BIDI, 0n, 'audio', 4n),
+      ].sort(),
+    )
   })
 
   for (const atOnce of [false, true]) {
     it(`different relays, and one namespace on several relays and paths, ${atOnce ? 'at once' : 'in turn'}`, async () => {
-      const { posts, impl } = recordingFetch()
-      const m = init(config, { ...quiet, fetchImpl: impl })
+      const { posts, timers, m } = page()
       await settle()
       const urls = [
         'https://relay-a.test/moq',
@@ -180,18 +259,22 @@ describe('one session across every connection the page opens', () => {
         'https://relay-a.test/edge/moq',
         'moqt://relay-c.test/live',
       ]
+      // Each relay numbers the same track `moqtap/test` `video` its own way.
+      const alias = (i: number) => BigInt(4 + i)
       if (atOnce) {
         const conns: Conn[] = []
         for (const u of urls) conns.push(await open(u))
-        // The same alias on each: the relays' own numbering of one namespace's track.
-        for (const c of conns) await group(c, 4n, 7n)
+        for (const [i, c] of conns.entries()) await subscribe(c, 0n, 'video', alias(i))
+        for (const [i, c] of conns.entries()) await group(c, alias(i), 7n)
         for (const c of conns) await close(c)
       } else {
-        for (const u of urls) {
+        for (const [i, u] of urls.entries()) {
           const c = await open(u)
-          await group(c, 4n, 7n)
+          await subscribe(c, 0n, 'video', alias(i))
+          await group(c, alias(i), 7n)
           await m.flush()
           await close(c)
+          await browse(timers)
         }
       }
       const id = m.ids()
@@ -199,8 +282,12 @@ describe('one session across every connection the page opens', () => {
       const s = await seen(posts)
       expect(s.sessions).toEqual(new Set([id.sessionId]))
       expect(s.instances.size).toBe(1)
+      expect(s.ends).toEqual(['app'])
       expect(s.relays).toEqual(urls.map((u, i) => [i, u]))
-      expect(s.runs).toEqual(urls.map((_, i) => twoObjects(i, 4n, 7n)).sort())
+      expect(s.runs).toEqual(urls.map((_, i) => twoObjects(i, alias(i), 7n)).sort())
+      expect(await ctrlFrames(posts)).toEqual(
+        urls.flatMap((_, i) => exchange(i, FIRST_BIDI, 0n, 'video', alias(i))).sort(),
+      )
     })
   }
 })

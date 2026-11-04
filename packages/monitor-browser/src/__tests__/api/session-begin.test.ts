@@ -26,6 +26,7 @@ import { installWebTransportHook } from '../../transport/index.js'
 import type { CollectorConfig, EnvelopeRecord } from '../../types.js'
 import { attempt, init, workerBuild } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
+import { manualTimers } from '../support/timers.js'
 import { allRecords, of, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
@@ -68,39 +69,6 @@ function lifecycle(): { fire(type: string, e?: unknown): void; restore(): void }
     restore: () => {
       g.addEventListener = prev
       g.removeEventListener = prevRemove
-    },
-  }
-}
-
-/** Every timer the page sets, run by hand. */
-function manualTimers() {
-  const live = new Map<number, { fn: () => void; ms: number }>()
-  let next = 1
-  return {
-    setTimer: (fn: () => void, ms: number): unknown => {
-      const id = next++
-      live.set(id, { fn, ms })
-      return id
-    },
-    clearTimer: (h: unknown): void => {
-      live.delete(h as number)
-    },
-    /** How many timers of `ms` are pending. */
-    pending: (ms: number): number => [...live.values()].filter((t) => t.ms === ms).length,
-    /** Run every pending timer once, as if the longest of them had passed. */
-    runAll(): void {
-      for (const [id, t] of [...live]) {
-        live.delete(id)
-        t.fn()
-      }
-    },
-    /** Run every pending timer of `ms`, as if that long had passed. */
-    run(ms: number): void {
-      for (const [id, t] of [...live]) {
-        if (t.ms !== ms) continue
-        live.delete(id)
-        t.fn()
-      }
     },
   }
 }
