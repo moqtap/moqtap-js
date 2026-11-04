@@ -41,8 +41,8 @@ startPlayer()
 ```
 
 That is a complete integration. Every MoQT session the page opens is measured and uploaded.
-A session begins when the page constructs its first `WebTransport`, and ends by itself 30
-seconds after its last connection closes, or when the page closes.
+A session begins when the page constructs its first `WebTransport`, and ends when the page
+closes.
 
 ### Import order
 
@@ -58,11 +58,12 @@ subscribe exchanges. Objects that arrived before `init()` are counted as `early.
 
 ## Sessions and connections
 
-- **Session**: the WebTransport activity of one page and its linked workers. It begins when the
-  page or a linked worker constructs a `WebTransport`, whether or not it connects. It ends 30
-  seconds after its last connection closes with no other attempted (`end` reason `idle`), when
-  the page closes, or when you call `end()` or `newSession()`. The next `WebTransport` after that
-  begins a new session, with a new session ID and the context set so far.
+- **Session**: the WebTransport activity of one page and its linked workers: every connection
+  they open, to any relay or path, at once or in turn. It begins when the page or a linked worker
+  constructs a `WebTransport`, whether or not it connects. It ends when the page closes, or when
+  you call `end()` or `newSession()`, however long the page goes without a connection. After
+  `newSession()`, the next `WebTransport` begins a new session, with a new session ID and the
+  context set so far.
 - **Instance**: one page load's recording, from `init()` on. Every session the page records has
   the same instance ID. A reload is a new instance, and a reload that passes the same
   `sessionId` is a second instance of that session.
@@ -257,7 +258,7 @@ await vitals.discard() // delete everything unsent and send nothing more
 ```
 
 You need `end()` only when you stop collecting for good while the page stays open. Closing the
-page ends the session by itself, and so do 30 seconds with no connection open. A native shell
+page ends the session by itself. A native shell
 that kills its webview without a `pagehide` event should `await vitals.flush()` first.
 
 Use `discard()` when the user withdraws consent. It deletes this session's unsent data from the
@@ -353,7 +354,6 @@ Without any call, the collector:
 |---|---|
 | a `WebTransport` is constructed | begins a session, unless one is running |
 | a connection closes | records why, and uploads that connection's records |
-| no connection has been open for 30 s | ends the session |
 | the page is hidden | uploads what it holds |
 | the page closes | ends the session and uploads the rest |
 | the page enters the back/forward cache | uploads what it holds; the session goes on if the page is restored |
@@ -651,14 +651,15 @@ Never uploaded:
 
 Every session counts toward your plan's monthly sessions, including one whose only connection
 failed to open. A page that never constructs a `WebTransport` produces no session and isn't
-counted. A page that connects again after 30 seconds with no connection open starts a new
+counted. A page that connects again after any time without a connection is still the same
 session.
 
 Baseline collection is always on and does not use recording minutes.
 
-Time above `baseline` counts toward your plan's monthly recording minutes, in whole seconds,
-rounded down, with a one-second minimum per window. A 4.9-second window counts 4 seconds; two
-200 ms windows count 2 seconds. `budget.elevatedMinutes` caps elevated time per session.
+Time above `baseline` counts toward your plan's monthly recording minutes: the time that the
+records of each upload sent above `baseline` cover, on Insight's clock, so time in which the page
+sent nothing never counts. Watching a session live in Insight counts too. A month's total counts
+whole minutes, rounded down. `budget.elevatedMinutes` caps elevated time per session.
 Nothing over a plan's limits is charged; the limits per plan are on the
 [pricing page](/pricing#compare).
 

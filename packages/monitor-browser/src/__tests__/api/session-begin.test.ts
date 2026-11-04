@@ -1,15 +1,15 @@
 /**
  * When a session exists: from the first `WebTransport` constructed in the page
- * or a linked worker, until its last connection has closed and none has been
- * attempted for {@link IDLE_END_MS}. A page that never constructs one records,
- * stores and sends nothing.
+ * or a linked worker, until the page ends, `end()` or `newSession()`, however
+ * long the page goes without a connection. A page that never constructs one
+ * records, stores and sends nothing.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ensureDormantHook, resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import { envelope, type LinkedMessage, linkMessage } from '../../api/link.js'
 import { ProbeRuntime } from '../../api/probe.js'
-import { IDLE_END_MS, type LinkEvent } from '../../api/session.js'
+import type { LinkEvent } from '../../api/session.js'
 import { initWorkerWith } from '../../api/worker.js'
 import { sha256Hex } from '../../envelope/index.js'
 import {
@@ -87,6 +87,13 @@ function manualTimers() {
     },
     /** How many timers of `ms` are pending. */
     pending: (ms: number): number => [...live.values()].filter((t) => t.ms === ms).length,
+    /** Run every pending timer once, as if the longest of them had passed. */
+    runAll(): void {
+      for (const [id, t] of [...live]) {
+        live.delete(id)
+        t.fn()
+      }
+    },
     /** Run every pending timer of `ms`, as if that long had passed. */
     run(ms: number): void {
       for (const [id, t] of [...live]) {
@@ -400,7 +407,7 @@ describe('the first WebTransport begins the session', () => {
   })
 })
 
-describe('the session ends when its connections have', () => {
+describe('the session outlives its connections', () => {
   /** A page with one connection that opened and closed, its timers in the test's hands. */
   async function closedOnce(over: Partial<CollectorConfig> = {}) {
     const fetch = recordingFetch()
@@ -413,75 +420,35 @@ describe('the session ends when its connections have', () => {
     return { c, timers, wt, ...fetch }
   }
 
-  it(`ends ${IDLE_END_MS / 1000} s after the last connection closes, and the next construction begins a new session`, async () => {
-    const { c, timers, wt, posts } = await closedOnce({ context: { tags: { experiment: 'a' } } })
-    c.setContext({ contentId: 'live/1', actorId: 'viewer-1', tags: { cdn: 'edge-1' } })
+  it('stays one session when the next connection comes after any wait', async () => {
+    const { c, timers, wt, posts } = await closedOnce()
     const first = c.ids()
     wt.closeSession('done')
     await settle(5)
-    expect(timers.pending(IDLE_END_MS)).toBe(1)
-
-    timers.run(IDLE_END_MS)
-    await until(async () => of(await allRecords(posts), 'end').length === 1)
-    const [end] = of(await allRecords(posts), 'end')
-    expect(end?.reason).toBe('idle')
-
-    // Waiting again: new ids at once, the context so far, and nothing sent.
-    const second = c.ids()
-    // A new session of the same emitter: the instance claim stays.
-    expect(second.sessionId).not.toBe(first.sessionId)
-    expect(second.instanceId).toBe(first.instanceId)
-    expect(second).toMatchObject({ contentId: 'live/1', actorId: 'viewer-1' })
-    const sent = posts.length
-    c.annotate('between')
-    await c.flush()
-    expect(posts).toHaveLength(sent)
-
-    attempt()
-    await c.end()
-    const all = await allRecords(posts)
-    expect(sessionsOf(all)).toEqual([first.sessionId, second.sessionId])
-    const setups = of(all, 'setup')
-    expect(setups[1]).toMatchObject({
-      identity: { sessionId: second.sessionId, instanceId: second.instanceId },
-      idSource: 'minted',
-    })
-    expect(of(all, 'ident').at(-1)).toMatchObject({
-      content: 'live/1',
-      actor: 'viewer-1',
-      tags: { experiment: 'a', cdn: 'edge-1' },
-    })
-    expect(setups[1]?.anchor.originMono).toBeGreaterThan(setups[0]?.anchor.originMono ?? 0)
-    expect(of(all, 'note').map((n) => n.name)).toEqual([])
-    expect(of(all, 'end').map((e) => e.reason)).toEqual(['idle', 'app'])
-  })
-
-  it('stays one session when a connection is attempted within the wait', async () => {
-    const { c, timers, wt, posts } = await closedOnce()
-    wt.closeSession('done')
-    await settle(5)
+    for (let i = 0; i < 3; i++) {
+      timers.runAll()
+      await settle(5)
+    }
+    expect(c.ids()).toEqual(first)
     const again = attempt()
     await again.open('moqt-20')
-    await settle(5)
-    timers.run(IDLE_END_MS)
     await settle(5)
     again.closeSession('done again')
     await settle(5)
     await c.end()
 
     const all = await allRecords(posts)
-    expect(sessionsOf(all)).toHaveLength(1)
-    expect(of(all, 'conn-open').map((o) => o.conn)).toHaveLength(4)
+    expect(sessionsOf(all)).toEqual([first.sessionId])
     expect(new Set(of(all, 'conn-close').map((x) => x.conn)).size).toBe(2)
     expect(of(all, 'end').map((e) => e.reason)).toEqual(['app'])
   })
 
-  it('closes a capture window open at the end; the next session starts at the configured level', async () => {
-    const { c, timers, wt, posts } = await closedOnce()
+  it('closes a capture window open at newSession(); the next session starts at the configured level', async () => {
+    const { c, wt, posts } = await closedOnce()
     c.escalate('headers', 'stall')
     wt.closeSession('done')
     await settle(5)
-    timers.run(IDLE_END_MS)
+    c.newSession()
     await until(async () => of(await allRecords(posts), 'end').length === 1)
 
     attempt()
@@ -530,7 +497,7 @@ describe('what ingest asked of a session', () => {
     expect(timers.pending(2_000)).toBe(1)
     wt.closeSession('done')
     await settle(5)
-    timers.run(IDLE_END_MS)
+    c.newSession()
     await until(async () => of(await allRecords(posts), 'end').length === 1)
     watching = false
     expect(timers.pending(2_000)).toBe(0)

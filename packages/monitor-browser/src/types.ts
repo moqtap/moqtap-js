@@ -1792,13 +1792,12 @@ export interface EndCounters {
  * id may have other instances, in other tabs or after a reload.
  *
  * `unload` is the page closing, `app` is `end()`, `new-session` is the page
- * starting the next session, `overrun` is the collector stopping itself
- * because the control plane outran it, and `idle` is the session's last
- * connection having closed with none attempted in the 30 s after.
+ * starting the next session, and `overrun` is the collector stopping itself
+ * because the control plane outran it.
  */
 export interface EndRecord extends RecordBase {
   readonly t: 'end'
-  readonly reason: 'unload' | 'app' | 'new-session' | 'overrun' | 'idle'
+  readonly reason: 'unload' | 'app' | 'new-session' | 'overrun'
   /** The `seq` of this instance's last body, the one this record rides in. */
   readonly finalSeq: number
   readonly counters: EndCounters

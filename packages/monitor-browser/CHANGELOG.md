@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** a session no longer ends 30 s after its last connection
+  closes. It is every connection the page opens, at once or in turn, until
+  the page closes, `end()` or `newSession()`, and `EndRecord['reason']` loses
+  `idle`.
 - **Breaking (types):** `SupportedDraft` gains `23`, and `MarkSample['what']`
   gains `{ end: 'group' | 'track' }`, so an exhaustive `switch` over either
   needs the new case.

@@ -142,8 +142,8 @@ export interface RuntimePorts {
    */
   readonly startTs?: number | undefined
   /**
-   * Another runtime took over: the session began, ended idle, or
-   * `newSession()` started the next. Called before the new runtime starts,
+   * Another runtime took over: the session began, or `newSession()`
+   * started the next. Called before the new runtime starts,
    * so a runtime that hands over again at once is named after this one.
    */
   readonly onSession?: ((r: CollectorRuntime) => void) | undefined
@@ -158,13 +158,6 @@ export interface RuntimePorts {
   /** The earlier session's run recorder and the decoders of the connections it left open. */
   readonly carry?: RealmCarry | undefined
 }
-
-/**
- * How long a session outlives its last connection. A connection attempted
- * within it joins the session; after it the session ends, and the next attempt
- * begins another.
- */
-export const IDLE_END_MS = 30_000
 
 /** The backoff a failed upload waits before the outbox tries again, in ms. */
 const RETRY_FIRST_MS = 1_000
@@ -246,7 +239,6 @@ export class CollectorRuntime {
   private readonly _armed: boolean
   /** What holds the page's transports until this session's realm starts; `undefined` is the dormant hook's own. */
   private _dormant: DormantState | undefined
-  private _idleHandle: unknown
 
   private readonly _clock: ClockSource
   private readonly _ports: RuntimePorts
@@ -469,10 +461,7 @@ export class CollectorRuntime {
                 if (build.features.flightRecorder === undefined) this._triggersUnrunnable()
                 this._schedule.ready(this._clock.now())
               },
-              onConnClosed: () => {
-                this._sealNow(false)
-                this._noteClosed()
-              },
+              onConnClosed: () => this._sealNow(false),
               onOverrun: () => this._overrun(),
               onPressure: (p) => this._pacer.notePressure(p),
               onBytes: (n) => this._buffered(n),
@@ -625,26 +614,6 @@ export class CollectorRuntime {
       this._links?.open() === true ||
       this._realm?.connections().some((c) => c.state !== 'closed') === true
     )
-  }
-
-  /**
-   * A connection closed, or the session began with none open yet. With none
-   * open, the session ends {@link IDLE_END_MS} from now unless one is
-   * attempted meanwhile, and the next attempt begins a new one, with the
-   * context so far.
-   */
-  private _noteClosed(): void {
-    if (this._ended || this._armed || this._open()) return
-    this._cancel(this._idleHandle)
-    this._idleHandle = this._timer(() => {
-      this._idleHandle = undefined
-      if (this._ended || this._open()) return
-      this._finish('idle')
-      this._seal(true)
-      this._handOver(this._withContext({ sessionId: mintId(), idSource: 'minted' }), mintId(), {
-        armed: true,
-      })
-    }, IDLE_END_MS)
   }
 
   /* ── the public verbs ─────────────────────────────────────────────────── */
@@ -943,9 +912,6 @@ export class CollectorRuntime {
     }
     this._releaseInherited()
     if (this._outbox.length > 0) void this._drain()
-    // A session a worker began may see that worker's connection close before
-    // its first forward arrives; it ends all the same.
-    this._noteClosed()
     // Last: a connection already waiting begins the next session at once, and
     // this one hands over what it now holds.
     if (this._armed) this._arm(false)
@@ -1040,7 +1006,6 @@ export class CollectorRuntime {
         self._clockBreak()
       },
       connReady: () => self._schedule.ready(self._clock.now()),
-      noteClosed: () => self._noteClosed(),
       sealNow: () => self._sealNow(false),
       annotate: (name, data, conn) => self.annotate(name, data, conn),
       observe: (name, value, labels) => self.observe(name, value, labels),
@@ -1218,7 +1183,7 @@ export class CollectorRuntime {
     this._links?.closeForwarded('session-end')
     this._customRollup?.tick(now)
     // Probes follow the page into its next session rather than stop.
-    if (reason !== 'new-session' && reason !== 'idle') this._broadcast({ t: 'unlinked' })
+    if (reason !== 'new-session') this._broadcast({ t: 'unlinked' })
     const record: EndRecord = {
       t: 'end',
       ts: this._relNow(),
@@ -1925,19 +1890,13 @@ export class CollectorRuntime {
     this._packer?.clear()
     this._life.abort()
     this._wake?.()
-    for (const h of [
-      this._intervalHandle,
-      this._windowHandle,
-      this._retryHandle,
-      this._idleHandle,
-    ]) {
+    for (const h of [this._intervalHandle, this._windowHandle, this._retryHandle]) {
       this._cancel(h)
     }
     this._links?.teardown()
     this._intervalHandle = undefined
     this._windowHandle = undefined
     this._retryHandle = undefined
-    this._idleHandle = undefined
     const g = globalThis as {
       removeEventListener?: (t: string, f: (e: unknown) => void, capture?: boolean) => void
     }

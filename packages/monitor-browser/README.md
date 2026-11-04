@@ -150,12 +150,13 @@ recorded as an escalation with `by.kind: 'hold'`.
 
 ## Sessions, instances and connections
 
-- **Session**: the WebTransport activity of one page and its linked workers.
-  It begins when a `WebTransport` is constructed, in the page or in a linked
-  worker, whether or not it connects. It ends when its last connection has
-  closed and no other is attempted within 30 s, when the page closes, or when
-  you call `end()` or `newSession()`. The next `WebTransport` after that
-  begins a new session, with a new session id and the context so far.
+- **Session**: the WebTransport activity of one page and its linked workers:
+  every connection they open, to any relay or path, at once or in turn. It
+  begins when a `WebTransport` is constructed, in the page or in a linked
+  worker, whether or not it connects. It ends when the page closes, or when
+  you call `end()` or `newSession()`, however long the page goes without a
+  connection. After `newSession()`, the next `WebTransport` begins a new
+  session, with a new session id and the context so far.
 - **Instance**: one page load's recording, from `init()` on. Every session the
   page records has the same instance id. A reload is a new instance, and a
   reload that passes the same `sessionId` is a second instance of that session.
@@ -181,7 +182,6 @@ Without any call, the collector:
 | -------------------------------------- | ---------------------------------------------------------- |
 | a `WebTransport` is constructed        | begins a session, unless one is running                    |
 | a connection closes                    | records why, and uploads that connection's records         |
-| no connection is open for 30 s         | ends the session                                           |
 | the page is hidden                     | uploads what it holds                                      |
 | the page closes                        | ends the session and uploads the rest                      |
 | the page enters the back/forward cache | uploads what it holds; the session goes on if restored     |

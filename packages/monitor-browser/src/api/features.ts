@@ -190,8 +190,6 @@ export interface LinkOwner {
   /** A probe's clock broke after its last forward: seal, raise the epoch, probe. */
   clockBreak(): void
   connReady(): void
-  /** A linked worker has fewer connections open than it had. */
-  noteClosed(): void
   sealNow(): void
   annotate(name: string, data: unknown, conn?: string): void
   observe(name: string, value: number, labels?: Record<string, string>): void

@@ -319,7 +319,6 @@ class Links implements WorkerLinks {
     if (closed.length > 0 || frames || runs !== undefined) owner.ensureSetup()
     for (const r of closed) owner.json(r)
     let gone: ConnectionState[] = []
-    let fewer = false
     if (!link.terminated) {
       const before = link.conns
       // A connection the page closed for a worker it counted gone stays closed.
@@ -330,7 +329,6 @@ class Links implements WorkerLinks {
         link.conns.map((s) => s.conn),
         [],
       )
-      fewer = link.conns.length < before.length
     }
     if (m.ready && !link.ready) {
       link.ready = true
@@ -344,7 +342,6 @@ class Links implements WorkerLinks {
     }
     // Closed once its last records are in: a seal on the way must still list it.
     if (gone.length > 0) owner.noteConns([], gone)
-    if (fewer) owner.noteClosed()
     if (m.brk === true) owner.clockBreak()
     if (typeof m.seq === 'number' && m.seq > link.seq) link.seq = m.seq
     this._tellRoom(link)
@@ -365,7 +362,6 @@ class Links implements WorkerLinks {
     this._closeForwarded(link, 'worker-gone')
     link.conns = []
     owner.sealNow()
-    owner.noteClosed()
   }
 
   /** Report a link's open connections closed, from its last forward. */
