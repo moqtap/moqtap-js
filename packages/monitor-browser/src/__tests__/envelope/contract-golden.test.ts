@@ -709,6 +709,7 @@ SPECS['conn-ends'] = {
       by: 'relay',
       code: 3,
       reason: 'draining',
+      counters: { parseFailures: 1, bucketsRefused: 0 },
     }),
     json({
       t: 'conn-close',
@@ -718,8 +719,17 @@ SPECS['conn-ends'] = {
       at_us: BASE + 3_000_000,
       cause: 'failed',
       by: 'local',
+      counters: { parseFailures: 0, bucketsRefused: 0 },
     }),
-    json({ t: 'conn-close', v: 2, c: 2, conn: 'c-2', at_us: BASE + 14_000_000, cause: 'page-end' }),
+    json({
+      t: 'conn-close',
+      v: 2,
+      c: 2,
+      conn: 'c-2',
+      at_us: BASE + 14_000_000,
+      cause: 'page-end',
+      counters: { parseFailures: 0, bucketsRefused: 0 },
+    }),
     json({
       t: 'conn-close',
       v: 2,
@@ -727,6 +737,7 @@ SPECS['conn-ends'] = {
       conn: 'w1-0',
       at_us: BASE + 12_000_000,
       cause: 'worker-gone',
+      counters: { parseFailures: 0, bucketsRefused: 0 },
     }),
   ],
 }

@@ -4,6 +4,8 @@
  * how, which groups never arrived, and which streams were reset with what code.
  */
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
 import type { CollectorConfig, ConnOpenRecord, RollupTrackWire } from '../../types.js'
@@ -11,8 +13,10 @@ import { subgroupBytes } from '../decode/vectors.js'
 import { init } from '../support/init.js'
 import { allFacts } from '../support/runs.js'
 import { settle } from '../support/settle.js'
-import { allRecords, of, preambleOf, recordingFetch } from '../support/uploads.js'
+import { allRecords, of, preambleOf, recordingFetch, recordsOf } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
+
+const GOLDENS = join(import.meta.dirname, '..', 'envelope', 'fixtures', 'contract-v2')
 
 const g = globalThis as unknown as Record<string, unknown>
 let originalWT: unknown
@@ -128,9 +132,21 @@ describe('a connection says who closed it', () => {
     wt.closeSession('draining', 3)
     await settle()
     await c.end()
-    expect(of(await allRecords(posts), 'conn-close')).toEqual([
+    const all = await allRecords(posts)
+    const closes = of(all, 'conn-close')
+    expect(closes).toEqual([
       expect.objectContaining({ cause: 'closed', by: 'relay', code: 3, reason: 'draining' }),
     ])
+    // The records as the monitor writes them are the golden's, field for field.
+    const golden = await recordsOf(new Uint8Array(readFileSync(join(GOLDENS, 'conn-ends.bin'))))
+    const goldenClose = of(golden, 'conn-close').find((r) => r.cause === 'closed')
+    expect(Object.keys(closes[0]!)).toEqual(Object.keys(goldenClose!))
+    const opened = Object.keys(of(all, 'conn-open').at(-1)!)
+    const goldenOpened = Object.keys(of(golden, 'conn-open')[0]!)
+    expect(opened.filter((k) => goldenOpened.includes(k))).toEqual(
+      goldenOpened.filter((k) => opened.includes(k)),
+    )
+    expect(closes[0]?.counters).toEqual({ parseFailures: 0, bucketsRefused: 0 })
   })
 
   it('the page, when it called close()', async () => {

@@ -1918,9 +1918,9 @@
     },
     {
       "name": "conn-ends",
-      "note": "v2 conn-open and conn-close with device times, one per cause: closed by the relay with its code and reason, failed before it was ready, the page ending, and a terminated worker. The id was minted and written.",
+      "note": "v2 conn-open and conn-close with device times, one per cause: closed by the relay with its code and reason, failed before it was ready, the page ending, and a terminated worker, each with the monitor counters. The id was minted and written.",
       "file": "conn-ends.bin",
-      "bodyBytes": 1862,
+      "bodyBytes": 2062,
       "expect": {
         "ok": true
       },
@@ -2073,7 +2073,11 @@
               "cause": "closed",
               "by": "relay",
               "code": 3,
-              "reason": "draining"
+              "reason": "draining",
+              "counters": {
+                "parseFailures": 1,
+                "bucketsRefused": 0
+              }
             },
             {
               "rseq": 5,
@@ -2083,7 +2087,11 @@
               "cause": "failed",
               "by": "local",
               "code": null,
-              "reason": null
+              "reason": null,
+              "counters": {
+                "parseFailures": 0,
+                "bucketsRefused": 0
+              }
             },
             {
               "rseq": 6,
@@ -2093,7 +2101,11 @@
               "cause": "page-end",
               "by": null,
               "code": null,
-              "reason": null
+              "reason": null,
+              "counters": {
+                "parseFailures": 0,
+                "bucketsRefused": 0
+              }
             },
             {
               "rseq": 7,
@@ -2103,7 +2115,11 @@
               "cause": "worker-gone",
               "by": null,
               "code": null,
-              "reason": null
+              "reason": null,
+              "counters": {
+                "parseFailures": 0,
+                "bucketsRefused": 0
+              }
             }
           ]
         }
