@@ -22,10 +22,10 @@
  *
  * The walk is draft-20's, and right from draft-20 on (see
  * {@link FETCH_HAND_WALK_FROM}), with draft-23's indicators and ID rules from
- * {@link FETCH_INDICATORS_FROM}. Every older draft differs somewhere a value
- * depends on: absolute Group IDs (15-17), absolute marker Group IDs (16-19),
- * absolute Object IDs (15-19), an Object Status (15), no Serialization Flags at
- * all (07-14). Its stream is walked by its adapter instead.
+ * {@link FETCH_INDICATORS_FROM}. Every draft before 18 differs somewhere a
+ * value depends on: absolute Group IDs (15-17), absolute Object IDs (15-17),
+ * an Object Status (15), no Serialization Flags at all (07-14). Those drafts,
+ * and 18-19, are walked by their adapter instead.
  */
 
 import {
@@ -125,7 +125,7 @@ export function readFetchObject(
   let objectId = prev.prevObjectId + 1n
 
   if (flags >= 0x80) {
-    // End-of-Range marker. draft-20 Section 11.4.4.2: Group ID Delta, Object ID Delta
+    // End-of-Range marker. draft-20 Section 11.4.4.2: Group ID, Object ID
     // and a Payload Length encoded as 0, and no Subgroup ID or Priority of its
     // own. Draft-19 has two such markers and draft-20 three (0x8C, 0x10C and
     // draft-20's new 0x20C); through draft-22 the walk accepts any value at or
@@ -163,9 +163,10 @@ export function readFetchObject(
     p = o.next
     objectId = o.value
     if (!indicators) {
-      const mg = groupFrom(prev, g.value)
-      if (mg === NEED) return NEED
-      groupId = mg
+      // draft-20 Section 11.4.4.2: "the Group ID and Object ID fields are
+      // present". Absolute through draft-22: the delta rules of
+      // draft-20 Section 11.4.4.1 cover only Objects.
+      groupId = g.value
     } else if (prev.first) {
       groupId = g.value
     } else if (g.value === 0n) {

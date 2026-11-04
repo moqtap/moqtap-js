@@ -222,25 +222,28 @@ export interface WalkDialect {
    */
   readonly fetchGroupIsAbsolute: boolean
   /**
-   * On an End-of-Range marker, the Group ID is absolute (16-19) rather than
-   * delta-resolved (20 on: as an object's in 20-22, by
-   * {@link markerIdsAreRangeDeltas} from 23).
+   * On an End-of-Range marker, the Group ID and Object ID are absolute (16-22)
+   * rather than delta-resolved by {@link markerIdsAreRangeDeltas} (23 on).
+   * draft-20 Section 11.4.4.2: "the Group ID and Object ID fields are present";
+   * the delta rules of draft-20 Section 11.4.4.1 cover only Objects.
    *
-   * Separate from {@link fetchGroupIsAbsolute} because draft-20 changed the two
-   * independently: ordinary objects went to deltas at draft-18, markers at
-   * draft-20.
+   * Separate from {@link fetchGroupIsAbsolute} because the drafts changed the
+   * two independently: ordinary objects went to deltas at draft-18, markers at
+   * draft-23.
    */
   readonly markerGroupIsAbsolute: boolean
   /**
-   * A fetch object's Object ID Delta field is an absolute Object ID (15-19).
+   * A fetch object's Object ID field is an absolute Object ID (15-17).
    *
-   * draft-20 resolves it — absolute when a Group ID Delta is present on the same
-   * object, `prior + delta` when it is not.
+   * From draft-18 it is an Object ID Delta: absolute when a Group ID Delta is
+   * present on the same object, `prior + delta` when it is not.
+   * draft-18 Section 11.4.4.1: "When the Group ID Delta field is not present,
+   * the Object ID is the prior Object's ID plus the Object ID Delta if present."
    */
   readonly fetchObjectIdIsAbsolute: boolean
   /**
    * Added to `prior + delta` when a fetch object has an Object ID Delta and no
-   * Group ID Delta: 0 for 20-22, 2 from draft-23. draft-23 Section 11.4.1.1:
+   * Group ID Delta: 0 for 18-22, 2 from draft-23. draft-23 Section 11.4.1.1:
    * "When the Group ID Delta field is not present, the Object ID is the prior
    * Object's ID plus the Object ID Delta + 2 if present."
    */

@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ID Gaps are read on fetch streams before draft-20.
 - A TRACK_STATUS_OK (drafts 13-14) no longer binds Track Alias 0, so a
   subscription on alias 0 keeps its own track key and request.
+- Fetch stream IDs: an End of Range's IDs are absolute on drafts 20-22, an
+  Object ID Delta with no Group ID Delta adds to the prior Object ID on
+  drafts 18-19, and a flight-recorder dump follows the FETCH's group order.
 
 ## [0.13.0] - 2026-11-03
 

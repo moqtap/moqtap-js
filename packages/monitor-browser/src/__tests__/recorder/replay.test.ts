@@ -19,6 +19,7 @@ import {
   type ObjectPayload,
 } from '@moqtap/codec/draft20'
 import { describe, expect, it } from 'vitest'
+import { TrackKeys } from '../../decode/track-key.js'
 import { DRAFT20_ADAPTER } from '../../drafts/draft20/index.js'
 import { deflateSegment } from '../../envelope/index.js'
 import {
@@ -85,6 +86,7 @@ function subgroupBytes(alias: bigint, group: bigint, objects: readonly ObjSpec[]
 function fetchBytes(
   requestId: bigint,
   objects: readonly { group: bigint; id: bigint; bytes?: number; flags?: number }[],
+  groupOrder: 1n | 2n = 1n,
 ): Uint8Array {
   const encoded: FetchObjectPayload[] = objects.map((o) => ({
     type: 'object',
@@ -99,7 +101,7 @@ function fetchBytes(
     payload: filled(o.bytes ?? 0),
     extensionData: new Uint8Array(0),
   }))
-  return encodeFetchStream({ type: 'fetch', requestId, objects: encoded })
+  return encodeFetchStream({ type: 'fetch', requestId, objects: encoded }, groupOrder)
 }
 
 function datagramBytes(alias: bigint, group: bigint, id: bigint, bytes: number): Uint8Array {
@@ -251,6 +253,26 @@ describe('replayWindow recovers per-object timings from raw bytes', () => {
     // on the next real object, so the stream still balances.
     expect(r.rows.map((o) => o.groupId)).toEqual([5n, 10n])
     expect(r.rows.reduce((n, o) => n + o.bytes, 0)).toBe(bytes.length)
+  })
+
+  it('reads a fetch stream in the group order of the FETCH it answers', () => {
+    const ring = ringOf()
+    const objects = [
+      { group: 10n, id: 0n, bytes: 10, flags: 0x0c },
+      { group: 8n, id: 0n, bytes: 20, flags: 0x0c },
+    ]
+    pushChunks(ring, 9, fetchBytes(4n, objects, 2n), [1])
+    const keys = new TrackKeys()
+    keys.applyControl(
+      { type: 'fetch', request_id: 4n, fetch_type: 1n, parameters: { group_order: 2n } },
+      'tx',
+      0,
+      0,
+    )
+
+    const r = replayWindow(ring, DRAFT20_ADAPTER, WHOLE_RING, { keys })
+
+    expect(r.rows.map((o) => o.groupId)).toEqual([10n, 8n])
   })
 
   it('walks datagrams, which carry no stream of their own', () => {

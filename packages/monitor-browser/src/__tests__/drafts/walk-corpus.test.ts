@@ -131,6 +131,7 @@ describe.each(
 
       const want = expectedObjects(decoded)
       const cursor = newCursor()
+      cursor.descending = v.group_order === '2'
       let p = head.next
       for (const [i, w] of want.entries()) {
         const priorGroup = cursor.prevGroupId

@@ -433,6 +433,9 @@ function walkFetch(
   const key = keys.fetchKey(dir, h.requestId)
 
   const cursor: ObjectCursor = newCursor()
+  // From draft-18 the Group ID Deltas count in the request's group order. With
+  // none settled, the walk stops at the first delta that needs it.
+  cursor.descending = keys.descending(dir, h.requestId)
   let carriedHeaderBytes = h.headerBytes
   let i = h.next
   let unkeyed = 0

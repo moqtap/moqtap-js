@@ -6,13 +6,13 @@
  * mis-reporting one field: End-of-Range markers, which are gap statements and
  * not objects (draft-20 §11.4.4.2), and the delta arithmetic, which resolves an
  * Object ID Delta *relative to the prior object* when no Group ID Delta
- * accompanies it — the one place draft-19 and draft-20 disagree on a
- * value.
+ * accompanies it, from draft-18 on.
  */
 
 import { decodeFetchStream } from '@moqtap/codec/draft20'
 import { describe, expect, it } from 'vitest'
 import { FetchCounter } from '../../decode/fetch-counter.js'
+import { DRAFT17_ADAPTER } from '../../drafts/draft17/index.js'
 import { DRAFT19_ADAPTER } from '../../drafts/draft19/index.js'
 import { DRAFT20_ADAPTER } from '../../drafts/draft20/index.js'
 import type { DraftAdapter } from '../../types.js'
@@ -94,17 +94,18 @@ describe('FetchCounter', () => {
     expect(sink.objects[0]?.key).toEqual({ dir: 'rx', kind: 'fetch', id: 11n, epoch: 0 })
   })
 
-  it('reads an Object ID Delta as relative on draft-20 and absolute on draft-19', () => {
-    // The single value-level divergence between the two supported drafts.
+  it('reads the Object ID field as relative on drafts 19-20 and absolute on draft-17', () => {
+    // draft-18 Section 11.4.4.1: "When the Group ID Delta field is not present,
+    // the Object ID is the prior Object's ID plus the Object ID Delta if present."
     const bytes = fetchBytes(1n, [
       { group: 2n, id: 3n, bytes: 1, flags: 0x0c },
       { group: 2n, id: 9n, bytes: 1, flags: 0x04 }, // wire delta = 9 - 3 = 6
     ])
-    expect(count(bytes).objects.map((o) => o.objectId)).toEqual([3n, 9n])
-    expect(count(bytes, bytes.length, DRAFT19_ADAPTER).objects.map((o) => o.objectId)).toEqual([
-      3n,
-      6n,
-    ])
+    const ids = (a: DraftAdapter): bigint[] =>
+      count(bytes, bytes.length, a).objects.map((o) => o.objectId)
+    expect(ids(DRAFT20_ADAPTER)).toEqual([3n, 9n])
+    expect(ids(DRAFT19_ADAPTER)).toEqual([3n, 9n])
+    expect(ids(DRAFT17_ADAPTER)).toEqual([3n, 6n])
   })
 
   it('abandons a stream whose first object references a prior object', () => {
@@ -204,8 +205,7 @@ describe('FetchCounter header fields', () => {
   })
 
   it('reads the same fields through an older draft’s walk', () => {
-    // Draft-19 reads the same flags; only its id arithmetic differs, and these
-    // objects state their ids where it would matter.
+    // Draft-19 reads the same flags through its adapter's walk.
     const bytes = fetchBytes(
       4n,
       FIELDS.filter((o) => o.flags !== 0x8c),

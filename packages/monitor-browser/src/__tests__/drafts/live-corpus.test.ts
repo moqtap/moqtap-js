@@ -15,6 +15,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { StreamDispatcher } from '../../decode/dispatch.js'
+import { TrackKeys } from '../../decode/track-key.js'
 import { SUPPORTED_DRAFTS } from '../../draft/protocol.js'
 import type {
   BucketKey,
@@ -33,6 +34,7 @@ import {
   loadVectors,
   num,
   pad,
+  type Vector,
 } from './corpus.js'
 
 interface Seen {
@@ -48,6 +50,7 @@ interface Seen {
 function run(
   draft: (typeof SUPPORTED_DRAFTS)[number],
   feed: (d: StreamDispatcher) => void,
+  keys: TrackKeys = new AscendingKeys(),
 ): { seen: Seen[]; failures: ParseFailureReason[] } {
   const seen: Seen[] = []
   const failures: ParseFailureReason[] = []
@@ -69,9 +72,32 @@ function run(
       failures.push(r)
     },
   }
-  d = new StreamDispatcher(adapterFor(draft), new AscendingKeys(), sink)
+  d = new StreamDispatcher(adapterFor(draft), keys, sink)
   feed(d)
   return { seen, failures }
+}
+
+/**
+ * Keys that have seen the FETCH a fetch vector answers, sent the other way,
+ * with the vector's GROUP_ORDER parameter when it states one.
+ */
+function fetchKeys(v: Vector): TrackKeys {
+  const decoded = v.decoded as Record<string, unknown>
+  const requestId = big(decoded.request_id ?? decoded.subscribe_id) as bigint
+  const order = big(v.group_order)
+  const keys = new TrackKeys()
+  keys.applyControl(
+    {
+      type: 'fetch',
+      request_id: requestId,
+      fetch_type: 1n,
+      parameters: order === undefined ? {} : { group_order: order },
+    },
+    'tx',
+    0,
+    0,
+  )
+  return keys
 }
 
 function stream(bytes: Uint8Array) {
@@ -123,7 +149,7 @@ describe.each(
     it(`counts fetch ${v.id}`, () => {
       const decoded = v.decoded as Record<string, unknown>
       const want = expectedObjects(decoded).filter((w) => !w.marker)
-      const { seen, failures } = run(draft, stream(hexToBytes(v.hex)))
+      const { seen, failures } = run(draft, stream(hexToBytes(v.hex)), fetchKeys(v))
       expect(failures).toEqual([])
       expect(seen).toEqual(
         want.map((w) => ({

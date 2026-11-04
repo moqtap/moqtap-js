@@ -20,6 +20,8 @@ export interface Vector {
   readonly id: string
   readonly description?: string
   readonly hex: string
+  /** A fetch stream's Group Order, from its FETCH: `"2"` is Descending. */
+  readonly group_order?: string
   readonly error?: unknown
   readonly decoded?: Record<string, unknown>
 }
