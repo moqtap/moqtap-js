@@ -1,7 +1,7 @@
 ---
 title: "@moqtap/trace"
 description: Read, write, and record .moqtrace session files in TypeScript.
-version: 0.6.0
+version: 0.6.1
 ---
 
 **Read, write, and record MoQT session traces.**

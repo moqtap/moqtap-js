@@ -1,7 +1,7 @@
 ---
 title: "@moqtap/codec"
 description: MoQT wire-format codec and session state machine for TypeScript.
-version: 0.16.0
+version: 0.17.0
 ---
 
 **Encode, decode, and validate MoQT messages in JavaScript/TypeScript.**
