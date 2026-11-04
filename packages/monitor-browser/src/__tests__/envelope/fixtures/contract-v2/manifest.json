@@ -283,7 +283,7 @@
               {
                 "id": 1,
                 "key": {
-                  "dir": "tx",
+                  "dir": "rx",
                   "kind": "fetch",
                   "id": "4",
                   "epoch": 0
@@ -743,7 +743,7 @@
               {
                 "id": 0,
                 "key": {
-                  "dir": "tx",
+                  "dir": "rx",
                   "kind": "fetch",
                   "id": "6",
                   "epoch": 0
@@ -752,7 +752,7 @@
               {
                 "id": 1,
                 "key": {
-                  "dir": "tx",
+                  "dir": "rx",
                   "kind": "fetch",
                   "id": "9",
                   "epoch": 0
@@ -1126,7 +1126,7 @@
               {
                 "id": 1,
                 "key": {
-                  "dir": "tx",
+                  "dir": "rx",
                   "kind": "fetch",
                   "id": "2",
                   "epoch": 0
@@ -1473,7 +1473,7 @@
               {
                 "id": 1,
                 "key": {
-                  "dir": "tx",
+                  "dir": "rx",
                   "kind": "fetch",
                   "id": "5",
                   "epoch": 0
@@ -1482,7 +1482,7 @@
               {
                 "id": 2,
                 "key": {
-                  "dir": "tx",
+                  "dir": "rx",
                   "kind": "fetch",
                   "id": "6",
                   "epoch": 0
@@ -1763,7 +1763,7 @@
               {
                 "id": 1,
                 "key": {
-                  "dir": "tx",
+                  "dir": "rx",
                   "kind": "fetch",
                   "id": "3",
                   "epoch": 0

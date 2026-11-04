@@ -149,7 +149,7 @@ const VCONN: BodyConn = { c: 0, draft: 20, relay: relayOf('https://relay-a.examp
 const alias = (id: number, v: string): BodyTrack => ({ id, key: { d: 'rx', k: 'alias', v, e: 0 } })
 const fetchKey = (id: number, v: string): BodyTrack => ({
   id,
-  key: { d: 'tx', k: 'fetch', v, e: 0 },
+  key: { d: 'rx', k: 'fetch', v, e: 0 },
 })
 
 const SPECS: Record<string, Spec> = {
