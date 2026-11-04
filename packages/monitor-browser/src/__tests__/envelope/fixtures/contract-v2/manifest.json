@@ -86,7 +86,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [
@@ -285,7 +284,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [
@@ -597,7 +595,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [
@@ -745,7 +742,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [
@@ -937,7 +933,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [
@@ -1100,7 +1095,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [],
@@ -1313,7 +1307,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [
@@ -1456,7 +1449,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [],
@@ -1602,7 +1594,6 @@
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
             "tracks": [],
-            "cont": false,
             "ss": null
           },
           "runs": [],
@@ -1739,7 +1730,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [
@@ -1878,7 +1868,6 @@
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
             "tracks": [],
-            "cont": false,
             "ss": "stored"
           },
           "runs": [],
@@ -1997,7 +1986,6 @@
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
             "tracks": [],
-            "cont": false,
             "ss": "new"
           },
           "runs": [],
@@ -2210,7 +2198,6 @@
                 }
               }
             ],
-            "cont": false,
             "ss": null
           },
           "runs": [
@@ -2315,10 +2302,10 @@
       }
     },
     {
-      "name": "cont",
-      "note": "A body sealed at raised detail that continues the emitter's previous body: no scheduled seal between them found nothing to send.",
-      "file": "cont.bin",
-      "bodyBytes": 763,
+      "name": "raised",
+      "note": "A later body (seq 1) sealed at raised detail (lvl headers).",
+      "file": "raised.bin",
+      "bodyBytes": 751,
       "expect": {
         "ok": true
       },
@@ -2390,7 +2377,6 @@
                 }
               }
             ],
-            "cont": true,
             "ss": null
           },
           "runs": [
@@ -2572,34 +2558,6 @@
       "read": {
         "ok": false,
         "reason": "bad-record"
-      }
-    },
-    {
-      "name": "refuse-cont-first",
-      "note": "cont on an emitter's first body, which has no previous body to continue.",
-      "file": "refuse-cont-first.bin",
-      "bodyBytes": 697,
-      "expect": {
-        "ok": false,
-        "reason": "no-batch-record"
-      },
-      "read": {
-        "ok": false,
-        "reason": "no-batch-record"
-      }
-    },
-    {
-      "name": "refuse-cont-false",
-      "note": "cont written as false: it is true or absent.",
-      "file": "refuse-cont-false.bin",
-      "bodyBytes": 698,
-      "expect": {
-        "ok": false,
-        "reason": "no-batch-record"
-      },
-      "read": {
-        "ok": false,
-        "reason": "no-batch-record"
       }
     },
     {

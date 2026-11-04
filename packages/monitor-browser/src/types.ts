@@ -1387,12 +1387,6 @@ export interface BatchRecord {
   /** Present at `group` timing: the body's runs carry no per-object times. */
   readonly timing?: 'group'
   /**
-   * Present when no scheduled seal since the emitter's previous body found
-   * nothing to send, so the time between the two bodies' records was
-   * captured without a silence. Never on the emitter's first body.
-   */
-  readonly cont?: true
-  /**
    * Where the browsing-session id came from: `stored` (read from the tab's
    * `sessionStorage`), `new` (minted and written there) or `page` (storage
    * unavailable: the id covers this page load only). Absent for a supplied id.

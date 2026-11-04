@@ -44,11 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and userinfo are still dropped.
 - Insight may ask for an upload interval of up to 60 s, up from 10 s, and
   never longer than `upload.intervalMs`.
-- The batch record's `cont` is set when nothing since the previous upload
-  showed recording stopped: no upload fell due and found nothing to send, the
-  page did not freeze, its clock did not break, no connection closed and
-  detail did not go back to `baseline`. Recording minutes then include the
-  time between the two uploads.
+- An upload is sealed at one detail level: a change of detail first seals
+  what came before at the old level.
 
 ### Added
 

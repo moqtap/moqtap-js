@@ -51,7 +51,6 @@ interface Spec {
   readonly records: readonly Record_[]
   readonly timing?: 'object' | 'group'
   readonly lvl?: string
-  readonly cont?: boolean
   readonly ss?: 'stored' | 'new' | 'page'
 }
 
@@ -86,7 +85,6 @@ function build(p: Spec): Uint8Array {
       conn: p.conn,
       trk: p.trk,
       ...(p.timing === undefined ? {} : { timing: p.timing }),
-      ...(p.cont === undefined ? {} : { cont: p.cont }),
       ...(p.ss === undefined ? {} : { ss: p.ss }),
     }),
   )
@@ -587,11 +585,10 @@ const manifest = JSON.parse(readFileSync(join(DIR, 'manifest.json'), 'utf8')) as
 }
 
 SPECS['group-timing'] = { ...SPECS.basic!, timing: 'group' }
-SPECS.cont = {
+SPECS.raised = {
   seq: 1,
   first: 2,
   lvl: 'headers',
-  cont: true,
   conn: [VCONN],
   trk: [alias(0, '1')],
   records: [

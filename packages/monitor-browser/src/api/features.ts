@@ -135,6 +135,7 @@ export interface EscalationOptions {
   readonly anchor: ClockAnchor
   readonly sink: RecordSink
   readonly ring?: { readonly capacityBytes: number; evictedBytes(): number }
+  readonly onLevelChanging?: () => void
   readonly onLevelChange?: (level: DetailLevel) => void
   readonly onCapChange?: (capped: boolean) => void
   readonly onWindowOpen?: (deadlineMono: Mono) => void
@@ -197,8 +198,6 @@ export interface LinkOwner {
   clockBreak(): void
   connReady(): void
   sealNow(): void
-  /** A probe's connection is closing: seal what came before, so its close starts a new body. */
-  connClosing(): void
   /** A probe's connection closed and its last records are in. */
   connClosed(): void
   annotate(name: string, data: unknown, conn?: string): void

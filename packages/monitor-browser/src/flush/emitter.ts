@@ -63,8 +63,6 @@ export class Emitter {
   readonly instanceId: string
   readonly clock: ClockSync
   private _seq = 0
-  private _quiet = false
-  private _cont = false
   private _rseq = 0
   private _through: number
   private readonly _conns = new Map<number, Conn>()
@@ -104,28 +102,9 @@ export class Emitter {
     return this._seq
   }
 
-  /**
-   * Take the next body's number, and whether that body continues the one
-   * before it: there is one, and nothing since showed capture stopped.
-   */
+  /** Take the next body's number. */
   takeSeq(): number {
-    this._cont = this._seq > 0 && !this._quiet
-    this._quiet = false
     return this._seq++
-  }
-
-  /** Whether the body last numbered continues the one before it. */
-  get cont(): boolean {
-    return this._cont
-  }
-
-  /**
-   * Capture stopped, or may have: a scheduled seal found nothing, the page
-   * froze, the clock broke, a connection closed or detail went back to
-   * baseline. The next body starts after a silence.
-   */
-  noteQuiet(): void {
-    this._quiet = true
   }
 
   /**
@@ -231,12 +210,6 @@ export class Emitter {
     }
     this._conns.delete(c)
     this._conns.set(c, { draft: known?.draft ?? draft, relay, open: true, listed: false })
-  }
-
-  /** Whether a connection the bodies list is still open. */
-  get anyOpen(): boolean {
-    for (const k of this._conns.values()) if (k.open) return true
-    return false
   }
 
   noteConnClosed(c: number): void {

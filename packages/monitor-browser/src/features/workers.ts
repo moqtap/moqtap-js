@@ -329,7 +329,6 @@ class Links implements WorkerLinks {
       gone = before.filter((s) => !open.has(s.conn.id)).map((s) => s.conn)
       owner.noteConns(link.conns, [])
     }
-    if (gone.length > 0) owner.connClosing()
     if (m.ready && !link.ready) {
       link.ready = true
       owner.connReady()
@@ -370,7 +369,6 @@ class Links implements WorkerLinks {
     if ((link.state !== 'linked' && link.state !== 'silent') || owner.ended) return
     link.state = 'gone'
     owner.writeLink(link.id, 'gone')
-    owner.connClosing()
     this._closeForwarded(link, 'worker-gone')
     link.conns = []
     owner.connClosed()

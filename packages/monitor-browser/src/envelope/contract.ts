@@ -503,8 +503,6 @@ export interface BatchV2 {
   readonly conn: readonly BodyConn[]
   readonly trk: readonly BodyTrack[]
   readonly timing?: Timing
-  /** No scheduled seal since the emitter's previous body found nothing to send. */
-  readonly cont?: boolean
   /** Where the browsing-session id came from; absent for an id the integrator supplied. */
   readonly ss?: SessionIdSource
 }
@@ -549,7 +547,6 @@ export function batchJson(b: BatchV2): BatchRecord {
     ),
     trk: b.trk.map((t) => ({ id: t.id, key: { d: t.key.d, k: t.key.k, v: t.key.v, e: t.key.e } })),
     ...(b.timing === 'group' ? { timing: 'group' as const } : {}),
-    ...(b.cont === true ? { cont: true as const } : {}),
     ...(b.ss !== undefined ? { ss: b.ss } : {}),
   }
 }

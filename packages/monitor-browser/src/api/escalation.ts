@@ -101,6 +101,11 @@ export interface EscalationControllerOptions {
   readonly sink: RecordSink
   /** The flight recorder's ring, when one is armed. Absent means the ring never closes a window. */
   readonly ring?: RingPressure
+  /**
+   * Called on every accepted change once its record is written, while
+   * {@link EscalationController.level} still reads the old level.
+   */
+  readonly onLevelChanging?: () => void
   /** Called after every accepted change, so the session can re-level its writers. */
   readonly onLevelChange?: (level: DetailLevel) => void
   /**
@@ -447,7 +452,6 @@ export class EscalationController {
     if (to === this._level) return false
 
     const from = this._level
-    this._level = to
     this._o.meter.setLevel(to)
     if (levelIndex(to) > levelIndex(from)) this._elevations += 1
 
@@ -477,6 +481,9 @@ export class EscalationController {
       ceilingMinutes: this._o.ceilingMinutes,
     }
     this._o.sink.json(record)
+    // Read as the old level until here, so what came before seals at it.
+    this._o.onLevelChanging?.()
+    this._level = to
     this._o.onLevelChange?.(to)
     return true
   }

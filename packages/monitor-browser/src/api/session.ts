@@ -328,6 +328,8 @@ export class CollectorRuntime {
   private _frozenAt: Mono | undefined
   /** How far an unload got; see `_unload`. */
   private _unloadStep: 0 | 1 | 2 | 3 | 4 | 5 = 0
+  /** Set while the page goes away: a change of detail then seals for the beacon. */
+  private _beaconing = false
   private _endBody: Chunk | null = null
   /** Bodies handed to the platform at `pagehide`, so a resumed unload sends each once. */
   private readonly _beaconed = new Set<Chunk>()
@@ -468,8 +470,7 @@ export class CollectorRuntime {
                 if (build.features.flightRecorder === undefined) this._triggersUnrunnable()
                 this._schedule.ready(this._clock.now())
               },
-              onConnClosing: () => this._connClosing(),
-              onConnClosed: () => this._connClosed(),
+              onConnClosed: () => this._sealNow(false),
               onOverrun: () => this._overrun(),
               onPressure: (p) => this._pacer.notePressure(p),
               onBytes: (n) => this._buffered(n),
@@ -513,6 +514,7 @@ export class CollectorRuntime {
               ? { ring: { capacityBytes: ring.maxBytes, evictedBytes: () => ring.evictedBytes } }
               : {}),
             onWindowOpen: (deadline) => this._scheduleWindowClose(deadline),
+            onLevelChanging: () => this._levelChanging(),
             onLevelChange: () => {
               this._broadcastLevel()
               this._levelChanged()
@@ -1032,8 +1034,7 @@ export class CollectorRuntime {
       },
       connReady: () => self._schedule.ready(self._clock.now()),
       sealNow: () => self._sealNow(false),
-      connClosing: () => self._connClosing(),
-      connClosed: () => self._connClosed(),
+      connClosed: () => self._sealNow(false),
       annotate: (name, data, conn) => self.annotate(name, data, conn),
       observe: (name, value, labels) => self.observe(name, value, labels),
       escalate: (level, reason) => self.escalate(level, reason),
@@ -1095,8 +1096,6 @@ export class CollectorRuntime {
   private _clockBreak(): void {
     if (this._ended) return
     this._sealNow(false)
-    // No body is joined across a break: the time across it is on neither clock.
-    this._emitter.noteQuiet()
     this._emitter.clock.raise()
     this._probeClock()
   }
@@ -1359,32 +1358,16 @@ export class CollectorRuntime {
   }
 
   /**
-   * Back at baseline, what was buffered while raised goes now: whoever raised
-   * detail is waiting for it, and the plain threshold would let it wait out
-   * the interval. The packer's runs are kept, for that seal to join, and for
-   * the unload's, which lowers the level just before it seals for the beacon.
+   * Detail is about to change: what was buffered seals now, at the level it
+   * was captured at, so every body is at one level over its sealed interval.
    */
+  private _levelChanging(): void {
+    this._seal(false, this._beaconing)
+  }
+
+  /** Send what the change sealed: whoever changed detail is waiting for it. */
   private _levelChanged(): void {
-    if (!this._packs() && this._queue.frameCount > 0) this._schedule.due()
-    if (this._escalation.level === 'baseline') this._emitter.noteQuiet()
-  }
-
-  /**
-   * A connection is closing: what came before goes in a body of its own, and
-   * the close starts a new one, since a page that slept learns of the close
-   * only on waking.
-   */
-  private _connClosing(): void {
-    if (this._ended) return
-    this._sealNow(false)
-    this._emitter.noteQuiet()
-  }
-
-  /** A connection closed: with none left open, capture has stopped. */
-  private _connClosed(): void {
-    if (this._ended) return
-    this._sealNow(false)
-    if (!this._emitter.anyOpen) this._emitter.noteQuiet()
+    if (!this._ended && this._outbox.length > 0) void this._drain()
   }
 
   /**
@@ -1425,7 +1408,6 @@ export class CollectorRuntime {
       this._clockCheck()
       if (tick) this._tick()
       if (this._seal() !== null) void this._drain()
-      else if (tick && this._queue.frameCount === 0) this._emitter.noteQuiet()
     } catch (err) {
       this._onError(err)
     }
@@ -1810,7 +1792,6 @@ export class CollectorRuntime {
     if (this._ended || this._armed) return
     this._tick()
     if (this._seal(false, true) !== null) void this._drain()
-    this._emitter.noteQuiet()
   }
 
   private _visibility(): void {
@@ -1854,13 +1835,17 @@ export class CollectorRuntime {
     if (persisted) {
       if (this._ended || this._frozenAt !== undefined) return
       this._frozenAt = this._clock.now()
-      this._escalation.unload()
-      this._tick()
-      this._writeLife('frozen')
-      this._seal(false, true)
-      this._emitter.noteQuiet()
-      this._beaconOutbox([])
-      this._beaconed.clear()
+      this._beaconing = true
+      try {
+        this._tick()
+        this._writeLife('frozen')
+        this._escalation.unload()
+        this._seal(false, true)
+        this._beaconOutbox([])
+        this._beaconed.clear()
+      } finally {
+        this._beaconing = false
+      }
       return
     }
     if (this._ended && this._unloadStep === 0) return
@@ -1876,9 +1861,10 @@ export class CollectorRuntime {
    * twice, which ingest dedupes, rather than not at all.
    */
   private _unload(): void {
+    this._beaconing = true
     if (this._unloadStep === 0) {
-      this._escalation.unload()
       this._tick()
+      this._escalation.unload()
       this._seal(false, true)
       this._unloadStep = 1
     }

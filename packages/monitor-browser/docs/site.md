@@ -669,13 +669,11 @@ session.
 
 Baseline collection is always on and does not use recording minutes.
 
-Your plan's monthly recording minutes count two things, on Insight's clock. The first is the
-time the uploads sent above `baseline` cover: the span of each upload's records, and the time
-from one upload to the next, unless something between them showed recording stopped: an upload
-fell due and found nothing to send, the page was frozen, the device's clock jumped (as after
-sleep), a connection closed, or detail went back to `baseline`.
-The second is the time someone watches the session live in Insight, whether or not the page
-sends anything meanwhile. A month's total counts whole minutes, rounded down.
+Your plan's monthly recording minutes count the time a connection is open while detail is
+above `baseline`, on Insight's clock: from `new WebTransport()` to the connection's close or,
+when no close reaches Insight (the tab crashed, say), to the last thing received about that
+connection. Connections open at the same time count once. Watching a session live in Insight
+adds no recording minutes. A month's total counts whole minutes, rounded down.
 `budget.elevatedMinutes` caps elevated time per page load.
 Nothing over a plan's limits is charged; the limits per plan are on the
 [pricing page](/pricing#compare).
