@@ -48,7 +48,6 @@ const STALL: Triggers = { stall: { afterMs: 500 } }
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-ring',
   ...over,
 })
 

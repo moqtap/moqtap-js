@@ -10,28 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `newSession()` and the `sessionId` option are removed: the
+  session is the tab's, and `setContext()` labels the connections of the next
+  playback. A `sessionId` key is reported as unknown (`MQ1112`), `MQ1113` is
+  retired, `EndRecord['reason']` loses `new-session`, `SetupRecord` loses
+  `startTs`, and `ResolvedConfig` loses `idSource`.
 - **Breaking:** at `object` timing a run states each object's start, last
   payload byte and payload size, in place of the run's byte count and last
   payload byte; at `group` timing it carries those two as before. Objects
   the page sends are recorded as runs too, under their sent track key, and
   are not counted in a body's received totals.
 - **Breaking:** a session is the tab's: its id is kept in `sessionStorage`
-  (`moqtap:session`) unless you pass `sessionId`, so a reload continues it,
-  and each body states where the id came from (`ss`). The storage is read
-  only when the first `WebTransport` begins the session, so `ids()` before
-  then returns a session id for this page load, which the tab's stored id
-  replaces at the begin. `conn-open` and
-  `conn-close` move to `v: 2`, with device times (`at_us`, `ready_us`), no
-  `relay`, `origin` or `lvl`, and `contentId` as `content`. `ConnCloseCause`
-  replaces `session-end` with `page-end`, and `end()`, `discard()` or an
-  overrun write no close for a connection still open. A worker silent for
-  10 s is reported `silent` and no end is reported for its connections;
-  only `terminate()` reports them `worker-gone`.
+  (`moqtap:session`), so a reload continues it, and each body states where
+  the id came from (`ss`). The storage is read only when the first
+  `WebTransport` begins the session, so `ids()` before then returns a
+  session id for this page load, which the tab's stored id replaces when
+  the session begins. `conn-open` and `conn-close` move to `v: 2`, with
+  device times (`at_us`, `ready_us`), no `relay`, `origin` or `lvl`, and
+  `contentId` as `content`. `ConnCloseCause` replaces `session-end` with
+  `page-end`, and `end()`, `discard()` or an overrun write no close for a
+  connection still open. A worker silent for 10 s is reported `silent` and
+  no end is reported for its connections; only `terminate()` reports them
+  `worker-gone`.
 - **Breaking:** a session no longer ends 30 s after its last connection
-  closes. It is every connection the page opens, at once or in turn, until
-  the page closes, `end()` or `newSession()`, and `EndRecord['reason']` loses
-  `idle`. Per-session limits such as `budget.elevatedMinutes` now apply
-  across the whole page.
+  closes, and `EndRecord['reason']` loses `idle`. `budget.elevatedMinutes`
+  applies per page load.
 - **Breaking (types):** `SupportedDraft` gains `23`, and `MarkSample['what']`
   gains `{ end: 'group' | 'track' }`, so an exhaustive `switch` over either
   needs the new case.
@@ -82,8 +85,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A fetch stream that decodes a Group or Object ID above 2^64-1 no longer
   counts objects under that ID; from draft-20 it is reported as
   `fetch-desync`.
-- A stream open across `newSession()` is still read in the new session, its
-  runs continuing; the rest of it was lost.
 - A connection is listed in every body from its open, before its draft is
   known.
 - A body lists at most 1,024 tracks and 64 connections; what would take it

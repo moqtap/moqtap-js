@@ -57,7 +57,6 @@ async function recordsOf(body: Uint8Array): Promise<EnvelopeRecord[]> {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-fixed',
   metrics: { intervalMs: 100 },
   ...over,
 })
@@ -276,41 +275,5 @@ describe('pub.ackedBytes, through the hook', () => {
 
     const rows = await txRows(posts, '4')
     expect(total(rows, 'ackedBytes')).toBe(2_048)
-  })
-
-  it('credits a stream open across newSession() once for what was acknowledged before', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { persist: false, noLifecycleListeners: true, fetchImpl: impl })
-    await settle()
-
-    const wt = new (g.WebTransport as new (u: string) => MockWebTransport)('https://relay.test/moq')
-    await wt.open('moqt-20')
-    await settle(5)
-
-    wt.bytesAcknowledged = 1_000
-    const send = await wt.createUnidirectionalStream({ hold: true, highWaterMark: 1 })
-    const held = wt.createdUni[0]?.out
-    const writer = (send as WritableStream<unknown>).getWriter()
-    const first = writer.write(
-      subgroupBytes({ alias: 4n, group: 0n, objects: [{ id: 0n, bytes: 8 }] }),
-    )
-    const second = writer.write(new Uint8Array([0x00]))
-    held?.release()
-    await settle()
-    held?.release()
-    await Promise.all([first, second])
-    await settle()
-
-    c.newSession({ sessionId: 'sess-second' })
-    await settle()
-    wt.bytesAcknowledged = 3_000
-    await writer.close()
-    await settle()
-    await c.end()
-    await settle()
-
-    const rows = await txRows(posts, '4')
-    // 1,000 in the first session and 2,000 more in the second.
-    expect(total(rows, 'ackedBytes')).toBe(3_000)
   })
 })

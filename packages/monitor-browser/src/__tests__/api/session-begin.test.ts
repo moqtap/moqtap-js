@@ -1,6 +1,6 @@
 /**
  * When a session exists: from the first `WebTransport` constructed in the page
- * or a linked worker, until the page ends, `end()` or `newSession()`, however
+ * or a linked worker, until the page ends or `end()`, however
  * long the page goes without a connection. A page that never constructs one
  * records, stores and sends nothing.
  */
@@ -16,11 +16,8 @@ import {
   type Chunk,
   type ChunkBackend,
   ChunkStore,
-  DIRECTIVE_HEADER,
   type LockManagerLike,
   MemoryBackend,
-  RECV_HEADER,
-  SEND_HEADER,
 } from '../../flush/index.js'
 import { installWebTransportHook } from '../../transport/index.js'
 import type { CollectorConfig, EnvelopeRecord } from '../../types.js'
@@ -49,11 +46,15 @@ afterEach(() => {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: ENDPOINT,
-  sessionId: 'sess-fixed',
   ...over,
 })
 
-const quiet = { persist: false, noLifecycleListeners: true, locks: null } as const
+const quiet = {
+  persist: false,
+  noLifecycleListeners: true,
+  locks: null,
+  mintSessionId: () => 'sess-fixed',
+} as const
 
 /** The page's lifecycle listeners, captured so a test can fire them. */
 function lifecycle(): { fire(type: string, e?: unknown): void; restore(): void } {
@@ -196,7 +197,7 @@ describe('a page that never constructs a WebTransport', () => {
 describe('the first WebTransport begins the session', () => {
   it('in the page, with clock zero at its construction and the ids ids() gave before', async () => {
     const { posts, impl } = recordingFetch()
-    const c = init(base({ sessionId: undefined as never }), { ...quiet, fetchImpl: impl })
+    const c = init(base(), { ...quiet, fetchImpl: impl })
     await settle()
     const before = c.ids()
     expect(posts).toEqual([])
@@ -409,128 +410,6 @@ describe('the session outlives its connections', () => {
     const all = await allRecords(posts)
     expect(sessionsOf(all)).toEqual([first.sessionId])
     expect(new Set(of(all, 'conn-close').map((x) => x.conn)).size).toBe(2)
-    expect(of(all, 'end').map((e) => e.reason)).toEqual(['app'])
-  })
-
-  it('closes a capture window open at newSession(); the next session starts at the configured level', async () => {
-    const { c, wt, posts } = await closedOnce()
-    c.escalate('headers', 'stall')
-    wt.closeSession('done')
-    await settle(5)
-    c.newSession()
-    await until(async () => of(await allRecords(posts), 'end').length === 1)
-
-    attempt()
-    await c.end()
-    const all = await allRecords(posts)
-    const [, second] = sessionsOf(all)
-    expect(
-      of(all, 'escalation').map((e) => [e.from, e.to, e.by]),
-      'opened, then closed with the session, by nobody',
-    ).toEqual([
-      ['baseline', 'headers', { kind: 'manual', reason: 'stall' }],
-      ['headers', 'baseline', { kind: 'window', closed: 'unload' }],
-    ])
-    const secondSetup = of(all, 'setup').find((s) => s.identity.sessionId === second)
-    expect(secondSetup?.lvl).toBe('baseline')
-  })
-})
-
-describe('what ingest asked of a session', () => {
-  it('ends with it: the next session seals on the usual schedule, at the configured level', async () => {
-    const serverNow = 5_000_000_000_000
-    let watching = false
-    const { posts, impl } = recordingFetch((n) => {
-      const url = posts[n]?.url ?? ''
-      return {
-        [RECV_HEADER]: String(serverNow),
-        [SEND_HEADER]: String(serverNow),
-        ...(watching && url.includes('ik=')
-          ? {
-              [DIRECTIVE_HEADER]: JSON.stringify({
-                flushMs: 2_000,
-                until: serverNow + 60_000,
-                elevate: { level: 'headers', until: serverNow + 60_000, reason: 'watching' },
-              }),
-            }
-          : {}),
-      }
-    })
-    const timers = manualTimers()
-    const c = init(base(), { ...quiet, fetchImpl: impl, ...timers })
-    await settle()
-    const wt = attempt()
-    watching = true
-    await wt.open('moqt-20')
-    await c.flush()
-    expect(timers.pending(2_000)).toBe(1)
-    wt.closeSession('done')
-    await settle(5)
-    c.newSession()
-    await until(async () => of(await allRecords(posts), 'end').length === 1)
-    watching = false
-    expect(timers.pending(2_000)).toBe(0)
-
-    attempt()
-    await c.flush()
-    expect(timers.pending(2_000)).toBe(0)
-    await c.end()
-    const all = await allRecords(posts)
-    const [, second] = sessionsOf(all)
-    const secondSetup = of(all, 'setup').find((x) => x.identity.sessionId === second)
-    expect(secondSetup?.lvl).toBe('baseline')
-    expect(of(all, 'escalation').map((e) => [e.to, e.by])).toEqual([
-      ['headers', expect.objectContaining({ kind: 'remote' })],
-      ['baseline', { kind: 'window', closed: 'unload' }],
-    ])
-  })
-})
-
-describe('newSession()', () => {
-  it('with no connection open, ends the session, and the next construction begins the new one', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    const wt = attempt()
-    wt.closeSession('done')
-    await settle(5)
-    const next = c.newSession({ contentId: 'vod/2' })
-    await until(async () => of(await allRecords(posts), 'end').length === 1)
-    expect(of(await allRecords(posts), 'end')[0]?.reason).toBe('new-session')
-    const sent = posts.length
-    await settle()
-    expect(posts).toHaveLength(sent)
-
-    attempt()
-    await c.end()
-    const all = await allRecords(posts)
-    expect(of(all, 'setup').map((s) => s.identity)).toEqual([
-      expect.objectContaining({ sessionId: 'sess-fixed' }),
-      { sessionId: next.sessionId, instanceId: next.instanceId },
-    ])
-    expect(of(all, 'ident').at(-1)).toMatchObject({ content: 'vod/2' })
-    expect(of(all, 'setup')[1]).not.toHaveProperty('startTs')
-  })
-
-  it('before any connection, only changes the ids the first construction begins', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    const next = c.newSession({ sessionId: 'playback-2', contentId: 'vod/2' })
-    expect(c.ids()).toEqual(next)
-    await settle()
-    expect(posts).toEqual([])
-
-    attempt()
-    await c.end()
-    const all = await allRecords(posts)
-    expect(of(all, 'setup')).toEqual([
-      expect.objectContaining({
-        identity: { sessionId: next.sessionId, instanceId: next.instanceId },
-        idSource: 'supplied',
-      }),
-    ])
-    expect(of(all, 'ident')).toEqual([expect.objectContaining({ content: 'vod/2' })])
     expect(of(all, 'end').map((e) => e.reason)).toEqual(['app'])
   })
 })

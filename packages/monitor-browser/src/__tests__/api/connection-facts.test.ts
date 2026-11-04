@@ -36,7 +36,6 @@ afterEach(() => {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-fixed',
   ...over,
 })
 
@@ -322,42 +321,5 @@ describe('the bodies a session uploads, as one emitter', () => {
     expect(listed).toEqual([{ c: 0, draft: 20, relay: 'https://relay.test:4443/moq' }])
     expect(of(all, 'conn-open')[0]).toMatchObject({ c: 0 })
     expect(of(all, 'ctrl').every((r) => r.c === 0 && typeof r.at_us === 'number')).toBe(true)
-  })
-
-  it('keep a connection’s ordinal across newSession(), so its runs stay with its requests', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    const first = await open('https://relay.test:4443/moq')
-    const uni = first.incomingUnidirectionalStreams.getReader()
-    await receive(
-      first,
-      uni,
-      subgroupBytes({ alias: 4n, group: 1n, objects: [{ id: 0n, bytes: 10 }] }),
-      'close',
-    )
-    c.newSession({ sessionId: 'sess-second' })
-    await settle()
-    await receive(
-      first,
-      uni,
-      subgroupBytes({ alias: 4n, group: 2n, objects: [{ id: 0n, bytes: 10 }] }),
-      'close',
-    )
-    // A connection opened after the rotation is a new one.
-    await open('https://relay.test:4443/other')
-    await c.end()
-
-    const all = await allRecords(posts)
-    const { runs } = await allFacts(posts.map((p) => p.body))
-    expect(runs.map((r) => [r.g, r.c])).toEqual([
-      [1n, 0],
-      [2n, 0],
-    ])
-    // Each transport is one connection, in both sessions.
-    expect(merged(all).map((r) => r.c)).toEqual([0, 1])
-    expect(
-      of(all, 'conn-open').every((r) => r.c === (r.conn === merged(all)[0]?.conn ? 0 : 1)),
-    ).toBe(true)
   })
 })

@@ -510,14 +510,6 @@ async function run(seed: number, steps: number): Promise<RunResult> {
       },
     ],
     [0.5, 'flush', () => void page.flush()],
-    [
-      0.3,
-      'new-session',
-      async () => {
-        page.newSession()
-        await turns()
-      },
-    ],
   ]
   const total = table.reduce((s, [w]) => s + w, 0)
   const step = async (): Promise<void> => {

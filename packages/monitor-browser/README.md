@@ -68,7 +68,6 @@ runtime chunk loading.
 | Key              | What it controls                                                                |
 | ---------------- | ------------------------------------------------------------------------------- |
 | `endpoint`       | Where uploads go. Defaults to the hosted ingest.                                |
-| `sessionId`      | Your own id for the first session, up to 128 UTF-8 bytes; else the tab's        |
 | `context`        | `actorId`, `contentId`, `environment`, `release`, `tags`                        |
 | `detail`         | `baseline`, `headers`, `headers+sizes` or `headers+data`                        |
 | `metrics`        | How often the rollup closes, how many tracks it follows                         |
@@ -154,13 +153,11 @@ recorded as an escalation with `by.kind: 'hold'`.
 - **Session**: the WebTransport activity of one browser tab and its linked
   workers: every connection the tab opens, in every page load, to any relay or
   path, at once or in turn. It begins with the first `WebTransport`
-  constructed, whether or not it connects. Unless you pass a `sessionId`, its
-  id is kept in the tab's `sessionStorage` (`moqtap:session`), read and
-  written only when that first `WebTransport` is constructed, so a reload
-  continues it however long the tab goes without a connection; where
-  `sessionStorage` can't be used, it is that page load alone. After
-  `newSession()`, the next `WebTransport` begins a new session in this page
-  load, with a new session id and the context so far.
+  constructed, whether or not it connects. Its id is kept in the tab's
+  `sessionStorage` (`moqtap:session`), read and written only when that first
+  `WebTransport` is constructed, so a reload continues it however long the
+  tab goes without a connection; where `sessionStorage` can't be used, it is
+  that page load alone.
 - **Instance**: one page load's recording, from `init()` on. A reload is a new
   instance of the same session.
 - **Connection**: one WebTransport, in the page or in a linked worker. A
@@ -175,10 +172,10 @@ open.
 Before a session begins, `ids()` answers with the instance id and a session
 id for this page load; when the session begins in a tab with a stored session
 id, `ids()` returns that one from then on. Context passed to `init()` or
-`setContext()` is sent with the session. Annotations, metric samples and `escalate()` calls made before then are
-not recorded; metric definitions are kept. A capture window still open when
-a session ends closes with it, and the next session starts at `detail`, or
-at `baseline` while detail is held.
+`setContext()` is sent with the session. Annotations, metric samples and
+`escalate()` calls made before then are not recorded; metric definitions are
+kept. A capture window still open when the page closes ends with it, and the
+next page load starts at `detail`, or at `baseline` while detail is held.
 
 Without any call, the collector:
 
@@ -224,10 +221,6 @@ vitals.setContext({
   actorId: 'user-81',
   tags: { cdn: 'edge-2' },
 })
-// Or one session per playback: ends this one and returns the new ids. With no
-// connection open, the new session begins with the next WebTransport. It
-// covers this page load only: a reload continues the tab's stored session.
-vitals.newSession({ contentId: 'vod/episode-2' })
 
 await vitals.flush() // upload everything recorded so far; ends nothing
 await vitals.end() // end this page load's recording, upload everything, restore WebTransport
@@ -348,8 +341,7 @@ The worker's `annotate`, `observe`, `escalate` and `resolve` go to the page's
 session, and calls made before the worker is linked are kept until it is. As
 in the page, those made before a session begins are not recorded; a
 `WebTransport` the worker constructs begins one. All configuration comes from
-the page's `init()`. `ids()` answers with the page's ids once linked, and
-follows the page into each new session.
+the page's `init()`. `ids()` answers with the page's ids once linked.
 
 If the worker also runs an RPC library such as Comlink on its global, give the
 link its own channel so neither side sees the other's messages:

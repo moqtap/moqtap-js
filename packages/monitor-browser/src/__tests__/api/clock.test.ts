@@ -35,7 +35,6 @@ afterEach(() => {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-fixed',
   ...over,
 })
 
@@ -82,25 +81,6 @@ describe('the clock on each body', () => {
     const want = (Date.now() + AHEAD_MS - performance.now()) * 1000
     expect(Math.abs((clk.o_us as number) - want)).toBeLessThan(2_000_000)
     expect(clk.res_us).toBeGreaterThanOrEqual(1)
-  })
-
-  it('keeps the epoch and its sample across newSession()', async () => {
-    const { posts, impl } = answering()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    attempt()
-    c.annotate('first')
-    await c.flush()
-    const second = c.newSession({ sessionId: 'sess-second' })
-    await settle()
-    c.annotate('second')
-    await c.flush()
-    await c.end()
-
-    const batches = await Promise.all(posts.map(batchOf))
-    const next = batches.find((b) => b.sessionId === second.sessionId)
-    expect(next?.clk.epoch).toBe(0)
-    expect(next?.clk.o_us).toBeTypeOf('number')
   })
 
   it('raises the epoch when a worker hosting the transport sees its clock break', async () => {

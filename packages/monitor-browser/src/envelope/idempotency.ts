@@ -8,8 +8,8 @@
  * body is silently discarded.
  *
  * `instanceId` is in the input because `sessionId` alone is not unique per
- * stream of bodies: a supplied id is reused across reloads and across tabs, and
- * each of those numbers its own bodies from zero. The instance is minted per
+ * stream of bodies: the browsing-session id is reused across reloads of a tab
+ * and in a duplicated tab, and each of those numbers its own bodies from zero. The instance is minted per
  * `init()`, so two streams can never produce the same key.
  *
  * Synchronous, on the bundled {@link sha256Hex}, so a seal keys its body in the

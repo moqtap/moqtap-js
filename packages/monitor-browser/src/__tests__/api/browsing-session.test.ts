@@ -179,18 +179,6 @@ describe('a page load of a tab', () => {
     expect(batches.every((b) => b.ss === 'page')).toBe(true)
   })
 
-  it('states no source for an id the integrator supplied', async () => {
-    const t = tab()
-    const { posts, impl } = recordingFetch()
-    const c = init(base({ sessionId: 'mine' }), { ...quiet, fetchImpl: impl, sessionStorageOf: t })
-    await settle()
-    await open()
-    await c.end()
-    const batches = of(await allRecords(posts), 'batch')
-    expect(batches.every((b) => b.sessionId === 'mine' && !('ss' in b))).toBe(true)
-    expect(t.items.size).toBe(0)
-  })
-
   it('forgets the tab id on discard()', async () => {
     const t = tab()
     const c = init(base(), { ...quiet, fetchImpl: recordingFetch().impl, sessionStorageOf: t })

@@ -33,7 +33,6 @@ afterEach(() => {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-fixed',
   ...over,
 })
 
@@ -228,27 +227,6 @@ describe('setContext()', () => {
     expect(of(await allRecords(posts), 'ident')).toHaveLength(1)
     expect(errors.map(String)).toEqual([`Error: ${MQ1114}: context.tags `])
   })
-
-  it('carries the session’s tags into the next session', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base({ context: { tags: { experiment: 'a' } } }), {
-      ...quiet,
-      fetchImpl: impl,
-    })
-    await settle()
-    attempt()
-    c.setContext({ tags: { cdn: 'edge-1' } })
-    c.newSession({ contentId: 'vod/2' })
-    c.annotate('second')
-    await c.end()
-    const all = await allRecords(posts)
-    expect(of(all, 'setup')).toHaveLength(2)
-    const firsts = of(all, 'ident').filter((r) => r.at_us !== undefined && r.content !== undefined)
-    expect(firsts.at(-1)).toMatchObject({
-      content: 'vod/2',
-      tags: { experiment: 'a', cdn: 'edge-1' },
-    })
-  })
 })
 
 describe('privacy.hashActorId', () => {
@@ -284,7 +262,6 @@ describe('privacy.hashActorId', () => {
     expect(c.ids().actorId).toBe(hashed('carol'))
     await settle()
     attempt()
-    c.newSession()
     expect(c.ids().actorId).toBe(hashed('carol'))
     await c.end()
     expect(await uploadedText(posts)).not.toContain('carol')

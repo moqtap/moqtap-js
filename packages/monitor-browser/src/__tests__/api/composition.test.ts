@@ -41,7 +41,6 @@ function config(errors: string[], over: Partial<CollectorConfig> = {}): Collecto
   return {
     apiKey: 'pk_test',
     endpoint: 'https://ingest.test/v1/ingest',
-    sessionId: 'sess-fixed',
     onInternalError: (e) => errors.push(String((e as Error).message)),
     ...over,
   }

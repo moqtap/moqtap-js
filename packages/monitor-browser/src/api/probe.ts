@@ -426,26 +426,16 @@ export class ProbeRuntime {
   }
 
   /**
-   * The page's session changed. What this probe holds goes out first. With a
-   * clock base, a fresh realm takes over the hook: the transports still open
-   * are announced to it, so each reappears in the new session as a connection
-   * of its own, as the page's own transports do. Without, the probe waits for
-   * this worker's next `WebTransport`.
+   * The page's session began: this probe, waiting until now, records into it
+   * from the clock base on, a `WebTransport` already constructed included.
    */
   private _follow(m: Extract<PageMessage, { t: 'session' }>): void {
-    if (this._stopped) return
-    this._forward()
+    if (this._stopped || this._realm !== null || m.base === undefined) return
     this._ids = { sessionId: m.sessionId, instanceId: m.instanceId }
     this._level = m.level
     this._capped = m.capped === true
     this._ready = false
-    const realm = this._realm
-    if (realm === null && m.base === undefined) return
-    this._realm = null
-    realm?.detach()
-    realm?.clear()
-    if (m.base === undefined) this._arm(false)
-    else this._record(m.base)
+    this._record(m.base)
   }
 
   /** The page's instance ended: stop observing and restore this worker's global. */

@@ -199,7 +199,7 @@ export const DEFAULT_ENDPOINT = 'https://moqgest.com/v1/ingest'
  * is a typo in an override, not an absence, and defaulting past it would send a
  * customer's traffic somewhere they did not choose.
  *
- * The empty strings on `sessionId`, `actorId`, `contentId`, `environment` and
+ * The empty strings on `sessionId` (minted at `init()`), `actorId`, `contentId`, `environment` and
  * `release` mean *absent*, not *empty*: every field of `ResolvedConfig` is
  * required, so there is no way to express absence and the sentinel is read back
  * as absence at every use site.
@@ -208,7 +208,6 @@ export const DEFAULTS: ResolvedConfig = /*#__PURE__*/ Object.freeze({
   apiKey: '',
   endpoint: DEFAULT_ENDPOINT,
   sessionId: '',
-  idSource: 'minted',
   detail: BASELINE,
   context: /*#__PURE__*/ Object.freeze({
     actorId: '',
@@ -234,9 +233,7 @@ export const DEFAULT_PROVENANCE: { readonly [K in keyof ResolvedConfig]: string 
     endpoint:
       'Defaults to the hosted ingest at https://moqgest.com/v1/ingest and stays overridable for a self-hosted or proxied collector. Upload is a `fetch()` POST, so whichever origin is in force is the one connect-src entry a page needs.',
     sessionId:
-      'Minted with crypto.randomUUID(). A supplied id may repeat across reloads and tabs, which is what instances are for: each `init()` mints its own instance id, which keys its bodies apart.',
-    idSource:
-      'Not a setting: says whether sessionId was supplied or minted, so ingest knows whether another instance may still join the session.',
+      'Not a setting. Minted with crypto.randomUUID() for the page load, then the id the tab keeps in sessionStorage once the first WebTransport begins the session. It repeats across reloads of the tab, which is what instances are for: each `init()` mints its own instance id, which keys its bodies apart.',
     detail:
       'Baseline is always on and always the same. Elevation uses recording minutes, so the default can only be baseline.',
     context:
@@ -263,7 +260,6 @@ export const DEFAULT_PROVENANCE: { readonly [K in keyof ResolvedConfig]: string 
 export const CONFIG_KEYS: readonly (keyof CollectorConfig)[] = /*#__PURE__*/ Object.freeze([
   'apiKey',
   'endpoint',
-  'sessionId',
   'detail',
   'context',
   'metrics',

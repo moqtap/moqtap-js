@@ -35,7 +35,7 @@ afterEach(() => {
   g.WebTransport = originalWT
 })
 
-// No supplied session id: the page mints one, and must keep it.
+// The page mints the session id, and must keep it.
 const config: CollectorConfig = { apiKey: 'pk_test', endpoint: 'https://ingest.test/v1/ingest' }
 const quiet = { persist: false, noLifecycleListeners: true, locks: null } as const
 

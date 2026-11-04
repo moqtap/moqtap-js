@@ -71,7 +71,7 @@ export interface FlushQueueOptions extends Omit<FrameBufferOptions, 'rseq' | 'on
   readonly appClock?: () => AppOffset | undefined
   /** The timing records are encoded at, read as each is buffered. */
   readonly timing?: () => Timing
-  /** Where the browsing-session id came from, read at each seal; absent for a supplied id. */
+  /** Where the browsing-session id came from, read at each seal. */
   readonly ss?: () => SessionIdSource | undefined
 }
 

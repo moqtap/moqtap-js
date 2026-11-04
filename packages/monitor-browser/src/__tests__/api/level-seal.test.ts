@@ -32,7 +32,6 @@ afterEach(() => {
 const base = (): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-level',
   upload: { intervalMs: 60_000, earlyFlushesMs: [] },
 })
 

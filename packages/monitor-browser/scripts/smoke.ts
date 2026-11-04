@@ -333,8 +333,8 @@ const INTERNAL_ONLY: readonly string[] = [
 ]
 
 /**
- * The integrator's surface, run from the build: a session, the next one, a
- * worker probe with no page to link it, and `discard()` restoring the global.
+ * The integrator's surface, run from the build: a session, a worker probe
+ * with no page to link it, and `discard()` restoring the global.
  * `fetch` is stubbed so the probe never reaches a network.
  */
 const SURFACE_BODY = (load: string, loadWorker: string): string =>
@@ -342,24 +342,22 @@ const SURFACE_BODY = (load: string, loadWorker: string): string =>
     'globalThis.fetch = async () => new Response(null, { status: 202 })',
     `const m = ${load}`,
     `const w = ${loadWorker}`,
-    "const c = m.init({ apiKey: 'pk_smoke', endpoint: 'https://ingest.invalid/v1/ingest', sessionId: 'smoke-1' })",
+    "const c = m.init({ apiKey: 'pk_smoke', endpoint: 'https://ingest.invalid/v1/ingest' })",
     'const first = c.ids()',
-    "const second = c.newSession({ contentId: 'next' })",
     'const verbs = ["ids", "connections", "connectionIdOf", "linkWorker", "setContext", "flush",',
-    '  "end", "newSession", "discard", "annotate", "defineMetric", "observe", "escalate",',
+    '  "end", "discard", "annotate", "defineMetric", "observe", "escalate",',
     '  "resolve", "usage"].filter((k) => typeof c[k] !== "function")',
-    'const removed = ["stop", "abort"].filter((k) => k in c)',
+    'const removed = ["stop", "abort", "newSession"].filter((k) => k in c)',
     'const probe = w.initWorker()',
     'const linkedIsPromise = typeof probe.linked?.then === "function"',
     'const linked = await probe.linked',
     'await c.discard()',
-    'process.stdout.write(JSON.stringify({ first, second, verbs, removed, linkedIsPromise, linked,',
+    'process.stdout.write(JSON.stringify({ first, verbs, removed, linkedIsPromise, linked,',
     '  restored: globalThis.WebTransport === SENTINEL }))',
   ].join('\n')
 
 interface SurfaceResult {
   readonly first: { sessionId: string; instanceId?: string }
-  readonly second: { sessionId: string; instanceId?: string; contentId?: string }
   readonly verbs: readonly string[]
   readonly removed: readonly string[]
   readonly linkedIsPromise: boolean
@@ -609,19 +607,17 @@ function main(): void {
         }
         check(
           r.verbs.length === 0 && r.removed.length === 0,
-          `has every Collector verb, and neither stop() nor abort(): ${label}`,
+          `has every Collector verb, and none of stop(), abort() and newSession(): ${label}`,
           [...r.verbs.map((v) => `missing ${v}`), ...r.removed.map((v) => `still has ${v}`)].join(
             ', ',
           ),
         )
         check(
-          r.first.sessionId === 'smoke-1' &&
-            typeof r.first.instanceId === 'string' &&
-            r.second.sessionId !== 'smoke-1' &&
-            r.second.instanceId === r.first.instanceId &&
-            r.second.contentId === 'next',
-          `newSession() returns the next session id at once and keeps the instance id: ${label}`,
-          JSON.stringify({ first: r.first, second: r.second }),
+          typeof r.first.sessionId === 'string' &&
+            r.first.sessionId !== '' &&
+            typeof r.first.instanceId === 'string',
+          `ids() answers a session and an instance id at once: ${label}`,
+          JSON.stringify(r.first),
         )
         check(
           r.linkedIsPromise && r.linked === false,
@@ -779,11 +775,11 @@ function typecheck(consumer: string): void {
       '// notes that a widened one makes every `=== NEED` across the boundary false.',
       'export const need: Need = NEED',
       '',
-      '// The session verbs, and the two they replaced. `@ts-expect-error` fails the',
+      '// The session verbs, and the names removed from them. `@ts-expect-error` fails the',
       '// compile if a removed name ever comes back.',
       'export async function playback(c: Collector): Promise<readonly ConnectionInfo[]> {',
-      "  const next: Identity = c.newSession({ contentId: 'next' })",
-      '  void next.instanceId',
+      '  const ids: Identity = c.ids()',
+      '  void ids.instanceId',
       "  c.setContext({ contentId: 'switched' })",
       '  await c.flush()',
       '  await c.end()',
@@ -792,6 +788,8 @@ function typecheck(consumer: string): void {
       '  c.stop()',
       '  // @ts-expect-error `abort()` is `discard()`',
       '  c.abort()',
+      '  // @ts-expect-error the browsing session is the tab, never restarted',
+      '  c.newSession()',
       '  return c.connections()',
       '}',
       'export const probe: WorkerProbe = initWorker()',

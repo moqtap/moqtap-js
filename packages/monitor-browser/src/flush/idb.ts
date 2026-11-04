@@ -20,8 +20,8 @@ import type { DetailLevel } from '../types.js'
  *    only to the ingest and project it belongs to. The key itself is never
  *    stored.
  *
- * 4. **Ingest's hold is kept here too**, per destination, so a page load or a
- *    new session is held from its start rather than from its first answer.
+ * 4. **Ingest's hold is kept here too**, per destination, so a page load is
+ *    held from its start rather than from its first answer.
  *
  * The store degrades rather than fails. IndexedDB is absent in some contexts,
  * throws on open in private-mode and sandboxed-iframe contexts, and can reject

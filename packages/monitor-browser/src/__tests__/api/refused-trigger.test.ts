@@ -81,7 +81,6 @@ function skippableClock(): { skip(ms: number): void } {
 const config = (errors: unknown[]): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-fixed',
   flightRecorder: { triggers: { stall: { afterMs: STALL_AFTER_MS } } },
   onInternalError: (e) => errors.push(e),
 })
@@ -210,34 +209,5 @@ describe('a hold heard by an earlier page load', () => {
     two.escalate('headers', 'held')
     await two.end()
     expect(of(await allRecords(second.posts), 'escalation')).toEqual([])
-  })
-})
-
-describe('a hold heard by an earlier session in the page', () => {
-  it('holds the next one from its start, with no store to keep it in', async () => {
-    let answering = true
-    const { posts, impl } = recordingFetch(() =>
-      answering
-        ? {
-            [RECV_HEADER]: String(SERVER_NOW),
-            [SEND_HEADER]: String(SERVER_NOW),
-            [DIRECTIVE_HEADER]: JSON.stringify({ hold: { until: SERVER_NOW + 3_600_000 } }),
-          }
-        : {},
-    )
-    const errors: unknown[] = []
-    const c = init(config(errors), { ...quiet, fetchImpl: impl })
-    attempt()
-    await settle(5)
-    c.annotate('x')
-    await c.flush()
-    expect(posts.length).toBeGreaterThan(0)
-
-    // The next session's uploads say nothing of the hold.
-    answering = false
-    c.newSession()
-    c.escalate('headers', 'held')
-    await c.end()
-    expect(of(await allRecords(posts), 'escalation')).toEqual([])
   })
 })

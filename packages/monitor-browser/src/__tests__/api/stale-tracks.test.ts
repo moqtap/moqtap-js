@@ -35,7 +35,6 @@ function rig(): Rig {
   const config = resolveConfig({
     apiKey: 'pk_test',
     endpoint: 'https://ingest.test/v1/ingest',
-    sessionId: 'sess-stale',
     flightRecorder: { triggers: { stall: { afterMs: 500 } } },
   })
   const clock: ClockSource = { now: () => 0, wall: () => 1_700_000_000_000 }

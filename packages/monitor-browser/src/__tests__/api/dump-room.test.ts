@@ -82,7 +82,6 @@ describe('a flight dump larger than the outbox has room for', () => {
       {
         apiKey: 'pk_test',
         endpoint: 'https://ingest.test/v1/ingest',
-        sessionId: 'sess-fixed',
         // The smallest outbox there is: eight bodies' worth.
         storage: { quotaBytes: 0 },
         // Armed, so the ring fills; the test fires the dump itself.
@@ -182,7 +181,6 @@ describe('a flight dump larger than the store has room for', () => {
       {
         apiKey: 'pk_test',
         endpoint: 'https://ingest.test/v1/ingest',
-        sessionId: 'sess-fixed',
         storage: { quotaBytes: quota },
         flightRecorder: { triggers: { stall: { afterMs: 600_000 } } },
         onInternalError: (e) => errors.push(e),
@@ -246,7 +244,6 @@ describe("a linked worker's flight dump larger than the outbox has room for", ()
       {
         apiKey: 'pk_test',
         endpoint: 'https://ingest.test/v1/ingest',
-        sessionId: 'sess-fixed',
         storage: { quotaBytes: 0 },
         flightRecorder: { triggers: { stall: { afterMs: 600_000 } } },
         onInternalError: (e) => errors.push(e),
@@ -337,7 +334,6 @@ describe('a flight dump of one slice', () => {
     const config = resolveConfig({
       apiKey: 'pk_test',
       endpoint: 'https://ingest.test/v1/ingest',
-      sessionId: 'sess-small',
       flightRecorder: { triggers: { stall: { afterMs: 500 } } },
     })
     const records: EnvelopeRecord[] = []

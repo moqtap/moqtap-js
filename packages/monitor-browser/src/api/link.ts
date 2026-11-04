@@ -166,10 +166,9 @@ export type PageMessage =
   /** This instance has ended. The probe stops observing. */
   | { readonly t: 'unlinked' }
   /**
-   * The page's session changed. With `base`, the probe records into it from
-   * now on, its open connections included. Without, the session has not begun
-   * and the probe records nothing until this worker constructs a
-   * `WebTransport`, as after `linked` without one.
+   * The page's session began. With `base`, a probe that was waiting records
+   * into it from now on. Without, the probe records nothing until this worker
+   * constructs a `WebTransport`, as after `linked` without one.
    */
   | {
       readonly t: 'session'

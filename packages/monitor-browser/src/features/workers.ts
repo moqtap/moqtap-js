@@ -2,9 +2,10 @@
  * Linked workers, the page's half: `linkWorker()`, the handshake, the frames
  * each probe forwards, and the worker that goes silent or is terminated.
  *
- * One set of links serves the page across its sessions. Every handler reads
- * the session that owns the links at the time of the call, so a link follows
- * the page into a new session without touching the customer's worker.
+ * One set of links serves the page load. Every handler reads the runtime
+ * that owns the links at the time of the call, so a link made while the page
+ * waits for its first `WebTransport` follows it into the recording runtime
+ * without touching the customer's worker.
  */
 
 import type { LinkOwner, LinksHost, WorkerLinks, WorkersFeature } from '../api/features.js'
@@ -111,10 +112,6 @@ class Links implements WorkerLinks {
     if (hello !== undefined) onHello(hello)
   }
 
-  open(): boolean {
-    return this._links.some((l) => l.conns.length > 0)
-  }
-
   connections(): ConnectionState[] {
     const out: ConnectionState[] = []
     for (const l of this._links) for (const s of l.conns) out.push(s.conn)
@@ -169,9 +166,9 @@ class Links implements WorkerLinks {
   }
 
   /**
-   * The next session took over. Every link, gone ones included, reports into
-   * it from now: a worker silent past the limit is linked again when it
-   * speaks, and the ids `w1, w2 …` stay unique in the page.
+   * The session began. Every link, gone ones included, reports into its
+   * recording runtime from now: a worker silent past the limit is linked
+   * again when it speaks, and the ids `w1, w2 …` stay unique in the page.
    */
   adopt(owner: LinkOwner): void {
     this._owner = owner

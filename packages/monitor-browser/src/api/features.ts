@@ -146,7 +146,7 @@ export interface Escalation {
   readonly level: DetailLevel
   /** Every raise is refused now: a hold, or the ceiling. */
   readonly capped: boolean
-  /** The end of a hold in force, for the next session in the page to keep. */
+  /** The end of a hold in force, which the recording runtime keeps when the session begins. */
   readonly holdUntil: Mono | undefined
   escalate(to: DetailLevel, reason?: string): void
   resolve(reason?: string): void
@@ -218,11 +218,9 @@ export interface LinkOwner {
   room(): number
 }
 
-/** The page's workers. One set serves the page across its sessions. */
+/** The page's workers. One set serves the page load. */
 export interface WorkerLinks {
   link(target: MessageTarget, hello?: LinkEvent): void
-  /** A connection is open or being attempted in a linked worker. */
-  open(): boolean
   connections(): ConnectionState[]
   /** Records the probes reported dropped, cumulative. */
   dropped(): number
@@ -232,7 +230,7 @@ export interface WorkerLinks {
   linked(): number
   /** Tell each probe the outbox room its flight dumps may take now. */
   tellRoom(): void
-  /** The next session took over: every link reports into `owner` from now. */
+  /** The session began: every link reports into `owner`, its recording runtime, from now. */
   adopt(owner: LinkOwner): void
   teardown(): void
 }

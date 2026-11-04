@@ -17,7 +17,7 @@
  * caller can put them in their own logs and join later.
  */
 
-import { MQ1004, MQ1006, MQ1113 } from '../codes.js'
+import { MQ1004, MQ1006 } from '../codes.js'
 import type { ChunkStore } from '../flush/index.js'
 import type { TransportHook } from '../transport/index.js'
 import { type PresenceHandle, publishPresence } from '../transport/presence.js'
@@ -31,14 +31,7 @@ import type {
   UsageReport,
 } from '../types.js'
 import { COLLECTOR_VERSION } from '../version.js'
-import {
-  type ConfigProblem,
-  contextText,
-  isStorableSessionId,
-  mintId,
-  resolveConfig,
-  sentActorId,
-} from './config.js'
+import { type ConfigProblem, contextText, mintId, resolveConfig, sentActorId } from './config.js'
 import type { ConnectionState } from './realm.js'
 import { type Build, CollectorRuntime, type MessageTarget, type RuntimePorts } from './session.js'
 
@@ -50,8 +43,10 @@ export type ConnectionInfo = ConnectionState
 
 export interface Collector {
   /**
-   * Synchronous ids for your own logs: the session the next `WebTransport`
-   * begins, or the one it began.
+   * Synchronous ids for your own logs. Until the page's first `WebTransport`
+   * the session id is one for this page load; when that `WebTransport`
+   * begins the session in a tab with a stored session id, the stored one
+   * replaces it from then on.
    */
   ids(): Identity
   /** Every connection seen in this page and its linked workers, open ones first. */
@@ -86,13 +81,6 @@ export interface Collector {
    * good.
    */
   end(): Promise<void>
-  /**
-   * End this session and start a new one in this page. Linked workers follow.
-   * With a connection open the new session begins at once; with none, it
-   * begins with the next `WebTransport`. Returns the new ids. After `end()` or
-   * `discard()` it starts nothing and returns the ids unchanged.
-   */
-  newSession(ctx?: { contentId?: string; sessionId?: string }): Identity
   /** Consent withdrawn: delete everything unsent, including stored backlog, and send nothing more. */
   discard(): Promise<void>
   /** Add a marker to the session timeline, optionally scoped to one connection. */
@@ -139,7 +127,7 @@ class PendingCollector implements Collector {
   #queued: ((r: CollectorRuntime) => void)[] = []
   #endRequest: 'end' | 'discard' | null = null
   #settled: Promise<void> | null = null
-  /** The current session's config and ids, which `newSession()` replaces. */
+  /** The session's config and ids. */
   #config: ResolvedConfig
   #identity: Identity
   readonly #onError: (e: unknown) => void
@@ -160,7 +148,7 @@ class PendingCollector implements Collector {
     this.#build = build
   }
 
-  /** The runtime took over from its predecessor on its own: a session began or ended. */
+  /** The runtime took over from its predecessor on its own: the session began. */
   swap(r: CollectorRuntime): void {
     this.#runtime = r
     this.#config = r.config
@@ -172,8 +160,8 @@ class PendingCollector implements Collector {
     this.#runtime ??= r
     const queued = this.#queued
     this.#queued = []
-    // Each call runs against the runtime current at its turn: a queued
-    // `newSession()` replaces it for the calls made after it.
+    // Each call runs against the runtime current at its turn: the session may
+    // begin, and a new runtime take over, between two of them.
     for (const f of queued) {
       try {
         f(this.#runtime ?? r)
@@ -257,53 +245,6 @@ class PendingCollector implements Collector {
       ...withId('contentId', contextText(ctx.contentId, 'contentId', quiet) ?? contentId),
     }
     this.#defer((r) => r.setContext(ctx))
-  }
-
-  newSession(ctx: { contentId?: string; sessionId?: string } = {}): Identity {
-    const current = this.ids()
-    if (this.#endRequest !== null || this.#settled !== null || this.#runtime?.ended === true) {
-      return current
-    }
-    let sessionId = mintId()
-    let idSource: ResolvedConfig['idSource'] = 'minted'
-    if (typeof ctx.sessionId === 'string' && ctx.sessionId !== '') {
-      if (isStorableSessionId(ctx.sessionId)) {
-        sessionId = ctx.sessionId
-        idSource = 'supplied'
-      } else {
-        // The byte length, not the id, as `init()` reports it.
-        const bytes = new TextEncoder().encode(ctx.sessionId).byteLength
-        this.#onError(new Error(`${MQ1113}: sessionId ${bytes}`))
-      }
-    }
-    const contentId = typeof ctx.contentId === 'string' ? ctx.contentId : current.contentId
-    const config: ResolvedConfig = Object.freeze({
-      ...this.#config,
-      sessionId,
-      idSource,
-      context: Object.freeze({
-        ...this.#config.context,
-        actorId: current.actorId ?? '',
-        contentId: contentId ?? '',
-      }),
-    })
-    // One emitter per page load: a new session keeps the instance claim.
-    const instanceId = current.instanceId
-    this.#config = config
-    this.#identity = {
-      sessionId,
-      instanceId,
-      ...withId('actorId', current.actorId),
-      ...withId('contentId', contentId),
-    }
-    // The runtime that takes over is named through `swap()`.
-    const next = (r: CollectorRuntime): void => void r.successor(config, instanceId)
-    if (this.#runtime !== null) {
-      next(this.#runtime)
-      return this.ids()
-    }
-    this.#defer(next)
-    return this.#identity
   }
 
   defineMetric(name: string, d: MetricDefinition): void {

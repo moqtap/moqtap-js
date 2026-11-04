@@ -97,7 +97,7 @@ export interface Identity {
   readonly actorId?: string
   /**
    * The WebTransport activity of one tab and its linked workers, across its
-   * page loads: kept in the tab's `sessionStorage` unless supplied, so a
+   * page loads: kept in the tab's `sessionStorage` where it has one, so a
    * reload continues it. Nothing ends it on a timer.
    */
   readonly sessionId: string
@@ -1181,16 +1181,6 @@ export interface CollectorConfig {
    * override, and defaulting past it would send traffic somewhere unchosen.
    */
   readonly endpoint?: string
-  /**
-   * The first session's id, when you want it to match one of your own. Absent
-   * means one is minted, as it is for every session that follows.
-   *
-   * At most 128 UTF-8 bytes, well-formed UTF-16, and free of control
-   * characters, because that is what ingest can store. Anything else is
-   * reported as MQ1113 and replaced by a minted id, which `vitals.ids()`
-   * returns.
-   */
-  readonly sessionId?: string
   readonly detail?: DetailLevel
   readonly context?: SessionContext
   readonly metrics?: Partial<MetricsConfig>
@@ -1279,8 +1269,6 @@ export interface ResolvedConfig {
   readonly apiKey: string
   readonly endpoint: string
   readonly sessionId: string
-  /** Whether `sessionId` is the one the caller supplied or one minted for them. */
-  readonly idSource: 'minted' | 'supplied'
   readonly detail: DetailLevel
   readonly context: Required<SessionContext>
   readonly metrics: MetricsConfig
@@ -1389,7 +1377,7 @@ export interface BatchRecord {
   /**
    * Where the browsing-session id came from: `stored` (read from the tab's
    * `sessionStorage`), `new` (minted and written there) or `page` (storage
-   * unavailable: the id covers this page load only). Absent for a supplied id.
+   * unavailable: the id covers this page load only).
    */
   readonly ss?: SessionIdSource
 }
@@ -1403,14 +1391,9 @@ export interface SetupRecord extends RecordBase {
   /** The page's clocks at `init()`. Every `ts` in the instance, workers' included, is relative to it. */
   readonly anchor: ClockAnchor
   readonly identity: Pick<Identity, 'sessionId' | 'instanceId'>
-  readonly idSource: 'minted' | 'supplied'
+  /** Every session id is minted by the monitor. */
+  readonly idSource: 'minted'
   readonly collectorVersion: string
-  /**
-   * When this session began, on the anchor's clock. Set on a session
-   * `newSession()` started, which keeps the page's anchor and the connections
-   * already open; absent on the one `init()` started.
-   */
-  readonly startTs?: number
 }
 
 /**
@@ -1804,16 +1787,15 @@ export interface EndCounters {
 }
 
 /**
- * This instance is done. It ends this instance only: a session with a supplied
- * id may have other instances, in other tabs or after a reload.
+ * This instance is done. It ends this instance only: the browsing session may
+ * have other instances, after a reload or in a duplicated tab.
  *
- * `unload` is the page closing, `app` is `end()`, `new-session` is the page
- * starting the next session, and `overrun` is the collector stopping itself
- * because the control plane outran it.
+ * `unload` is the page closing, `app` is `end()`, and `overrun` is the
+ * collector stopping itself because the control plane outran it.
  */
 export interface EndRecord extends RecordBase {
   readonly t: 'end'
-  readonly reason: 'unload' | 'app' | 'new-session' | 'overrun'
+  readonly reason: 'unload' | 'app' | 'overrun'
   /** The `seq` of this instance's last body, the one this record rides in. */
   readonly finalSeq: number
   readonly counters: EndCounters

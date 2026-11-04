@@ -193,7 +193,7 @@ export interface RealmOptions {
   readonly monoBase?: Mono
   /**
    * The ordinal of the hooked session `id`: unique in the emitter, never
-   * reused, and the same for a session a later realm observes again.
+   * reused.
    */
   readonly ordinal?: (id: string) => number
   /** The session `id` closed: its ordinal is never asked for again. */
@@ -201,33 +201,6 @@ export interface RealmOptions {
   readonly clock: ClockSource
   /** The flight recorder, when the build carries it. Without it the realm rings nothing. */
   readonly recorder?: FlightRecorderFeature | undefined
-  /** What an earlier realm of the page handed on: its run recorder and the decoders of its open connections. */
-  readonly carry?: RealmCarry | undefined
-}
-
-/**
- * What a realm hands to the next session's: the run recorder, whose stream
- * state continues, and per hooked session still open its decoder, so a
- * stream open across the rotation is still read.
- */
-export interface RealmCarry {
-  readonly runs: RunRecorder
-  readonly conns: ReadonlyMap<string, CarriedConnection>
-}
-
-export interface CarriedConnection {
-  readonly keys: TrackKeys
-  readonly dispatcher: StreamDispatcher
-  readonly adapter: DraftAdapter | undefined
-  readonly draft: SupportedDraft | null
-  readonly protocol: string | null
-  readonly readyTs: number | undefined
-  readonly offered: number[] | undefined
-  readonly sink: ForwardingSink
-  readonly skip: Set<string>
-  readonly ackedByStream: Map<number, SendStreamAcks>
-  readonly resets: Map<number, number>
-  readonly errored: Set<number>
 }
 
 /** A connection as the page's API and the probe's snapshots report it. */
@@ -452,10 +425,6 @@ export class RealmObserver {
   private readonly _runs: RunRecorder
   /** Early control chunks are being replayed: their bytes were counted already. */
   private _adopting = false
-  /** Decoders an earlier realm handed on, by hooked session, until this realm sees the session. */
-  private _carry: ReadonlyMap<string, CarriedConnection> | undefined
-  /** Decoders of the connections a session end left open, for the next realm. */
-  private readonly _carried = new Map<string, CarriedConnection>()
   private readonly _ordinal: (id: string) => number
 
   constructor(o: RealmOptions) {
@@ -463,9 +432,8 @@ export class RealmObserver {
     this._host = o.host
     this._origin = o.originMono
     this._contentId = o.config.context.contentId
-    this._runs = o.carry?.runs ?? new RunRecorder(o.monoBase ?? 0)
+    this._runs = new RunRecorder(o.monoBase ?? 0)
     this._runs.onFull = () => this._host.onFlowsFull?.()
-    this._carry = o.carry?.conns
     let next = 0
     this._ordinal = o.ordinal ?? (() => next++)
     const f = o.recorder
@@ -526,11 +494,6 @@ export class RealmObserver {
   /** Objects seen in the current one-second window: the pacer's pressure signal. */
   get objectRate(): number {
     return this._objectsInWindow
-  }
-
-  /** What the next session's realm takes over, once {@link closeAll} has closed this one's connections. */
-  carry(): RealmCarry {
-    return { runs: this._runs, conns: this._carried }
   }
 
   /** Every connection this realm has seen, open ones first. */
@@ -635,8 +598,7 @@ export class RealmObserver {
    */
   detach(): void {
     this._halted = true
-    // Once, and only by a realm that started: the hook may already be
-    // buffering for the realm's next session.
+    // Once, and only by a realm that started.
     if (this._live) {
       this._live = false
       try {
@@ -697,8 +659,7 @@ export class RealmObserver {
       monoBase: this._o.monoBase ?? 0,
       requestOf: (k) => (c.keys as TrackKeys).requestFor(k),
     })
-    const carried = this._carry?.get(s.id)
-    const sink = carried?.sink ?? forwarding(undefined as unknown as ConnectionSink)
+    const sink = forwarding(undefined as unknown as ConnectionSink)
     const c: Connection = {
       id: s.id,
       c: ordinal,
@@ -710,15 +671,15 @@ export class RealmObserver {
       contentId: this._contentId,
       rollup,
       sink,
-      keys: carried?.keys ?? keys,
-      dispatcher: carried?.dispatcher ?? null,
-      adapter: carried?.adapter,
-      draft: carried?.draft ?? null,
-      protocol: carried?.protocol ?? null,
+      keys,
+      dispatcher: null,
+      adapter: undefined,
+      draft: null,
+      protocol: null,
       degraded: undefined,
-      readyTs: carried?.readyTs,
-      offered: carried?.offered ?? offered,
-      offerProbed: carried !== undefined || offered !== undefined,
+      readyTs: undefined,
+      offered,
+      offerProbed: offered !== undefined,
       roles: new Set(),
       pending: [],
       pendingBytes: 0,
@@ -726,15 +687,14 @@ export class RealmObserver {
       closed: false,
       awaitingSetup: false,
       probedStreams: new Set(),
-      skip: carried?.skip ?? new Set(),
-      ackedByStream: carried?.ackedByStream ?? new Map(),
-      resets: carried?.resets ?? new Map(),
-      errored: carried?.errored ?? new Set(),
+      skip: new Set(),
+      ackedByStream: new Map(),
+      resets: new Map(),
+      errored: new Set(),
     }
     sink.to = this._connectionSink(() => c, rollup)
     this._connections.set(s.id, c)
     this._host.onConn?.(c.c, c.draft, c.relay)
-    if (carried !== undefined) this._host.onConnReady()
     // Stamped with the transport's own construction time, which precedes this
     // realm's start for a session replayed from the dormant hook.
     this._writeConnOpen(c)
@@ -1213,7 +1173,6 @@ export class RealmObserver {
     } finally {
       this._closing = false
     }
-    const ending = info === null || info.cause === 'page-end'
     if (info !== null) {
       const detail = info as SessionCloseInfo
       const record: ConnCloseRecord = {
@@ -1233,27 +1192,9 @@ export class RealmObserver {
       }
       this._writeCritical(record)
     }
-    // A session's end leaves the transport open: its streams and decoder go
-    // on in the next session's realm.
-    if (ending && c.dispatcher !== null) {
-      this._carried.set(c.id, {
-        keys: c.keys,
-        dispatcher: c.dispatcher,
-        adapter: c.adapter,
-        draft: c.draft,
-        protocol: c.protocol,
-        readyTs: c.readyTs,
-        offered: c.offered,
-        sink: c.sink,
-        skip: c.skip,
-        ackedByStream: c.ackedByStream,
-        resets: c.resets,
-        errored: c.errored,
-      })
-    } else this._runs.onConnClose(c.c)
+    this._runs.onConnClose(c.c)
     this._host.onConnGone?.(c.c)
-    // A session's end leaves the transport open for the next session's realm.
-    if (!ending) this._o.ordinalDone?.(c.id)
+    this._o.ordinalDone?.(c.id)
     this._closedParseFailures += c.rollup.parseFailures
     this._closedBucketsRefused += c.rollup.bucketsRefused
     this._connections.delete(c.id)

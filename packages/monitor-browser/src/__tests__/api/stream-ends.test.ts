@@ -33,7 +33,6 @@ afterEach(() => {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-fixed',
   ...over,
 })
 
@@ -69,14 +68,6 @@ async function fin(s: Awaited<ReturnType<typeof stream>>): Promise<void> {
 }
 
 const one = subgroupBytes({ alias: 4n, group: 1n, objects: [{ id: 0n, bytes: 10 }] })
-const two = subgroupBytes({
-  alias: 4n,
-  group: 1n,
-  objects: [
-    { id: 0n, bytes: 10 },
-    { id: 1n, bytes: 10 },
-  ],
-})
 
 describe('a stream’s end that no run carries', () => {
   it('is recorded alone when it comes after the stream’s last run was sealed', async () => {
@@ -108,35 +99,6 @@ describe('a stream’s end that no run carries', () => {
     const { runs, ends } = await allFacts(posts.map((p) => p.body))
     expect(runs).toEqual([])
     expect(ends.map((e) => [e.end, e.eog, e.g, e.o])).toEqual([['fin', true, 102n, null]])
-  })
-})
-
-describe('a stream open across newSession()', () => {
-  it('goes on in the next session: its objects continue the run, and its FIN ends it', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    const { wt, uni } = await open()
-    const s = await stream(wt, uni, one)
-    const first = c.ids()
-    const second = c.newSession({ sessionId: 'sess-second' })
-    await settle()
-    s.src.push(two.subarray(one.byteLength))
-    await s.reader.read()
-    await settle(2)
-    await fin(s)
-    await c.end()
-
-    const { runs, ends } = await allFacts(posts.map((p) => p.body))
-    expect(runs.map((r) => [r.g, r.ids, r.cont, r.end, r.c])).toEqual([
-      [1n, [0n], false, 'open', 0],
-      [1n, [1n], true, 'fin', 0],
-    ])
-    expect(ends).toEqual([])
-    const sessions = of(await allRecords(posts), 'batch').map((b) => b.sessionId)
-    expect(new Set(sessions)).toEqual(new Set([first.sessionId, second.sessionId]))
-    const parse = of(await allRecords(posts), 'conn-close').map((r) => r.counters.parseFailures)
-    expect(parse.every((n) => n === 0)).toBe(true)
   })
 })
 

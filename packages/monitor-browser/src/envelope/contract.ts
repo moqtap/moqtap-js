@@ -525,7 +525,7 @@ export interface BatchV2 {
   readonly conn: readonly BodyConn[]
   readonly trk: readonly BodyTrack[]
   readonly timing?: Timing
-  /** Where the browsing-session id came from; absent for an id the integrator supplied. */
+  /** Where the browsing-session id came from. */
   readonly ss?: SessionIdSource
 }
 

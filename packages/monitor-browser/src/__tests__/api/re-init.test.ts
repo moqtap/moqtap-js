@@ -124,7 +124,8 @@ afterEach(() => {
 describe('init() after the previous collector was stopped', () => {
   it('wraps the second run transport and reports it as fully as the first', async () => {
     const first = recordingFetch()
-    const a = init(base({ sessionId: 'sess-a' }), {
+    const a = init(base(), {
+      mintSessionId: () => 'sess-a',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: first.impl,
@@ -139,7 +140,8 @@ describe('init() after the previous collector was stopped', () => {
     expect(g.WebTransport).toBe(MockWebTransport)
 
     const second = recordingFetch()
-    const b = init(base({ sessionId: 'sess-b' }), {
+    const b = init(base(), {
+      mintSessionId: () => 'sess-b',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: second.impl,
@@ -166,7 +168,8 @@ describe('init() after the previous collector was stopped', () => {
   })
 
   it('does the same after discard(), which withdraws consent rather than ending a run', async () => {
-    const a = init(base({ sessionId: 'sess-a' }), {
+    const a = init(base(), {
+      mintSessionId: () => 'sess-a',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: recordingFetch().impl,
@@ -177,7 +180,8 @@ describe('init() after the previous collector was stopped', () => {
     await settle()
 
     const second = recordingFetch()
-    const b = init(base({ sessionId: 'sess-b' }), {
+    const b = init(base(), {
+      mintSessionId: () => 'sess-b',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: second.impl,
@@ -198,7 +202,8 @@ describe('init() after the previous collector was stopped', () => {
     // The other teardown path: `PendingCollector.discard()` tears the dormant
     // hook down itself, with no runtime at all, because the customer withdrew
     // consent while the asynchronous setup was still in flight.
-    const a = init(base({ sessionId: 'sess-a' }), {
+    const a = init(base(), {
+      mintSessionId: () => 'sess-a',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: recordingFetch().impl,
@@ -207,7 +212,8 @@ describe('init() after the previous collector was stopped', () => {
     await settle()
 
     const second = recordingFetch()
-    const b = init(base({ sessionId: 'sess-b' }), {
+    const b = init(base(), {
+      mintSessionId: () => 'sess-b',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: second.impl,
@@ -230,7 +236,8 @@ describe('init() before the previous end() has settled', () => {
     // global, so the old collector's teardown lands *after* the new one is
     // already running — and it must not restore the global out from under it.
     const problems: ConfigProblem[] = []
-    const a = init(base({ sessionId: 'sess-a' }), {
+    const a = init(base(), {
+      mintSessionId: () => 'sess-a',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: recordingFetch().impl,
@@ -240,7 +247,8 @@ describe('init() before the previous end() has settled', () => {
 
     const ending = a.end()
     const second = recordingFetch()
-    const b = init(base({ sessionId: 'sess-b' }), {
+    const b = init(base(), {
+      mintSessionId: () => 'sess-b',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: second.impl,
@@ -300,7 +308,8 @@ describe('init() over a collector that was never stopped', () => {
   it('names the mistake instead of handing back a collector that reports nothing', async () => {
     const problems: ConfigProblem[] = []
     const errors: unknown[] = []
-    const a = init(base({ sessionId: 'sess-a' }), {
+    const a = init(base(), {
+      mintSessionId: () => 'sess-a',
       persist: false,
       noLifecycleListeners: true,
       fetchImpl: recordingFetch().impl,
@@ -310,7 +319,6 @@ describe('init() over a collector that was never stopped', () => {
     const second = recordingFetch()
     const b = init(
       base({
-        sessionId: 'sess-b',
         onInternalError: (e) => {
           errors.push(e)
         },

@@ -45,15 +45,9 @@ import type {
   LinkRecord,
   RollupRecord,
 } from '../../types.js'
-import {
-  chunks,
-  concatBytes,
-  encodeControl,
-  subgroupBytes,
-  subscribeBytes,
-} from '../decode/vectors.js'
+import { chunks, concatBytes, encodeControl, subscribeBytes } from '../decode/vectors.js'
 import { attempt, init, workerBuild } from '../support/init.js'
-import { allFacts, type DecodedBw, factsOf } from '../support/runs.js'
+import { type DecodedBw, factsOf } from '../support/runs.js'
 import { settle, until } from '../support/settle.js'
 import { afterPreamble, clockProbe } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
@@ -151,12 +145,16 @@ async function store(): Promise<ChunkStore> {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: ENDPOINT,
-  sessionId: 'sess-fixed',
   ...over,
 })
 
 /** Every page the suite builds runs without the platform's locks unless a test supplies some. */
-const quiet = { persist: false, noLifecycleListeners: true, locks: null } as const
+const quiet = {
+  persist: false,
+  noLifecycleListeners: true,
+  locks: null,
+  mintSessionId: () => 'sess-fixed',
+} as const
 
 async function openTransport(protocol = 'moqt-20'): Promise<MockWebTransport> {
   const wt = new (g.WebTransport as new (u: string) => MockWebTransport)(
@@ -255,7 +253,7 @@ describe('init()', () => {
     expect(c.connections()).toEqual([])
   })
 
-  it('mints a new instance for every init() of the same supplied session id', () => {
+  it('mints a new instance for every init() under the same session id', () => {
     const a = init(base(), quiet).ids()
     const b = init(base(), quiet).ids()
     expect(a.sessionId).toBe(b.sessionId)
@@ -298,18 +296,8 @@ describe('end() — the instance is done', () => {
     expect(records[1]).toMatchObject({
       t: 'setup',
       identity: { sessionId: 'sess-fixed', instanceId: 'inst-1' },
-      idSource: 'supplied',
+      idSource: 'minted',
     })
-  })
-
-  it('says whether the session id was supplied or minted', async () => {
-    const { posts, impl } = recordingFetch()
-    const { sessionId: _omit, ...minted } = base()
-    const c = init(minted, { ...quiet, fetchImpl: impl })
-    attempt()
-    await settle()
-    await c.end()
-    expect(of(await allRecords(posts), 'setup')[0]?.idSource).toBe('minted')
   })
 
   it('ends with an end record in the final body, which names that body', async () => {
@@ -1947,193 +1935,6 @@ describe('conn-close carries its counters', () => {
   })
 })
 
-/* ── one page, several sessions ──────────────────────────────────────────── */
-
-/** Every record that arrived, grouped by the session its body belongs to. */
-async function bySession(posts: readonly Post[]): Promise<Map<string, EnvelopeRecord[]>> {
-  const out = new Map<string, EnvelopeRecord[]>()
-  const seen = new Set<string>()
-  for (const p of posts) {
-    const records = await recordsOf(p.body)
-    const batch = records[0] as BatchRecord
-    if (seen.has(batch.idempotencyKey)) continue
-    seen.add(batch.idempotencyKey)
-    out.set(batch.sessionId, [...(out.get(batch.sessionId) ?? []), ...records])
-  }
-  return out
-}
-
-describe('newSession() — the next playback in the same page', () => {
-  it('ends the first session in a final body and numbers the second on, as one emitter', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    attempt()
-    await settle()
-    c.annotate('first')
-    const first = c.ids()
-    const second = c.newSession({ contentId: 'movie-2' })
-    expect(second.sessionId).not.toBe(first.sessionId)
-    expect(second.instanceId).toBe(first.instanceId)
-    expect(second.contentId).toBe('movie-2')
-    expect(c.ids()).toEqual(second)
-    c.annotate('second')
-    await c.end()
-
-    const sessions = await bySession(posts)
-    const a = sessions.get(first.sessionId) ?? []
-    const b = sessions.get(second.sessionId) ?? []
-    expect(of(a, 'end').map((e) => e.reason)).toEqual(['new-session'])
-    expect(of(a, 'note').map((n) => n.name)).toEqual(['first'])
-    expect(of(b, 'end').map((e) => e.reason)).toEqual(['app'])
-    expect(of(b, 'note').map((n) => n.name)).toEqual(['second'])
-    const setup = of(b, 'setup')[0]
-    expect(setup?.identity).toEqual({
-      sessionId: second.sessionId,
-      instanceId: second.instanceId,
-    })
-    expect(of(b, 'ident')[0]).toMatchObject({ content: 'movie-2' })
-    expect(setup?.idSource).toBe('minted')
-    // The second session runs on the first one's clock, from where it began.
-    expect(of(a, 'setup')[0]?.startTs).toBeUndefined()
-    expect(setup?.startTs).toBeGreaterThanOrEqual(0)
-    expect(setup?.startTs).toBeLessThanOrEqual(of(b, 'end')[0]?.ts as number)
-    const seqs = [...of(a, 'batch'), ...of(b, 'batch')].map((x) => x.seq)
-    expect(seqs).toEqual(seqs.map((_, i) => i))
-    for (const records of [a, b]) expect(of(records, 'batch').at(-1)?.final).toBe(true)
-  })
-
-  it('keeps observing: a transport still open continues in the new session', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    const wt = await openTransport()
-    const conn = c.connectionIdOf(wt as unknown as WebTransport)
-    const first = c.ids()
-    const second = c.newSession()
-    await settle(5)
-    expect(g.WebTransport).not.toBe(MockWebTransport)
-    await c.end()
-
-    const sessions = await bySession(posts)
-    expect(of(sessions.get(first.sessionId) ?? [], 'conn-close')).toEqual([])
-    const reopened = connections(sessions.get(second.sessionId) ?? [])
-    expect([...reopened.keys()]).toEqual([conn])
-    expect(reopened.get(conn as string)).toMatchObject({ draft: 20 })
-  })
-
-  it('takes a supplied session id, and mints one in place of an id ingest cannot store', async () => {
-    const errors: unknown[] = []
-    const c = init(base({ onInternalError: (e) => errors.push(e) }), {
-      ...quiet,
-      fetchImpl: recordingFetch().impl,
-    })
-    await settle()
-    expect(c.newSession({ sessionId: 'playback-7' }).sessionId).toBe('playback-7')
-    const minted = c.newSession({ sessionId: 'x'.repeat(200) })
-    expect(minted.sessionId).not.toBe('x'.repeat(200))
-    expect(String(errors[0])).toContain('MQ1113')
-    await c.end()
-  })
-
-  it('works before setup has finished, in the order the calls were made', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    attempt()
-    c.annotate('first')
-    const second = c.newSession()
-    c.annotate('second')
-    expect(c.ids()).toEqual(second)
-    await settle()
-    expect(c.ids()).toEqual(second)
-    await c.end()
-
-    const sessions = await bySession(posts)
-    expect(of(sessions.get('sess-fixed') ?? [], 'note').map((n) => n.name)).toEqual(['first'])
-    expect(of(sessions.get(second.sessionId) ?? [], 'note').map((n) => n.name)).toEqual(['second'])
-  })
-
-  it('starts nothing once the collector has ended', async () => {
-    const { posts, impl } = recordingFetch()
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    await c.end()
-    const before = posts.length
-    expect(c.newSession()).toEqual(c.ids())
-    await settle()
-    expect(posts.length).toBe(before)
-  })
-
-  it('sends the first session’s unsent bodies from the second', async () => {
-    let up = false
-    const { posts, impl } = recordingFetch(() => (up ? 200 : 0))
-    const c = init(base({ upload: { maxAttempts: 1 } }), { ...quiet, fetchImpl: impl })
-    attempt()
-    await settle()
-    c.annotate('offline')
-    const first = c.ids()
-    await c.flush()
-    c.newSession()
-    up = true
-    await c.flush()
-    await c.end()
-
-    const notes = of((await bySession(posts)).get(first.sessionId) ?? [], 'note')
-    expect(notes.map((n) => n.name)).toEqual(['offline'])
-  })
-
-  it('deletes every stored body on discard(), the earlier sessions’ included', async () => {
-    const s = await store()
-    const dest = { endpoint: ENDPOINT, keyHash: sha256Hex('pk_test') }
-    const { impl } = recordingFetch(0)
-    const c = init(base({ upload: { maxAttempts: 1 } }), { ...quiet, store: s, fetchImpl: impl })
-    attempt()
-    await settle()
-    c.annotate('first')
-    await c.flush()
-    c.newSession()
-    c.annotate('second')
-    await c.flush()
-    const sessions = (): number => new Set(s.backlog(dest).map((e) => e.sessionId)).size
-    await until(() => sessions() === 2)
-    expect(sessions()).toBe(2)
-    await c.discard()
-    expect(s.backlog(dest)).toEqual([])
-  })
-
-  it('takes a linked worker along, with its open connections', async () => {
-    const { posts, impl } = recordingFetch()
-    const channel = new MessageChannel()
-    const c = init(base(), { ...quiet, fetchImpl: impl, timeOrigin: 1_000 })
-    c.linkWorker(channel.port1)
-    await settle(5)
-    const probe = initWorkerWith(workerBuild, channel.port2, { timeOrigin: 1_000 })
-    expect(await probe.linked).toBe(true)
-    const wt = await openTransport()
-    const conn = probe.connectionIdOf(wt as unknown as WebTransport)
-    expect(conn).toBeDefined()
-    // The page learns of the worker's connection from its next forward.
-    await settle(40, FORWARD_INTERVAL_MS)
-
-    const first = c.ids()
-    const second = c.newSession()
-    await settle()
-    expect(probe.ids()).toEqual({ sessionId: second.sessionId, instanceId: second.instanceId })
-    probe.annotate('after', undefined, conn)
-    await settle(40, FORWARD_INTERVAL_MS)
-    await c.end()
-
-    const sessions = await bySession(posts)
-    const a = sessions.get(first.sessionId) ?? []
-    const b = sessions.get(second.sessionId) ?? []
-    expect(of(a, 'conn-close')).toEqual([])
-    expect(of(b, 'link')).toEqual([expect.objectContaining({ link: 'w1', ev: 'linked' })])
-    expect(connections(b).get(conn as string)).toMatchObject({ realm: 'worker', draft: 20 })
-    expect(of(b, 'note')).toEqual([expect.objectContaining({ name: 'after', conn })])
-    channel.port1.close()
-    channel.port2.close()
-  })
-})
-
 describe('setContext(), connectionIdOf() and scoped annotations', () => {
   it('stamps connections opened after setContext() with the new content id', async () => {
     const { posts, impl } = recordingFetch()
@@ -2373,67 +2174,5 @@ describe('nothing before the session attaches is lost', () => {
     expect(counted('early.dataChunks')).toBe(2)
     expect(counted('early.dataBytes')).toBe(9)
     expect((of(all, 'end')[0] as EndRecord).counters.parseFailures).toBe(0)
-  })
-
-  it('keeps skipping a stream from before init() after newSession()', async () => {
-    const { posts, impl } = recordingFetch()
-    ensureDormantHook()
-    const wt = await openTransport()
-    const src = wt.deliverUniStream([Uint8Array.of(0x10, 1, 2, 3)])
-    const arrived = await wt.incomingUnidirectionalStreams.getReader().read()
-    const reading = readAll(arrived.value as ReadableStream<Uint8Array>)
-    await settle(5)
-
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    c.newSession({ sessionId: 'sess-second' })
-    await settle()
-    // Bytes that would read as a subgroup header if the stream began here.
-    src.push(subgroupBytes({ alias: 4n, group: 1n, objects: [{ id: 0n, bytes: 10 }] }))
-    src.close()
-    await reading
-    await settle()
-    await c.end()
-
-    const all = await allRecords(posts)
-    const counted = (name: string): number =>
-      of(all, 'rollup').reduce((n, r) => n + (r.session[name] ?? 0), 0)
-    expect(counted('early.dataChunks')).toBe(2)
-    const { runs, ends } = await allFacts(posts.map((p) => p.body))
-    expect(runs).toEqual([])
-    expect(ends).toEqual([])
-    for (const r of of(all, 'end')) expect((r as EndRecord).counters.parseFailures).toBe(0)
-  })
-
-  it('keeps skipping the rest of a control stream it cut after newSession()', async () => {
-    const { posts, impl } = recordingFetch()
-    const frame = subscribeBytes(1n, 'v'.repeat(1000))
-    const size = 4096
-    const count = Math.ceil((80 * 1024) / frame.length)
-    const parts = chunks(concatBytes(...Array.from({ length: count }, () => frame)), size)
-    ensureDormantHook()
-    const wt = await openTransport()
-    const stream = wt.deliverBidiStream(parts)
-    const arrived = await wt.incomingBidirectionalStreams.getReader().read()
-    const reading = readAll((arrived.value as { readable: ReadableStream<Uint8Array> }).readable)
-    await settle(5)
-
-    const c = init(base(), { ...quiet, fetchImpl: impl })
-    await settle()
-    c.newSession({ sessionId: 'sess-second' })
-    await settle()
-    stream.inbound.push(frame)
-    stream.inbound.push(frame)
-    stream.inbound.close()
-    await reading
-    await settle()
-    await c.end()
-
-    const all = await allRecords(posts)
-    expect(of(all, 'ctrl')).toHaveLength(Math.floor(EARLY_CONTROL_CONNECTION_BYTES / frame.length))
-    for (const r of of(all, 'end')) expect((r as EndRecord).counters.parseFailures).toBe(0)
-    for (const r of of(all, 'conn-close')) {
-      expect((r as ConnCloseRecord).counters.parseFailures).toBe(0)
-    }
   })
 })

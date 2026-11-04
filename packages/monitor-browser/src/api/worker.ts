@@ -38,7 +38,7 @@ export interface WorkerProbe {
    * and sends nothing.
    */
   readonly linked: Promise<boolean>
-  /** The page's ids, or `null` until linked. They follow the page into a new session. */
+  /** The page's ids, or `null` until linked. They follow the page when its session begins. */
   ids(): { sessionId: string; instanceId: string } | null
   /** The connection id of a `WebTransport` this worker created. */
   connectionIdOf(transport: WebTransport): string | undefined

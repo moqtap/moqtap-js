@@ -61,15 +61,14 @@ subscribe exchanges. Objects that arrived before `init()` are counted as `early.
 - **Session**: the WebTransport activity of one browser tab and its linked workers: every
   connection the tab opens, in every page load, to any relay or path, at once or in turn. It
   begins with the first `WebTransport` the page or a linked worker constructs, whether or not it
-  connects. Unless you pass a `sessionId`, its ID is kept in the tab's `sessionStorage` under
-  `moqtap:session`, read and written only when that first `WebTransport` is constructed, so a
-  reload or a later page of the same origin in the tab continues the session however long the tab
-  goes without a connection. A page load that constructs no `WebTransport` doesn't touch it. Where `sessionStorage` can't be used (a sandboxed frame, storage blocked or full),
-  the session is that page load alone. A duplicated tab carries the same ID. `discard()` removes
-  it. After `newSession()`, the next `WebTransport` begins a new session in this page load, with
-  a new session ID and the context set so far.
-- **Instance**: one page load's recording, from `init()` on. Every session the page records has
-  the same instance ID. A reload is a new instance of the same session.
+  connects. Its ID is kept in the tab's `sessionStorage` under `moqtap:session`, read and written
+  only when that first `WebTransport` is constructed, so a reload or a later page of the same
+  origin in the tab continues the session however long the tab goes without a connection. A page
+  load that constructs no `WebTransport` doesn't touch it. Where `sessionStorage` can't be used (a
+  sandboxed frame, storage blocked or full), the session is that page load alone. A duplicated tab
+  carries the same ID. `discard()` removes it.
+- **Instance**: one page load's recording, from `init()` on. A reload is a new instance of the
+  same session.
 - **Connection**: one `WebTransport`, in the page or in a linked worker, from its construction to
   its end. A connection that fails to open is still reported, in the session its attempt began
   or joined. Its end is reported when it is known: closed by your code or the relay, failed, the
@@ -85,11 +84,11 @@ Before a session begins:
 - `ids()` already returns the instance ID, and a session ID for this page load. When the session
   begins in a tab that has a stored session ID, `ids()` returns that one from then on.
 - Context passed to `init()` or `setContext()` is sent with the session's setup.
-- Metric definitions are kept, and carry into every session that follows.
+- Metric definitions are kept.
 - Annotations, metric samples and `escalate()` calls are dropped.
 
-A session's clock starts at its begin. A capture window still open when a session ends closes
-with it, and the next session starts at `detail`, or at `baseline` while detail is
+A session's clock starts at its begin. A capture window still open when the page closes ends
+with it, and the next page load starts at `detail`, or at `baseline` while detail is
 held (see [Changes Insight makes while a session runs](#changes-insight-makes-while-a-session-runs)).
 
 A Web Worker that opens its own `WebTransport` is measured as part of the page's session. The
@@ -139,12 +138,11 @@ Acknowledged bytes are reported only in Chromium-based browsers.
 
 ### Find a viewer's session
 
-Pass your own identifiers in `context`, or pass your own `sessionId`:
+Pass your own identifiers in `context`:
 
 ```typescript
 const vitals = init({
   apiKey: 'mqt_pk_...',
-  sessionId: playbackSession.id, // optional; a UUID is generated if you leave it out
   context: { actorId: user.id, contentId: stream.id },
 })
 ```
@@ -167,9 +165,6 @@ vitals.connections() // every connection in the page and its linked workers, ope
 
 Each entry in `connections()` has `id`, `realm` (page or worker), `origin`, `draft`,
 `contentId`, `state` (`connecting`, `open` or `closed`) and, once closed, `closeCause`.
-
-A `sessionId` longer than 128 UTF-8 bytes, or containing control characters, is replaced by a
-generated one and reported as `MQ1113`. `ids()` returns the ID actually in use.
 
 `actorId` is stored as given. If it identifies a person, treat it as personal data under your
 privacy policy, pass an opaque ID instead, or set `privacy: { hashActorId: true }`. With
@@ -218,8 +213,7 @@ video.requestVideoFrameCallback(function onFrame(now, meta) {
 
 Pass `buckets` (strictly ascending numbers) to a histogram to set your own boundaries.
 
-Definitions carry into each new session. Samples observed before a session begins are
-dropped.
+Samples observed before the session begins are dropped.
 
 Limits per session: 64 metrics, 8 labels per observation, 32 distinct label combinations per
 metric, label values truncated to 64 characters. Going over a limit is reported through
@@ -237,31 +231,21 @@ player.on('seek', (t) => vitals.annotate('seek', { to: t }))
 
 An annotation made before the session begins is dropped.
 
-### Switch content, or start a new session
+### Switch content
 
-When the player moves to a different stream, either label the new connections or start a new
-session:
+When the player moves to a different stream, label the connections it opens from then on:
 
 ```typescript
-// Same session; connections opened from now on carry this content id.
+// Connections opened from now on carry this content id.
 vitals.setContext({ contentId: 'live/room-43', tags: { cdn: 'edge-2' } })
-
-// One session per playback: ends this one, starts the next, returns the new ids.
-const { sessionId } = vitals.newSession({ contentId: 'vod/episode-2' })
 ```
 
 `setContext()` takes `contentId`, `actorId` and `tags`. Tags add to the session's, and a key
 given again replaces its value. An empty `contentId` or `actorId` clears it. Each call is
 recorded in the session with what it set.
-`newSession()` takes `contentId` and an optional `sessionId` of your own; the new session
-keeps the actor and tags. With a connection open, the new session begins at once. With none,
-`newSession()` ends the current session and the new one begins with the next `WebTransport`.
-Linked workers follow the page into the new session. A session started by `newSession()` covers
-this page load only: its ID isn't stored, and a reload continues the tab's stored session. After
-`end()` or `discard()`, `newSession()` starts nothing and returns the IDs unchanged.
 
 Calling `init()` again while a collector is still running replaces it: the new one takes over,
-and `MQ1004` is reported. Use `newSession()` instead.
+and `MQ1004` is reported.
 
 ### Upload now, stop collecting, or honour an opt-out
 
@@ -320,7 +304,7 @@ The worker's `annotate()`, `observe()`, `escalate()` and `resolve()` go to the p
 Calls made before the worker is linked are kept until it is. As in the page, calls made before
 a session begins are dropped; a `WebTransport` the worker constructs begins one. All
 configuration comes from the page's `init()`. `ids()` in the worker returns `null` until it is
-linked, then the page's IDs, and follows the page into each new session.
+linked, then the page's IDs.
 
 Call `linkWorker()` once per worker, including each replacement. With no argument,
 `initWorker()` links over the worker's own global, which is what a plain `new Worker()` gives
@@ -494,9 +478,9 @@ again once the hold ends. After a move to a plan with more minutes, a held sessi
 its configured level within 10 minutes. Each change is recorded as a `hold` escalation
 (`by: { kind: 'hold' }`).
 
-A new session in the same page starts held. With the `persistence` feature, the hold is also
-kept across page loads, in a second IndexedDB database (`moqtap-collector:holds`). Without it,
-a new page load is held once its first upload is answered.
+With the `persistence` feature, the hold is kept across page loads, in a second IndexedDB
+database (`moqtap-collector:holds`). Without it, a new page load is held once its first upload
+is answered.
 
 ## Configuration
 
@@ -517,7 +501,6 @@ init({
 |---|---|---|
 | `apiKey` | — | Your Insight project key. Required. |
 | `endpoint` | `https://moqgest.com/v1/ingest` | Where uploads go. Set it to use your own ingest or a proxy. |
-| `sessionId` | the tab's | Your own ID for the first session, up to 128 UTF-8 bytes, used in place of the tab's stored one and not stored. Sessions after `newSession()` get a random UUID. |
 | `context` | empty | `actorId`, `contentId`, `environment`, `release`, `tags`. |
 | `detail` | `'baseline'` | The level the whole session runs at. See [Detail levels](#detail-levels). |
 | `metrics.intervalMs` | `10000` | How often a rollup closes. |

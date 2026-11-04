@@ -161,7 +161,6 @@ const all = <T extends EnvelopeRecord['t']>(received: readonly Received[], t: T)
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-holes',
   ...over,
 })
 

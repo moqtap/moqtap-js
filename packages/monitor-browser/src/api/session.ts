@@ -85,7 +85,7 @@ import {
 } from './features.js'
 import type { PageMessage } from './link.js'
 import { UsageMeter } from './meter.js'
-import type { ConnectionState, RealmCarry, RealmObserver } from './realm.js'
+import type { ConnectionState, RealmObserver } from './realm.js'
 import { forgetTabSession, peekTabSession, tabSession } from './tab-session.js'
 
 /** Re-exported for the public API; defined in `../version.js` so the dormant
@@ -109,9 +109,9 @@ export interface MessageTarget {
 /** Ports the runtime needs and does not create, so the suite can supply its own. */
 export interface RuntimePorts {
   readonly clock?: ClockSource
-  /** The page's upload clock exchanges, kept across its sessions. */
+  /** The page's upload clock exchanges, kept when the session begins. */
   readonly clockSync?: ClockSync
-  /** The page's emitter: its numbers, connections and clock, kept across its sessions. */
+  /** The page's emitter: its numbers, connections and clock, kept when the session begins. */
   readonly emitter?: Emitter
   /** `performance.timeOrigin`: the page's clock origin, against which a worker's is rebased. */
   readonly timeOrigin?: number
@@ -137,18 +137,11 @@ export interface RuntimePorts {
   /** Clock zero. Default: now. */
   readonly anchor?: ClockAnchor | undefined
   /**
-   * When this session began on {@link anchor}, which an earlier session in the
-   * page set: one started by `newSession()` while connections were open keeps
-   * the page's timeline, so a linked probe's clock offset stays valid.
-   */
-  readonly startTs?: number | undefined
-  /**
-   * Another runtime took over: the session began, or `newSession()`
-   * started the next. Called before the new runtime starts,
-   * so a runtime that hands over again at once is named after this one.
+   * Another runtime took over: the session began. Called before the
+   * recording runtime starts.
    */
   readonly onSession?: ((r: CollectorRuntime) => void) | undefined
-  /** The customer's metric definitions, which carry from one session to the next. */
+  /** The customer's metric definitions, kept when the session begins. */
   readonly custom?: CustomMetrics | undefined
   /** Features already reported missing in this page, which are not reported again. */
   readonly reported?: Set<string> | undefined
@@ -156,8 +149,6 @@ export interface RuntimePorts {
   readonly onInternalError?: (err: unknown) => void
   /** `CollectorConfig.clock`, which `ResolvedConfig` omits like `onInternalError`. */
   readonly appClock?: (() => AppClockReading | null | undefined) | undefined
-  /** The earlier session's run recorder and the decoders of the connections it left open. */
-  readonly carry?: RealmCarry | undefined
   /** The global whose `sessionStorage` holds the tab's id. Default `globalThis`. */
   readonly sessionStorageOf?: unknown
 }
@@ -303,11 +294,6 @@ export class CollectorRuntime {
 
   /** The page's workers, shared with every session in the page; `null` until one is linked. */
   private _links: WorkerLinks | null = null
-  /**
-   * Instance locks of earlier sessions in this page, held while their bodies
-   * are still in this outbox, so no other page load sweeps them meanwhile.
-   */
-  private readonly _inheritedLocks = new Map<string, () => void>()
   /** What `ids()` and connections opened from now on carry. `setContext()` changes it. */
   private readonly _context: {
     actorId: string
@@ -316,8 +302,6 @@ export class CollectorRuntime {
   }
 
   private _setupSent = false
-  /** When this session began on an inherited anchor; `undefined` when the anchor is its own. */
-  private _startTs: number | undefined
   private _ended = false
   private _discarded = false
   private _releaseLock: () => void = () => {}
@@ -361,7 +345,6 @@ export class CollectorRuntime {
       }
     }
     this.anchor = ports.anchor ?? this._anchorNow()
-    this._startTs = ports.startTs
     this._armed = ports.armed === true
     this.instanceId = ports.emitter?.instanceId ?? ports.instanceId ?? mintId()
     this._emitter =
@@ -457,7 +440,6 @@ export class CollectorRuntime {
             ordinalDone: (id) => this._emitter.connDone(id),
             clock: this._clock,
             recorder: build.features.flightRecorder,
-            carry: ports.carry,
             host: {
               sink: this._sink,
               onConn: (c, draft, relay) => this._emitter.noteConn(c, draft, relay),
@@ -551,7 +533,7 @@ export class CollectorRuntime {
 
   start(): void {
     if (this._armed) {
-      this._arm(true)
+      this._arm()
       return
     }
     this._begin()
@@ -578,7 +560,7 @@ export class CollectorRuntime {
    * before the constructor returns. One made before this runtime started,
    * still held by the dormant hook, begins it at once.
    */
-  private _arm(first: boolean): void {
+  private _arm(): void {
     this._installLifecycle()
     const observation = this._build.observation
     if (this._hook === null || observation === null || !this._hook.installed) return
@@ -595,7 +577,7 @@ export class CollectorRuntime {
     if (s !== undefined) {
       s.onOpen = begin
       if (observation.pending(s)) begin()
-    } else if (first && observation.pending()) begin()
+    } else if (observation.pending()) begin()
     else this._dormant = observation.arm(hook, begin)
   }
 
@@ -603,19 +585,19 @@ export class CollectorRuntime {
   private _beginNow(): void {
     if (this._ended) return
     const e = this._emitter
-    let over: Pick<ResolvedConfig, 'sessionId' | 'idSource'> | undefined
-    if (e.tab === undefined && !e.tabFixed && this.config.idSource === 'minted') {
+    let over: Pick<ResolvedConfig, 'sessionId'> | undefined
+    if (e.tab === undefined && !e.tabFixed) {
       // The id this load showed until now is written when storage holds none.
       const sessionId = this.config.sessionId
       e.tab = tabSession(this._ports.sessionStorageOf ?? globalThis, () => sessionId)
-      over = { sessionId: e.tab.id, idSource: 'minted' }
+      over = { sessionId: e.tab.id }
     }
     e.tabFixed = true
     this._handOver(this._withContext(over), this.instanceId, { anchor: this._anchorNow() })
   }
 
-  /** This session's config with the context as it stands, which the next one starts from. */
-  private _withContext(over?: Pick<ResolvedConfig, 'sessionId' | 'idSource'>): ResolvedConfig {
+  /** This runtime's config with the context as it stands, which the recording one starts from. */
+  private _withContext(over?: Pick<ResolvedConfig, 'sessionId'>): ResolvedConfig {
     return Object.freeze({
       ...this.config,
       ...over,
@@ -625,14 +607,6 @@ export class CollectorRuntime {
 
   private _anchorNow(): ClockAnchor {
     return { originMono: this._clock.now(), originWall: this._clock.wall() }
-  }
-
-  /** A connection is open or being attempted, in the page or a linked worker. */
-  private _open(): boolean {
-    return (
-      this._links?.open() === true ||
-      this._realm?.connections().some((c) => c.state !== 'closed') === true
-    )
   }
 
   /* ── the public verbs ─────────────────────────────────────────────────── */
@@ -788,7 +762,7 @@ export class CollectorRuntime {
   /**
    * End this instance: report its open connections closed, write `end{app}`,
    * send everything, and restore the patched global. Before the session
-   * begins there is nothing of it to end, only earlier sessions' bodies to send.
+   * begins there is nothing of it to end, only earlier page loads' bodies to send.
    */
   async end(): Promise<void> {
     if (this._ended) return
@@ -819,18 +793,17 @@ export class CollectorRuntime {
     this._ended = true
     const storage = this._ports.sessionStorageOf ?? globalThis
     // Not begun, this load holds its own id; the tab's earlier loads are under the stored one.
-    const sessionId =
-      this._emitter.tabFixed || this.config.idSource !== 'minted'
-        ? this.config.sessionId
-        : (peekTabSession(storage) ?? this.config.sessionId)
+    const sessionId = this._emitter.tabFixed
+      ? this.config.sessionId
+      : (peekTabSession(storage) ?? this.config.sessionId)
     this._realm?.detach()
     const unsent = this._outbox
     this._outbox = []
     this._teardown()
     if (this._store !== null) {
       try {
-        // The outbox can hold bodies of earlier sessions in this page and of
-        // earlier page loads; consent covers those too. Their stored copies may
+        // The outbox can hold bodies of earlier page loads; consent covers
+        // those too. Their stored copies may
         // still be being written, so each is deleted once it is.
         await Promise.all(unsent.map((c) => this._prepared.get(c)))
         for (const c of unsent) await this._store.delete(c.idempotencyKey)
@@ -843,84 +816,48 @@ export class CollectorRuntime {
     forgetTabSession(sessionId, storage)
   }
 
-  /**
-   * End this session and start the next one in this page, which takes over
-   * the transport hook, the store, every worker link and every body not yet
-   * sent. `null` once this instance has ended.
-   *
-   * With a connection open, the next session begins at once and inherits it.
-   * With none, it begins with the next `WebTransport`, like the first.
-   *
-   * Synchronous, like the seal: the old session's last body is numbered and
-   * keyed before this returns. A probe forward already on its way lands in
-   * the new session.
-   */
-  successor(next: ResolvedConfig, instanceId: string): CollectorRuntime | null {
-    if (this._ended) return null
-    this._emitter.tabFixed = true
-    const open = !this._armed && this._open()
-    if (!this._armed) {
-      this._finish('new-session')
-      this._seal(true)
-    }
-    return this._handOver(
-      next,
-      instanceId,
-      open
-        ? { anchor: this.anchor, startTs: this._clock.now() - this.anchor.originMono }
-        : { armed: true },
-    )
-  }
-
-  /** Hand everything a page keeps across its sessions to the runtime of the next one. */
+  /** At the session's begin, hand what this waiting runtime holds to the one that records. */
   private _handOver(
     next: ResolvedConfig,
     instanceId: string,
-    ports: Pick<RuntimePorts, 'armed' | 'anchor' | 'startTs'>,
+    ports: Pick<RuntimePorts, 'anchor'>,
   ): CollectorRuntime {
     const runtime = new CollectorRuntime(next, this._hook, this._build, {
       ...this._ports,
       instanceId,
       armed: false,
       anchor: undefined,
-      startTs: undefined,
       custom: this._custom ?? undefined,
       reported: this._reported,
       emitter: this._emitter,
-      carry: this._realm?.carry(),
       ...ports,
     })
-    // The links go on with the next session, and their count with them.
+    // The links go on with the recording runtime, and their count with them.
     this._emitter.noteDroppedRecords(this._dropped() - (this._links?.dropped() ?? 0))
-    // The session's tags so far, `setContext()`'s included, go on with it.
+    // The tags so far, `setContext()`'s included, go on with it.
     runtime._context.tags = this._context.tags
     runtime._dormant = this._dormant
     this._dormant = undefined
-    // Ingest's hold is the page's, not the session's: the next one is held
-    // from its start, store or none. Both runtimes share the clock.
+    // Ingest's hold is the page's: the recording runtime is held from its
+    // start, store or none. Both runtimes share the clock.
     const held = this._escalation.holdUntil
     const kept = runtime._escalation.holdUntil
     if (held !== undefined && (kept === undefined || held > kept)) runtime._escalation.hold(held)
     const outbox = this._outbox
     const links = this._links
-    const locks = new Map(this._inheritedLocks)
-    if (!this._armed) locks.set(this.instanceId, this._releaseLock)
     this._outbox = []
     this._links = null
-    this._inheritedLocks.clear()
-    this._releaseLock = () => {}
     this._teardown({ keepHook: true })
     this._ports.onSession?.(runtime)
-    runtime._adopt(this, outbox, links, locks)
+    runtime._adopt(this, outbox, links)
     return runtime
   }
 
-  /** Take over what {@link successor} hands on, and start. */
+  /** Take over what {@link _handOver} hands on, and start. */
   private _adopt(
     from: CollectorRuntime,
     outbox: readonly Chunk[],
     links: WorkerLinks | null,
-    locks: ReadonlyMap<string, () => void>,
   ): void {
     for (const c of outbox) {
       const prepared = from._prepared.get(c)
@@ -928,29 +865,13 @@ export class CollectorRuntime {
       if (from._metered.has(c)) this._metered.add(c)
     }
     this._outbox = [...outbox, ...this._outbox]
-    for (const [id, release] of locks) this._inheritedLocks.set(id, release)
-    if (!this._armed) {
-      this._begin()
-      if (from._armed) void this._sweep()
-    }
+    this._begin()
+    void this._sweep()
     if (links !== null) {
       this._links = links
       links.adopt(this._owner)
     }
-    this._releaseInherited()
     if (this._outbox.length > 0) void this._drain()
-    // Last: a connection already waiting begins the next session at once, and
-    // this one hands over what it now holds.
-    if (this._armed) this._arm(false)
-  }
-
-  /** Let go of an earlier session's lock once none of its bodies is left to send. */
-  private _releaseInherited(): void {
-    for (const [id, release] of this._inheritedLocks) {
-      if (this._outbox.some((c) => c.instanceId === id)) continue
-      this._inheritedLocks.delete(id)
-      release()
-    }
   }
 
   /* ── worker links ─────────────────────────────────────────────────────── */
@@ -1162,9 +1083,8 @@ export class CollectorRuntime {
       lvl: this._escalation.level,
       anchor: this.anchor,
       identity: { sessionId: this.config.sessionId, instanceId: this.instanceId },
-      idSource: this.config.idSource,
+      idSource: 'minted',
       collectorVersion: COLLECTOR_VERSION,
-      ...(this._startTs !== undefined ? { startTs: this._startTs } : {}),
     }
     this._queue.json(record)
     // The session's identity: every field it has.
@@ -1213,8 +1133,7 @@ export class CollectorRuntime {
     this._realm?.closeAll(cause, now)
     this._links?.closeForwarded(cause)
     this._customRollup?.tick(now)
-    // Probes follow the page into its next session rather than stop.
-    if (reason !== 'new-session') this._broadcast({ t: 'unlinked' })
+    this._broadcast({ t: 'unlinked' })
     const record: EndRecord = {
       t: 'end',
       ts: this._relNow(),
@@ -1560,7 +1479,7 @@ export class CollectorRuntime {
     this._meter.noteBytes(c.level, c.bytes.byteLength)
   }
 
-  /** A body of this session: an earlier session of the same emitter shares its instance. */
+  /** A body of this page load, not one of an earlier page load's swept from the store. */
   private _isOwn(c: Chunk): boolean {
     return c.instanceId === this.instanceId && c.sessionId === this.config.sessionId
   }
@@ -1605,7 +1524,6 @@ export class CollectorRuntime {
         const at = this._outbox.indexOf(chunk)
         if (at !== -1) this._outbox.splice(at, 1)
         if (this._store !== null) await this._store.delete(chunk.idempotencyKey)
-        if (!this._isOwn(chunk)) this._releaseInherited()
         continue
       }
       // Kept, at the front. Spinning here would be the congestion the pacer
@@ -1825,7 +1743,7 @@ export class CollectorRuntime {
    * be restored: the tail goes, marked `frozen`, and the instance carries on.
    */
   private _pagehide(persisted: boolean): void {
-    // Waiting for a session, a page holds only earlier sessions' bodies.
+    // Waiting for a session, a page holds only earlier page loads' bodies.
     if (this._armed) {
       if (this._ended) return
       this._beaconOutbox([])
@@ -1930,8 +1848,8 @@ export class CollectorRuntime {
 
   /**
    * Stop every timer and listener, end uploads in flight, release the locks,
-   * and restore the global, unless the next session in this page keeps the
-   * hook.
+   * and restore the global, unless the runtime that takes over the session
+   * keeps the hook.
    */
   private _teardown(opts: { keepHook?: boolean } = {}): void {
     this._ended = true
@@ -1953,8 +1871,6 @@ export class CollectorRuntime {
     for (const [type, f, capture] of this._listeners) g.removeEventListener?.(type, f, capture)
     this._listeners = []
     this._releaseLock()
-    for (const release of this._inheritedLocks.values()) release()
-    this._inheritedLocks.clear()
     this._realm?.clear()
     if (opts.keepHook === true) return
     try {

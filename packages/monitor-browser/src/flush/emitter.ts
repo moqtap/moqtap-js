@@ -1,10 +1,10 @@
 /**
- * The emitter: one page load, from `init()` on, across session rotations.
+ * The emitter: one page load, from `init()` on, through the session's begin.
  *
- * Everything the backend keys dedup and loss by lives here, so a new session
- * cannot split it: the instance claim, the body sequence, the record sequence
- * `rseq`, the chain of sealed intervals, the connection ordinals and the
- * clock. Sessions come and go; the emitter's numbers only ever count up.
+ * Everything the backend keys dedup and loss by lives here, so the runtime
+ * that takes over at the begin cannot split it: the instance claim, the body
+ * sequence, the record sequence `rseq`, the chain of sealed intervals, the
+ * connection ordinals and the clock. The emitter's numbers only ever count up.
  */
 
 import {
@@ -79,14 +79,14 @@ export class Emitter {
   /** Each key object's string: the decoders hand the same frozen key for every object of a track. */
   private readonly _keyStrings = new WeakMap<BucketKey, string>()
   private _conn = 0
-  /** Ordinals of the hooked sessions still open, kept across the page's sessions. */
+  /** Ordinals of the hooked sessions still open. */
   private readonly _connIds = new Map<string, number>()
-  /** The timing ingest last stated, kept across the page's sessions. */
+  /** The timing ingest last stated. */
   directedTiming: Timing | undefined
   /**
-   * The tab's browsing-session id and where it came from, once the page
-   * load's first session began on it. `fixed` once an id was chosen any other
-   * way, so storage is not read for this page load.
+   * The tab's browsing-session id and where it came from, once the session
+   * began on it. `tabFixed` once the session began, so storage is not read
+   * again for this page load.
    */
   tab: { readonly id: string; readonly ss: SessionIdSource } | undefined
   tabFixed = false

@@ -22,7 +22,7 @@ import type { CollectorConfig, Directive } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
 import { attempt, init } from '../support/init.js'
 import { settle, until } from '../support/settle.js'
-import { allRecords, clockProbe, of, recordingFetch } from '../support/uploads.js'
+import { allRecords, of, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -43,7 +43,6 @@ afterEach(() => {
 const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
   apiKey: 'pk_test',
   endpoint: 'https://ingest.test/v1/ingest',
-  sessionId: 'sess-fixed',
   ...over,
 })
 
@@ -203,38 +202,6 @@ describe('elevate: a capture window covers the session', () => {
     const [raise] = of(await allRecords(posts), 'escalation')
     expect(raise).toMatchObject({ to: 'headers+sizes', by: { kind: 'remote' } })
     expect(raise?.by).not.toHaveProperty('reason')
-  })
-
-  it('is not obeyed for a body of an earlier session', async () => {
-    let failing = true
-    let firstBody = ''
-    const { posts, impl: ok } = answering((url) =>
-      firstBody !== '' && url.includes(firstBody)
-        ? { elevate: { level: 'headers', until: SERVER_NOW + 60_000, reason: 'old' } }
-        : null,
-    )
-    const impl = ((url: string, i: RequestInit) => {
-      const clock = clockProbe(url)
-      if (clock !== undefined) return clock
-      if (failing) {
-        firstBody ||= /ik=[0-9a-f]+/.exec(url)?.[0] ?? ''
-        return Promise.reject(new TypeError('offline'))
-      }
-      return ok(url, i)
-    }) as unknown as typeof fetch
-    const c = init(base({ upload: { maxAttempts: 1 } }), { ...quiet, fetchImpl: impl })
-    await settle()
-    attempt()
-    c.annotate('kept for later')
-    await c.flush()
-    failing = false
-    c.newSession()
-    // The second session sends the first one's body, and hears its answer.
-    await until(() => posts.some((p) => p.url.includes(firstBody)))
-    await settle()
-    c.annotate('second session')
-    await c.end()
-    expect(of(await allRecords(posts), 'escalation')).toEqual([])
   })
 })
 
