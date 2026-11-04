@@ -20,7 +20,7 @@ const vectorEntries = loadVectorDir('transport/draft22/codec/data-streams')
 
 /** See the note in messages.test.ts — these counts guard against silent skips. */
 const EXPECTED_FILES = 3
-const EXPECTED_VECTORS = 60
+const EXPECTED_VECTORS = 66
 
 describe('draft-22 data stream vector corpus', () => {
   it('loads every published data-stream vector file', () => {

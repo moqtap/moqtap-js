@@ -118,8 +118,35 @@ describe('draft-15 malformedTrackReason', () => {
     )
     expect(
       malformedTrackReason(
-        fetch([5n, 0n, props([G, 2n])], [6n, 0n, props([G, 1n])], [5n, 1n, props([G, 3n])]),
+        fetch([5n, 0n, props([G, 2n])], [7n, 0n, props([G, 1n])], [5n, 1n, props([G, 3n])]),
       ),
     ).toBe(reason)
+  })
+
+  it('reports a gap covering the Group or Object before it on a fetch stream', () => {
+    expect(malformedTrackReason(fetch([9n, 0n, empty], [10n, 0n, props([G, 1n])]))).toBe(
+      'Prior Group ID Gap 1 of Group 10 covers Group 9, received earlier',
+    )
+    expect(malformedTrackReason(fetch([8n, 0n, empty], [10n, 0n, props([G, 1n])]))).toBeNull()
+    expect(malformedTrackReason(fetch([3n, 8n, empty], [3n, 9n, props([O, 1n])]))).toBe(
+      'Prior Object ID Gap 1 of Object 9 covers Object 8',
+    )
+    expect(malformedTrackReason(fetch([3n, 7n, empty], [3n, 9n, props([O, 1n])]))).toBeNull()
+  })
+
+  it('reports a Prior Object ID Gap covering the Object before it on a subgroup stream', () => {
+    expect(malformedTrackReason(subgroup(3n, [8n, empty], [9n, props([O, 1n])]))).toBe(
+      'Prior Object ID Gap 1 of Object 9 covers Object 8',
+    )
+    expect(malformedTrackReason(subgroup(3n, [7n, empty], [9n, props([O, 1n])]))).toBeNull()
+  })
+
+  it('reports a Group or Object within the gap the one before it on a fetch stream communicated', () => {
+    expect(malformedTrackReason(fetch([10n, 0n, props([G, 2n])], [9n, 0n, empty]))).toBe(
+      'Group 9 is within the Prior Group ID Gap 2 that Group 10 communicated',
+    )
+    expect(malformedTrackReason(fetch([3n, 10n, props([O, 2n])], [3n, 9n, empty]))).toBe(
+      'Object 9 is within the Prior Object ID Gap 2 that Object 10 communicated',
+    )
   })
 })

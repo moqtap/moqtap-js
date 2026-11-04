@@ -11,8 +11,18 @@ This file starts at 0.9.0. Earlier releases are in the git history.
 
 ### Added
 
-- Drafts 11-13: `malformedTrackReason`, which reports a Prior Group ID Gap larger
-  than the Group ID, or two different Prior Group ID Gaps within a Group.
+- Drafts 11-13: `malformedTrackReason`, which reports an Object whose every Prior
+  Group ID Gap is larger than the Group ID, Objects of one Group with no Prior
+  Group ID Gap value in common, and on a fetch stream a Group within the gap the
+  Group before it communicated.
+
+### Fixed
+
+- Drafts 14-23: `malformedTrackReason` checked a subgroup or fetch stream's Objects
+  one by one and within a Group only. It now also reports a gap covering the Group
+  or Object before it (drafts 14-15 and 23; on a subgroup stream, the Object), and
+  on a fetch stream a Group or Object within the gap the one before it
+  communicated (drafts 14-17 and 23).
 
 ## [0.15.0] - 2026-11-03
 

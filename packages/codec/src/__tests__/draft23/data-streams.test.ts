@@ -25,7 +25,7 @@ const vectorEntries = loadVectorDir('transport/draft23/codec/data-streams')
 
 /** See the note in messages.test.ts — these counts guard against silent skips. */
 const EXPECTED_FILES = 3
-const EXPECTED_VECTORS = 73
+const EXPECTED_VECTORS = 79
 
 describe('draft-23 data stream vector corpus', () => {
   it('loads every published data-stream vector file', () => {
@@ -86,6 +86,12 @@ const CLOSE_CODES: Readonly<Record<string, bigint | null>> = {
   'fetch-header.json/object-id-delta-plus-two-overflow': Close.DeltaEncodingOverflow,
   'fetch-header.json/invalid-serialization-flags': Close.MalformedObject,
   'fetch-header.json/invalid-serialization-flags-0x82': Close.MalformedObject,
+  'fetch-header.json/fetch-prior-group-id-gaps-differ': null,
+  'fetch-header.json/fetch-prior-group-id-gap-covers-an-earlier-group': null,
+  'fetch-header.json/fetch-prior-object-id-gap-covers-an-earlier-object': null,
+  'fetch-header.json/fetch-prior-group-id-gap-exceeds-group-id': null,
+  'fetch-header.json/fetch-prior-object-id-gap-exceeds-object-id': null,
+  'fetch-header.json/fetch-prior-group-id-gap-repeated': null,
   'subgroup.json/subgroup-properties-status-object': Close.InvalidObjectStatus,
   'subgroup.json/reserved-subgroup-id-mode': Close.InvalidStreamHeader,
   'subgroup.json/bit-4-not-set': Close.InvalidStreamHeader,
@@ -456,6 +462,28 @@ describe('draft-23 Mandatory Track Properties on an Object (Section 3.7)', () =>
 
   it('does not for the grease value 0x401D', () => {
     const result = codec.decodeFetchStream(withProperty('c0401d'))
+    expect(result.ok).toBe(true)
+    expect(result.ok && malformedTrackReason(result.value)).toBeNull()
+  })
+})
+
+// draft-23 Section 10.9: "An endpoint receives an Object with a Prior Object
+// ID Gap covering an Object it previously received."
+describe('draft-23 Prior Object ID Gap along a subgroup stream (Section 10.9)', () => {
+  // Type Flags 0x11, Group 5. The first Object carries PRIOR_GROUP_ID_GAP=0,
+  // the second PRIOR_OBJECT_ID_GAP=1.
+  const twoObjects = (firstDelta: string, secondDelta: string) =>
+    hexToBytes(`11010580${firstDelta}023c0001aa${secondDelta}023e0101bb`)
+
+  it('makes the Track malformed when the gap covers the Object before it', () => {
+    const result = codec.decodeSubgroupStream(twoObjects('08', '00'))
+    expect(result.ok && malformedTrackReason(result.value)).toBe(
+      'Prior Object ID Gap 1 of Object 9 covers Object 8',
+    )
+  })
+
+  it('does not when the gap ends above the Object before it', () => {
+    const result = codec.decodeSubgroupStream(twoObjects('07', '01'))
     expect(result.ok).toBe(true)
     expect(result.ok && malformedTrackReason(result.value)).toBeNull()
   })

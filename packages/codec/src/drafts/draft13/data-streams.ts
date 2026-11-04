@@ -1,5 +1,6 @@
 import { BufferReader } from '../../core/buffer-reader.js'
 import { BufferWriter } from '../../core/buffer-writer.js'
+import { FetchGapOrder } from '../../core/fetch-gaps.js'
 import type {
   ObjectProperty,
   ObjectPropertyInit,
@@ -65,63 +66,99 @@ const EXTENSION_PRIOR_GROUP_ID_GAP = 0x40n
 
 /**
  * Why an Object's Prior Group ID Gap makes its Track malformed, or null, with
- * `earlier` the Prior Group ID Gaps that earlier Objects of the same Group
- * carried. draft-13 Section 10.1: "A track with a Group that contains more
- * than one Object with different values for Prior Group ID Gap or has a Prior
- * Group ID Gap larger than the Group ID is considered malformed."
+ * `common` the values every earlier Object of the same Group that carried a
+ * Prior Group ID Gap carried, or undefined before the first such Object.
+ * draft-13 Section 10.1: "A track with a Group that contains more than one
+ * Object with different values for Prior Group ID Gap or has a Prior Group ID
+ * Gap larger than the Group ID is considered malformed."
  *
- * The draft does not limit an Object to one Prior Group ID Gap, so each one is
- * checked. "If an endpoint receives an Object with a Group ID within a
- * previously communicated gap it also treats the track as malformed" needs
- * Objects received earlier and is the receiver's to check.
+ * This draft does not say whether an Object may carry 0x40 more than once, or
+ * which value is that Object's when it does. draft-13 Section 9.2.1.2 says only
+ * "Object Extension Headers are serialized as Key-Value-Pairs", and the
+ * no-repeat rule of draft-13 Section 8.2, "Senders MUST NOT repeat the same
+ * parameter type in a message", covers message Parameters. draft-13 Section 12
+ * leaves it open: "List which headers can be repeated in the table." So the
+ * Objects carry different values only when no value is carried by every one of
+ * them: then, whichever of its values is taken as each Object's, two of them
+ * differ. While a value is common to all, taking it as each Object's makes them
+ * equal, and they are not reported. The values one Object carries are not
+ * compared with each other, since the condition needs "more than one Object".
+ *
+ * "has a Prior Group ID Gap larger than the Group ID" (draft-13 Section 10.1)
+ * also depends on which value is the Object's. An Object carrying a value
+ * larger than the Group ID and one that is not has a gap larger than the Group
+ * ID under one reading and not under another, so it is reported only when every
+ * value it carries is larger.
+ *
+ * "If an endpoint receives an Object with a Group ID within a previously
+ * communicated gap it also treats the track as malformed" needs Objects
+ * received earlier. On a fetch stream {@link malformedTrackReason} checks it
+ * against the Group before; across streams it is the receiver's to check.
  */
 function priorGroupGapMalformed(
   block: Uint8Array | undefined,
   groupId: bigint,
-  earlier: ReadonlySet<bigint>,
-): { reason: string } | { gaps: bigint[] } {
-  if (block === undefined || block.byteLength === 0) return { gaps: [] }
+  common: readonly bigint[] | undefined,
+): { reason: string } | { common: readonly bigint[] | undefined } {
+  if (block === undefined || block.byteLength === 0) return { common }
   const decoded = decodeObjectProperties(block)
-  if (!decoded.ok) return { gaps: [] }
+  if (!decoded.ok) return { common }
 
   const gaps: bigint[] = []
   for (const p of decoded.value) {
     if (p.type === EXTENSION_PRIOR_GROUP_ID_GAP && p.value !== undefined) gaps.push(p.value)
   }
-  for (const gap of gaps) {
-    if (gap > groupId) {
-      return { reason: `Prior Group ID Gap ${gap} is larger than Group ID ${groupId}` }
-    }
-    for (const prior of earlier) {
-      if (prior !== gap) {
-        return { reason: `Group ${groupId} carries Prior Group ID Gap ${prior} and ${gap}` }
-      }
+  const least = gaps.reduce<bigint | undefined>(
+    (m, g) => (m === undefined || g < m ? g : m),
+    undefined,
+  )
+  if (least !== undefined && least > groupId) {
+    return { reason: `Prior Group ID Gap ${least} is larger than Group ID ${groupId}` }
+  }
+  if (gaps.length === 0) return { common }
+  if (common === undefined) return { common: [...new Set(gaps)] }
+  const shared = common.filter((value) => gaps.includes(value))
+  if (shared.length === 0) {
+    return {
+      reason: `the Objects in Group ${groupId} carry no Prior Group ID Gap value in common`,
     }
   }
-  return { gaps }
+  return { common: shared }
 }
 
 /**
  * Why the Prior Group ID Gaps on a decoded subgroup stream, datagram or fetch
  * stream make the Track malformed, or null. See {@link priorGroupGapMalformed}
- * for the conditions. A malformed Track is not a decode failure:
+ * for the conditions, and on a fetch stream also those `FetchGapOrder` checks
+ * across its Objects. A malformed Track is not a decode failure:
  * draft-13 Section 2.5, "When a subscriber detects a Malformed Track, it MUST
  * UNSUBSCRIBE from the Track and SHOULD deliver an error to the application".
  */
 export function malformedTrackReason(stream: Draft13DataStream): string | null {
   if (stream.type === 'datagram') {
-    const r = priorGroupGapMalformed(stream.extensionData, stream.groupId, new Set())
+    const r = priorGroupGapMalformed(stream.extensionData, stream.groupId, undefined)
     return 'reason' in r ? r.reason : null
   }
-  const seen = new Map<bigint, Set<bigint>>()
+  const common = new Map<bigint, readonly bigint[]>()
+  const order =
+    stream.type === 'fetch'
+      ? new FetchGapOrder({
+          groupType: EXTENSION_PRIOR_GROUP_ID_GAP,
+          covering: false,
+          withinGap: true,
+        })
+      : undefined
   for (const obj of stream.objects) {
     const groupId =
       stream.type === 'subgroup' ? stream.groupId : (obj as FetchObjectPayload).groupId
-    const earlier = seen.get(groupId) ?? new Set<bigint>()
-    const r = priorGroupGapMalformed(obj.extensionData, groupId, earlier)
+    const r = priorGroupGapMalformed(obj.extensionData, groupId, common.get(groupId))
     if ('reason' in r) return r.reason
-    for (const gap of r.gaps) earlier.add(gap)
-    seen.set(groupId, earlier)
+    if (r.common !== undefined) common.set(groupId, r.common)
+    if (order !== undefined) {
+      const decoded = decodeObjectProperties(obj.extensionData)
+      const reason = order.check(groupId, obj.objectId, decoded.ok ? decoded.value : [])
+      if (reason !== null) return reason
+    }
   }
   return null
 }

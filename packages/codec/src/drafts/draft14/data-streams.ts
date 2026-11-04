@@ -1,5 +1,6 @@
 import { BufferReader } from '../../core/buffer-reader.js'
 import { BufferWriter } from '../../core/buffer-writer.js'
+import { FetchGapOrder } from '../../core/fetch-gaps.js'
 import type {
   ObjectProperty,
   ObjectPropertyInit,
@@ -92,8 +93,10 @@ const PROPERTY_PRIOR_OBJECT_ID_GAP = 0x3en
  *    ID Gap" and "An Object has a Prior Object ID Gap larger than the Object
  *    ID".
  *
- * The conditions that need Objects received earlier, such as a gap covering an
- * Object already received, are the receiver's to check.
+ * The conditions that need Objects received earlier, such as a gap covering
+ * an Object already received, are checked across a subgroup or fetch
+ * stream's Objects by {@link malformedTrackReason}; across streams they are
+ * the receiver's to check.
  */
 function priorGapsMalformed(
   block: Uint8Array | undefined,
@@ -133,10 +136,11 @@ function priorGapsMalformed(
 /**
  * Why the Prior Group ID Gap and Prior Object ID Gap on a decoded subgroup
  * stream, datagram or fetch stream make the Track malformed, or null. See
- * {@link priorGapsMalformed} for the conditions. A malformed Track is not a
- * decode failure: draft-14 Section 2.5, "When a subscriber detects a
- * Malformed Track, it MUST UNSUBSCRIBE any subscription and FETCH_CANCEL any
- * fetch for that Track from that publisher".
+ * {@link priorGapsMalformed} for the conditions, and on a
+ * subgroup or fetch stream also those `FetchGapOrder` checks across its
+ * Objects. A malformed Track is not a decode failure: draft-14 Section 2.5,
+ * "When a subscriber detects a Malformed Track, it MUST UNSUBSCRIBE any
+ * subscription and FETCH_CANCEL any fetch for that Track from that publisher".
  */
 export function malformedTrackReason(stream: Draft14DataStream): string | null {
   if (stream.type === 'datagram') {
@@ -144,12 +148,24 @@ export function malformedTrackReason(stream: Draft14DataStream): string | null {
     return 'reason' in r ? r.reason : null
   }
   const gaps = new Map<bigint, bigint | undefined>()
+  // draft-14 Section 2.2 sends a subgroup's Objects "in ascending order by
+  // Object ID", so on a subgroup stream only a gap covering the Object before
+  // it applies.
+  const order = new FetchGapOrder({
+    groupType: PROPERTY_PRIOR_GROUP_ID_GAP,
+    objectType: PROPERTY_PRIOR_OBJECT_ID_GAP,
+    covering: true,
+    withinGap: stream.type === 'fetch',
+  })
   for (const obj of stream.objects) {
     const groupId =
       stream.type === 'subgroup' ? stream.groupId : (obj as FetchObjectPayload).groupId
     const r = priorGapsMalformed(obj.extensionData, groupId, obj.objectId, gaps.get(groupId))
     if ('reason' in r) return r.reason
     gaps.set(groupId, r.groupGap)
+    const decoded = decodeObjectProperties(obj.extensionData)
+    const reason = order.check(groupId, obj.objectId, decoded.ok ? decoded.value : [])
+    if (reason !== null) return reason
   }
   return null
 }
