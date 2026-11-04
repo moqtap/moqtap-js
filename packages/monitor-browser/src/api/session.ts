@@ -1021,7 +1021,7 @@ export class CollectorRuntime {
         self._emitter.noteDroppedObjects(t.dropped ?? 0)
       },
       noteConns: (open, gone) => {
-        for (const c of open) self._emitter.noteConn(c.c, c.draft, c.origin)
+        for (const s of open) self._emitter.noteConn(s.conn.c, s.conn.draft, s.relay)
         for (const c of gone) self._emitter.noteConnClosed(c.c)
       },
       ensureSetup: () => self._ensureSetup(),

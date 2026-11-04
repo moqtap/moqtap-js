@@ -936,6 +936,7 @@ describe('worker links', () => {
             draft: 20,
             state: 'open',
           },
+          relay: 'https://relay.test/moq',
           rollup: null,
           counters: { parseFailures: 2, bucketsRefused: 0 },
         },
@@ -1129,6 +1130,7 @@ describe('a linked worker that falls silent', () => {
       draft: 20,
       state: 'open',
     },
+    relay: 'https://relay.test/w/moq',
     counters: { parseFailures: 0, bucketsRefused: 0 },
   })
 
@@ -1250,6 +1252,20 @@ describe('a linked worker that falls silent', () => {
     expect(of(sent, 'rollup').filter((r) => r.conn === 'w-conn')).toEqual([])
     const batches = of(sent, 'batch')
     expect(batches.some((b) => b.conn.some((c) => c.c === W_CONN))).toBe(true)
+    w.port()?.close()
+  })
+
+  it('lists a worker’s connection under its relay, path and all', async () => {
+    const w = await silentWorker()
+    forward(w.port(), [], [open()], piece(4n, 0n, 2, false))
+    await settle(10)
+    await w.c.end()
+
+    const listed = of(await allRecords(w.posts), 'batch').flatMap((b) =>
+      b.conn.filter((c) => c.c === W_CONN),
+    )
+    expect(listed.length).toBeGreaterThan(0)
+    expect(listed.every((c) => c.relay === 'https://relay.test/w/moq')).toBe(true)
     w.port()?.close()
   })
 

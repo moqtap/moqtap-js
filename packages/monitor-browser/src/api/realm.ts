@@ -248,6 +248,8 @@ export interface ConnectionState {
 /** An open connection as a worker reports it to its page with every forward. */
 export interface ConnectionSnapshot {
   readonly conn: ConnectionState
+  /** The capture contract's relay endpoint: origin and path. */
+  readonly relay: string
   readonly counters: ConnCloseRecord['counters']
 }
 
@@ -597,6 +599,7 @@ export class RealmObserver {
     for (const c of this._connections.values()) {
       out.push({
         conn: this._stateOf(c),
+        relay: c.relay,
         counters: {
           parseFailures: c.rollup.parseFailures,
           bucketsRefused: c.rollup.bucketsRefused,

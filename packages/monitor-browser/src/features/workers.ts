@@ -327,10 +327,7 @@ class Links implements WorkerLinks {
       link.conns = m.conns.filter((s) => !link.closed.has(s.conn.id))
       const open = new Set(link.conns.map((s) => s.conn.id))
       gone = before.filter((s) => !open.has(s.conn.id)).map((s) => s.conn)
-      owner.noteConns(
-        link.conns.map((s) => s.conn),
-        [],
-      )
+      owner.noteConns(link.conns, [])
     }
     if (gone.length > 0) owner.connClosing()
     if (m.ready && !link.ready) {

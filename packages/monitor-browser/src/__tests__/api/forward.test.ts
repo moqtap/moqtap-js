@@ -220,13 +220,15 @@ describe('a probe’s runs', () => {
     ])
   })
 
-  it('names its connections with their ordinals beside the runs', async () => {
+  it('names its connections with their ordinals and relay paths beside the runs', async () => {
     const h = await harness('baseline')
     await h.send(0, 1)
     h.forward()
     await settle(5)
     h.stop()
-    expect(h.forwards[0]?.conns.map((s) => [s.conn.c, s.conn.draft])).toEqual([[1 << 20, 20]])
+    expect(h.forwards[0]?.conns.map((s) => [s.conn.c, s.conn.draft, s.relay])).toEqual([
+      [1 << 20, 20, 'https://relay.test/w'],
+    ])
   })
 })
 

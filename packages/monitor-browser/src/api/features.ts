@@ -45,7 +45,13 @@ import type {
 import type { DormantClaim, DormantState } from './dormant.js'
 import type { PageMessage } from './link.js'
 import type { UsageMeter } from './meter.js'
-import type { ConnectionState, RealmConfig, RealmObserver, RealmOptions } from './realm.js'
+import type {
+  ConnectionSnapshot,
+  ConnectionState,
+  RealmConfig,
+  RealmObserver,
+  RealmOptions,
+} from './realm.js'
 import type { LinkEvent, MessageTarget } from './session.js'
 
 /* ── drafts ──────────────────────────────────────────────────────────────── */
@@ -185,7 +191,7 @@ export interface LinkOwner {
   /** Runs and marks a probe forwarded, sealed into the page's next body. */
   absorbRuns(t: Taken): void
   /** A probe's open connections as of its last forward; `gone` are those it no longer reports. */
-  noteConns(open: readonly ConnectionState[], gone: readonly ConnectionState[]): void
+  noteConns(open: readonly ConnectionSnapshot[], gone: readonly ConnectionState[]): void
   ensureSetup(): void
   /** A probe's clock broke after its last forward: seal, raise the epoch, probe. */
   clockBreak(): void
