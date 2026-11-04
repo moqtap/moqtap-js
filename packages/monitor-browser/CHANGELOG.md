@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   past either is sealed into the next body.
 - End of Group closes a group's `groupOpenMs` span, and Prior Group and Object
   ID Gaps are read on fetch streams before draft-20.
+- A TRACK_STATUS_OK (drafts 13-14) no longer binds Track Alias 0, so a
+  subscription on alias 0 keeps its own track key and request.
 
 ## [0.13.0] - 2026-11-03
 

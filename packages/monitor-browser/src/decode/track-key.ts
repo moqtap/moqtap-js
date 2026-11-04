@@ -237,7 +237,10 @@ export class TrackKeys implements TrackKeyResolver {
     this.order.apply(msg, dir, streamId, rid, this.pending.get(streamId)?.req.requestId)
 
     const type = msg.type
-    const alias = trackAliasOf(msg)
+    // TRACK_STATUS_OK (drafts 13-14) carries alias 0 and binds no track: it
+    // "is not considered an error if Track Alias 0 is already in use by an
+    // active subscription" (draft-14 Section 9.21).
+    const alias = type === 'track_status_ok' ? undefined : trackAliasOf(msg)
     if (alias !== undefined) {
       // SUBSCRIBE_OK carries the alias and no id at all, so the binding's
       // request comes from the stream — which is precisely what the map is

@@ -11,6 +11,7 @@
 
 import { decodeMessage as decode07, encodeMessage as encode07 } from '@moqtap/codec/draft07'
 import { decodeMessage as decode11, encodeMessage as encode11 } from '@moqtap/codec/draft11'
+import { decodeMessage as decode13, encodeMessage as encode13 } from '@moqtap/codec/draft13'
 import { decodeMessage as decode14, encodeMessage as encode14 } from '@moqtap/codec/draft14'
 import { describe, expect, it } from 'vitest'
 import { TrackKeys } from '../../decode/track-key.js'
@@ -130,6 +131,13 @@ describe('TrackKeys — bucket keys', () => {
     expect(keys.fetchKey('rx', 12n)).toBe(keys.fetchKey('rx', 12n))
   })
 })
+
+/** A draft-13 control message, encoded and decoded back through the codec. */
+function msg13(m: Record<string, unknown>): AnyMessage {
+  const r = decode13(encode13(m as unknown as Parameters<typeof encode13>[0]))
+  if (!r.ok) throw new Error('draft-13 vector did not decode')
+  return r.value as unknown as AnyMessage
+}
 
 /** A draft-14 control message, encoded and decoded back through the codec. */
 function msg14(m: Parameters<typeof encode14>[0]): AnyMessage {
@@ -414,6 +422,65 @@ describe('TrackKeys — the request behind a bucket', () => {
     const second = keys.aliasKey('rx', 5n) as BucketKey
     expect(keys.requestFor(first)).toEqual({ d: 'rx', v: '0' })
     expect(keys.requestFor(second)).toEqual({ d: 'rx', v: '2' })
+  })
+
+  it('binds no alias at a TRACK_STATUS_OK, drafts 13-14', () => {
+    // draft-14 Section 9.21: TRACK_STATUS_OK sets Track Alias to 0, and "it is
+    // not considered an error if Track Alias 0 is already in use by an active
+    // subscription".
+    const drafts: ((m: Record<string, unknown>) => AnyMessage)[] = [
+      msg13,
+      (m) => msg14(m as unknown as Parameters<typeof encode14>[0]),
+    ]
+    for (const m of drafts) {
+      const subscribe = (id: bigint, name: string, type = 'subscribe') =>
+        m({
+          type,
+          request_id: id,
+          track_namespace: ['live'],
+          track_name: name,
+          subscriber_priority: 1,
+          group_order: 0,
+          forward: 1n,
+          filter_type: 2n,
+          parameters: {},
+        })
+      const ok = (id: bigint, type = 'subscribe_ok') =>
+        m({
+          type,
+          request_id: id,
+          track_alias: 0n,
+          expires: 0n,
+          group_order: 1,
+          content_exists: 0n,
+          parameters: {},
+        })
+
+      const keys = new TrackKeys()
+      keys.applyControl(subscribe(6n, 'audio', 'track_status'), 'tx', 0, 1)
+      keys.applyControl(ok(6n, 'track_status_ok'), 'rx', 0, 2)
+      keys.applyControl(subscribe(4n, 'video'), 'tx', 0, 3)
+      keys.applyControl(ok(4n), 'rx', 0, 4)
+      const first = keys.aliasKey('rx', 0n) as BucketKey
+      keys.applyControl(m({ type: 'unsubscribe', request_id: 4n }), 'tx', 0, 5)
+      keys.applyControl(subscribe(8n, 'audio'), 'tx', 0, 6)
+      keys.applyControl(ok(8n), 'rx', 0, 7)
+      const second = keys.aliasKey('rx', 0n) as BucketKey
+      expect(first.epoch).toBe(0)
+      expect(keys.requestFor(first)).toEqual({ d: 'tx', v: '4' })
+      expect(second.epoch).toBe(1)
+      expect(keys.requestFor(second)).toEqual({ d: 'tx', v: '8' })
+
+      const live = new TrackKeys()
+      live.applyControl(subscribe(4n, 'video'), 'tx', 0, 1)
+      live.applyControl(ok(4n), 'rx', 0, 2)
+      live.applyControl(subscribe(6n, 'audio', 'track_status'), 'tx', 0, 3)
+      live.applyControl(ok(6n, 'track_status_ok'), 'rx', 0, 4)
+      const k = live.aliasKey('rx', 0n) as BucketKey
+      expect(k.epoch).toBe(0)
+      expect(live.sharedFor(k)).toBe(false)
+      expect(live.requestFor(k)).toEqual({ d: 'tx', v: '4' })
+    }
   })
 
   it('has no link for an alias two live requests share', () => {
