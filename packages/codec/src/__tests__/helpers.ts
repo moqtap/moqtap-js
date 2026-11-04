@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
+import type { FetchGroupOrder } from '../core/group-order.js'
 
 const require_ = createRequire(import.meta.url)
 const VECTORS_BASE = dirname(require_.resolve('@moqtap/test-vectors/manifest'))
@@ -58,6 +59,15 @@ export interface TestVector {
   decoded?: Record<string, unknown>
   error?: string
   error_detail?: string
+  /** A fetch stream's Group Order, "1" Ascending or "2" Descending; absent means "1". */
+  group_order?: string
+}
+
+/** The Group Order a fetch stream vector is read in. */
+export function fetchGroupOrder(vector: TestVector): FetchGroupOrder {
+  if (vector.group_order === undefined || vector.group_order === '1') return 1n
+  if (vector.group_order === '2') return 2n
+  throw new Error(`[${vector.id}] group_order ${vector.group_order} is neither "1" nor "2"`)
 }
 
 /**

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { FetchGroupOrder } from '../../core/group-order.js'
 import {
   createDraft23Codec,
   malformedTrackPropertiesReason,
@@ -15,6 +16,7 @@ import {
   bytesToHex,
   endpointRefuses,
   expectPropertyList,
+  fetchGroupOrder,
   hexToBytes,
   loadVectorDir,
 } from '../helpers.js'
@@ -25,7 +27,7 @@ const vectorEntries = loadVectorDir('transport/draft23/codec/data-streams')
 
 /** See the note in messages.test.ts — these counts guard against silent skips. */
 const EXPECTED_FILES = 3
-const EXPECTED_VECTORS = 79
+const EXPECTED_VECTORS = 81
 
 describe('draft-23 data stream vector corpus', () => {
   it('loads every published data-stream vector file', () => {
@@ -92,6 +94,7 @@ const CLOSE_CODES: Readonly<Record<string, bigint | null>> = {
   'fetch-header.json/fetch-prior-group-id-gap-exceeds-group-id': null,
   'fetch-header.json/fetch-prior-object-id-gap-exceeds-object-id': null,
   'fetch-header.json/fetch-prior-group-id-gap-repeated': null,
+  'fetch-header.json/fetch-group-within-a-communicated-gap': null,
   'subgroup.json/subgroup-properties-status-object': Close.InvalidObjectStatus,
   'subgroup.json/reserved-subgroup-id-mode': Close.InvalidStreamHeader,
   'subgroup.json/bit-4-not-set': Close.InvalidStreamHeader,
@@ -124,7 +127,10 @@ for (const { file, data: vectorFile } of vectorEntries) {
         if (vector.error) {
           it('should fail to decode', () => {
             const streamType = getStreamType(file, vector)
-            const result = codec.decodeDataStream(streamType, bytes)
+            const result =
+              streamType === 'fetch'
+                ? codec.decodeFetchStream(bytes, fetchGroupOrder(vector))
+                : codec.decodeDataStream(streamType, bytes)
             // An endpoint refuses what does not decode, and a Track whose
             // Object Properties make it malformed (Section 12.1).
             const refused =
@@ -148,7 +154,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
           const streamType = getStreamType(file, vector)
 
           it('should decode correctly', () => {
-            const result = decodeByStreamType(streamType, bytes)
+            const result = decodeByStreamType(streamType, bytes, fetchGroupOrder(vector))
             expect(result.ok).toBe(true)
             if (!result.ok) return
 
@@ -158,13 +164,17 @@ for (const { file, data: vectorFile } of vectorEntries) {
 
           if (vector.canonical !== false) {
             it('should re-encode to same bytes', () => {
-              const result = decodeByStreamType(streamType, bytes)
+              const result = decodeByStreamType(streamType, bytes, fetchGroupOrder(vector))
               if (!result.ok) {
                 expect.fail('decode failed')
                 return
               }
 
-              const reEncoded = encodeByStreamType(streamType, result.value)
+              const reEncoded = encodeByStreamType(
+                streamType,
+                result.value,
+                fetchGroupOrder(vector),
+              )
               expect(bytesToHex(reEncoded)).toBe(vector.hex)
             })
           }
@@ -196,20 +206,25 @@ function getStreamType(
   throw new Error(`Cannot infer stream type for ${file}`)
 }
 
-function decodeByStreamType(streamType: 'subgroup' | 'datagram' | 'fetch', bytes: Uint8Array) {
+function decodeByStreamType(
+  streamType: 'subgroup' | 'datagram' | 'fetch',
+  bytes: Uint8Array,
+  groupOrder: FetchGroupOrder,
+) {
   switch (streamType) {
     case 'subgroup':
       return codec.decodeSubgroupStream(bytes)
     case 'datagram':
       return codec.decodeDatagram(bytes)
     case 'fetch':
-      return codec.decodeFetchStream(bytes)
+      return codec.decodeFetchStream(bytes, groupOrder)
   }
 }
 
 function encodeByStreamType(
   streamType: 'subgroup' | 'datagram' | 'fetch',
   value: unknown,
+  groupOrder: FetchGroupOrder,
 ): Uint8Array {
   switch (streamType) {
     case 'subgroup':
@@ -217,7 +232,7 @@ function encodeByStreamType(
     case 'datagram':
       return codec.encodeDatagram(value as DatagramObject)
     case 'fetch':
-      return codec.encodeFetchStream(value as FetchStream)
+      return codec.encodeFetchStream(value as FetchStream, groupOrder)
   }
 }
 

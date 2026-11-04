@@ -1,6 +1,7 @@
 import { MoqtBufferReader as BufferReader } from '../../core/buffer-reader.js'
 import { MoqtBufferWriter as BufferWriter } from '../../core/buffer-writer.js'
 import { FetchGapOrder } from '../../core/fetch-gaps.js'
+import { type FetchGroupOrder, isDescending } from '../../core/group-order.js'
 import type {
   ObjectProperty,
   ObjectPropertyInit,
@@ -246,7 +247,11 @@ export function encodeDatagram(dg: DatagramObject): Uint8Array {
   return w.finish()
 }
 
-export function encodeFetchStream(stream: FetchStream): Uint8Array {
+export function encodeFetchStream(
+  stream: FetchStream,
+  groupOrder: FetchGroupOrder = 1n,
+): Uint8Array {
+  const descending = isDescending(groupOrder)
   const w = new BufferWriter()
   w.writeVarInt(FETCH_STREAM_TYPE)
   w.writeVarInt(stream.requestId)
@@ -259,18 +264,22 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
     w.writeVarInt(BigInt(obj.serializationFlags))
     const flags = obj.serializationFlags
     if (flags >= 0x80) {
-      // End of Range (0x8C, 0x10C): Group ID, Object ID, PayloadLength=0
+      // End of Range (0x8C, 0x10C). draft-18 Section 11.4.4.2: "the Group ID
+      // and Object ID fields are present". They are absolute: the delta rules of
+      // draft-18 Section 11.4.4.1 cover "an Object other than the first", and a
+      // value of 128 or more is not read as flag bits (draft-18 Section 11.4.4: "When
+      // less than 128, the bits represent flags"). Object Payload Length is 0.
       w.writeVarInt(obj.groupId)
       w.writeVarInt(obj.objectId)
       w.writeVarInt(BigInt(obj.payloadLength))
     } else if (flags & 0x40) {
       // DATAGRAM mode: no subgroup_id field
       if (flags & 0x08) {
-        // First object encodes absolute group; subsequent encode delta (ascending: delta+1)
+        // First object encodes absolute group; subsequent encode delta
         if (first) w.writeVarInt(obj.groupId)
-        else w.writeVarInt(obj.groupId - prevGroupId - 1n)
+        else w.writeVarInt(groupIdDeltaFor(obj.groupId, prevGroupId, descending))
       }
-      if (flags & 0x04) w.writeVarInt(obj.objectId)
+      if (flags & 0x04) w.writeVarInt(objectIdDeltaFor(flags, obj.objectId, prevObjectId))
       if (flags & 0x10) w.writeUint8(obj.publisherPriority)
       if (flags & 0x20) {
         const props = obj.extensionData
@@ -284,11 +293,11 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
     } else {
       if (flags & 0x08) {
         if (first) w.writeVarInt(obj.groupId)
-        else w.writeVarInt(obj.groupId - prevGroupId - 1n)
+        else w.writeVarInt(groupIdDeltaFor(obj.groupId, prevGroupId, descending))
       }
       const subgroupEncoding = flags & 0x03
       if (subgroupEncoding === 0x03) w.writeVarInt(obj.subgroupId)
-      if (flags & 0x04) w.writeVarInt(obj.objectId)
+      if (flags & 0x04) w.writeVarInt(objectIdDeltaFor(flags, obj.objectId, prevObjectId))
       if (flags & 0x10) w.writeUint8(obj.publisherPriority)
       if (flags & 0x20) {
         const props = obj.extensionData
@@ -304,8 +313,6 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
     prevObjectId = obj.objectId
     first = false
   }
-  // suppress unused-warning: prevObjectId is updated for clarity / future use
-  void prevObjectId
   return w.finish()
 }
 
@@ -557,6 +564,66 @@ export function decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject> 
   }
 }
 
+/**
+ * The value to write into the Object ID Delta slot, per draft-18 Section 11.4.4.1:
+ * "When the Group ID Delta field is present, the Object ID is the value of
+ * Object ID Delta if present. When the Group ID Delta field is not present,
+ * the Object ID is the prior Object's ID plus the Object ID Delta if present."
+ * The relative form adds no 1, unlike the Group ID Delta.
+ */
+function objectIdDeltaFor(flags: number, objectId: bigint, prevObjectId: bigint): bigint {
+  return (flags & 0x08) !== 0 ? objectId : objectId - prevObjectId
+}
+
+/** The decode-side counterpart of {@link objectIdDeltaFor}. */
+function resolveObjectId(groupIdPresent: boolean, delta: bigint, prevObjectId: bigint): bigint {
+  return groupIdPresent ? delta : prevObjectId + delta
+}
+
+/**
+ * draft-18 Section 11.4.4.1: "If the computed Object ID would be greater than
+ * 2^64-1, the Subscriber MUST close the Session with error 'PROTOCOL_VIOLATION'."
+ * Applies with or without an Object ID Delta.
+ */
+function checkObjectId(objectId: bigint, offset: number): void {
+  if (objectId > 0xffffffffffffffffn) {
+    throw new DecodeError('CONSTRAINT_VIOLATION', 'computed Object ID exceeds 2^64 - 1', offset)
+  }
+}
+
+/**
+ * The Group ID Delta to write for an Object after the first, the inverse of
+ * draft-18 Section 11.4.4.1: "If the Group Order is Ascending, the Group ID is the
+ * prior Object's Group ID plus the Group ID Delta + 1. If the Group Order is
+ * Descending, the Group ID is the prior Object's Group ID minus the (Group ID
+ * Delta + 1)."
+ */
+function groupIdDeltaFor(groupId: bigint, prevGroupId: bigint, descending: boolean): bigint {
+  return descending ? prevGroupId - groupId - 1n : groupId - prevGroupId - 1n
+}
+
+/**
+ * Resolve a Group ID Delta, per draft-18 Section 11.4.4.1. The first Object's
+ * delta is the absolute Group ID. On any later Object, "If the Group Order is
+ * Ascending, the Group ID is the prior Object's Group ID plus the Group ID
+ * Delta + 1. If the Group Order is Descending, the Group ID is the prior
+ * Object's Group ID minus the (Group ID Delta + 1). If the computed Group ID
+ * would be less than 0 or greater than 2^64-1, the Subscriber MUST close the
+ * Session with error 'PROTOCOL_VIOLATION'."
+ */
+function resolveGroupId(st: FetchObjectState, delta: bigint, offset: number): bigint {
+  if (st.first) return delta
+  const groupId = st.descending ? st.prevGroupId - delta - 1n : st.prevGroupId + delta + 1n
+  if (groupId < 0n || groupId > 0xffffffffffffffffn) {
+    throw new DecodeError(
+      'CONSTRAINT_VIOLATION',
+      `computed Group ID ${groupId} is out of range`,
+      offset,
+    )
+  }
+  return groupId
+}
+
 /** The delta state a fetch stream carries from one Object to the next. */
 interface FetchObjectState {
   prevGroupId: bigint
@@ -564,10 +631,19 @@ interface FetchObjectState {
   prevObjectId: bigint
   prevPriority: number
   first: boolean
+  /** The stream's Group Order is Descending. */
+  descending: boolean
 }
 
-function newFetchObjectState(): FetchObjectState {
-  return { prevGroupId: 0n, prevSubgroupId: 0n, prevObjectId: 0n, prevPriority: 128, first: true }
+function newFetchObjectState(groupOrder: FetchGroupOrder): FetchObjectState {
+  return {
+    prevGroupId: 0n,
+    prevSubgroupId: 0n,
+    prevObjectId: 0n,
+    prevPriority: 128,
+    first: true,
+    descending: isDescending(groupOrder),
+  }
 }
 
 /**
@@ -616,14 +692,13 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
     const propsPresent = (flags & 0x20) !== 0
 
     if (groupIdPresent) {
-      // First object's delta IS the absolute group id;
-      // subsequent objects: groupId = st.prevGroupId + delta + 1 (ascending)
       const groupDelta = r.readVarInt()
-      groupId = st.first ? groupDelta : st.prevGroupId + groupDelta + 1n
+      groupId = resolveGroupId(st, groupDelta, r.offset)
     }
     if (objectIdPresent) {
-      objectId = r.readVarInt()
+      objectId = resolveObjectId(groupIdPresent, r.readVarInt(), st.prevObjectId)
     }
+    checkObjectId(objectId, r.offset)
     if (priorityPresent) {
       st.prevPriority = r.readUint8()
     }
@@ -665,7 +740,7 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
 
     if (groupIdPresent) {
       const groupDelta = r.readVarInt()
-      groupId = st.first ? groupDelta : st.prevGroupId + groupDelta + 1n
+      groupId = resolveGroupId(st, groupDelta, r.offset)
     } else if (st.first) {
       throw new DecodeError(
         'CONSTRAINT_VIOLATION',
@@ -699,7 +774,7 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
     }
 
     if (objectIdPresent) {
-      objectId = r.readVarInt()
+      objectId = resolveObjectId(groupIdPresent, r.readVarInt(), st.prevObjectId)
     } else if (st.first) {
       throw new DecodeError(
         'CONSTRAINT_VIOLATION',
@@ -707,6 +782,7 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
         r.offset,
       )
     }
+    checkObjectId(objectId, r.offset)
 
     if (priorityPresent) {
       st.prevPriority = r.readUint8()
@@ -747,7 +823,10 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
   return obj
 }
 
-export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> {
+export function decodeFetchStream(
+  bytes: Uint8Array,
+  groupOrder: FetchGroupOrder = 1n,
+): DecodeResult<FetchStream> {
   try {
     const r = new BufferReader(bytes)
     const streamType = r.readVarInt()
@@ -764,7 +843,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
     const requestId = r.readVarInt()
     const objects: FetchObjectPayload[] = []
 
-    const st = newFetchObjectState()
+    const st = newFetchObjectState(groupOrder)
 
     while (r.remaining > 0) {
       objects.push(readFetchObject(r, 0, st))
@@ -781,9 +860,11 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
   }
 }
 
+/** `groupOrder` is the FETCH's Group Order, read only for a fetch stream. */
 export function decodeDataStream(
   streamType: 'subgroup' | 'datagram' | 'fetch',
   bytes: Uint8Array,
+  groupOrder: FetchGroupOrder = 1n,
 ): DecodeResult<Draft18DataStream> {
   switch (streamType) {
     case 'subgroup':
@@ -791,7 +872,7 @@ export function decodeDataStream(
     case 'datagram':
       return decodeDatagram(bytes)
     case 'fetch':
-      return decodeFetchStream(bytes)
+      return decodeFetchStream(bytes, groupOrder)
     default: {
       const _exhaustive: never = streamType
       throw new Error(`Unknown stream type: ${_exhaustive}`)
@@ -956,17 +1037,16 @@ export function createSubgroupStreamDecoder(): TransformStream<
   })
 }
 
-export function createFetchStreamDecoder(): TransformStream<
-  Uint8Array,
-  FetchStreamHeader | ObjectPayload
-> {
+export function createFetchStreamDecoder(
+  groupOrder: FetchGroupOrder = 1n,
+): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload> {
   const b = new StreamBuffer()
   let headerEmitted = false
   /**
    * The delta state the Objects carry between them. Without it DATAGRAM-mode
    * Object IDs come out wrong: they resolve against the previous Object's ID.
    */
-  const st = newFetchObjectState()
+  const st = newFetchObjectState(groupOrder)
 
   return new TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>({
     transform(chunk, controller) {
@@ -1027,7 +1107,10 @@ export function createFetchStreamDecoder(): TransformStream<
   })
 }
 
-export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent> {
+/** `groupOrder` is the FETCH's Group Order, read only for a fetch stream. */
+export function createDataStreamDecoder(
+  groupOrder: FetchGroupOrder = 1n,
+): TransformStream<Uint8Array, DataStreamEvent> {
   /**
    * Delegation that actually delegates.
    *
@@ -1097,7 +1180,10 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
         )
       } else if (firstByte === 0x05) {
         attach(
-          createFetchStreamDecoder() as unknown as TransformStream<Uint8Array, DataStreamEvent>,
+          createFetchStreamDecoder(groupOrder) as unknown as TransformStream<
+            Uint8Array,
+            DataStreamEvent
+          >,
           controller,
         )
       } else {

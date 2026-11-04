@@ -6,6 +6,7 @@ import {
 } from '../../core/auth-redaction.js'
 import { MoqtBufferReader as BufferReader } from '../../core/buffer-reader.js'
 import { MoqtBufferWriter as BufferWriter } from '../../core/buffer-writer.js'
+import type { FetchGroupOrder } from '../../core/group-order.js'
 import { bytesToHex, hexToBytes } from '../../core/hex.js'
 import type { ObjectProperty, ObjectPropertyInit } from '../../core/object-properties.js'
 import type { BaseCodec, DecodeResult } from '../../core/types.js'
@@ -1764,20 +1765,25 @@ export interface Draft20Codec extends BaseCodec<Draft20Message> {
   readonly draft: '20'
   encodeSubgroupStream(stream: SubgroupStream): Uint8Array
   encodeDatagram(dg: DatagramObject): Uint8Array
-  encodeFetchStream(stream: FetchStream): Uint8Array
+  encodeFetchStream(stream: FetchStream, groupOrder?: FetchGroupOrder): Uint8Array
   decodeSubgroupStream(bytes: Uint8Array): DecodeResult<SubgroupStream>
   decodeDatagram(bytes: Uint8Array): DecodeResult<DatagramObject>
-  decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream>
+  decodeFetchStream(bytes: Uint8Array, groupOrder?: FetchGroupOrder): DecodeResult<FetchStream>
   decodeObjectProperties(bytes: Uint8Array): DecodeResult<ObjectProperty[]>
   encodeObjectProperties(props: readonly ObjectPropertyInit[]): Uint8Array
   decodeDataStream(
     streamType: 'subgroup' | 'datagram' | 'fetch',
     bytes: Uint8Array,
+    groupOrder?: FetchGroupOrder,
   ): DecodeResult<Draft20DataStream>
   createStreamDecoder(): TransformStream<Uint8Array, Draft20Message>
   createSubgroupStreamDecoder(): TransformStream<Uint8Array, SubgroupStreamHeader | ObjectPayload>
-  createFetchStreamDecoder(): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>
-  createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent>
+  createFetchStreamDecoder(
+    groupOrder?: FetchGroupOrder,
+  ): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>
+  createDataStreamDecoder(
+    groupOrder?: FetchGroupOrder,
+  ): TransformStream<Uint8Array, DataStreamEvent>
 }
 
 export function createDraft20Codec(): Draft20Codec {

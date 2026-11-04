@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [Unreleased]
+
+### Added
+
+- Drafts 18-23: `encodeFetchStream`, `decodeFetchStream`, `decodeDataStream`,
+  `createFetchStreamDecoder` and `createDataStreamDecoder` take an optional Group
+  Order, `1n` Ascending (the default) or `2n` Descending. A computed Group ID below
+  0, or above 2^64-1 on drafts 18-19, is refused.
+
+### Fixed
+
+- Drafts 18-19: a fetch Object with an Object ID Delta and no Group ID Delta takes
+  the prior Object ID plus the delta. The decoder read the delta as the Object ID,
+  and the encoder wrote the Object ID as the delta. A computed Object ID above
+  2^64-1 is refused, with or without a delta.
+- Drafts 20-22: an End of Range marker's Group ID and Object ID are absolute, as
+  on drafts 18-19. They were read and written as deltas from the Object before.
+
 ## [0.16.0] - 2026-11-04
 
 ### Added

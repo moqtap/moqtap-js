@@ -4,6 +4,7 @@ export const DRAFT_VERSION = 0xff000012n
 
 export type { AuthRedaction } from '../../core/auth-redaction.js'
 export { REDACTION_FILL } from '../../core/auth-redaction.js'
+export type { FetchGroupOrder } from '../../core/group-order.js'
 export type { ObjectProperty, ObjectPropertyInit } from '../../core/object-properties.js'
 export type { Draft18Codec } from './codec.js'
 export {

@@ -21,6 +21,7 @@ export const DRAFT_VERSION = 0xff000017n
 
 export type { AuthRedaction } from '../../core/auth-redaction.js'
 export { REDACTION_FILL } from '../../core/auth-redaction.js'
+export type { FetchGroupOrder } from '../../core/group-order.js'
 export type { ObjectProperty, ObjectPropertyInit } from '../../core/object-properties.js'
 export type { ControlMessageOptions, Draft23Codec } from './codec.js'
 export {

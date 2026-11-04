@@ -134,6 +134,8 @@ codec.createDataStreamDecoder();
 
 Drafts 08 and later also have `decodeDataStream(streamType, bytes)`, with `streamType` one of `'subgroup'`, `'datagram'` or `'fetch'`. Drafts 08 to 10 add `'datagram_status'`, with `encodeDatagramStatus` and `decodeDatagramStatus`.
 
+From draft-18 a fetch stream's Group IDs step up or down from the Group before, in the FETCH's Group Order, which the stream does not carry. `encodeFetchStream`, `decodeFetchStream`, `decodeDataStream`, `createFetchStreamDecoder` and `createDataStreamDecoder` take it as an optional last argument: `1n` for Ascending (the default) or `2n` for Descending.
+
 ### Object properties
 
 The data stream decoders return each Object's property block (Extension Headers before draft-17) as raw bytes in `extensionData`, with `extensionDataByteOffset` giving where it starts. Decode it with the draft's `decodeObjectProperties`:

@@ -1,6 +1,7 @@
 import { MoqtBufferReader as BufferReader } from '../../core/buffer-reader.js'
 import { MoqtBufferWriter as BufferWriter } from '../../core/buffer-writer.js'
 import { FetchGapOrder } from '../../core/fetch-gaps.js'
+import { type FetchGroupOrder, isDescending } from '../../core/group-order.js'
 import type {
   ObjectProperty,
   ObjectPropertyInit,
@@ -504,7 +505,11 @@ function resolveObjectId(groupIdPresent: boolean, delta: bigint, prevObjectId: b
   return groupIdPresent ? delta : prevObjectId + delta + 2n
 }
 
-export function encodeFetchStream(stream: FetchStream): Uint8Array {
+export function encodeFetchStream(
+  stream: FetchStream,
+  groupOrder: FetchGroupOrder = 1n,
+): Uint8Array {
+  const descending = isDescending(groupOrder)
   const w = new BufferWriter()
   w.writeVarInt(FETCH_STREAM_TYPE)
   w.writeVarInt(stream.requestId)
@@ -525,13 +530,13 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
     }
     if (FETCH_END_OF_RANGE.has(flags)) {
       // Section 11.4.2.1: absolute IDs when first; otherwise Group ID Delta
-      // from the prior Group ID (no + 1) and, within the same Group, the
-      // Object ID as prior + Object ID Delta + 1.
+      // from the prior Group ID (no + 1, subtracted under Descending) and,
+      // within the same Group, the Object ID as prior + Object ID Delta + 1.
       if (first) {
         w.writeVarInt(obj.groupId)
         w.writeVarInt(obj.objectId)
       } else {
-        const groupDelta = obj.groupId - prevGroupId
+        const groupDelta = descending ? prevGroupId - obj.groupId : obj.groupId - prevGroupId
         w.writeVarInt(groupDelta)
         w.writeVarInt(groupDelta === 0n ? obj.objectId - prevObjectId - 1n : obj.objectId)
       }
@@ -540,10 +545,8 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
       w.writeVarInt(BigInt(obj.payloadLength))
     } else {
       if (flags & 0x08) {
-        // Section 11.4.1.1, Ascending: "the prior Object's Group ID plus the
-        // Group ID Delta + 1".
         if (first) w.writeVarInt(obj.groupId)
-        else w.writeVarInt(obj.groupId - prevGroupId - 1n)
+        else w.writeVarInt(groupIdDeltaFor(obj.groupId, prevGroupId, descending))
       }
       // A DATAGRAM-mode Object (0x40) has no Subgroup ID field.
       if (!(flags & 0x40) && (flags & 0x03) === 0x03) w.writeVarInt(obj.subgroupId)
@@ -569,23 +572,38 @@ export function encodeFetchStream(stream: FetchStream): Uint8Array {
 }
 
 /**
+ * The Group ID Delta to write for an Object after the first, the inverse of
+ * draft-23 Section 11.4.1.1: "If the Group Order is Ascending, the Group ID is the
+ * prior Object's Group ID plus the Group ID Delta + 1. If the Group Order is
+ * Descending, the Group ID is the prior Object's Group ID minus the (Group ID
+ * Delta + 1)."
+ */
+function groupIdDeltaFor(groupId: bigint, prevGroupId: bigint, descending: boolean): bigint {
+  return descending ? prevGroupId - groupId - 1n : groupId - prevGroupId - 1n
+}
+
+/**
  * Resolve an Object's Group ID Delta, draft-23 Section 11.4.1.1: "If the Group
  * Order is Ascending, the Group ID is the prior Object's Group ID plus the
- * Group ID Delta + 1. [...] If the computed Group ID would be less than 0 or
- * greater than 2^64-1, the Subscriber MUST close the Session with
- * DELTA_ENCODING_OVERFLOW."
+ * Group ID Delta + 1. If the Group Order is Descending, the Group ID is the
+ * prior Object's Group ID minus the (Group ID Delta + 1). If the computed
+ * Group ID would be less than 0 or greater than 2^64-1, the Subscriber MUST
+ * close the Session with DELTA_ENCODING_OVERFLOW."
  *
- * Group Order is a FETCH or subscription parameter, which a data-stream
- * decoder does not see, so Ascending is assumed. A caller that knows the order
- * is Descending recomputes from the `groupIdDelta` kept on each Object.
+ * The order comes from the FETCH, not the data stream, so the caller passes
+ * it to `decodeFetchStream`.
  */
 function resolveGroupId(
   first: boolean,
   delta: bigint,
   prevGroupId: bigint,
   offset: number,
+  descending: boolean,
 ): bigint {
-  const groupId = first ? delta : prevGroupId + delta + 1n
+  const groupId = first ? delta : descending ? prevGroupId - delta - 1n : prevGroupId + delta + 1n
+  if (groupId < 0n) {
+    throw fail(Close.DeltaEncodingOverflow, 'computed Group ID is below 0', offset)
+  }
   if (groupId > MAX_U64) {
     throw fail(Close.DeltaEncodingOverflow, 'computed Group ID exceeds 2^64 - 1', offset)
   }
@@ -866,9 +884,11 @@ interface FetchObjectState {
   first: boolean
   /** An actual Object has been read, so prior Subgroup ID and Priority exist. */
   hasPriorObject: boolean
+  /** The stream's Group Order is Descending. */
+  descending: boolean
 }
 
-function newFetchObjectState(): FetchObjectState {
+function newFetchObjectState(groupOrder: FetchGroupOrder): FetchObjectState {
   return {
     prevGroupId: 0n,
     prevSubgroupId: 0n,
@@ -876,6 +896,7 @@ function newFetchObjectState(): FetchObjectState {
     prevPriority: 128,
     first: true,
     hasPriorObject: false,
+    descending: isDescending(groupOrder),
   }
 }
 
@@ -907,9 +928,8 @@ function noPriorField(field: string, offset: number): DecodeError {
  * than zero or greater than 2^64-1, the Subscriber MUST close the Session with
  * DELTA_ENCODING_OVERFLOW."
  *
- * Ascending is assumed, as for Objects (see {@link resolveGroupId}). After End
- * of Group or End of Track the prior Object ID is 2^64-1 (Section 11.4.2.2), so
- * an indicator in the same Group overflows.
+ * After End of Group or End of Track the prior Object ID is 2^64-1
+ * (Section 11.4.2.2), so an indicator in the same Group overflows.
  */
 function readEndOfRange(
   r: BufferReader,
@@ -926,13 +946,13 @@ function readEndOfRange(
     groupId = groupDelta
     objectId = objectDelta
   } else {
-    groupId = st.prevGroupId + groupDelta
+    groupId = st.descending ? st.prevGroupId - groupDelta : st.prevGroupId + groupDelta
     objectId = groupDelta === 0n ? st.prevObjectId + objectDelta + 1n : objectDelta
   }
-  if (groupId > MAX_U64 || objectId > MAX_U64) {
+  if (groupId < 0n || groupId > MAX_U64 || objectId > MAX_U64) {
     throw fail(
       Close.DeltaEncodingOverflow,
-      'End of Range indicator decodes to an ID above 2^64 - 1',
+      'End of Range indicator decodes to an ID below 0 or above 2^64 - 1',
       base + r.offset,
     )
   }
@@ -1052,7 +1072,7 @@ function readFetchObject(r: BufferReader, base: number, st: FetchObjectState): F
   let groupDelta: bigint | undefined
   if (groupIdPresent) {
     groupDelta = r.readVarInt()
-    groupId = resolveGroupId(st.first, groupDelta, st.prevGroupId, base + r.offset)
+    groupId = resolveGroupId(st.first, groupDelta, st.prevGroupId, base + r.offset, st.descending)
   }
 
   // Section 11.4.1.1: with 0x40 set the subscriber "MUST ignore" the two low
@@ -1143,7 +1163,10 @@ function fetchHeaderTypeError(streamType: bigint): DecodeError {
   )
 }
 
-export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> {
+export function decodeFetchStream(
+  bytes: Uint8Array,
+  groupOrder: FetchGroupOrder = 1n,
+): DecodeResult<FetchStream> {
   try {
     const r = new BufferReader(bytes)
     const streamType = r.readVarInt()
@@ -1155,7 +1178,7 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
     // PUBLISH or REQUEST_UPDATE that requested a fill (Section 3.4).
     const requestId = r.readVarInt()
     const objects: FetchObjectPayload[] = []
-    const st = newFetchObjectState()
+    const st = newFetchObjectState(groupOrder)
     while (r.remaining > 0) {
       objects.push(readFetchObject(r, 0, st))
     }
@@ -1166,9 +1189,11 @@ export function decodeFetchStream(bytes: Uint8Array): DecodeResult<FetchStream> 
   }
 }
 
+/** `groupOrder` is the FETCH's Group Order, read only for a fetch stream. */
 export function decodeDataStream(
   streamType: 'subgroup' | 'datagram' | 'fetch',
   bytes: Uint8Array,
+  groupOrder: FetchGroupOrder = 1n,
 ): DecodeResult<Draft23DataStream> {
   switch (streamType) {
     case 'subgroup':
@@ -1176,7 +1201,7 @@ export function decodeDataStream(
     case 'datagram':
       return decodeDatagram(bytes)
     case 'fetch':
-      return decodeFetchStream(bytes)
+      return decodeFetchStream(bytes, groupOrder)
     default: {
       const _exhaustive: never = streamType
       throw new Error(`Unknown stream type: ${_exhaustive}`)
@@ -1336,13 +1361,12 @@ export function createSubgroupStreamDecoder(): TransformStream<
   })
 }
 
-export function createFetchStreamDecoder(): TransformStream<
-  Uint8Array,
-  FetchStreamHeader | ObjectPayload
-> {
+export function createFetchStreamDecoder(
+  groupOrder: FetchGroupOrder = 1n,
+): TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload> {
   const b = new StreamBuffer()
   let headerEmitted = false
-  const st = newFetchObjectState()
+  const st = newFetchObjectState(groupOrder)
 
   return new TransformStream<Uint8Array, FetchStreamHeader | ObjectPayload>({
     transform(chunk, controller) {
@@ -1397,7 +1421,10 @@ export function createFetchStreamDecoder(): TransformStream<
   })
 }
 
-export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStreamEvent> {
+/** `groupOrder` is the FETCH's Group Order, read only for a fetch stream. */
+export function createDataStreamDecoder(
+  groupOrder: FetchGroupOrder = 1n,
+): TransformStream<Uint8Array, DataStreamEvent> {
   /**
    * The inner decoder's readable is pumped into this one's controller as the
    * bytes arrive, so events are not held until end of stream. The first byte
@@ -1458,7 +1485,10 @@ export function createDataStreamDecoder(): TransformStream<Uint8Array, DataStrea
         )
       } else if (firstByte === 0x05) {
         attach(
-          createFetchStreamDecoder() as unknown as TransformStream<Uint8Array, DataStreamEvent>,
+          createFetchStreamDecoder(groupOrder) as unknown as TransformStream<
+            Uint8Array,
+            DataStreamEvent
+          >,
           controller,
         )
       } else {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { FetchGroupOrder } from '../../core/group-order.js'
 import { createDraft18Codec, malformedTrackReason } from '../../drafts/draft18/codec.js'
 import type {
   DatagramObject,
@@ -10,6 +11,7 @@ import {
   bytesToHex,
   endpointRefuses,
   expectPropertyList,
+  fetchGroupOrder,
   hexToBytes,
   loadVectorDir,
 } from '../helpers.js'
@@ -29,7 +31,10 @@ for (const { file, data: vectorFile } of vectorEntries) {
         if (vector.error) {
           it('should fail to decode', () => {
             const streamType = getStreamType(messageType, vector)
-            const result = codec.decodeDataStream(streamType, bytes)
+            const result =
+              streamType === 'fetch'
+                ? codec.decodeFetchStream(bytes, fetchGroupOrder(vector))
+                : codec.decodeDataStream(streamType, bytes)
             // An endpoint refuses what does not decode, and a Track whose
             // Prior Gaps make it malformed (Section 2.4.2).
             const refused =
@@ -42,7 +47,7 @@ for (const { file, data: vectorFile } of vectorEntries) {
           const streamType = (decoded.stream_type as string) || messageType
 
           it('should decode correctly', () => {
-            const result = decodeByStreamType(streamType, bytes)
+            const result = decodeByStreamType(streamType, bytes, fetchGroupOrder(vector))
             expect(result.ok).toBe(true)
             if (!result.ok) return
 
@@ -52,13 +57,17 @@ for (const { file, data: vectorFile } of vectorEntries) {
 
           if (vector.canonical !== false) {
             it('should re-encode to same bytes', () => {
-              const result = decodeByStreamType(streamType, bytes)
+              const result = decodeByStreamType(streamType, bytes, fetchGroupOrder(vector))
               if (!result.ok) {
                 expect.fail('decode failed')
                 return
               }
 
-              const reEncoded = encodeByStreamType(streamType, result.value)
+              const reEncoded = encodeByStreamType(
+                streamType,
+                result.value,
+                fetchGroupOrder(vector),
+              )
               expect(bytesToHex(reEncoded)).toBe(vector.hex)
             })
           }
@@ -84,27 +93,31 @@ function getStreamType(
   return messageType as 'subgroup' | 'datagram' | 'fetch'
 }
 
-function decodeByStreamType(streamType: string, bytes: Uint8Array) {
+function decodeByStreamType(streamType: string, bytes: Uint8Array, groupOrder: FetchGroupOrder) {
   switch (streamType) {
     case 'subgroup':
       return codec.decodeSubgroupStream(bytes)
     case 'datagram':
       return codec.decodeDatagram(bytes)
     case 'fetch':
-      return codec.decodeFetchStream(bytes)
+      return codec.decodeFetchStream(bytes, groupOrder)
     default:
       throw new Error(`Unknown stream type: ${streamType}`)
   }
 }
 
-function encodeByStreamType(streamType: string, value: unknown): Uint8Array {
+function encodeByStreamType(
+  streamType: string,
+  value: unknown,
+  groupOrder: FetchGroupOrder,
+): Uint8Array {
   switch (streamType) {
     case 'subgroup':
       return codec.encodeSubgroupStream(value as SubgroupStream)
     case 'datagram':
       return codec.encodeDatagram(value as DatagramObject)
     case 'fetch':
-      return codec.encodeFetchStream(value as FetchStream)
+      return codec.encodeFetchStream(value as FetchStream, groupOrder)
     default:
       throw new Error(`Unknown stream type: ${streamType}`)
   }
@@ -205,3 +218,39 @@ function assertDataStreamMatch(
     }
   }
 }
+
+// draft-18 Section 11.4.4.1: "If the computed Object ID would be greater than
+// 2^64-1, the Subscriber MUST close the Session with error 'PROTOCOL_VIOLATION'."
+describe('draft-18 fetch Object ID past 2^64-1 without an Object ID Delta', () => {
+  const MAX_U64 = 0xffffffffffffffffn
+  const obj = (serializationFlags: number, objectId: bigint) => ({
+    type: 'object' as const,
+    byteOffset: 0,
+    payloadByteOffset: 0,
+    serializationFlags,
+    groupId: 0n,
+    subgroupId: 0n,
+    objectId,
+    publisherPriority: 128,
+    payloadLength: 0,
+    payload: new Uint8Array(0),
+    extensionData: new Uint8Array(0),
+  })
+  const stream = (n: number): FetchStream => ({
+    type: 'fetch',
+    requestId: 1n,
+    objects: [obj(0x1c, MAX_U64 - 1n), ...Array.from({ length: n }, () => obj(0x00, 0n))],
+  })
+
+  it('accepts the prior Object ID plus one up to 2^64-1', () => {
+    const result = codec.decodeFetchStream(codec.encodeFetchStream(stream(1)))
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.objects[1]?.objectId).toBe(MAX_U64)
+  })
+
+  it('refuses the prior Object ID plus one past 2^64-1', () => {
+    const result = codec.decodeFetchStream(codec.encodeFetchStream(stream(2)))
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('CONSTRAINT_VIOLATION')
+  })
+})
