@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { relayOf } from '../../api/relay.js'
 import {
   type BodyConn,
   type BodyTrack,
@@ -132,7 +133,7 @@ const ids = (from: bigint, n: number) => Array.from({ length: n }, (_, i) => fro
 const times = (t0: number, step: number, n: number) =>
   Array.from({ length: n }, (_, i) => t0 + i * step)
 
-const VCONN: BodyConn = { c: 0, draft: 20, relay: 'https://relay-a.example.net' }
+const VCONN: BodyConn = { c: 0, draft: 20, relay: relayOf('https://relay-a.example.net') }
 const alias = (id: number, v: string): BodyTrack => ({ id, key: { d: 'rx', k: 'alias', v, e: 0 } })
 const fetchKey = (id: number, v: string): BodyTrack => ({
   id,
@@ -201,9 +202,9 @@ const SPECS: Record<string, Spec> = {
   },
   'zero-length-normal': {
     conn: [
-      { c: 0, draft: 8, relay: 'https://relay-a.example.net' },
-      { c: 1, draft: 14, relay: 'https://relay-a.example.net' },
-      { c: 2, draft: 20, relay: 'https://relay-a.example.net' },
+      { c: 0, draft: 8, relay: relayOf('https://relay-a.example.net') },
+      { c: 1, draft: 14, relay: relayOf('https://relay-a.example.net') },
+      { c: 2, draft: 20, relay: relayOf('https://relay-a.example.net') },
     ],
     trk: [alias(0, '1'), fetchKey(1, '4')],
     records: [
@@ -273,8 +274,8 @@ const SPECS: Record<string, Spec> = {
   'fetch-paths': {
     conn: [
       VCONN,
-      { c: 1, draft: 14, relay: 'https://relay-b.example.net' },
-      { c: 2, draft: 22, relay: 'https://relay-c.example.net' },
+      { c: 1, draft: 14, relay: relayOf('https://relay-b.example.net') },
+      { c: 2, draft: 22, relay: relayOf('https://relay-c.example.net') },
     ],
     trk: [fetchKey(0, '6'), fetchKey(1, '9'), alias(2, '3')],
     records: [
@@ -373,9 +374,9 @@ const SPECS: Record<string, Spec> = {
   },
   marks: {
     conn: [
-      { c: 0, draft: 22, relay: 'https://relay-a.example.net' },
-      { c: 1, draft: 8, relay: 'https://relay-a.example.net' },
-      { c: 2, draft: 7, relay: 'https://relay-a.example.net' },
+      { c: 0, draft: 22, relay: relayOf('https://relay-a.example.net') },
+      { c: 1, draft: 8, relay: relayOf('https://relay-a.example.net') },
+      { c: 2, draft: 7, relay: relayOf('https://relay-a.example.net') },
     ],
     trk: [alias(0, '1'), fetchKey(1, '2')],
     records: [
@@ -442,7 +443,7 @@ const SPECS: Record<string, Spec> = {
   'stream-ends': {
     seq: 1,
     first: 8,
-    conn: [VCONN, { c: 1, draft: 23, relay: 'https://relay-b.example.net' }],
+    conn: [VCONN, { c: 1, draft: 23, relay: relayOf('https://relay-b.example.net') }],
     trk: [alias(0, '1'), fetchKey(1, '5'), fetchKey(2, '6')],
     records: [
       {
@@ -512,8 +513,8 @@ const SPECS: Record<string, Spec> = {
   },
   'unknown-draft-unseen-fetch': {
     conn: [
-      { c: 0, relay: 'https://relay-a.example.net' },
-      { c: 1, draft: 14, relay: 'https://relay-a.example.net' },
+      { c: 0, relay: relayOf('https://relay-a.example.net') },
+      { c: 1, draft: 14, relay: relayOf('https://relay-a.example.net') },
     ],
     trk: [alias(0, '1'), fetchKey(1, '3')],
     records: [
@@ -616,7 +617,7 @@ SPECS.cont = {
 }
 
 SPECS['bw-seconds'] = {
-  conn: [VCONN, { c: 1, draft: 20, relay: 'https://relay-b.example.net/moq' }],
+  conn: [VCONN, { c: 1, draft: 20, relay: relayOf('https://relay-b.example.net/moq') }],
   trk: [],
   ss: 'stored',
   records: [
@@ -653,9 +654,9 @@ const json = (j: Record<string, unknown>): Record_ => ({ kind: 'json', json: j, 
 SPECS['conn-ends'] = {
   conn: [
     VCONN,
-    { c: 1, relay: 'https://relay-a.example.net' },
-    { c: 2, draft: 20, relay: 'https://relay-b.example.net/moq' },
-    { c: 3, draft: 20, relay: 'https://relay-a.example.net' },
+    { c: 1, relay: relayOf('https://relay-a.example.net') },
+    { c: 2, draft: 20, relay: relayOf('https://relay-b.example.net/moq') },
+    { c: 3, draft: 20, relay: relayOf('https://relay-a.example.net') },
   ],
   trk: [],
   ss: 'new',

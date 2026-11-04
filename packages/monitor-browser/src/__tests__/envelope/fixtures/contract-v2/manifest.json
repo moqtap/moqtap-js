@@ -5,7 +5,7 @@
       "name": "basic",
       "note": "Subgroup stream runs on draft 20: FIRST_OBJECT known, EOG with FIN, a run open at seal, tl, and a ctrl record keeping its raw control bytes.",
       "file": "basic.bin",
-      "bodyBytes": 927,
+      "bodyBytes": 928,
       "expect": {
         "ok": true
       },
@@ -86,7 +86,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [
             {
@@ -182,7 +183,10 @@
             }
           ],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -190,7 +194,7 @@
       "name": "zero-length-normal",
       "note": "Zero-length Normal objects are arrivals with 0 bytes, per draft family (8, 14, 20), on a subgroup stream, as datagrams and on FETCH; no mark is written for them.",
       "file": "zero-length-normal.bin",
-      "bodyBytes": 1025,
+      "bodyBytes": 1028,
       "expect": {
         "ok": true
       },
@@ -281,7 +285,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [
             {
@@ -509,7 +514,10 @@
           "marks": [],
           "records": [],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -517,7 +525,7 @@
       "name": "datagram-arrival-order",
       "note": "A datagram run keeps arrival order: ids 5, 3, 4, 9 are signed deltas, a repeat is kept, EOG flag set.",
       "file": "datagram-arrival-order.bin",
-      "bodyBytes": 749,
+      "bodyBytes": 750,
       "expect": {
         "ok": true
       },
@@ -589,7 +597,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [
             {
@@ -625,7 +634,10 @@
           "marks": [],
           "records": [],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -633,7 +645,7 @@
       "name": "fetch-paths",
       "note": "A standalone FETCH stream carrying groups 11 then 10 (descending order), a joining FETCH on draft 14, a fill on draft 22 with a datagram-flagged object.",
       "file": "fetch-paths.bin",
-      "bodyBytes": 1025,
+      "bodyBytes": 1028,
       "expect": {
         "ok": true
       },
@@ -733,7 +745,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [
             {
@@ -841,7 +854,10 @@
           "marks": [],
           "records": [],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -849,7 +865,7 @@
       "name": "reset-cont-negative",
       "note": "A reset run with its code, a cont run open at seal, times going backward (negative dt, negative tl), a seq 2 body.",
       "file": "reset-cont-negative.bin",
-      "bodyBytes": 763,
+      "bodyBytes": 764,
       "expect": {
         "ok": true
       },
@@ -921,7 +937,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [
             {
@@ -981,7 +998,10 @@
           "marks": [],
           "records": [],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -989,7 +1009,7 @@
       "name": "marks",
       "note": "Marks as received: FETCH range markers (non-existent after the previous entry at {10, 0}; timed out as the first entry of its stream, so from the request start), Prior Group and Object ID Gaps, an undefined status, End of Track (22); End of Track and Group, Does Not Exist (8); End of Subgroup (7); a datagram mark has no stream id.",
       "file": "marks.bin",
-      "bodyBytes": 976,
+      "bodyBytes": 979,
       "expect": {
         "ok": true
       },
@@ -1080,7 +1100,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [],
           "marks": [
@@ -1209,7 +1230,10 @@
           ],
           "records": [],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -1217,7 +1241,7 @@
       "name": "u64-ids",
       "note": "u64 everywhere: an alias of 2^64-1, group 2^64-1, a large stream id and subgroup id.",
       "file": "u64-ids.bin",
-      "bodyBytes": 787,
+      "bodyBytes": 788,
       "expect": {
         "ok": true
       },
@@ -1289,7 +1313,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [
             {
@@ -1325,7 +1350,10 @@
           "marks": [],
           "records": [],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -1333,7 +1361,7 @@
       "name": "stream-ends",
       "note": "Stream ends no run carries: a FIN after the run was sealed, EOG + FIN on a subgroup stream with no object (draft 20), a reset FETCH stream with no object, a FETCH End of Group alone and then a FIN on draft 23.",
       "file": "stream-ends.bin",
-      "bodyBytes": 938,
+      "bodyBytes": 940,
       "expect": {
         "ok": true
       },
@@ -1428,7 +1456,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [],
           "marks": [],
@@ -1500,7 +1529,10 @@
                 }
               ]
             }
-          ]
+          ],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -1508,7 +1540,7 @@
       "name": "ident",
       "note": "A session's identity: the first ident carries every field it has, a later one what setContext set (actor, one tag added), an empty content clears it.",
       "file": "ident.bin",
-      "bodyBytes": 926,
+      "bodyBytes": 927,
       "expect": {
         "ok": true
       },
@@ -1570,7 +1602,8 @@
             "sessionId": "sess_8c41f2d0",
             "lvl": "baseline",
             "tracks": [],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [],
           "marks": [],
@@ -1609,7 +1642,10 @@
               "tags": {}
             }
           ],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -1617,7 +1653,7 @@
       "name": "unknown-draft-unseen-fetch",
       "note": "A connection whose draft the monitor did not see: no per-draft check applies. A FETCH stream on draft 14 whose request the monitor did not see: path fetch_unseen, ids as decoded.",
       "file": "unknown-draft-unseen-fetch.bin",
-      "bodyBytes": 865,
+      "bodyBytes": 867,
       "expect": {
         "ok": true
       },
@@ -1703,7 +1739,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [
             {
@@ -1763,7 +1800,10 @@
           "marks": [],
           "records": [],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -1771,7 +1811,7 @@
       "name": "bw-seconds",
       "note": "Bytes per connection, direction and device second: received and sent on two connections, a second at the seal's edge, and a pre total of bytes before init() that no second places. The id was read from the tab's storage.",
       "file": "bw-seconds.bin",
-      "bodyBytes": 778,
+      "bodyBytes": 779,
       "expect": {
         "ok": true
       },
@@ -1880,7 +1920,7 @@
       "name": "conn-ends",
       "note": "v2 conn-open and conn-close with device times, one per cause: closed by the relay with its code and reason, failed before it was ready, the page ending, and a terminated worker. The id was minted and written.",
       "file": "conn-ends.bin",
-      "bodyBytes": 1859,
+      "bodyBytes": 1862,
       "expect": {
         "ok": true
       },
@@ -2073,7 +2113,7 @@
       "name": "group-timing",
       "note": "The basic body at group timing: the batch record's timing, and each run's t0 and tl with no per-object dt.",
       "file": "group-timing.bin",
-      "bodyBytes": 904,
+      "bodyBytes": 905,
       "expect": {
         "ok": true
       },
@@ -2154,7 +2194,8 @@
                 }
               }
             ],
-            "cont": false
+            "cont": false,
+            "ss": null
           },
           "runs": [
             {
@@ -2250,7 +2291,10 @@
             }
           ],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -2258,7 +2302,7 @@
       "name": "cont",
       "note": "A body sealed at raised detail that continues the emitter's previous body: no scheduled seal between them found nothing to send.",
       "file": "cont.bin",
-      "bodyBytes": 762,
+      "bodyBytes": 763,
       "expect": {
         "ok": true
       },
@@ -2330,7 +2374,8 @@
                 }
               }
             ],
-            "cont": true
+            "cont": true,
+            "ss": null
           },
           "runs": [
             {
@@ -2366,7 +2411,10 @@
           "marks": [],
           "records": [],
           "idents": [],
-          "streamEnds": []
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [],
+          "connCloses": []
         }
       }
     },
@@ -2374,7 +2422,7 @@
       "name": "refuse-stream-end-eog-reset",
       "note": "EOG on a subgroup stream that was reset: a reset loses the end of group.",
       "file": "refuse-stream-end-eog-reset.bin",
-      "bodyBytes": 743,
+      "bodyBytes": 744,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2388,7 +2436,7 @@
       "name": "refuse-fetch-eog-before-23",
       "note": "A FETCH End of Group stream end on draft 20, which has no such marker.",
       "file": "refuse-fetch-eog-before-23.bin",
-      "bodyBytes": 743,
+      "bodyBytes": 744,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2402,7 +2450,7 @@
       "name": "refuse-pace",
       "note": "A pace record in a viewer body.",
       "file": "refuse-pace.bin",
-      "bodyBytes": 735,
+      "bodyBytes": 736,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2416,7 +2464,7 @@
       "name": "refuse-gs",
       "note": "gs on a viewer run: only the source knows a group start.",
       "file": "refuse-gs.bin",
-      "bodyBytes": 741,
+      "bodyBytes": 742,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2430,7 +2478,7 @@
       "name": "refuse-fo-known-on-datagram",
       "note": "fo_known on a datagram run.",
       "file": "refuse-fo-known-on-datagram.bin",
-      "bodyBytes": 739,
+      "bodyBytes": 740,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2444,7 +2492,7 @@
       "name": "refuse-datagram-subgroup",
       "note": "A datagram run carrying a subgroup id.",
       "file": "refuse-datagram-subgroup.bin",
-      "bodyBytes": 739,
+      "bodyBytes": 740,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2458,7 +2506,7 @@
       "name": "refuse-fo-known-before-18",
       "note": "fo_known on draft 14, which has no FIRST_OBJECT bit.",
       "file": "refuse-fo-known-before-18.bin",
-      "bodyBytes": 741,
+      "bodyBytes": 742,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2472,7 +2520,7 @@
       "name": "refuse-fill-before-20",
       "note": "A fill stream on draft 14.",
       "file": "refuse-fill-before-20.bin",
-      "bodyBytes": 741,
+      "bodyBytes": 742,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2486,7 +2534,7 @@
       "name": "refuse-joining-fetch-after-19",
       "note": "A joining FETCH on draft 20, which removed it.",
       "file": "refuse-joining-fetch-after-19.bin",
-      "bodyBytes": 741,
+      "bodyBytes": 742,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2500,7 +2548,7 @@
       "name": "refuse-datagram-eog-before-12",
       "note": "A datagram END_OF_GROUP on draft 11, which has no such flag.",
       "file": "refuse-datagram-eog-before-12.bin",
-      "bodyBytes": 739,
+      "bodyBytes": 740,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2514,7 +2562,7 @@
       "name": "refuse-cont-first",
       "note": "cont on an emitter's first body, which has no previous body to continue.",
       "file": "refuse-cont-first.bin",
-      "bodyBytes": 696,
+      "bodyBytes": 697,
       "expect": {
         "ok": false,
         "reason": "no-batch-record"
@@ -2528,7 +2576,7 @@
       "name": "refuse-cont-false",
       "note": "cont written as false: it is true or absent.",
       "file": "refuse-cont-false.bin",
-      "bodyBytes": 697,
+      "bodyBytes": 698,
       "expect": {
         "ok": false,
         "reason": "no-batch-record"
@@ -2542,7 +2590,7 @@
       "name": "refuse-bad-ss",
       "note": "ss names no source of the browsing-session id: it is stored, new or page, or absent.",
       "file": "refuse-bad-ss.bin",
-      "bodyBytes": 695,
+      "bodyBytes": 696,
       "expect": {
         "ok": false,
         "reason": "no-batch-record"
@@ -2556,7 +2604,7 @@
       "name": "refuse-bw-undeclared-conn",
       "note": "A bw entry names a connection the body does not list.",
       "file": "refuse-bw-undeclared-conn.bin",
-      "bodyBytes": 732,
+      "bodyBytes": 733,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2570,7 +2618,7 @@
       "name": "refuse-bw-zero-second",
       "note": "A bw second with no bytes: only seconds with bytes are listed.",
       "file": "refuse-bw-zero-second.bin",
-      "bodyBytes": 734,
+      "bodyBytes": 735,
       "expect": {
         "ok": false,
         "reason": "bad-record"
@@ -2584,7 +2632,7 @@
       "name": "refuse-instance-mismatch",
       "note": "The batch record names another instance than the preamble.",
       "file": "refuse-instance-mismatch.bin",
-      "bodyBytes": 653,
+      "bodyBytes": 654,
       "expect": {
         "ok": false,
         "reason": "bad-instance-id"
