@@ -25,6 +25,7 @@ import {
   type StreamHeaderSample,
   type SupportedDraft,
 } from '../types.js'
+import { BwCounter, type BwEntry } from './bw.js'
 
 /** Flows a recorder holds open before it asks for an early seal. */
 export const MAX_OPEN_FLOWS = 4096
@@ -97,6 +98,8 @@ export interface Taken {
   readonly ends: RecordedEnd[]
   /** Arrivals since the last take that no run could hold. */
   readonly dropped?: number
+  /** Bytes per connection, direction and second. */
+  readonly bw?: BwEntry[]
 }
 
 /** A stream end that closes a group, for the rollup's group span. */
@@ -178,13 +181,17 @@ export class RunRecorder {
   private readonly totals = new Map<number, { objects: number; bytes: number }>()
   /** Arrivals no run could hold: objects of an unseen request's stream whose group is not known. */
   droppedObjects = 0
+  /** Bytes the page read and wrote, per connection and second, on this recorder's timeline. */
+  readonly bw: BwCounter
 
   constructor(
     /** The session anchor's monotonic origin, ms. */
     private readonly origin: Mono,
     /** Called once when the open flows reach {@link MAX_OPEN_FLOWS}. */
     public onFull?: () => void,
-  ) {}
+  ) {
+    this.bw = new BwCounter(origin)
+  }
 
   /** Flows with a run open now. */
   get openFlows(): number {
@@ -371,7 +378,8 @@ export class RunRecorder {
     this.open = open
     const kept = hold ? this.done.filter((r) => r.end === 'open') : []
     const runs = hold ? this.done.filter((r) => r.end !== 'open') : this.done
-    const out = { runs, marks: this.marks, ends: this.ends }
+    const bw = this.bw.take()
+    const out = { runs, marks: this.marks, ends: this.ends, ...(bw.length > 0 ? { bw } : {}) }
     this.done = kept
     this.marks = []
     this.ends = []
@@ -386,6 +394,7 @@ export class RunRecorder {
    * forwards and is sealed once.
    */
   absorb(t: Taken): void {
+    if (t.bw !== undefined) this.bw.absorb(t.bw)
     for (const r of t.runs) {
       const prior = r.cont ? this.byFlow.get(r.flow) : undefined
       if (prior !== undefined && (prior.end === 'open' || prior.end === 'na')) {

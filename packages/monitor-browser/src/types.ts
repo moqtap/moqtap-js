@@ -96,14 +96,14 @@ export interface Identity {
    */
   readonly actorId?: string
   /**
-   * The WebTransport activity of a page and its linked workers, from the first
-   * `WebTransport` constructed until 30 s after the last connection closed.
+   * The WebTransport activity of one tab and its linked workers, across its
+   * page loads: kept in the tab's `sessionStorage` unless supplied, so a
+   * reload continues it. Nothing ends it on a timer.
    */
   readonly sessionId: string
   /**
-   * One session's recording in one page. Minted every time, so a reload that
-   * keeps a supplied `sessionId` is a second instance of the same session,
-   * with its own upload stream and its own end.
+   * One page load's recording. Minted every time, so a reload is a second
+   * instance of the same session, with its own upload stream and its own end.
    */
   readonly instanceId: string
   readonly contentId?: string
@@ -1392,7 +1392,16 @@ export interface BatchRecord {
    * captured without a silence. Never on the emitter's first body.
    */
   readonly cont?: true
+  /**
+   * Where the browsing-session id came from: `stored` (read from the tab's
+   * `sessionStorage`), `new` (minted and written there) or `page` (storage
+   * unavailable: the id covers this page load only). Absent for a supplied id.
+   */
+  readonly ss?: SessionIdSource
 }
+
+/** Where a browsing-session id came from. */
+export type SessionIdSource = 'stored' | 'new' | 'page'
 
 /** Sent once per instance, in its first body. */
 export interface SetupRecord extends RecordBase {
@@ -1440,35 +1449,33 @@ export type Role = 'publisher' | 'subscriber'
  * Sent at open, and again when the transport is ready or the draft, the
  * protocol, the offered drafts or a new role becomes known. Ingest merges the copies, and each one carries everything known so far.
  */
-export interface ConnOpenRecord extends RecordBase {
+export interface ConnOpenRecord {
   readonly t: 'conn-open'
+  readonly v: 2
+  /** The connection's ordinal within the page load: never reused, the runs' and marks' `c`. */
+  readonly c: number
+  /** The id `connectionIdOf()` returns. */
   readonly conn: string
-  /** The connection's ordinal within the emitter: never reused, the runs' and marks' `c`. */
-  readonly c?: number
+  /** The `new WebTransport()` call, device mono µs on the runs' clock. */
+  readonly at_us: number
   readonly realm: Realm
-  /** Scheme, host and port only: a path or query can carry a token. */
-  readonly origin: string
-  /** The relay the transport was opened to: scheme, host and port, as {@link origin}. */
-  readonly relay: string
-  /** What the page passed the `WebTransport` constructor, when it passed any of these. */
-  readonly options?: ConnOptions
-  readonly contentId?: string
-  readonly draft?: SupportedDraft | null
-  readonly protocol?: string | null
-  /** A **set**: role is a property of a track, not of a connection. */
-  readonly roles?: readonly Role[]
-  /** The loud failure. Set means: transport-only metrics, raw control bytes still shipped. */
-  readonly degraded?: 'draft-mismatch' | 'unsupported-protocol'
-  /**
-   * When the transport's `ready` resolved, on the same clock as `ts`. Absent on
-   * a connection that never became ready.
-   */
-  readonly readyTs?: number
+  /** When `ready` resolved, on the same clock. Absent on a connection that never became ready. */
+  readonly ready_us?: number
+  readonly draft?: SupportedDraft
+  readonly protocol?: string
   /**
    * The draft numbers the page offered: from the `WebTransport` constructor's
    * `protocols`, else from the version list of the CLIENT_SETUP it sent.
    */
   readonly offered?: readonly number[]
+  /** What the page passed the `WebTransport` constructor, when it passed any of these. */
+  readonly options?: ConnOptions
+  /** A set: `publisher` once the page sent an object on it, `subscriber` once it received one. */
+  readonly roles?: readonly Role[]
+  readonly content?: string
+  /** The loud failure. Set means: transport-only metrics, raw control bytes still shipped. */
+  readonly degraded?: 'draft-mismatch' | 'unsupported-protocol'
+  readonly rseq?: number
 }
 
 /**
@@ -1478,14 +1485,21 @@ export interface ConnOpenRecord extends RecordBase {
  */
 export type ConnOptions = Omit<WebTransportOptionsInfo, 'protocols'>
 
-export type ConnCloseCause = 'closed' | 'failed' | 'worker-gone' | 'session-end'
+/**
+ * Why a connection ended, known for certain: `closed` (its `closed` resolved),
+ * `failed` (`ready` or `closed` rejected), `page-end` (a `pagehide` that is
+ * not persisted), `worker-gone` (the page terminated the worker hosting it).
+ */
+export type ConnCloseCause = 'closed' | 'failed' | 'page-end' | 'worker-gone'
 
-/** A connection closed. A connection never ends the session; only `end` does. */
-export interface ConnCloseRecord extends RecordBase {
+/** A connection ended. Written once, and only when its end is known. */
+export interface ConnCloseRecord {
   readonly t: 'conn-close'
+  readonly v: 2
+  readonly c: number
   readonly conn: string
-  /** The connection's ordinal within the emitter: never reused, the runs' and marks' `c`. */
-  readonly c?: number
+  /** Device mono µs on the runs' clock. */
+  readonly at_us: number
   readonly cause: ConnCloseCause
   /** Who ended the transport, on a `closed` or `failed` cause. */
   readonly by?: CloseBy
@@ -1493,6 +1507,7 @@ export interface ConnCloseRecord extends RecordBase {
   readonly code?: number
   readonly reason?: string
   readonly counters: { readonly parseFailures: number; readonly bucketsRefused: number }
+  readonly rseq?: number
 }
 
 /**
@@ -1772,9 +1787,10 @@ export interface LinkRecord extends RecordBase {
   readonly link: string
   /**
    * `linked` when the worker answered, `timeout` when it did not answer within
-   * `limits.linkTimeoutMs`, `gone` when it was terminated or stopped answering.
+   * `limits.linkTimeoutMs`, `silent` when no message came from it for 10 s,
+   * `gone` when the page terminated it.
    */
-  readonly ev: 'linked' | 'timeout' | 'gone'
+  readonly ev: 'linked' | 'timeout' | 'silent' | 'gone'
 }
 
 /**

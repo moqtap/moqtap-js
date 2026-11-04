@@ -215,7 +215,8 @@ describe('the first WebTransport begins the session', () => {
     expect(setup?.anchor.originMono).toBeLessThanOrEqual(to)
     expect(setup).not.toHaveProperty('startTs')
     const [open] = of(all, 'conn-open')
-    expect(Math.abs(open?.ts ?? Number.NaN)).toBeLessThan(50)
+    expect(open?.at_us).toBeGreaterThanOrEqual(Math.floor(from * 1000))
+    expect(open?.at_us).toBeLessThanOrEqual(Math.ceil(to * 1000))
     for (const b of of(all, 'batch')) {
       expect([b.sessionId, b.instanceId]).toEqual([before.sessionId, before.instanceId])
     }
@@ -241,7 +242,7 @@ describe('the first WebTransport begins the session', () => {
         tags: { experiment: 'a', cdn: 'edge-3' },
       }),
     ])
-    expect(of(all, 'conn-open')[0]?.contentId).toBe('live/7')
+    expect(of(all, 'conn-open')[0]?.content).toBe('live/7')
   })
 
   it('records no page life, annotation, metric sample or escalation from before it; definitions carry', async () => {
@@ -269,7 +270,7 @@ describe('the first WebTransport begins the session', () => {
       expect(of(all, 'note').map((n) => n.name)).toEqual(['after'])
       expect(of(all, 'life')).toEqual([])
       expect(of(all, 'escalation')).toEqual([])
-      expect(all.every((r) => r.t === 'ident' || r.lvl === 'baseline')).toBe(true)
+      expect(all.every((r) => !('lvl' in r) || r.lvl === 'baseline')).toBe(true)
       const samples = of(all, 'rollup').flatMap((r) => r.custom ?? [])
       expect(samples.map((m) => [m.name, m.hist?.n])).toEqual([['decodeMs', 1]])
     } finally {

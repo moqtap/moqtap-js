@@ -90,10 +90,14 @@ describe('a connection says where it went and how it was opened', () => {
     })
     await c.end()
 
-    const records = of(await allRecords(posts), 'conn-open')
+    const all = await allRecords(posts)
+    const records = of(all, 'conn-open')
     expect(records.length).toBeGreaterThan(1)
+    const relays = new Set(of(all, 'batch').flatMap((b) => b.conn.map((c) => c.relay)))
+    expect([...relays]).toEqual(['https://relay.test:4433/moq'])
+    expect(JSON.stringify([...relays])).not.toMatch(/secret|token/)
     for (const r of records) {
-      expect(r.relay).toBe('https://Relay.test:4433')
+      expect(r).not.toHaveProperty('relay')
       expect(r.options).toEqual({
         congestionControl: 'low-latency',
         allowPooling: false,
@@ -110,7 +114,7 @@ describe('a connection says where it went and how it was opened', () => {
     await open('https://relay.test/moq', { protocols: ['moqt-20'] })
     await c.end()
     const [conn] = merged(await allRecords(posts))
-    expect(conn?.relay).toBe('https://relay.test')
+    expect(conn?.at_us).toBeGreaterThanOrEqual(0)
     expect(conn).not.toHaveProperty('options')
   })
 })
@@ -155,15 +159,15 @@ describe('a connection says who closed it', () => {
     expect(close).not.toHaveProperty('code')
   })
 
-  it('nobody, when the session ended with the connection open', async () => {
+  it('no close at all, when recording stopped with the connection open', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
     await settle()
     await open()
     await c.end()
-    const [close] = of(await allRecords(posts), 'conn-close')
-    expect(close?.cause).toBe('session-end')
-    expect(close).not.toHaveProperty('by')
+    const all = await allRecords(posts)
+    expect(of(all, 'conn-close')).toEqual([])
+    expect(of(all, 'end')).toEqual([expect.objectContaining({ reason: 'app' })])
   })
 })
 

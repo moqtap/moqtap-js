@@ -217,11 +217,40 @@ export function decodeEnds(raw: Uint8Array, n: number, baseUs: number): DecodedE
   return out
 }
 
+export interface DecodedBw {
+  readonly c: number
+  readonly sent: boolean
+  readonly pre: number
+  readonly secs: [number, number][]
+}
+
+export function decodeBw(raw: Uint8Array, n: number, baseUs: number): DecodedBw[] {
+  const r = new Reader(raw)
+  const base = Math.floor(baseUs / 1_000_000)
+  const out: DecodedBw[] = []
+  for (let k = 0; k < n; k++) {
+    const c = r.u()
+    const fl = r.byte()
+    const pre = (fl & 2) !== 0 ? r.u() : 0
+    const count = r.u()
+    const secs: [number, number][] = []
+    let i = 0
+    for (let j = 0; j < count; j++) {
+      i = j === 0 ? base + r.t() : i + r.u() + 1
+      secs.push([i, r.u()])
+    }
+    out.push({ c, sent: (fl & 1) !== 0, pre, secs })
+  }
+  if (!r.done) throw new RangeError('trailing bw bytes')
+  return out
+}
+
 export interface BodyFacts {
   readonly trk: readonly { id: number; key: { d: string; k: string; v: string; e: number } }[]
   readonly runs: DecodedRun[]
   readonly marks: DecodedMark[]
   readonly ends: DecodedEnd[]
+  readonly bw: DecodedBw[]
   readonly timing: 'object' | 'group'
 }
 
@@ -247,6 +276,7 @@ export async function factsOf(body: Uint8Array): Promise<BodyFacts> {
   const runs: DecodedRun[] = []
   const marks: DecodedMark[] = []
   const ends: DecodedEnd[] = []
+  const bw: DecodedBw[] = []
   for (let i = 1; i < list.length; i++) {
     const f = list[i]!
     if (f.raw) continue
@@ -257,8 +287,9 @@ export async function factsOf(body: Uint8Array): Promise<BodyFacts> {
     }
     if (r.t === 'mark') marks.push(...decodeMarks(raw!.payload, r.n, batch.clk.base_us))
     if (r.t === 'stream-end') ends.push(...decodeEnds(raw!.payload, r.n, batch.clk.base_us))
+    if (r.t === 'bw') bw.push(...decodeBw(raw!.payload, r.n, batch.clk.base_us))
   }
-  return { trk: batch.trk, runs, marks, ends, timing: batch.timing ?? 'object' }
+  return { trk: batch.trk, runs, marks, ends, bw, timing: batch.timing ?? 'object' }
 }
 
 /** Every run and mark in every body, with each run's track key resolved. */

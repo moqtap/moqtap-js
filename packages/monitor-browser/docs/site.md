@@ -58,24 +58,32 @@ subscribe exchanges. Objects that arrived before `init()` are counted as `early.
 
 ## Sessions and connections
 
-- **Session**: the WebTransport activity of one page and its linked workers: every connection
-  they open, to any relay or path, at once or in turn. It begins when the page or a linked worker
-  constructs a `WebTransport`, whether or not it connects. It ends when the page closes, or when
-  you call `end()` or `newSession()`, however long the page goes without a connection. After
-  `newSession()`, the next `WebTransport` begins a new session, with a new session ID and the
-  context set so far.
+- **Session**: the WebTransport activity of one browser tab and its linked workers: every
+  connection the tab opens, in every page load, to any relay or path, at once or in turn. It
+  begins with the first `WebTransport` the page or a linked worker constructs, whether or not it
+  connects. Unless you pass a `sessionId`, its ID is kept in the tab's `sessionStorage` under
+  `moqtap:session`, read and written only when that first `WebTransport` is constructed, so a
+  reload or a later page of the same origin in the tab continues the session however long the tab
+  goes without a connection. A page load that constructs no `WebTransport` doesn't touch it. Where `sessionStorage` can't be used (a sandboxed frame, storage blocked or full),
+  the session is that page load alone. A duplicated tab carries the same ID. `discard()` removes
+  it. After `newSession()`, the next `WebTransport` begins a new session in this page load, with
+  a new session ID and the context set so far.
 - **Instance**: one page load's recording, from `init()` on. Every session the page records has
-  the same instance ID. A reload is a new instance, and a reload that passes the same
-  `sessionId` is a second instance of that session.
-- **Connection**: one `WebTransport`, in the page or in a linked worker. A connection that fails
-  to open is still reported, in the session its attempt began or joined.
+  the same instance ID. A reload is a new instance of the same session.
+- **Connection**: one `WebTransport`, in the page or in a linked worker, from its construction to
+  its end. A connection that fails to open is still reported, in the session its attempt began
+  or joined. Its end is reported when it is known: closed by your code or the relay, failed, the
+  page unloading, or `terminate()` on the worker hosting it. `end()`, `discard()` and an overrun
+  stop recording without ending the transport, so they report no end for the connections still
+  open.
 
 A page that never constructs a `WebTransport` has no session: it records, stores and uploads
 nothing, and isn't counted.
 
 Before a session begins:
 
-- `ids()` already returns the IDs the session will be uploaded under.
+- `ids()` already returns the instance ID, and a session ID for this page load. When the session
+  begins in a tab that has a stored session ID, `ids()` returns that one from then on.
 - Context passed to `init()` or `setContext()` is sent with the session's setup.
 - Metric definitions are kept, and carry into every session that follows.
 - Annotations, metric samples and `escalate()` calls are dropped.
@@ -115,6 +123,9 @@ Per session, it also records:
   it closed, and who closed it: your code calling `close()`, the relay, or a local failure.
 - **Each connection's relay and options**: the relay URL's scheme, host, port and path, and the
   `WebTransport` options the page passed, with server certificate hashes reduced to a count.
+- **Each connection's bytes received and sent, per second**: every stream chunk and datagram the
+  page reads or writes, control streams included, from the `WebTransport`'s construction, also
+  before `init()`. QUIC and HTTP/3 framing never reach the page and aren't counted.
 - **Stream resets that came before the stream named a track**, counted per connection.
 
 Stalls are judged against each track's own delivery rhythm, so a 2-second-GOP track and a
@@ -136,9 +147,9 @@ const vitals = init({
 })
 ```
 
-`ids()` returns the session and instance IDs right away, before the session has begun. Put them
-in your own logs or error reports to jump from a support ticket to the exact session in
-Insight:
+`ids()` returns the session and instance IDs right away. The session ID is final once the session
+has begun (see above). Put them in your own logs or error reports to jump from a support ticket to
+the exact session in Insight:
 
 ```typescript
 const { sessionId, instanceId } = vitals.ids()
@@ -243,8 +254,9 @@ recorded in the session with what it set.
 `newSession()` takes `contentId` and an optional `sessionId` of your own; the new session
 keeps the actor and tags. With a connection open, the new session begins at once. With none,
 `newSession()` ends the current session and the new one begins with the next `WebTransport`.
-Linked workers follow the page into the new session. After `end()` or `discard()`,
-`newSession()` starts nothing and returns the IDs unchanged.
+Linked workers follow the page into the new session. A session started by `newSession()` covers
+this page load only: its ID isn't stored, and a reload continues the tab's stored session. After
+`end()` or `discard()`, `newSession()` starts nothing and returns the IDs unchanged.
 
 Calling `init()` again while a collector is still running replaces it: the new one takes over,
 and `MQ1004` is reported. Use `newSession()` instead.
@@ -253,12 +265,12 @@ and `MQ1004` is reported. Use `newSession()` instead.
 
 ```typescript
 await vitals.flush()   // upload everything recorded so far; ends nothing
-await vitals.end()     // end the session, upload everything, restore WebTransport
+await vitals.end()     // end this page load's recording, upload everything, restore WebTransport
 await vitals.discard() // delete everything unsent and send nothing more
 ```
 
 You need `end()` only when you stop collecting for good while the page stays open. Closing the
-page ends the session by itself. A native shell
+page ends its recording by itself. A native shell
 that kills its webview without a `pagehide` event should `await vitals.flush()` first.
 
 Use `discard()` when the user withdraws consent. It deletes this session's unsent data from the
@@ -355,10 +367,10 @@ Without any call, the collector:
 | a `WebTransport` is constructed | begins a session, unless one is running |
 | a connection closes | records why, and uploads that connection's records |
 | the page is hidden | uploads what it holds |
-| the page closes | ends the session and uploads the rest |
+| the page closes | ends the page load's recording and uploads the rest |
 | the page enters the back/forward cache | uploads what it holds; the session goes on if the page is restored |
 | an upload fails | retries it |
-| the page closes with an upload unsent | sends it with the next session on the same origin |
+| the page closes with an upload unsent | sends it from the next page load on the same origin |
 | a linked worker is terminated | records its connections closed, with what it last reported |
 
 Terminating a worker is safe at any time. Its open connections are recorded closed at once,
@@ -503,7 +515,7 @@ init({
 |---|---|---|
 | `apiKey` | — | Your Insight project key. Required. |
 | `endpoint` | `https://moqgest.com/v1/ingest` | Where uploads go. Set it to use your own ingest or a proxy. |
-| `sessionId` | random UUID | Your own ID for the first session, up to 128 UTF-8 bytes. Later sessions get a random UUID. |
+| `sessionId` | the tab's | Your own ID for the first session, up to 128 UTF-8 bytes, used in place of the tab's stored one and not stored. Sessions after `newSession()` get a random UUID. |
 | `context` | empty | `actorId`, `contentId`, `environment`, `release`, `tags`. |
 | `detail` | `'baseline'` | The level the whole session runs at. See [Detail levels](#detail-levels). |
 | `metrics.intervalMs` | `10000` | How often a rollup closes. |
@@ -511,10 +523,10 @@ init({
 | `flightRecorder.depth` | `'32MB'` | Memory the recorder may use, per page or worker that opens a `WebTransport`. |
 | `flightRecorder.triggers` | none | `stall`, `cadence`. All off unless listed. |
 | `flightRecorder.windowMs` | `15000` | How long a trigger's capture window stays open without `resolve()`. |
-| `budget.elevatedMinutes` | `60` | Elevated time allowed per session, which lasts as long as the page. When it's used up the session drops to `baseline` and refuses further escalation. |
+| `budget.elevatedMinutes` | `60` | Elevated time allowed per page load. When it's used up the page load drops to `baseline` and refuses further escalation. |
 | `upload.intervalMs` | `60000` | Upload at least this often. |
 | `upload.byteThreshold` | `32768` | Upload early once this many bytes are waiting. While detail is raised they are counted gzipped, and one upload holds at most 64 times this uncompressed. |
-| `upload.earlyFlushesMs` | `[45000]` | Extra uploads at these offsets after the session begins. |
+| `upload.earlyFlushesMs` | `[45000]` | Extra uploads at these offsets after the page load's first `WebTransport`. |
 | `upload.maxAttempts` | `5` | Attempts per upload round. An upload that runs out of attempts stays queued and is retried. |
 | `upload.timeoutMs` | `10000` | How long one upload request may go unanswered. |
 | `upload.drainDeadlineMs` | `2000` | How long `flush()` and `end()` wait for uploads to finish. |
@@ -534,8 +546,8 @@ The exported `DEFAULTS` object holds every default.
 The `upload` options set how often the page uploads. It also uploads when a connection closes,
 when the page is hidden, on `flush()` and `end()`, and when the page closes.
 
-Data that can't be sent is kept in IndexedDB (database `moqtap-collector`) and sent with the
-next session on the same origin. If ingest is unreachable, slow or failing, your player isn't
+Data that can't be sent is kept in IndexedDB (database `moqtap-collector`) and sent from the
+next page load on the same origin. If ingest is unreachable, slow or failing, your player isn't
 affected.
 
 Workers use neither the network nor IndexedDB. Everything they record is uploaded by the page.
@@ -630,7 +642,8 @@ Uploaded:
 - Per-track counters and histograms, including missing group ranges and stream resets.
 - The session's control messages, with authorization token values masked.
 - Each connection's relay (scheme, host, port and path), the `WebTransport` options the page
-  passed (server certificate hashes as a count only), and who closed it.
+  passed (server certificate hashes as a count only), who closed it, and its bytes received and
+  sent per second.
 - Your `context` (including tags), custom metrics and annotations. `actorId` is hashed first
   when `privacy.hashActorId` is on.
 - While the level is above `baseline`: per-object header records (including subgroup and
@@ -661,7 +674,7 @@ time the uploads sent above `baseline` cover: the span of each upload's records,
 from one upload to the next, unless an upload fell due between them and found nothing to send.
 The second is the time someone watches the session live in Insight, whether or not the page
 sends anything meanwhile. A month's total counts whole minutes, rounded down.
-`budget.elevatedMinutes` caps elevated time per session, and a session lasts as long as the page.
+`budget.elevatedMinutes` caps elevated time per page load.
 Nothing over a plan's limits is charged; the limits per plan are on the
 [pricing page](/pricing#compare).
 

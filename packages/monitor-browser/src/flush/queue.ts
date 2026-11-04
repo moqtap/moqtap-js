@@ -23,6 +23,7 @@ import {
   bucketKeyString,
   type ClockSource,
   type DetailLevel,
+  type SessionIdSource,
   type Timing,
 } from '../types.js'
 import {
@@ -70,6 +71,8 @@ export interface FlushQueueOptions extends Omit<FrameBufferOptions, 'rseq' | 'on
   readonly appClock?: () => AppOffset | undefined
   /** The timing records are encoded at, read as each is buffered. */
   readonly timing?: () => Timing
+  /** Where the browsing-session id came from, read at each seal; absent for a supplied id. */
+  readonly ss?: () => SessionIdSource | undefined
 }
 
 /** An offset to UTC, µs: `utc − mono`, its bound, and the mono µs it was read at. */
@@ -101,6 +104,9 @@ const platformClock: ClockSource = {
   wall: () => Date.now(),
 }
 
+const ssOf = (ss: SessionIdSource | undefined): { ss?: SessionIdSource } =>
+  ss === undefined ? {} : { ss }
+
 /** A body's preamble and its frames before the buffered ones. */
 interface Head {
   readonly seq: number
@@ -118,6 +124,7 @@ export class FlushQueue extends FrameBuffer {
   private readonly _dropped: () => number
   private readonly _appClock: () => AppOffset | undefined
   private readonly _timing: () => Timing
+  private readonly _ss: () => SessionIdSource | undefined
   /** The timing of the buffered records: a body holds one. */
   private _bufTiming: Timing = 'object'
 
@@ -135,6 +142,7 @@ export class FlushQueue extends FrameBuffer {
     this._dropped = opts.droppedRecords ?? (() => this.droppedRecords)
     this._appClock = opts.appClock ?? (() => undefined)
     this._timing = opts.timing ?? (() => 'object')
+    this._ss = opts.ss ?? (() => undefined)
   }
 
   /** The number the next seal will take. Bodies so far are `0 … nextSeq - 1`. */
@@ -152,7 +160,14 @@ export class FlushQueue extends FrameBuffer {
    * not list on top of its own, to seal what is buffered.
    */
   writeFacts(t: Taken, full: () => void = () => {}): void {
-    if (t.runs.length === 0 && t.marks.length === 0 && t.ends.length === 0) return
+    if (
+      t.runs.length === 0 &&
+      t.marks.length === 0 &&
+      t.ends.length === 0 &&
+      (t.bw === undefined || t.bw.length === 0)
+    ) {
+      return
+    }
     const e = this._emitter
     const timing = this._timing()
     // A body holds records of one timing: what is buffered at another is sealed first.
@@ -280,6 +295,7 @@ export class FlushQueue extends FrameBuffer {
         conn: e.bodyConns(refs.c),
         trk: e.bodyTracks(refs.ti),
         timing: this._bufTiming,
+        ...ssOf(this._ss()),
         cont: e.cont,
       }),
     )

@@ -86,6 +86,7 @@ import {
 import type { PageMessage } from './link.js'
 import { UsageMeter } from './meter.js'
 import type { ConnectionState, RealmCarry, RealmObserver } from './realm.js'
+import { forgetTabSession, peekTabSession, tabSession } from './tab-session.js'
 
 /** Re-exported for the public API; defined in `../version.js` so the dormant
  * path can read it without pulling this module in. */
@@ -157,6 +158,8 @@ export interface RuntimePorts {
   readonly appClock?: (() => AppClockReading | null | undefined) | undefined
   /** The earlier session's run recorder and the decoders of the connections it left open. */
   readonly carry?: RealmCarry | undefined
+  /** The global whose `sessionStorage` holds the tab's id. Default `globalThis`. */
+  readonly sessionStorageOf?: unknown
 }
 
 /** The backoff a failed upload waits before the outbox tries again, in ms. */
@@ -373,6 +376,10 @@ export class CollectorRuntime {
 
     this._queue = new FlushQueue({
       sessionId: config.sessionId,
+      ss: () => {
+        const tab = this._emitter.tab
+        return tab !== undefined && tab.id === config.sessionId ? tab.ss : undefined
+      },
       emitter: this._emitter,
       clock: this._clock,
       level: () => this._escalation.level,
@@ -592,7 +599,16 @@ export class CollectorRuntime {
   /** Begin the session this runtime was waiting for, in a runtime that records it. */
   private _beginNow(): void {
     if (this._ended) return
-    this._handOver(this._withContext(), this.instanceId, { anchor: this._anchorNow() })
+    const e = this._emitter
+    let over: Pick<ResolvedConfig, 'sessionId' | 'idSource'> | undefined
+    if (e.tab === undefined && !e.tabFixed && this.config.idSource === 'minted') {
+      // The id this load showed until now is written when storage holds none.
+      const sessionId = this.config.sessionId
+      e.tab = tabSession(this._ports.sessionStorageOf ?? globalThis, () => sessionId)
+      over = { sessionId: e.tab.id, idSource: 'minted' }
+    }
+    e.tabFixed = true
+    this._handOver(this._withContext(over), this.instanceId, { anchor: this._anchorNow() })
   }
 
   /** This session's config with the context as it stands, which the next one starts from. */
@@ -798,6 +814,12 @@ export class CollectorRuntime {
     if (this._discarded) return
     this._discarded = true
     this._ended = true
+    const storage = this._ports.sessionStorageOf ?? globalThis
+    // Not begun, this load holds its own id; the tab's earlier loads are under the stored one.
+    const sessionId =
+      this._emitter.tabFixed || this.config.idSource !== 'minted'
+        ? this.config.sessionId
+        : (peekTabSession(storage) ?? this.config.sessionId)
     this._realm?.detach()
     const unsent = this._outbox
     this._outbox = []
@@ -809,12 +831,13 @@ export class CollectorRuntime {
         // still be being written, so each is deleted once it is.
         await Promise.all(unsent.map((c) => this._prepared.get(c)))
         for (const c of unsent) await this._store.delete(c.idempotencyKey)
-        await this._store.clearSession(this.config.sessionId)
+        await this._store.clearSession(sessionId)
       } catch (err) {
         this._onError(err)
       }
       this._store.close()
     }
+    forgetTabSession(sessionId, storage)
   }
 
   /**
@@ -831,6 +854,7 @@ export class CollectorRuntime {
    */
   successor(next: ResolvedConfig, instanceId: string): CollectorRuntime | null {
     if (this._ended) return null
+    this._emitter.tabFixed = true
     const open = !this._armed && this._open()
     if (!this._armed) {
       this._finish('new-session')
@@ -1021,6 +1045,7 @@ export class CollectorRuntime {
       overrun: (at, signal) => self._overrun({ overrunAt: at, overrunSignal: signal }),
       json: (r) => self._sink.json(r),
       relNow: () => self._relNow(),
+      nowUs: () => Math.floor(self._clock.now() * 1000),
       room: () => self._probeRoom(),
     }
   })()
@@ -1179,8 +1204,10 @@ export class CollectorRuntime {
     this._escalation.close()
     this._seal()
     this._packer?.clear()
-    this._realm?.closeAll('session-end', now)
-    this._links?.closeForwarded('session-end')
+    // Only a page that unloads ends its transports; otherwise their end is not known.
+    const cause = reason === 'unload' ? 'page-end' : 'stopped'
+    this._realm?.closeAll(cause, now)
+    this._links?.closeForwarded(cause)
     this._customRollup?.tick(now)
     // Probes follow the page into its next session rather than stop.
     if (reason !== 'new-session') this._broadcast({ t: 'unlinked' })

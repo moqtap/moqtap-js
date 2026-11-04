@@ -194,7 +194,7 @@ function dormantObserver(s: DormantState): TransportObserver {
     },
     onStreamError(): void {},
     onDatagram(c: DatagramChunk): void {
-      s.early.onDatagram(c.sessionId, c.data.byteLength)
+      s.early.onDatagram(c.sessionId, c.data.byteLength, c.direction === 'tx', c.at)
       s.ring?.push({
         sessionId: c.sessionId,
         streamId: DORMANT_DATAGRAM_STREAM_ID,

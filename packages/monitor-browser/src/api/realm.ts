@@ -253,6 +253,8 @@ interface Connection {
   readonly id: string
   readonly c: number
   readonly session: InterceptedSession
+  /** The `new WebTransport()` call, device µs on the runs' clock. */
+  readonly openUs: number
   readonly origin: string
   /** The capture contract's relay endpoint: origin and path. */
   readonly relay: string
@@ -446,6 +448,8 @@ export class RealmObserver {
   /** A closing connection's last interval is being written; it passes the halt gate. */
   private _closing = false
   private readonly _runs: RunRecorder
+  /** Early control chunks are being replayed: their bytes were counted already. */
+  private _adopting = false
   /** Decoders an earlier realm handed on, by hooked session, until this realm sees the session. */
   private _carry: ReadonlyMap<string, CarriedConnection> | undefined
   /** Decoders of the connections a session end left open, for the next realm. */
@@ -646,8 +650,9 @@ export class RealmObserver {
    * interval first. Written past the halt gate: these are the records that say
    * why the connection's data stops.
    */
-  closeAll(cause: ConnCloseCause, now: Mono): void {
-    for (const c of [...this._connections.values()]) this._close(c, now, { cause })
+  closeAll(cause: 'page-end' | 'stopped', now: Mono): void {
+    const info = cause === 'stopped' ? null : { cause }
+    for (const c of [...this._connections.values()]) this._close(c, now, info)
   }
 
   /** Release memory. After this the realm is inert. */
@@ -695,6 +700,7 @@ export class RealmObserver {
       id: s.id,
       c: ordinal,
       session: s,
+      openUs: this._us(s.anchor.originMono),
       origin: originOf(s.url),
       relay: relayOf(s.url),
       options: connOptionsOf(s.options),
@@ -728,7 +734,7 @@ export class RealmObserver {
     if (carried !== undefined) this._host.onConnReady()
     // Stamped with the transport's own construction time, which precedes this
     // realm's start for a session replayed from the dormant hook.
-    this._writeConnOpen(c, s.anchor.originMono - this._origin)
+    this._writeConnOpen(c)
   }
 
   /** `ready` resolved. Every path below sends the connection record again, with `readyTs`. */
@@ -786,6 +792,8 @@ export class RealmObserver {
     }
     const conn = this._connections.get(c.sessionId)
     if (conn === undefined) return
+    // A replayed early chunk was counted by the early buffer.
+    if (!this._adopting) this._runs.bw.add(conn.c, c.direction === 'tx', c.at, c.data.byteLength)
     if (conn.skip.size > 0 && conn.skip.has(halfOf(c.streamId, c.direction))) {
       this._skipEarly(conn, c.control, c.data.byteLength)
       return
@@ -872,6 +880,7 @@ export class RealmObserver {
     }
     const conn = this._connections.get(c.sessionId)
     if (conn === undefined) return
+    this._runs.bw.add(conn.c, c.direction === 'tx', c.at, c.data.byteLength)
     if (conn.dispatcher !== null) conn.dispatcher.onDatagram(c)
     else if (conn.pendingDatagrams.length < 512) {
       conn.pendingDatagrams.push({ ...c, data: c.data.slice() })
@@ -1145,33 +1154,43 @@ export class RealmObserver {
 
   /* ── connection records ───────────────────────────────────────────────── */
 
-  /** Everything known about `c` so far. Sent again whenever that grows. */
-  private _writeConnOpen(c: Connection, ts?: Mono): void {
+  /** A mono time as device µs on the runs' clock. */
+  private _us(at: Mono): number {
+    return Math.floor((at - (this._o.monoBase ?? 0)) * 1000)
+  }
+
+  /**
+   * Everything known about `c` so far. Sent again whenever that grows,
+   * with the same construction time.
+   */
+  private _writeConnOpen(c: Connection): void {
     const record: ConnOpenRecord = {
       t: 'conn-open',
-      ts: ts ?? this._relNow(),
-      lvl: this._host.level(),
-      conn: c.id,
+      v: 2,
       c: c.c,
+      conn: c.id,
+      at_us: c.openUs,
       realm: this._o.realm,
-      origin: c.origin,
-      relay: c.origin,
-      ...(c.options !== undefined ? { options: c.options } : {}),
-      ...(c.contentId !== '' ? { contentId: c.contentId } : {}),
-      draft: c.draft,
-      protocol: c.protocol,
-      roles: [...c.roles],
-      ...(c.degraded !== undefined ? { degraded: c.degraded } : {}),
-      ...(c.readyTs !== undefined ? { readyTs: c.readyTs } : {}),
+      ...(c.readyTs !== undefined ? { ready_us: this._us(c.readyTs + this._origin) } : {}),
+      ...(c.draft !== null ? { draft: c.draft } : {}),
+      ...(c.protocol !== null ? { protocol: c.protocol } : {}),
       ...(c.offered !== undefined ? { offered: c.offered } : {}),
+      ...(c.options !== undefined ? { options: c.options } : {}),
+      ...(c.roles.size > 0 ? { roles: [...c.roles] } : {}),
+      ...(c.contentId !== '' ? { content: c.contentId } : {}),
+      ...(c.degraded !== undefined ? { degraded: c.degraded } : {}),
     }
     this._writeCritical(record)
   }
 
+  /**
+   * `c` ended, or (`info` null) recording stops while its transport stays
+   * open: then no close is written, since its end is not known.
+   */
   private _close(
     c: Connection,
     at: Mono,
-    info: SessionCloseInfo | { cause: ConnCloseCause },
+    info: SessionCloseInfo | { cause: ConnCloseCause } | null,
   ): void {
     if (c.closed) return
     c.closed = true
@@ -1188,26 +1207,29 @@ export class RealmObserver {
     } finally {
       this._closing = false
     }
-    const detail = info as SessionCloseInfo
-    const record: ConnCloseRecord = {
-      t: 'conn-close',
-      ts: at - this._origin,
-      lvl: this._host.level(),
-      conn: c.id,
-      c: c.c,
-      cause: info.cause,
-      ...(detail.by !== undefined ? { by: detail.by } : {}),
-      ...(detail.code !== undefined ? { code: detail.code } : {}),
-      ...(detail.reason !== undefined ? { reason: detail.reason } : {}),
-      counters: {
-        parseFailures: c.rollup.parseFailures,
-        bucketsRefused: c.rollup.bucketsRefused,
-      },
+    const ending = info === null || info.cause === 'page-end'
+    if (info !== null) {
+      const detail = info as SessionCloseInfo
+      const record: ConnCloseRecord = {
+        t: 'conn-close',
+        v: 2,
+        c: c.c,
+        conn: c.id,
+        at_us: this._us(at),
+        cause: info.cause,
+        ...(detail.by !== undefined ? { by: detail.by } : {}),
+        ...(detail.code !== undefined ? { code: detail.code } : {}),
+        ...(detail.reason !== undefined ? { reason: detail.reason } : {}),
+        counters: {
+          parseFailures: c.rollup.parseFailures,
+          bucketsRefused: c.rollup.bucketsRefused,
+        },
+      }
+      this._writeCritical(record)
     }
-    this._writeCritical(record)
     // A session's end leaves the transport open: its streams and decoder go
     // on in the next session's realm.
-    if (info.cause === 'session-end' && c.dispatcher !== null) {
+    if (ending && c.dispatcher !== null) {
       this._carried.set(c.id, {
         keys: c.keys,
         dispatcher: c.dispatcher,
@@ -1225,11 +1247,13 @@ export class RealmObserver {
     } else this._runs.onConnClose(c.c)
     this._host.onConnGone?.(c.c)
     // A session's end leaves the transport open for the next session's realm.
-    if (info.cause !== 'session-end') this._o.ordinalDone?.(c.id)
+    if (!ending) this._o.ordinalDone?.(c.id)
     this._closedParseFailures += c.rollup.parseFailures
     this._closedBucketsRefused += c.rollup.bucketsRefused
     this._connections.delete(c.id)
-    this._closed.push({ ...this._stateOf(c), closeCause: info.cause })
+    this._closed.push(
+      info === null ? this._stateOf(c) : { ...this._stateOf(c), closeCause: info.cause },
+    )
     // Bounded: a page that reconnects all day keeps the newest closed ones.
     if (this._closed.length > 64) this._closed.shift()
   }
@@ -1420,19 +1444,45 @@ export class RealmObserver {
     for (const [id, e] of early) {
       const conn = this._connections.get(id)
       if (conn === undefined) continue
-      for (const chunk of e.control) {
-        try {
-          this.onStreamData(chunk)
-        } catch (err) {
-          this._host.onError(err)
+      this._adopting = true
+      try {
+        for (const chunk of e.control) {
+          try {
+            this.onStreamData(chunk)
+          } catch (err) {
+            this._host.onError(err)
+          }
         }
+      } finally {
+        this._adopting = false
       }
+      this._adoptEarlyBw(conn.c, e)
       for (const half of e.skip) conn.skip.add(half)
       if (e.dropped > 0) {
         this._droppedRecords += e.dropped
         this._sampledTypes.add(EARLY_CONTROL)
       }
       this._countEarlyData(conn, e.dataChunks, e.dataBytes)
+    }
+  }
+
+  /**
+   * The early buffer's seconds, on this realm's timeline only when it is the
+   * page's: a worker's early seconds cannot be placed on the page's, so they
+   * count as bytes no second places.
+   */
+  private _adoptEarlyBw(c: number, e: EarlyConnection): void {
+    const bw = this._runs.bw
+    const exact = (this._o.monoBase ?? 0) === 0
+    for (const [sent, secs, pre] of [
+      [false, e.bw.rx, e.bw.preRx],
+      [true, e.bw.tx, e.bw.preTx],
+    ] as const) {
+      for (const [i, n] of secs) {
+        if (exact) bw.addSecond(c, sent, i, n)
+        else bw.addPre(c, sent, n)
+      }
+      bw.addPre(c, sent, pre)
     }
   }
 
@@ -1501,10 +1551,6 @@ export class RealmObserver {
 
   private _rollupOwning(k: BucketKey): RollupEngine | undefined {
     return this._owner(k)?.rollup
-  }
-
-  private _relNow(): Mono {
-    return this._o.clock.now() - this._origin
   }
 
   /**

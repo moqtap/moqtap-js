@@ -203,7 +203,7 @@ describe('object headers follow the detail level', () => {
     ])
     for (const h of hdr) expect(h).not.toHaveProperty('size')
     // Decoded fields only: the raw frames in the upload are the control plane's and the runs'.
-    expect(records.rawAfter.every((t) => ['ctrl', 'run', 'mark'].includes(t))).toBe(true)
+    expect(records.rawAfter.every((t) => ['ctrl', 'run', 'mark', 'bw'].includes(t))).toBe(true)
   })
 
   it('adds the payload size at headers+sizes', async () => {
@@ -226,7 +226,7 @@ describe('object headers follow the detail level', () => {
     }
     expect(hdr.map((h) => h.lvl)).toEqual(['headers+data', 'headers+data', 'headers+data'])
     expect(hdr.map(strip)).toEqual(sizes.map(strip))
-    expect(records.rawAfter.every((t) => ['ctrl', 'run', 'mark'].includes(t))).toBe(true)
+    expect(records.rawAfter.every((t) => ['ctrl', 'run', 'mark', 'bw'].includes(t))).toBe(true)
   })
 
   it('stops when the window closes', async () => {
@@ -374,7 +374,7 @@ describe('object headers give way when the buffer nears its cap', () => {
     expect(runs.reduce((n, r) => n + r.ids.length, 0)).toBe(600)
     const ctrl = of(records, 'ctrl')
     expect(ctrl).toHaveLength(1)
-    expect(rawAfter.filter((t) => t !== 'run')).toEqual(['ctrl'])
+    expect(rawAfter.filter((t) => t !== 'run' && t !== 'bw')).toEqual(['ctrl'])
   })
 })
 

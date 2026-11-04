@@ -203,6 +203,8 @@ export interface LinkOwner {
   overrun(at: Mono, signal: string): void
   json(r: EnvelopeRecord): void
   relNow(): Mono
+  /** Now, as device µs on the runs' clock. */
+  nowUs(): number
   /** The outbox room one probe's flight dumps may take now. */
   room(): number
 }
@@ -215,7 +217,7 @@ export interface WorkerLinks {
   connections(): ConnectionState[]
   /** Records the probes reported dropped, cumulative. */
   dropped(): number
-  closeForwarded(cause: 'session-end'): void
+  closeForwarded(cause: 'page-end' | 'stopped'): void
   broadcast(m: PageMessage): void
   /** Probes that can still forward a flight dump. */
   linked(): number

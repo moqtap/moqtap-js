@@ -408,9 +408,11 @@ export function initWith(
     onError(new Error(`${p.code}: ${p.key}${p.got === undefined ? '' : ` ${p.got}`}`))
   }
 
+  // This page load's id until the first WebTransport begins the session, which
+  // is when the tab's storage is first read, and the stored id takes over.
   const resolved = resolveConfig(config, {
     onProblem: report,
-    ...(options.mintSessionId !== undefined ? { mintSessionId: options.mintSessionId } : {}),
+    mintSessionId: options.mintSessionId ?? mintId,
   })
 
   // The hook is already installed from module-eval time. Claiming it is what

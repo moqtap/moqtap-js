@@ -334,7 +334,7 @@ describe('end() — the instance is done', () => {
     expect(end[0]?.counters).toHaveProperty('bucketsRefused')
   })
 
-  it('reports the connections still open as closed by the session end', async () => {
+  it('writes no close for a connection still open: its end is not known', async () => {
     const { posts, impl } = recordingFetch()
     const c = init(base(), { ...quiet, fetchImpl: impl })
     await settle()
@@ -342,10 +342,9 @@ describe('end() — the instance is done', () => {
     await c.end()
 
     const all = await allRecords(posts)
-    const [conn] = connections(all).values()
-    expect(of(all, 'conn-close')).toEqual([
-      expect.objectContaining({ conn: conn?.conn, cause: 'session-end' }),
-    ])
+    expect(connections(all).size).toBe(1)
+    expect(of(all, 'conn-close')).toEqual([])
+    expect(of(all, 'end')).toEqual([expect.objectContaining({ reason: 'app' })])
   })
 
   it('writes the open rollup interval of each connection it closes', async () => {
@@ -633,12 +632,8 @@ describe('connections', () => {
 
     const all = await allRecords(posts)
     const [conn] = connections(all).values()
-    expect(conn).toMatchObject({
-      realm: 'page',
-      origin: 'https://relay.test:4433',
-      draft: 20,
-      protocol: 'moqt-20',
-    })
+    expect(conn).toMatchObject({ realm: 'page', draft: 20, protocol: 'moqt-20' })
+    expect(conn).not.toHaveProperty('origin')
     // Every connection-scoped record names its connection.
     const ctrl = of(all, 'ctrl')
     expect(ctrl.length).toBeGreaterThan(0)
@@ -672,7 +667,7 @@ describe('connections', () => {
     const all = await allRecords(posts)
     expect(of(all, 'conn-close')[0]?.cause).toBe('failed')
     // Never ready, so no record says it was.
-    expect(of(all, 'conn-open').some((r) => r.readyTs !== undefined)).toBe(false)
+    expect(of(all, 'conn-open').some((r) => r.ready_us !== undefined)).toBe(false)
   })
 
   it('sends the connection again when the transport is ready, saying when', async () => {
@@ -683,10 +678,10 @@ describe('connections', () => {
     await c.end()
 
     const opens = of(await allRecords(posts), 'conn-open')
-    expect(opens[0]?.readyTs).toBeUndefined()
-    const ready = opens.find((r) => r.readyTs !== undefined)
-    expect(ready).toMatchObject({ draft: 20 })
-    expect(ready?.readyTs).toBeGreaterThanOrEqual(opens[0]?.ts as number)
+    expect(opens[0]?.ready_us).toBeUndefined()
+    const ready = opens.find((r) => r.ready_us !== undefined)
+    expect(ready).toMatchObject({ draft: 20, at_us: opens[0]?.at_us })
+    expect(ready?.ready_us).toBeGreaterThanOrEqual(opens[0]?.at_us as number)
   })
 
   it('reports the drafts the page offered, from the protocols it passed', async () => {
@@ -890,8 +885,9 @@ describe('worker links', () => {
     // On the page's timeline: the worker's readings plus the three seconds,
     // less the moment the page took to hear of the attempt that began it.
     const opened = of(all, 'conn-open')[0] as ConnOpenRecord
-    expect(opened.ts).toBeGreaterThan(2_900)
-    expect(opened.ts).toBeLessThan(13_000)
+    const ts = opened.at_us / 1000 - (of(all, 'setup')[0]?.anchor.originMono ?? 0)
+    expect(ts).toBeGreaterThan(2_900)
+    expect(ts).toBeLessThan(13_000)
     expect(of(all, 'ctrl').every((r) => r.conn === conn?.conn)).toBe(true)
     expect(of(all, 'note').map((n) => n.name)).toContain('from-the-worker')
     // Every body is the page's: one instance, numbered without a gap.
@@ -1095,7 +1091,7 @@ describe('a linked worker that falls silent', () => {
     await c.end()
 
     const links = of(await allRecords(posts), 'link').map((l) => l.ev)
-    expect(links).toEqual(['linked', 'gone', 'linked'])
+    expect(links).toEqual(['linked', 'silent', 'linked'])
     port?.close()
   })
   /** A worker's closed interval for `w-conn`: one receive track. */
@@ -1240,26 +1236,24 @@ describe('a linked worker that falls silent', () => {
     return n
   }
 
-  it('stands nothing in for a worker that falls silent: its connection closes, its runs arrive once', async () => {
+  it('stands nothing in for a worker that falls silent: its connection keeps no end, its runs arrive once', async () => {
     const w = await silentWorker()
     forward(w.port(), [], [open()], piece(4n, 0n, 5, false))
     await settle(5)
     w.advance(11_000)
     await settle(10, 20)
+    await w.c.end()
 
     const sent = await allRecords(w.posts)
-    expect(of(sent, 'link').map((l) => l.ev)).toEqual(['linked', 'gone'])
-    expect(of(sent, 'conn-close')).toEqual([
-      expect.objectContaining({ conn: 'w-conn', c: W_CONN, cause: 'worker-gone' }),
-    ])
+    expect(of(sent, 'link').map((l) => l.ev)).toEqual(['linked', 'silent'])
+    expect(of(sent, 'conn-close')).toEqual([])
     expect(of(sent, 'rollup').filter((r) => r.conn === 'w-conn')).toEqual([])
     const batches = of(sent, 'batch')
     expect(batches.some((b) => b.conn.some((c) => c.c === W_CONN))).toBe(true)
-    await w.c.end()
     w.port()?.close()
   })
 
-  it('writes a resumed worker’s closed interval as it is, and keeps its connection closed', async () => {
+  it('writes a resumed worker’s closed interval as it is, and closes nothing for the silence', async () => {
     const w = await silentWorker()
     forward(w.port(), [], [open()])
     await settle(5)
@@ -1270,8 +1264,8 @@ describe('a linked worker that falls silent', () => {
     await w.c.end()
 
     const all = await allRecords(w.posts)
-    expect(of(all, 'link').map((l) => l.ev)).toEqual(['linked', 'gone', 'linked'])
-    expect(of(all, 'conn-close').filter((r) => r.conn === 'w-conn')).toHaveLength(1)
+    expect(of(all, 'link').map((l) => l.ev)).toEqual(['linked', 'silent', 'linked'])
+    expect(of(all, 'conn-close').filter((r) => r.conn === 'w-conn')).toHaveLength(0)
     expect(of(all, 'rollup').filter((r) => r.conn === 'w-conn')).toHaveLength(1)
     w.port()?.close()
   })
@@ -1366,7 +1360,7 @@ describe('a pre-15 session over WebTransport', () => {
 
     const [conn] = connections(await allRecords(posts)).values()
     expect(conn?.draft).toBe(14)
-    expect(conn?.protocol).toBeNull()
+    expect(conn?.protocol).toBeUndefined()
     expect(conn?.degraded).toBeUndefined()
   })
 
@@ -1422,9 +1416,10 @@ describe('a pre-15 session over WebTransport', () => {
 
     const opens = of(await allRecords(posts), 'conn-open')
     expect(opens.length).toBeGreaterThanOrEqual(2)
-    expect(opens[0]?.readyTs).toBeUndefined()
-    expect(opens[1]).toMatchObject({ draft: null, protocol: null })
-    expect(opens[1]?.readyTs).toBeGreaterThanOrEqual(opens[0]?.ts as number)
+    expect(opens[0]?.ready_us).toBeUndefined()
+    expect(opens[1]).not.toHaveProperty('draft')
+    expect(opens[1]).not.toHaveProperty('protocol')
+    expect(opens[1]?.ready_us).toBeGreaterThanOrEqual(opens[0]?.at_us as number)
   })
 
   it('reports the drafts offered in CLIENT_SETUP when the page passed no protocols', async () => {
@@ -1455,10 +1450,10 @@ describe('a pre-15 session over WebTransport', () => {
     await c.end()
 
     const [conn] = connections(await allRecords(posts)).values()
-    expect(conn?.draft).toBeNull()
+    expect(conn?.draft).toBeUndefined()
     expect(conn?.degraded).toBeUndefined()
     expect(conn?.offered).toEqual([13, 14])
-    expect(typeof conn?.readyTs).toBe('number')
+    expect(typeof conn?.ready_us).toBe('number')
   })
 
   it('says so when SERVER_SETUP selects a version this build cannot read', async () => {
@@ -1479,7 +1474,7 @@ describe('a pre-15 session over WebTransport', () => {
     await c.end()
 
     const [conn] = connections(await allRecords(posts)).values()
-    expect(conn?.draft).toBeNull()
+    expect(conn?.draft).toBeUndefined()
     expect(conn?.degraded).toBe('unsupported-protocol')
   })
 })
@@ -1978,8 +1973,7 @@ describe('newSession() — the next playback in the same page', () => {
     await c.end()
 
     const sessions = await bySession(posts)
-    const closed = of(sessions.get(first.sessionId) ?? [], 'conn-close')
-    expect(closed).toEqual([expect.objectContaining({ conn, cause: 'session-end' })])
+    expect(of(sessions.get(first.sessionId) ?? [], 'conn-close')).toEqual([])
     const reopened = connections(sessions.get(second.sessionId) ?? [])
     expect([...reopened.keys()]).toEqual([conn])
     expect(reopened.get(conn as string)).toMatchObject({ draft: 20 })
@@ -2089,7 +2083,7 @@ describe('newSession() — the next playback in the same page', () => {
     const sessions = await bySession(posts)
     const a = sessions.get(first.sessionId) ?? []
     const b = sessions.get(second.sessionId) ?? []
-    expect(of(a, 'conn-close')).toEqual([expect.objectContaining({ conn, cause: 'session-end' })])
+    expect(of(a, 'conn-close')).toEqual([])
     expect(of(b, 'link')).toEqual([expect.objectContaining({ link: 'w1', ev: 'linked' })])
     expect(connections(b).get(conn as string)).toMatchObject({ realm: 'worker', draft: 20 })
     expect(of(b, 'note')).toEqual([expect.objectContaining({ name: 'after', conn })])
@@ -2112,8 +2106,8 @@ describe('setContext(), connectionIdOf() and scoped annotations', () => {
     const conns = connections(await allRecords(posts))
     const idOf = (wt: MockWebTransport): string =>
       c.connectionIdOf(wt as unknown as WebTransport) as string
-    expect(conns.get(idOf(one))?.contentId).toBe('movie-1')
-    expect(conns.get(idOf(two))?.contentId).toBe('movie-2')
+    expect(conns.get(idOf(one))?.content).toBe('movie-1')
+    expect(conns.get(idOf(two))?.content).toBe('movie-2')
   })
 
   it('answers connectionIdOf() with the id the records carry, and nothing for a stranger', async () => {

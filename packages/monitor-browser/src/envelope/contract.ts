@@ -15,7 +15,7 @@
  * device mono µs, floored. A body at `group` timing writes no `dt`.
  */
 
-import type { BatchRecord, EnvelopeRecord, Timing } from '../types.js'
+import type { BatchRecord, EnvelopeRecord, SessionIdSource, Timing } from '../types.js'
 import { FrameWriter } from './frame-writer.js'
 import { LebWriter } from './leb.js'
 
@@ -328,6 +328,55 @@ export function writeStreamEndRecord(
   w.raw(raw)
 }
 
+/** One connection's bytes in one direction: per device mono second, and those no second places. */
+export interface BwInput {
+  readonly c: number
+  readonly sent: boolean
+  /** `[second, bytes]`, seconds ascending and distinct, bytes ≥ 1. */
+  readonly secs: readonly (readonly [number, number])[]
+  /** Bytes before `init()` that no second places; 0 for none. */
+  readonly pre: number
+}
+
+const BW_SENT = 0x01
+const BW_PRE = 0x02
+
+/**
+ * `bw` entries: `c fl [pre] k`, then `k` pairs `i bytes`. The first `i` is a
+ * `t` from `floor(baseUs / 1e6)`, each later one `u(i − previous − 1)`.
+ */
+export function encodeBw(baseUs: number, entries: readonly BwInput[]): Uint8Array {
+  const w = new LebWriter(entries.length * 16)
+  const base = Math.floor(baseUs / 1_000_000)
+  for (const e of entries) {
+    w.u(e.c)
+    w.byte((e.sent ? BW_SENT : 0) | (e.pre > 0 ? BW_PRE : 0))
+    if (e.pre > 0) w.u(e.pre)
+    w.u(e.secs.length)
+    let prev: number | undefined
+    for (const [i, bytes] of e.secs) {
+      if (prev === undefined) w.t(i - base)
+      else if (i > prev) w.u(i - prev - 1)
+      else throw new RangeError('bw seconds not ascending')
+      if (!(bytes >= 1)) throw new RangeError('bw second with no bytes')
+      w.u(bytes)
+      prev = i
+    }
+  }
+  return w.bytes()
+}
+
+export function writeBwRecord(
+  w: FrameWriter,
+  rseq: number,
+  baseUs: number,
+  entries: readonly BwInput[],
+): void {
+  const raw = encodeBw(baseUs, entries)
+  w.json({ t: 'bw', v: 1, n: entries.length, rseq } as unknown as EnvelopeRecord)
+  w.raw(raw)
+}
+
 /** Records `[first, first + n)` of the emitter's rseq. */
 export type RseqRange = readonly [first: number, n: number]
 
@@ -456,6 +505,8 @@ export interface BatchV2 {
   readonly timing?: Timing
   /** No scheduled seal since the emitter's previous body found nothing to send. */
   readonly cont?: boolean
+  /** Where the browsing-session id came from; absent for an id the integrator supplied. */
+  readonly ss?: SessionIdSource
 }
 
 /** The batch record's JSON, fields in the order the reference writer puts them. */
@@ -499,6 +550,7 @@ export function batchJson(b: BatchV2): BatchRecord {
     trk: b.trk.map((t) => ({ id: t.id, key: { d: t.key.d, k: t.key.k, v: t.key.v, e: t.key.e } })),
     ...(b.timing === 'group' ? { timing: 'group' as const } : {}),
     ...(b.cont === true ? { cont: true as const } : {}),
+    ...(b.ss !== undefined ? { ss: b.ss } : {}),
   }
 }
 

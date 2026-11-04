@@ -27,7 +27,7 @@ import type { Mono } from '../types.js'
 interface Link {
   readonly id: string
   readonly target: MessageTarget
-  state: 'waiting' | 'linked' | 'timeout' | 'gone'
+  state: 'waiting' | 'linked' | 'timeout' | 'silent' | 'gone'
   port: MessagePort | null
   lastHeard: Mono
   ready: boolean
@@ -127,7 +127,7 @@ class Links implements WorkerLinks {
     return n
   }
 
-  closeForwarded(cause: 'session-end'): void {
+  closeForwarded(cause: 'page-end' | 'stopped'): void {
     for (const l of this._links) this._closeForwarded(l, cause)
   }
 
@@ -183,7 +183,9 @@ class Links implements WorkerLinks {
       link.closed.clear()
       link.ready = false
       link.lastHeard = now
-      if (link.state === 'linked' || link.state === 'timeout') owner.writeLink(link.id, link.state)
+      if (link.state === 'linked' || link.state === 'timeout' || link.state === 'silent') {
+        owner.writeLink(link.id, link.state)
+      }
       try {
         link.port?.postMessage(
           envelope<PageMessage>({
@@ -348,15 +350,23 @@ class Links implements WorkerLinks {
   }
 
   /**
-   * The worker is gone: terminated, or silent past {@link SILENCE_MS}. Its open
-   * connections are reported closed. What it observed after its last forward
-   * is lost, and nothing stands in for it: the runs' counters show the gap.
-   * If it speaks again, it is linked again; what the page closed for it stays
-   * closed.
+   * No message for {@link SILENCE_MS}: stated, and nothing more. Its
+   * connections keep no end; if it speaks again it is linked again.
+   */
+  private _silent(link: Link): void {
+    if (this._owner.ended) return
+    link.state = 'silent'
+    this._owner.writeLink(link.id, 'silent')
+  }
+
+  /**
+   * The page called `terminate()`: its open connections are reported closed.
+   * What it observed after its last forward is lost, and nothing stands in for
+   * it: the runs' counters show the gap.
    */
   private _workerGone(link: Link): void {
     const owner = this._owner
-    if (link.state !== 'linked' || owner.ended) return
+    if ((link.state !== 'linked' && link.state !== 'silent') || owner.ended) return
     link.state = 'gone'
     owner.writeLink(link.id, 'gone')
     this._closeForwarded(link, 'worker-gone')
@@ -365,20 +375,22 @@ class Links implements WorkerLinks {
   }
 
   /** Report a link's open connections closed, from its last forward. */
-  private _closeForwarded(link: Link, cause: 'worker-gone' | 'session-end'): void {
+  private _closeForwarded(link: Link, cause: 'worker-gone' | 'page-end' | 'stopped'): void {
     const owner = this._owner
-    const ts = owner.relNow()
+    const atUs = owner.nowUs()
     const gone: ConnectionState[] = []
     for (const s of link.conns) {
       if (s.conn.state === 'closed') continue
       link.closed.add(s.conn.id)
       gone.push(s.conn)
+      // Recording stopped with the transport open: its end is not known.
+      if (cause === 'stopped') continue
       owner.json({
         t: 'conn-close',
-        ts,
-        lvl: owner.level,
-        conn: s.conn.id,
+        v: 2,
         c: s.conn.c,
+        conn: s.conn.id,
+        at_us: atUs,
         cause,
         counters: s.counters,
       })
@@ -422,7 +434,7 @@ class Links implements WorkerLinks {
       }
       const now = this._host.clock.now()
       for (const l of this._links) {
-        if (l.state === 'linked' && now - l.lastHeard > SILENCE_MS) this._workerGone(l)
+        if (l.state === 'linked' && now - l.lastHeard > SILENCE_MS) this._silent(l)
       }
       this._timer = this._host.timer(run, HEARTBEAT_MS)
     }

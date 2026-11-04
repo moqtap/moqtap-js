@@ -25,7 +25,7 @@
  * prefix of the control plane, and every half it cut is skipped thereafter.
  */
 
-import type { Direction, StreamChunk } from '../types.js'
+import type { Direction, Mono, StreamChunk } from '../types.js'
 
 /** Control bytes held per connection. SETUP and a burst of SUBSCRIBEs fit many times over. */
 export const EARLY_CONTROL_CONNECTION_BYTES = 64 * 1024
@@ -55,7 +55,29 @@ export interface EarlyConnection {
   readonly dataChunks: number
   readonly dataBytes: number
   /** Halves the session must not decode: object streams, and control streams cut short. */
-  readonly skip: Set<string>
+  readonly skip: Set<string> /** Bytes per direction and second of the page's mono clock, and those past the bound. */
+  readonly bw: EarlyBw
+}
+
+export interface EarlyBw {
+  readonly rx: Map<number, number>
+  readonly tx: Map<number, number>
+  preRx: number
+  preTx: number
+}
+
+/** Seconds of early bytes kept per connection and direction; later ones are counted unplaced. */
+export const EARLY_BW_SECONDS = 600
+
+function countBw(bw: EarlyBw, sent: boolean, at: Mono, n: number): void {
+  if (!(n > 0)) return
+  const secs = sent ? bw.tx : bw.rx
+  const i = Math.floor(at / 1000)
+  const had = secs.get(i)
+  if (had !== undefined) secs.set(i, had + n)
+  else if (secs.size < EARLY_BW_SECONDS) secs.set(i, n)
+  else if (sent) bw.preTx += n
+  else bw.preRx += n
 }
 
 interface Held {
@@ -66,6 +88,7 @@ interface Held {
   dataChunks: number
   dataBytes: number
   skip: Set<string>
+  bw: EarlyBw
 }
 
 export class EarlyBuffer {
@@ -83,6 +106,7 @@ export class EarlyBuffer {
     const h = this._held(c.sessionId)
     const half = halfOf(c.streamId, c.direction)
     const n = c.data.byteLength
+    countBw(h.bw, c.direction === 'tx', c.at, n)
     if (!c.control) {
       h.dataChunks += 1
       h.dataBytes += n
@@ -107,11 +131,14 @@ export class EarlyBuffer {
     remember(h.skip, half)
   }
 
-  onDatagram(sessionId: string, bytes: number): void {
+  onDatagram(sessionId: string, bytes: number, sent = false, at: Mono = Number.NaN): void {
     if (this._released) return
     const h = this._held(sessionId)
     h.dataChunks += 1
     h.dataBytes += bytes
+    if (Number.isFinite(at)) countBw(h.bw, sent, at, bytes)
+    else if (sent) h.bw.preTx += bytes
+    else h.bw.preRx += bytes
   }
 
   /** A stream that ended needs no skipping: nothing more of it will arrive. */
@@ -140,6 +167,7 @@ export class EarlyBuffer {
         dataChunks: h.dataChunks,
         dataBytes: h.dataBytes,
         skip: h.skip,
+        bw: h.bw,
       })
     }
     this.release()
@@ -164,6 +192,7 @@ export class EarlyBuffer {
         dataChunks: 0,
         dataBytes: 0,
         skip: new Set(),
+        bw: { rx: new Map(), tx: new Map(), preRx: 0, preTx: 0 },
       }
       this._conns.set(sessionId, h)
     }

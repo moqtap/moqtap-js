@@ -13,11 +13,13 @@ import {
   type MarkInput,
   type RunInput,
   type StreamEndInput,
+  writeBwRecord,
   writeMarkRecord,
   writeRunRecord,
   writeStreamEndRecord,
 } from '../envelope/contract.js'
 import { FrameWriter } from '../envelope/frame-writer.js'
+import type { BwEntry } from '../rollup/bw.js'
 import {
   type RecordedEnd,
   type RecordedMark,
@@ -29,6 +31,7 @@ import {
   type BucketKey,
   bucketKeyString,
   bucketKeyWire,
+  type SessionIdSource,
   type SupportedDraft,
   type Timing,
 } from '../types.js'
@@ -82,6 +85,13 @@ export class Emitter {
   private readonly _connIds = new Map<string, number>()
   /** The timing ingest last stated, kept across the page's sessions. */
   directedTiming: Timing | undefined
+  /**
+   * The tab's browsing-session id and where it came from, once the page
+   * load's first session began on it. `fixed` once an id was chosen any other
+   * way, so storage is not read for this page load.
+   */
+  tab: { readonly id: string; readonly ss: SessionIdSource } | undefined
+  tabFixed = false
 
   constructor(instanceId: string, startUs: number, clock: ClockSync = new ClockSync()) {
     this.instanceId = instanceId
@@ -420,6 +430,25 @@ export function encodeFacts(
       part.map((x) => endInput(x, e.trackId(x.key, ti), c)),
     ),
   )
+  const bw = t.bw ?? []
+  for (let i = 0; i < bw.length; ) {
+    // A record names no more connections than a body lists.
+    const c = new Set<number>()
+    let j = i
+    for (; j < bw.length; j++) {
+      const x = (bw[j] as BwEntry).c
+      if (!c.has(x) && c.size === MAX_BODY_CONNS) break
+      c.add(x)
+    }
+    const part = bw.slice(i, j)
+    i = j
+    if (!room([], c)) full()
+    const w = new FrameWriter({ initialBytes: 64 })
+    const rseq = e.takeRseq()
+    writeBwRecord(w, rseq, RECORD_BASE_US, part)
+    const count = w.frameCount
+    put({ frames: w.take(), count, records: [{ rseq, refs: { ti: new Set(), c } }] })
+  }
 }
 
 function runInput(r: RecordedRun, ti: number, conns: Set<number>): RunInput {

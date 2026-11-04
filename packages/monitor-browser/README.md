@@ -68,7 +68,7 @@ runtime chunk loading.
 | Key              | What it controls                                                                |
 | ---------------- | ------------------------------------------------------------------------------- |
 | `endpoint`       | Where uploads go. Defaults to the hosted ingest.                                |
-| `sessionId`      | Your own id for the first session, up to 128 UTF-8 bytes; else minted           |
+| `sessionId`      | Your own id for the first session, up to 128 UTF-8 bytes; else the tab's        |
 | `context`        | `actorId`, `contentId`, `environment`, `release`, `tags`                        |
 | `detail`         | `baseline`, `headers`, `headers+sizes` or `headers+data`                        |
 | `metrics`        | How often the rollup closes, how many tracks it follows                         |
@@ -150,28 +150,31 @@ recorded as an escalation with `by.kind: 'hold'`.
 
 ## Sessions, instances and connections
 
-- **Session**: the WebTransport activity of one page and its linked workers:
-  every connection they open, to any relay or path, at once or in turn. It
-  begins when a `WebTransport` is constructed, in the page or in a linked
-  worker, whether or not it connects. It ends when the page closes, or when
-  you call `end()` or `newSession()`, however long the page goes without a
-  connection. After `newSession()`, the next `WebTransport` begins a new
-  session, with a new session id and the context so far.
-- **Instance**: one page load's recording, from `init()` on. Every session the
-  page records has the same instance id. A reload is a new instance, and a
-  reload that passes the same `sessionId` is a second instance of that session.
+- **Session**: the WebTransport activity of one browser tab and its linked
+  workers: every connection the tab opens, in every page load, to any relay or
+  path, at once or in turn. It begins with the first `WebTransport`
+  constructed, whether or not it connects. Unless you pass a `sessionId`, its
+  id is kept in the tab's `sessionStorage` (`moqtap:session`), read and
+  written only when that first `WebTransport` is constructed, so a reload
+  continues it however long the tab goes without a connection; where
+  `sessionStorage` can't be used, it is that page load alone. After
+  `newSession()`, the next `WebTransport` begins a new session in this page
+  load, with a new session id and the context so far.
+- **Instance**: one page load's recording, from `init()` on. A reload is a new
+  instance of the same session.
 - **Connection**: one WebTransport, in the page or in a linked worker. A
   connection that fails to open is still reported, in the session its attempt
-  began or joined.
+  began or joined. Its end is reported only when it is known.
 
 A page that never constructs a `WebTransport` has no session: it records,
 stores and uploads nothing, and does not count toward the month's sessions.
 Every session that begins does, including one whose only connection failed to
 open.
 
-Before a session begins, `ids()` already answers with the ids it will be
-uploaded under, and context passed to `init()` or `setContext()` is sent with
-it. Annotations, metric samples and `escalate()` calls made before then are
+Before a session begins, `ids()` answers with the instance id and a session
+id for this page load; when the session begins in a tab with a stored session
+id, `ids()` returns that one from then on. Context passed to `init()` or
+`setContext()` is sent with the session. Annotations, metric samples and `escalate()` calls made before then are
 not recorded; metric definitions are kept. A capture window still open when
 a session ends closes with it, and the next session starts at `detail`, or
 at `baseline` while detail is held.
@@ -183,10 +186,10 @@ Without any call, the collector:
 | a `WebTransport` is constructed        | begins a session, unless one is running                    |
 | a connection closes                    | records why, and uploads that connection's records         |
 | the page is hidden                     | uploads what it holds                                      |
-| the page closes                        | ends the session and uploads the rest                      |
+| the page closes                        | ends the page load's recording and uploads the rest        |
 | the page enters the back/forward cache | uploads what it holds; the session goes on if restored     |
 | an upload fails                        | retries it                                                 |
-| the page closes with an upload unsent  | sends it with the next session on the same origin          |
+| the page closes with an upload unsent  | sends it from the next page load on the same origin        |
 | a linked worker is terminated          | records its connections closed, with what it last reported |
 
 A tab killed with no `pagehide` while visible loses at most the last 60 s.
@@ -221,16 +224,17 @@ vitals.setContext({
   tags: { cdn: 'edge-2' },
 })
 // Or one session per playback: ends this one and returns the new ids. With no
-// connection open, the new session begins with the next WebTransport.
+// connection open, the new session begins with the next WebTransport. It
+// covers this page load only: a reload continues the tab's stored session.
 vitals.newSession({ contentId: 'vod/episode-2' })
 
 await vitals.flush() // upload everything recorded so far; ends nothing
-await vitals.end() // end the session, upload everything, restore WebTransport
+await vitals.end() // end this page load's recording, upload everything, restore WebTransport
 await vitals.discard() // delete everything unsent and send nothing more
 ```
 
 You need `end()` only when you stop collecting for good while the page stays
-open; closing the page ends the session. A native shell that kills its webview
+open; closing the page ends its recording. A native shell that kills its webview
 without `pagehide` should `await vitals.flush()` first.
 
 `discard()` is the one to call when the reason you are stopping is that you no

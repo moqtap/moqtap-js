@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** a session is the tab's: its id is kept in `sessionStorage`
+  (`moqtap:session`) unless you pass `sessionId`, so a reload continues it,
+  and each body states where the id came from (`ss`). The storage is read
+  only when the first `WebTransport` begins the session, so `ids()` before
+  then returns a session id for this page load, which the tab's stored id
+  replaces at the begin. `conn-open` and
+  `conn-close` move to `v: 2`, with device times (`at_us`, `ready_us`), no
+  `relay`, `origin` or `lvl`, and `contentId` as `content`. `ConnCloseCause`
+  replaces `session-end` with `page-end`, and `end()`, `discard()` or an
+  overrun write no close for a connection still open. A worker silent for
+  10 s is reported `silent` and no end is reported for its connections;
+  only `terminate()` reports them `worker-gone`.
 - **Breaking:** a session no longer ends 30 s after its last connection
   closes. It is every connection the page opens, at once or in turn, until
   the page closes, `end()` or `newSession()`, and `EndRecord['reason']` loses
@@ -37,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A `bw` record: each connection's bytes received and sent per second,
+  including those before `init()`.
 - Draft-23, with the `@moqtap/monitor-browser/draft23` entry and its `/thin`,
   `/worker`, `/thin/worker` and `/decoder` variants.
 - The `rng_gone` mark, for a FETCH End of Gone Range (draft-23).
