@@ -39,8 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `first`, and `BatchRecord.conn[].draft` is optional.
 - Requires `@moqtap/codec` 0.15.0.
 - An upload names each connection's relay by the URL's scheme, host, port
-  and normalised path, so latency is matched per relay path; the query,
-  fragment and userinfo are still dropped.
+  and path, the path exactly as the connection sends it (an empty `https`
+  path is `/`), so latency is matched per relay path; the query, fragment
+  and userinfo are still dropped.
 - Insight may ask for an upload interval of up to 60 s, up from 10 s, and
   never longer than `upload.intervalMs`.
 - The batch record's `cont` is set when no upload fell due since the

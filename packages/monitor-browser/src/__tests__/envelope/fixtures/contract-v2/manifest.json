@@ -59,7 +59,7 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
@@ -244,17 +244,17 @@
               {
                 "c": 0,
                 "draft": 8,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               },
               {
                 "c": 1,
                 "draft": 14,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               },
               {
                 "c": 2,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
@@ -571,7 +571,7 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
@@ -687,17 +687,17 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               },
               {
                 "c": 1,
                 "draft": 14,
-                "relay": "https://relay-b.example.net"
+                "relay": "https://relay-b.example.net/"
               },
               {
                 "c": 2,
                 "draft": 22,
-                "relay": "https://relay-c.example.net"
+                "relay": "https://relay-c.example.net/"
               }
             ],
             "timing": "object",
@@ -903,7 +903,7 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
@@ -1043,17 +1043,17 @@
               {
                 "c": 0,
                 "draft": 22,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               },
               {
                 "c": 1,
                 "draft": 8,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               },
               {
                 "c": 2,
                 "draft": 7,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
@@ -1271,7 +1271,7 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
@@ -1387,12 +1387,12 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               },
               {
                 "c": 1,
                 "draft": 23,
-                "relay": "https://relay-b.example.net"
+                "relay": "https://relay-b.example.net/"
               }
             ],
             "timing": "object",
@@ -1562,7 +1562,7 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
@@ -1671,12 +1671,12 @@
               {
                 "c": 0,
                 "draft": null,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               },
               {
                 "c": 1,
                 "draft": 14,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
@@ -2127,7 +2127,7 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "group",
@@ -2312,7 +2312,7 @@
               {
                 "c": 0,
                 "draft": 20,
-                "relay": "https://relay-a.example.net"
+                "relay": "https://relay-a.example.net/"
               }
             ],
             "timing": "object",
