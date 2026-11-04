@@ -47,7 +47,7 @@ const base = (over: Partial<CollectorConfig> = {}): CollectorConfig => ({
 })
 
 /** The largest body the tests let a seal produce. */
-const MAX_BODY_BYTES = 48 * 1024
+const MAX_BODY_BYTES = 56 * 1024
 
 /** A merge of eight thresholds and the step that overruns it, the longest compression the packer runs. */
 const LONGEST_GZIP = 8.5 * 32 * 1024 + 1024
@@ -435,7 +435,7 @@ describe('upload rate while detail is raised', () => {
           const [batch] = of(await allRecords([{ url: '', body: b }]), 'batch')
           if (!uploaded.has(batch?.seq ?? -1)) sealed += 1
         }
-        expect(sealed, `${seconds} s`).toBeLessThanOrEqual(2)
+        expect(sealed, `${seconds} s`).toBeLessThanOrEqual(3)
         expect(of(run.records, 'hdr'), `${seconds} s`).toHaveLength(seconds * (video + audio))
         expect(of(run.records, 'end')).toHaveLength(1)
       }

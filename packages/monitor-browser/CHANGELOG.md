@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** at `object` timing a run states each object's start, last
+  payload byte and payload size, in place of the run's byte count and last
+  payload byte; at `group` timing it carries those two as before. Objects
+  the page sends are recorded as runs too, under their sent track key, and
+  are not counted in a body's received totals.
 - **Breaking:** a session is the tab's: its id is kept in `sessionStorage`
   (`moqtap:session`) unless you pass `sessionId`, so a reload continues it,
   and each body states where the id came from (`ss`). The storage is read
@@ -67,8 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   range begins at the request's start.
 - `MQ1115`: an `actorId`, `contentId`, `environment` or `release` longer than
   256 characters is left out.
-- `upload.timing`: `'object'` (the default) or `'group'`, one time per run of
-  objects, which Insight may also ask for. `MQ1116` reports any other value.
+- `upload.timing`: `'object'` (the default) or `'group'`, one time and one
+  byte count per run of objects, which Insight may also ask for. `MQ1116` reports any other value.
 
 ### Fixed
 

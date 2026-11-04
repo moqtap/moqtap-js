@@ -47,8 +47,27 @@ describe('stream runs', () => {
     expect(run!.ids).toBeNull()
     expect(run!.times).toEqual([100_000, 133_000, 166_000, 199_000])
     expect(run!.tl).toBe(300_000)
+    expect(run!.ends).toEqual([100_000, 133_000, 166_000, 300_000])
+    expect(run!.sizes).toEqual([10, 10, 10, 10])
     expect(run!.b).toBe(40)
     expect(run!.end).toBe('fin')
+  })
+
+  it('ends each object at its last payload byte', () => {
+    const r = new RunRecorder(0)
+    r.onObject(0, obj(7n, 0n, 1, { payloadBytes: 5_000 }))
+    r.onPayload(0, 3, 2)
+    r.onPayload(0, 3, 4)
+    r.onObject(0, obj(7n, 1n, 5, { payloadBytes: 0 }))
+    r.onObject(0, obj(7n, 2n, 6, { payloadBytes: 300 }))
+    r.onPayload(0, 3, 7)
+    const [run] = r.take().runs
+    expect([run!.times, run!.ends, run!.sizes, run!.tl]).toEqual([
+      [1_000, 5_000, 6_000],
+      [4_000, 5_000, 7_000],
+      [5_000, 0, 300],
+      7_000,
+    ])
   })
 
   it('takes FIRST_OBJECT on the stream’s first run only, and EOG at FIN only', () => {
@@ -108,10 +127,16 @@ describe('stream runs', () => {
     expect(r.droppedObjects).toBe(0)
   })
 
-  it('records receive tracks only', () => {
+  it('records the objects the page sends too, apart from the received counters', () => {
     const r = new RunRecorder(0)
-    r.onObject(0, obj(1n, 0n, 1, { key: { ...ALIAS, dir: 'tx' } }))
-    expect(r.take().runs).toEqual([])
+    const tx = { ...ALIAS, dir: 'tx' as const }
+    r.onObject(0, obj(1n, 0n, 1, { key: tx, streamId: 2 }))
+    r.onObject(0, obj(1n, 1n, 2, { key: tx, streamId: 2 }))
+    r.onPayload(0, 2, 3)
+    r.onStreamEnd(0, 2, 'fin', undefined, 4)
+    const [run] = r.take().runs
+    expect(run).toMatchObject({ key: tx, n: 2, b: 20, end: 'fin', ends: [1_000, 3_000] })
+    expect(r.counters()).toEqual([])
   })
 })
 
@@ -229,11 +254,11 @@ describe('a stream that carried no object', () => {
     ])
   })
 
-  it('records a send stream’s header not at all', () => {
+  it('records a send stream’s end as it records a receive stream’s', () => {
     const r = new RunRecorder(0)
     r.onStreamHeader(0, { ...header('sub_stream', 1n), key: { ...ALIAS, dir: 'tx' } })
-    r.onStreamEnd(0, 3, 'fin', undefined, 5)
-    expect(r.take().ends).toEqual([])
+    expect(r.onStreamEnd(0, 3, 'fin', undefined, 5)).toBeUndefined()
+    expect(r.take().ends).toMatchObject([{ c: 0, sid: 3, end: 'fin', g: 1n }])
   })
 })
 

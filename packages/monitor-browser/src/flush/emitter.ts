@@ -258,6 +258,7 @@ export class Emitter {
   /** Objects and payload bytes per connection, cumulative over the emitter. */
   noteTotals(runs: readonly RecordedRun[]): void {
     for (const r of runs) {
+      if (r.key.dir !== 'rx') continue
       const t = this._totals.get(r.c)
       if (t === undefined) this._totals.set(r.c, [r.n, r.b])
       else {
@@ -447,6 +448,8 @@ function runInput(r: RecordedRun, ti: number, conns: Set<number>): RunInput {
     ids: runIds(r),
     ...(r.osub !== null ? { osub: r.osub } : {}),
     timesUs: r.times,
+    endsUs: r.ends,
+    sizes: r.sizes,
     tlUs: r.tl,
     b: r.b,
     cont: r.cont,

@@ -1,5 +1,6 @@
 /**
- * The run recorder: every arriving object, unsampled, as runs.
+ * The run recorder: every object the page receives or sends, unsampled, as
+ * runs, each object with its start, its last payload byte and its size.
  *
  * A flow is `(connection, stream, group)` for a stream, since a FETCH or fill
  * stream carries several groups, and `(connection, track, group)` for
@@ -49,7 +50,12 @@ export interface RecordedRun {
   last: bigint
   /** Fetch paths: each object's subgroup. */
   readonly osub: (bigint | null)[] | null
+  /** Each object's start: its header's last byte. */
   readonly times: number[]
+  /** Each object's last payload byte. */
+  readonly ends: number[]
+  /** Each object's payload bytes. */
+  readonly sizes: number[]
   b: number
   tl: number
   cont: boolean
@@ -198,7 +204,7 @@ export class RunRecorder {
     return this.open
   }
 
-  /** Cumulative objects and payload bytes per connection ordinal. */
+  /** Cumulative received objects and payload bytes per connection ordinal. */
   counters(): readonly (readonly [c: number, objects: number, bytes: number])[] {
     const out: [number, number, number][] = []
     for (const [c, t] of this.totals) out.push([c, t.objects, t.bytes])
@@ -207,7 +213,6 @@ export class RunRecorder {
 
   /** A data stream's header, before any object on it. */
   onStreamHeader(c: number, h: StreamHeaderSample): void {
-    if (h.key.dir !== 'rx') return
     const f = this.flow(c, h.streamId, h.key, h.path)
     f.headerG = h.groupId
     f.eog = h.eog
@@ -215,23 +220,27 @@ export class RunRecorder {
 
   /** One Normal object. Status objects go to {@link onMark}. */
   onObject(c: number, s: ObjectSample): void {
-    if (s.key.dir !== 'rx' || s.status !== undefined) return
+    if (s.status !== undefined) return
     const t = (s.at - this.origin) * 1000
-    let total = this.totals.get(c)
-    if (total === undefined) {
-      total = { objects: 0, bytes: 0 }
-      this.totals.set(c, total)
+    if (s.key.dir === 'rx') {
+      let total = this.totals.get(c)
+      if (total === undefined) {
+        total = { objects: 0, bytes: 0 }
+        this.totals.set(c, total)
+      }
+      total.objects += 1
+      total.bytes += s.payloadBytes
     }
-    total.objects += 1
-    total.bytes += s.payloadBytes
     if (s.streamId === undefined) this.datagram(c, s, t)
     else this.stream(c, s.streamId, s, t)
   }
 
-  /** More of the open run's last payload arrived on the stream. */
+  /** More of the open run's last object's payload crossed the stream. */
   onPayload(c: number, sid: number, at: Mono): void {
     const run = this.streams.get(c)?.get(sid)?.run
-    if (run != null) run.tl = (at - this.origin) * 1000
+    if (run == null) return
+    run.tl = (at - this.origin) * 1000
+    run.ends[run.n - 1] = run.tl
   }
 
   /**
@@ -272,7 +281,7 @@ export class RunRecorder {
     }
     flows!.delete(sid)
     if (flows!.size === 0) this.streams.delete(c)
-    if (end !== 'fin' || !f.eog || f.path !== 'sub_stream') return undefined
+    if (end !== 'fin' || !f.eog || f.path !== 'sub_stream' || f.key.dir !== 'rx') return undefined
     const g = f.seen ? f.lastGroup : f.headerG
     return g === null ? undefined : { key: f.key, g }
   }
@@ -515,6 +524,8 @@ export class RunRecorder {
         last: s.objectId,
         osub: fetch ? [s.sub] : null,
         times: [t],
+        ends: [t],
+        sizes: [s.payloadBytes],
         b: s.payloadBytes,
         tl: t,
         cont,
@@ -558,6 +569,8 @@ export class RunRecorder {
         last: s.objectId,
         osub: null,
         times: [t],
+        ends: [t],
+        sizes: [s.payloadBytes],
         b: s.payloadBytes,
         tl: t,
         cont: this.sealedDatagrams.has(flow),
@@ -590,6 +603,8 @@ function append(run: RecordedRun, id: bigint, t: number, bytes: number): void {
   run.n += 1
   run.last = id
   run.times.push(t)
+  run.ends.push(t)
+  run.sizes.push(bytes)
   run.b += bytes
   run.tl = t
 }
@@ -626,6 +641,8 @@ function join(prior: RecordedRun, next: RecordedRun): void {
   prior.last = next.last
   if (prior.osub !== null && next.osub !== null) for (const s of next.osub) prior.osub.push(s)
   for (const t of next.times) prior.times.push(t)
+  for (const t of next.ends) prior.ends.push(t)
+  for (const s of next.sizes) prior.sizes.push(s)
   prior.b += next.b
   prior.tl = next.tl
   prior.eog ||= next.eog

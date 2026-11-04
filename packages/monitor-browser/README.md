@@ -94,8 +94,9 @@ By default a session uploads when it is ready, 45 s later, then every 60 s or
 once 32 KB is waiting, whichever comes first. While detail is raised, the 32 KB
 is counted compressed, and an upload holds at most 64 times that uncompressed.
 `upload.earlyFlushesMs`, `upload.intervalMs` and `upload.byteThreshold` set
-those. Each object's arrival time is sent; `upload.timing: 'group'` sends one
-time per run of objects instead, and Insight may ask for that too.
+those. Each object's start, end and size are sent; `upload.timing: 'group'`
+sends one time and one byte count per run of objects instead, and Insight may
+ask for that too.
 
 The flight recorder uses memory (`depth`, 32 MB by default) only when a trigger
 is set, in each page or worker that opens a WebTransport. A page that only

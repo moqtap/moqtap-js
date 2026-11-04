@@ -24,6 +24,10 @@ export interface DecodedRun {
   readonly osub: (bigint | null)[] | null
   readonly t0Us: number
   readonly dt: number[]
+  /** Each object's last payload byte from its start, in 100 µs; none at `group` timing. */
+  readonly de: number[]
+  /** Each object's payload bytes; none at `group` timing. */
+  readonly os: number[]
   readonly b: number
   readonly rc: bigint | null
   readonly tl: number
@@ -95,7 +99,7 @@ class Reader {
 const isFetch = (p: string) =>
   p === 'fetch' || p === 'fetch_joining' || p === 'fill' || p === 'fetch_unseen'
 
-/** At `group` timing a run carries no `dt`. */
+/** At `group` timing a run carries no `dt`, `de` or `os`, only `b` and `tl`. */
 export function decodeRuns(
   raw: Uint8Array,
   n: number,
@@ -139,11 +143,24 @@ export function decodeRuns(
     const t0Us = lastT0 + rd.t()
     lastT0 = t0Us
     const dt: number[] = []
-    for (let i = 1; i < count && timing === 'object'; i++) dt.push(rd.t())
-    const b = rd.u()
+    const de: number[] = []
+    const os: number[] = []
+    let b = 0
+    let last = 0
+    if (timing === 'object') {
+      for (let i = 1; i < count; i++) dt.push(rd.t())
+      let q = 0
+      for (let i = 0; i < count; i++) {
+        if (i > 0) q += dt[i - 1]!
+        de.push(rd.t())
+        last = q + de[i]!
+      }
+      for (let i = 0; i < count; i++) os.push(rd.u())
+      b = os.reduce((x, y) => x + y, 0)
+    } else b = rd.u()
     const end = RUN_ENDS[(fl >> 5) & 3]!
     const rc = end === 'reset' ? rd.big() : null
-    const tl = rd.t()
+    const tl = timing === 'object' ? last : rd.t()
     out.push({
       cont: (fl & 0x01) !== 0,
       fo: (fl & 0x04) !== 0,
@@ -160,6 +177,8 @@ export function decodeRuns(
       osub,
       t0Us,
       dt,
+      de,
+      os,
       b,
       rc,
       tl,

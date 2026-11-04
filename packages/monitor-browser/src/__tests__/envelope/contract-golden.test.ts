@@ -92,7 +92,7 @@ function build(p: Spec): Uint8Array {
     const rseq = first + i
     if (r.kind === 'run') {
       frames.json({ t: 'run', v: 2, n: r.runs.length, rseq } as unknown as EnvelopeRecord)
-      frames.raw(encodeRuns(BASE, r.runs, p.timing))
+      frames.raw(encodeRuns(BASE, r.runs.map(withSizes), p.timing))
     } else if (r.kind === 'mark') {
       frames.json({ t: 'mark', v: 1, n: r.marks.length, rseq } as unknown as EnvelopeRecord)
       frames.raw(encodeMarks(BASE, r.marks))
@@ -127,6 +127,20 @@ function build(p: Spec): Uint8Array {
   return contractBody(preamble, frames.take(), false)
 }
 
+/** A golden run that states no sizes splits `b` evenly over its objects, the remainder on the last. */
+function withSizes(r: RunInput): RunInput {
+  if (r.sizes !== undefined) return r
+  const n = r.ids.length
+  const each = Math.floor(r.b / n)
+  return {
+    ...r,
+    sizes: Array.from({ length: n }, (_, i) => (i < n - 1 ? each : r.b - (n - 1) * each)),
+  }
+}
+
+/** The payload bytes of the `basic` video run's eight objects, 41,210 in all. */
+const VIDEO_SIZES = [12_000, 4_100, 4_000, 4_100, 4_300, 4_210, 4_300, 4_200]
+
 const ids = (from: bigint, n: number) => Array.from({ length: n }, (_, i) => from + BigInt(i))
 const times = (t0: number, step: number, n: number) =>
   Array.from({ length: n }, (_, i) => t0 + i * step)
@@ -160,6 +174,8 @@ const SPECS: Record<string, Spec> = {
             sid: 3n,
             ids: ids(0n, 8),
             timesUs: times(BASE + 45_100.2, 33_333.3, 8),
+            endsUs: times(BASE + 45_970.2, 33_333.3, 8),
+            sizes: VIDEO_SIZES,
             tlUs: BASE + 45_100.2 + 7 * 33_333.3 + 870,
             b: 41_210,
             fo: true,
@@ -647,6 +663,46 @@ SPECS['bw-seconds'] = {
 }
 
 const json = (j: Record<string, unknown>): Record_ => ({ kind: 'json', json: j, raw: [] })
+
+SPECS['sent-objects'] = {
+  conn: [VCONN],
+  trk: [alias(0, '1'), { id: 1, key: { d: 'tx', k: 'alias', v: '4', e: 0 } }],
+  records: [
+    {
+      kind: 'run',
+      runs: [
+        {
+          c: 0,
+          ti: 1,
+          g: 7n,
+          path: 'sub_stream',
+          sub: 0n,
+          sid: 2n,
+          ids: ids(0n, 3),
+          timesUs: times(BASE + 10_000, 33_333, 3),
+          endsUs: [BASE + 14_000, BASE + 43_400, BASE + 76_733],
+          sizes: [9_000, 1_500, 0],
+          b: 10_500,
+          end: 'fin',
+        },
+        {
+          c: 0,
+          ti: 0,
+          g: 40n,
+          path: 'sub_stream',
+          sub: 0n,
+          sid: 3n,
+          ids: ids(0n, 2),
+          timesUs: [BASE + 20_000, BASE + 40_000],
+          endsUs: [BASE + 20_000, BASE + 41_250.5],
+          sizes: [180, 2_400],
+          b: 2_580,
+          end: 'open',
+        },
+      ],
+    },
+  ],
+}
 
 SPECS['conn-ends'] = {
   conn: [

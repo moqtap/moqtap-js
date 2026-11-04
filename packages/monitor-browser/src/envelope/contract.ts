@@ -4,7 +4,7 @@
  * a JSON frame, gzipped or not. A `run` or `mark` record is one JSON
  * descriptor followed by one raw frame of LEB128 columns:
  *
- *     run         fl c ti g path [sk [sub]] [sid] o0 n [oid…] [osub…] t0 [dt…] b [rc] tl
+ *     run         fl c ti g path [sk [sub]] [sid] o0 n [oid…] [osub…] t0 [dt…] (de… os… | b) [rc] [tl]
  *     mark        kind c ti g o [g2 o2] [n] t path [sid]
  *     stream-end  fl c ti path sid [g [o]] t [rc]
  *
@@ -12,7 +12,9 @@
  * first from 0), `sid` a `z` delta from the previous stream run's (the first
  * from 0), and `t0`/`t` a `t` delta from the previous entry's (the first from
  * the body's `clk.base_us`). A stream end's `sid` is absolute. Every time is
- * device mono µs, floored. A body at `group` timing writes no `dt`.
+ * device mono µs, floored. At `object` timing a run states each object's
+ * start (`t0`, `dt`), end (`de`) and size (`os`); at `group` timing its first
+ * start, its bytes `b` and its last payload byte `tl`.
  */
 
 import type { BatchRecord, EnvelopeRecord, SessionIdSource, Timing } from '../types.js'
@@ -57,7 +59,7 @@ const FL_FO_KNOWN = 0x08
 const FL_EOG = 0x10
 const FL_END_SHIFT = 5
 
-/** Time quantum of `dt` and `tl`, µs. */
+/** Time quantum of `dt`, `de` and `tl`, µs. */
 export const DT_QUANTUM_US = 100
 
 const INT32_MIN = -(2 ** 31)
@@ -90,8 +92,12 @@ export interface RunInput {
   readonly ids: readonly bigint[]
   /** Fetch paths: each object's subgroup, null when datagram-flagged. */
   readonly osub?: readonly (bigint | null)[]
-  /** Each object's time, device mono µs. */
+  /** Each object's start, device mono µs. */
   readonly timesUs: readonly number[]
+  /** Each object's last payload byte, device mono µs. Default: each its start, the last `tlUs`. */
+  readonly endsUs?: readonly number[]
+  /** Each object's payload bytes, summing to `b`; may be absent for one object. */
+  readonly sizes?: readonly number[]
   /** Payload bytes of the run. */
   readonly b: number
   /** The reset code, when `end` is `reset`. */
@@ -202,15 +208,31 @@ export function encodeRuns(
     const t0 = Math.floor(r.timesUs[0] as number)
     w.t(t0 - lastT0)
     lastT0 = t0
-    let q = 0
-    for (let i = 1; i < n && timing === 'object'; i++) {
-      const qi = quantum(Math.floor(r.timesUs[i] as number), t0)
-      w.t(qi - q)
-      q = qi
-    }
-    w.u(r.b)
+    const tl = r.tlUs ?? (r.timesUs[n - 1] as number)
+    if (timing === 'object') {
+      // Each object's start, end and size; the run's b and tl are their sum and last end.
+      const qs = r.timesUs.map((t) => quantum(Math.floor(t), t0))
+      for (let i = 1; i < n; i++) w.t((qs[i] as number) - (qs[i - 1] as number))
+      if (r.endsUs !== undefined && r.endsUs.length !== n) {
+        throw new RangeError('a run needs an end per object')
+      }
+      for (let i = 0; i < n; i++) {
+        const e = r.endsUs?.[i] ?? (i === n - 1 ? tl : (r.timesUs[i] as number))
+        w.t(quantum(Math.floor(e), t0) - (qs[i] as number))
+      }
+      const sizes = r.sizes ?? (n === 1 ? [r.b] : null)
+      if (sizes === null || sizes.length !== n) {
+        throw new RangeError('a run at object timing needs each object size')
+      }
+      let sum = 0
+      for (const s of sizes) {
+        w.u(s)
+        sum += s
+      }
+      if (sum !== r.b) throw new RangeError('object sizes do not sum to b')
+    } else w.u(r.b)
     if (end === 'reset') w.u(r.rc ?? 0n)
-    w.t(quantum(Math.floor(r.tlUs ?? (r.timesUs[n - 1] as number)), t0))
+    if (timing === 'group') w.t(quantum(Math.floor(tl), t0))
   }
   return w.bytes()
 }

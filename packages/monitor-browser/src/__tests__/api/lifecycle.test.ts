@@ -1151,6 +1151,8 @@ describe('a linked worker that falls silent', () => {
         last: from + BigInt(n - 1),
         osub: null,
         times: Array.from({ length: n }, (_, i) => 1_000 * (Number(from) + i)),
+        ends: Array.from({ length: n }, (_, i) => 1_000 * (Number(from) + i + 1)),
+        sizes: Array.from({ length: n }, () => 10),
         b: 10 * n,
         tl: 1_000 * (Number(from) + n),
         cont,

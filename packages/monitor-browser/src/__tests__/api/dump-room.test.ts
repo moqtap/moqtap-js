@@ -104,7 +104,7 @@ describe('a flight dump larger than the outbox has room for', () => {
 
     // Enough objects for a dump of every slice a dump may have.
     const uni = wt.incomingUnidirectionalStreams.getReader()
-    const objects = Array.from({ length: 24_000 }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
+    const objects = Array.from({ length: 8_000 }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
     wt.deliverUniStream([subgroupBytes({ alias: 4n, group: 0n, objects })]).close()
     const reader = ((await uni.read()).value as ReadableStream<Uint8Array>).getReader()
     for (;;) if ((await reader.read()).done) break
@@ -194,7 +194,7 @@ describe('a flight dump larger than the store has room for', () => {
     await settle(5)
 
     const uni = wt.incomingUnidirectionalStreams.getReader()
-    const objects = Array.from({ length: 24_000 }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
+    const objects = Array.from({ length: 8_000 }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
     wt.deliverUniStream([subgroupBytes({ alias: 4n, group: 0n, objects })]).close()
     const reader = ((await uni.read()).value as ReadableStream<Uint8Array>).getReader()
     for (;;) if ((await reader.read()).done) break
@@ -301,7 +301,7 @@ describe("a linked worker's flight dump larger than the outbox has room for", ()
     await wt.open('moqt-20')
     await settle(5)
     const uni = wt.incomingUnidirectionalStreams.getReader()
-    const objects = Array.from({ length: 24_000 }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
+    const objects = Array.from({ length: 8_000 }, (_, i) => ({ id: BigInt(i), bytes: 1 }))
     wt.deliverUniStream([subgroupBytes({ alias: 4n, group: 0n, objects })]).close()
     const reader = ((await uni.read()).value as ReadableStream<Uint8Array>).getReader()
     for (;;) if ((await reader.read()).done) break
