@@ -1768,6 +1768,308 @@
       }
     },
     {
+      "name": "bw-seconds",
+      "note": "Bytes per connection, direction and device second: received and sent on two connections, a second at the seal's edge, and a pre total of bytes before init() that no second places. The id was read from the tab's storage.",
+      "file": "bw-seconds.bin",
+      "bodyBytes": 778,
+      "expect": {
+        "ok": true
+      },
+      "read": {
+        "ok": true,
+        "body": {
+          "side": "viewer",
+          "preamble": {
+            "v": 2,
+            "i": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "em": [
+              {
+                "first": 0,
+                "n": 1
+              }
+            ],
+            "seal": {
+              "seq": 0,
+              "fromUs": 7200000000,
+              "throughUs": 7215000000,
+              "ms": 15000
+            }
+          },
+          "batch": {
+            "v": 2,
+            "instanceId": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "seq": 0,
+            "idempotencyKey": "f3382ccd1be03893c514d90799d5f2ebd777b4ca76de3692c639a9c3ba3335c0",
+            "final": false,
+            "clk": {
+              "baseUs": 7200000000,
+              "epoch": 0,
+              "resUs": 5,
+              "sample": {
+                "oUs": 1761688800041500,
+                "rUs": 18250,
+                "atUs": 7198000000,
+                "pop": "LHR"
+              },
+              "app": null
+            },
+            "tail": {
+              "lastRseq": 0,
+              "preDrop": {
+                "records": 0,
+                "objects": 0
+              },
+              "conn": []
+            },
+            "conns": [
+              {
+                "c": 0,
+                "draft": 20,
+                "relay": "https://relay-a.example.net/"
+              },
+              {
+                "c": 1,
+                "draft": 20,
+                "relay": "https://relay-b.example.net/moq"
+              }
+            ],
+            "timing": "object",
+            "t": "batch",
+            "sessionId": "sess_8c41f2d0",
+            "lvl": "baseline",
+            "tracks": [],
+            "cont": false,
+            "ss": "stored"
+          },
+          "runs": [],
+          "marks": [],
+          "records": [],
+          "idents": [],
+          "streamEnds": [],
+          "bw": [
+            {
+              "rseq": 0,
+              "entries": [
+                {
+                  "c": 0,
+                  "sent": false,
+                  "pre": 2048,
+                  "secs": [[7200, 1200], [7201, 5400], [7204, 300]]
+                },
+                {
+                  "c": 0,
+                  "sent": true,
+                  "pre": 0,
+                  "secs": [[7200, 64]]
+                },
+                {
+                  "c": 1,
+                  "sent": false,
+                  "pre": 0,
+                  "secs": [[7203, 900], [7214, 10]]
+                }
+              ]
+            }
+          ],
+          "connOpens": [],
+          "connCloses": []
+        }
+      }
+    },
+    {
+      "name": "conn-ends",
+      "note": "v2 conn-open and conn-close with device times, one per cause: closed by the relay with its code and reason, failed before it was ready, the page ending, and a terminated worker. The id was minted and written.",
+      "file": "conn-ends.bin",
+      "bodyBytes": 1859,
+      "expect": {
+        "ok": true
+      },
+      "read": {
+        "ok": true,
+        "body": {
+          "side": "viewer",
+          "preamble": {
+            "v": 2,
+            "i": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "em": [
+              {
+                "first": 0,
+                "n": 8
+              }
+            ],
+            "seal": {
+              "seq": 0,
+              "fromUs": 7200000000,
+              "throughUs": 7215000000,
+              "ms": 15000
+            }
+          },
+          "batch": {
+            "v": 2,
+            "instanceId": "0b6f9d2e-41a7-4c3e-9f58-2d7c1e6a0b93",
+            "seq": 0,
+            "idempotencyKey": "f3382ccd1be03893c514d90799d5f2ebd777b4ca76de3692c639a9c3ba3335c0",
+            "final": false,
+            "clk": {
+              "baseUs": 7200000000,
+              "epoch": 0,
+              "resUs": 5,
+              "sample": {
+                "oUs": 1761688800041500,
+                "rUs": 18250,
+                "atUs": 7198000000,
+                "pop": "LHR"
+              },
+              "app": null
+            },
+            "tail": {
+              "lastRseq": 7,
+              "preDrop": {
+                "records": 0,
+                "objects": 0
+              },
+              "conn": []
+            },
+            "conns": [
+              {
+                "c": 0,
+                "draft": 20,
+                "relay": "https://relay-a.example.net/"
+              },
+              {
+                "c": 1,
+                "draft": null,
+                "relay": "https://relay-a.example.net/"
+              },
+              {
+                "c": 2,
+                "draft": 20,
+                "relay": "https://relay-b.example.net/moq"
+              },
+              {
+                "c": 3,
+                "draft": 20,
+                "relay": "https://relay-a.example.net/"
+              }
+            ],
+            "timing": "object",
+            "t": "batch",
+            "sessionId": "sess_8c41f2d0",
+            "lvl": "baseline",
+            "tracks": [],
+            "cont": false,
+            "ss": "new"
+          },
+          "runs": [],
+          "marks": [],
+          "records": [],
+          "idents": [],
+          "streamEnds": [],
+          "bw": [],
+          "connOpens": [
+            {
+              "rseq": 0,
+              "c": 0,
+              "conn": "c-0",
+              "atUs": 7200000100,
+              "realm": "page",
+              "readyUs": 7200048000,
+              "draft": 20,
+              "protocol": "moqt-20",
+              "offered": [20, 19],
+              "roles": ["publisher", "subscriber"],
+              "content": "call-7",
+              "degraded": null
+            },
+            {
+              "rseq": 1,
+              "c": 1,
+              "conn": "c-1",
+              "atUs": 7200000200,
+              "realm": "page",
+              "readyUs": null,
+              "draft": null,
+              "protocol": null,
+              "offered": null,
+              "roles": [],
+              "content": null,
+              "degraded": null
+            },
+            {
+              "rseq": 2,
+              "c": 2,
+              "conn": "c-2",
+              "atUs": 7200000300,
+              "realm": "page",
+              "readyUs": 7200040000,
+              "draft": 20,
+              "protocol": "moqt-20",
+              "offered": null,
+              "roles": ["subscriber"],
+              "content": null,
+              "degraded": null
+            },
+            {
+              "rseq": 3,
+              "c": 3,
+              "conn": "w1-0",
+              "atUs": 7200000400,
+              "realm": "worker",
+              "readyUs": 7200052000,
+              "draft": 20,
+              "protocol": "moqt-20",
+              "offered": null,
+              "roles": [],
+              "content": null,
+              "degraded": null
+            }
+          ],
+          "connCloses": [
+            {
+              "rseq": 4,
+              "c": 0,
+              "conn": "c-0",
+              "atUs": 7209000000,
+              "cause": "closed",
+              "by": "relay",
+              "code": 3,
+              "reason": "draining"
+            },
+            {
+              "rseq": 5,
+              "c": 1,
+              "conn": "c-1",
+              "atUs": 7203000000,
+              "cause": "failed",
+              "by": "local",
+              "code": null,
+              "reason": null
+            },
+            {
+              "rseq": 6,
+              "c": 2,
+              "conn": "c-2",
+              "atUs": 7214000000,
+              "cause": "page-end",
+              "by": null,
+              "code": null,
+              "reason": null
+            },
+            {
+              "rseq": 7,
+              "c": 3,
+              "conn": "w1-0",
+              "atUs": 7212000000,
+              "cause": "worker-gone",
+              "by": null,
+              "code": null,
+              "reason": null
+            }
+          ]
+        }
+      }
+    },
+    {
       "name": "group-timing",
       "note": "The basic body at group timing: the batch record's timing, and each run's t0 and tl with no per-object dt.",
       "file": "group-timing.bin",
@@ -2234,6 +2536,48 @@
       "read": {
         "ok": false,
         "reason": "no-batch-record"
+      }
+    },
+    {
+      "name": "refuse-bad-ss",
+      "note": "ss names no source of the browsing-session id: it is stored, new or page, or absent.",
+      "file": "refuse-bad-ss.bin",
+      "bodyBytes": 695,
+      "expect": {
+        "ok": false,
+        "reason": "no-batch-record"
+      },
+      "read": {
+        "ok": false,
+        "reason": "no-batch-record"
+      }
+    },
+    {
+      "name": "refuse-bw-undeclared-conn",
+      "note": "A bw entry names a connection the body does not list.",
+      "file": "refuse-bw-undeclared-conn.bin",
+      "bodyBytes": 732,
+      "expect": {
+        "ok": false,
+        "reason": "bad-record"
+      },
+      "read": {
+        "ok": false,
+        "reason": "bad-record"
+      }
+    },
+    {
+      "name": "refuse-bw-zero-second",
+      "note": "A bw second with no bytes: only seconds with bytes are listed.",
+      "file": "refuse-bw-zero-second.bin",
+      "bodyBytes": 734,
+      "expect": {
+        "ok": false,
+        "reason": "bad-record"
+      },
+      "read": {
+        "ok": false,
+        "reason": "bad-record"
       }
     },
     {

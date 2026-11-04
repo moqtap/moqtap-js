@@ -9,8 +9,10 @@ import { describe, expect, it } from 'vitest'
 import {
   type BodyConn,
   type BodyTrack,
+  type BwInput,
   batchJson,
   contractBody,
+  encodeBw,
   encodeMarks,
   encodeRuns,
   encodeStreamEnds,
@@ -37,6 +39,7 @@ type Record_ =
   | { readonly kind: 'run'; readonly runs: readonly RunInput[] }
   | { readonly kind: 'mark'; readonly marks: readonly MarkInput[] }
   | { readonly kind: 'stream-end'; readonly ends: readonly StreamEndInput[] }
+  | { readonly kind: 'bw'; readonly entries: readonly BwInput[] }
   | { readonly kind: 'json'; readonly json: Record<string, unknown>; readonly raw: Uint8Array[] }
 
 interface Spec {
@@ -48,6 +51,7 @@ interface Spec {
   readonly timing?: 'object' | 'group'
   readonly lvl?: string
   readonly cont?: boolean
+  readonly ss?: 'stored' | 'new' | 'page'
 }
 
 function build(p: Spec): Uint8Array {
@@ -82,6 +86,7 @@ function build(p: Spec): Uint8Array {
       trk: p.trk,
       ...(p.timing === undefined ? {} : { timing: p.timing }),
       ...(p.cont === undefined ? {} : { cont: p.cont }),
+      ...(p.ss === undefined ? {} : { ss: p.ss }),
     }),
   )
   p.records.forEach((r, i) => {
@@ -95,6 +100,9 @@ function build(p: Spec): Uint8Array {
     } else if (r.kind === 'stream-end') {
       frames.json({ t: 'stream-end', v: 1, n: r.ends.length, rseq } as unknown as EnvelopeRecord)
       frames.raw(encodeStreamEnds(BASE, r.ends))
+    } else if (r.kind === 'bw') {
+      frames.json({ t: 'bw', v: 1, n: r.entries.length, rseq } as unknown as EnvelopeRecord)
+      frames.raw(encodeBw(BASE, r.entries))
     } else {
       const one = new FrameWriter()
       one.json(r.json as unknown as EnvelopeRecord)
@@ -607,6 +615,121 @@ SPECS.cont = {
   ],
 }
 
+SPECS['bw-seconds'] = {
+  conn: [VCONN, { c: 1, draft: 20, relay: 'https://relay-b.example.net/moq' }],
+  trk: [],
+  ss: 'stored',
+  records: [
+    {
+      kind: 'bw',
+      entries: [
+        {
+          c: 0,
+          sent: false,
+          pre: 2_048,
+          secs: [
+            [7_200, 1_200],
+            [7_201, 5_400],
+            [7_204, 300],
+          ],
+        },
+        { c: 0, sent: true, pre: 0, secs: [[7_200, 64]] },
+        {
+          c: 1,
+          sent: false,
+          pre: 0,
+          secs: [
+            [7_203, 900],
+            [7_214, 10],
+          ],
+        },
+      ],
+    },
+  ],
+}
+
+const json = (j: Record<string, unknown>): Record_ => ({ kind: 'json', json: j, raw: [] })
+
+SPECS['conn-ends'] = {
+  conn: [
+    VCONN,
+    { c: 1, relay: 'https://relay-a.example.net' },
+    { c: 2, draft: 20, relay: 'https://relay-b.example.net/moq' },
+    { c: 3, draft: 20, relay: 'https://relay-a.example.net' },
+  ],
+  trk: [],
+  ss: 'new',
+  records: [
+    json({
+      t: 'conn-open',
+      v: 2,
+      c: 0,
+      conn: 'c-0',
+      at_us: BASE + 100,
+      realm: 'page',
+      ready_us: BASE + 48_000,
+      draft: 20,
+      protocol: 'moqt-20',
+      offered: [20, 19],
+      roles: ['publisher', 'subscriber'],
+      content: 'call-7',
+    }),
+    json({ t: 'conn-open', v: 2, c: 1, conn: 'c-1', at_us: BASE + 200, realm: 'page' }),
+    json({
+      t: 'conn-open',
+      v: 2,
+      c: 2,
+      conn: 'c-2',
+      at_us: BASE + 300,
+      realm: 'page',
+      ready_us: BASE + 40_000,
+      draft: 20,
+      protocol: 'moqt-20',
+      roles: ['subscriber'],
+    }),
+    json({
+      t: 'conn-open',
+      v: 2,
+      c: 3,
+      conn: 'w1-0',
+      at_us: BASE + 400,
+      realm: 'worker',
+      ready_us: BASE + 52_000,
+      draft: 20,
+      protocol: 'moqt-20',
+    }),
+    json({
+      t: 'conn-close',
+      v: 2,
+      c: 0,
+      conn: 'c-0',
+      at_us: BASE + 9_000_000,
+      cause: 'closed',
+      by: 'relay',
+      code: 3,
+      reason: 'draining',
+    }),
+    json({
+      t: 'conn-close',
+      v: 2,
+      c: 1,
+      conn: 'c-1',
+      at_us: BASE + 3_000_000,
+      cause: 'failed',
+      by: 'local',
+    }),
+    json({ t: 'conn-close', v: 2, c: 2, conn: 'c-2', at_us: BASE + 14_000_000, cause: 'page-end' }),
+    json({
+      t: 'conn-close',
+      v: 2,
+      c: 3,
+      conn: 'w1-0',
+      at_us: BASE + 12_000_000,
+      cause: 'worker-gone',
+    }),
+  ],
+}
+
 describe('v2 viewer goldens', () => {
   it('rebuilds every accepted fixture, and only those', () => {
     const accepted = manifest.fixtures.filter((f) => f.expect.ok).map((f) => f.name)
@@ -626,6 +749,8 @@ describe('v2 viewer goldens', () => {
         marks.map((m) => [m.kind, m.g, m.o, m.n ?? null]),
       )
       const ends = spec.records.flatMap((r) => (r.kind === 'stream-end' ? r.ends : []))
+      const bw = spec.records.flatMap((r) => (r.kind === 'bw' ? r.entries : []))
+      expect(facts.bw).toEqual(bw.map((e) => ({ c: e.c, sent: e.sent, pre: e.pre, secs: e.secs })))
       expect(facts.ends.map((e) => [e.end, e.eog, e.path, e.sid, e.g, e.o, e.tUs, e.rc])).toEqual(
         ends.map((e) => [
           e.end,
