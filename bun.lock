@@ -13,7 +13,7 @@
     },
     "packages/codec": {
       "name": "@moqtap/codec",
-      "version": "0.17.0",
+      "version": "0.17.1",
       "devDependencies": {
         "@moqtap/test-vectors": "^0.25.0",
         "tsup": "^8.0.0",

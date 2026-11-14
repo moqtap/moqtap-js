@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This file starts at 0.9.0. Earlier releases are in the git history.
 
+## [0.17.1] - 2026-11-14
+
+### Fixed
+
+- Draft-23: End of Group or End of Track as a fetch stream's first entry is
+  still refused with CONSTRAINT_VIOLATION, but no longer carries
+  MALFORMED_OBJECT as its `closeCode`.
+
 ## [0.17.0] - 2026-11-04
 
 ### Added

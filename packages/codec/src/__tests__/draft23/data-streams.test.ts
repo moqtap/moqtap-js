@@ -556,3 +556,25 @@ describe('draft-23 End of Group after End of Group (Section 11.4.2.2)', () => {
     })
   })
 })
+
+// draft-23 Section 11.4.2.2 defines End of Group and End of Track by the prior
+// Object, and draft-23 Section 11.4.1 makes 0x80 and 0x81 indicators, not the
+// flags draft-23 Section 11.4.1.1 closes MALFORMED_OBJECT for.
+describe('draft-23 End of Group or End of Track as the first fetch entry (Section 11.4.2.2)', () => {
+  for (const [name, hex] of [
+    ['End of Group', '8080'],
+    ['End of Track', '8081'],
+  ] as const) {
+    it(`refuses ${name} with no close code`, async () => {
+      const bytes = hexToBytes(`0501${hex}`)
+      const result = codec.decodeFetchStream(bytes)
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatchObject({ code: 'CONSTRAINT_VIOLATION', offset: 4 })
+      expect(result.error.closeCode).toBeUndefined()
+      const error = await errorOnClose(codec.createFetchStreamDecoder(), bytes)
+      expect(error).toMatchObject({ code: 'CONSTRAINT_VIOLATION' })
+      expect((error as { closeCode?: bigint }).closeCode).toBeUndefined()
+    })
+  }
+})

@@ -990,10 +990,14 @@ function readEndOfRange(
  * the Track, respectively. End of Track also indicates End of Group. The prior
  * Object ID becomes 2^64-1."
  *
- * As the first entry it would name a prior Object that does not exist, which
- * Section 12.2 files under MALFORMED_OBJECT: "The serialization of an Object on
- * a data stream or in a datagram cannot be decoded, for example a flag
- * references a prior Object that does not exist."
+ * As the first entry there is no prior Object for it to end, and the draft
+ * names no close code. draft-23 Section 11.4.1.1 calls for MALFORMED_OBJECT
+ * only for a flag: "If the first Object in the FETCH response uses a flag that
+ * references fields in the prior Object, the Subscriber MUST close the session
+ * with MALFORMED_OBJECT." These values are not flags, draft-23 Section 11.4.1:
+ * "When less than 128, the bits represent flags described in Section 11.4.1.1.
+ * When 128 or greater, the value signals an indicator". The entry names no
+ * Location, so it is refused, with no `closeCode`.
  *
  * Straight after another marker or an End of Range indicator, the draft states
  * no rule. The marker is accepted and reports the prior entry's Location: after
@@ -1007,8 +1011,8 @@ function readEndMarker(
   st: FetchObjectState,
 ): FetchObjectPayload {
   if (st.first) {
-    throw fail(
-      Close.MalformedObject,
+    throw new DecodeError(
+      'CONSTRAINT_VIOLATION',
       `0x${flags.toString(16)} is the first fetch entry, so there is no prior Object for it to end`,
       base + r.offset,
     )
