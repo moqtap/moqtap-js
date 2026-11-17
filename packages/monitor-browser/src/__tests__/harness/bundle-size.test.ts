@@ -94,21 +94,21 @@ const FORBIDDEN_CODEC_IMPORTS = ['encodeMessage', 'encodeSubgroupStream', 'encod
  */
 const CEILING_GZ = {
   /** `.`: every draft, every feature. */
-  root: 91_000,
+  root: 91_500,
   /** `./draftNN`: one draft, every feature. */
-  draft: 71_500,
+  draft: 72_000,
   /** `./draftNN/thin`: one draft, no optional feature. */
-  thin: 59_000,
+  thin: 59_500,
   /** `compose({ features: [workers] })`: a page whose transports live in its workers. */
-  linked: 29_000,
+  linked: 29_500,
   /**
    * `compose({ features: [workers, escalation, persistence] })` built for
    * es2019 and es2020, where `#` members cost WeakMap helpers.
    */
-  es2019: 36_500,
-  es2020: 35_000,
+  es2019: 37_000,
+  es2020: 35_500,
   /** `./worker`: every draft and the flight recorder. */
-  worker: 63_500,
+  worker: 64_000,
   /** `./draftNN/worker`. */
   draftWorker: 44_500,
   /** `./draftNN/thin/worker`. */

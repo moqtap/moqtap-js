@@ -95,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fetch stream IDs: an End of Range's IDs are absolute on drafts 20-22, an
   Object ID Delta with no Group ID Delta adds to the prior Object ID on
   drafts 18-19, and a flight-recorder dump follows the FETCH's group order.
+- At high object rates, a page closing just before a metrics interval ended
+  could split what it sent across four beacon bodies near the 64 KB limit.
 
 ## [0.13.0] - 2026-11-03
 

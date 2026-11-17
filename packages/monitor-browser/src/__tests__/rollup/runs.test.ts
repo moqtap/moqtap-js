@@ -5,7 +5,17 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { MAX_OPEN_FLOWS, RunRecorder, rangeKind, runIds, statusKind } from '../../rollup/runs.js'
+import { encodeRuns, type RunInput } from '../../envelope/contract.js'
+import {
+  MAX_OPEN_FLOWS,
+  type RecordedRun,
+  RUN_CONTEXT_BYTES,
+  RUN_SID_BYTES,
+  RunRecorder,
+  rangeKind,
+  runIds,
+  statusKind,
+} from '../../rollup/runs.js'
 import type { BucketKey, MarkSample, ObjectSample } from '../../types.js'
 
 const ALIAS: BucketKey = Object.freeze({ dir: 'rx', kind: 'alias', id: 4n, epoch: 0 })
@@ -552,5 +562,166 @@ describe('across realms and bounds', () => {
     r.onConnClose(1)
     expect(r.openFlows).toBe(0)
     expect(r.take().runs.map((x) => x.end)).toEqual(['open', 'na'])
+  })
+})
+
+/** The bytes `encodeRuns` writes for `v` as an unsigned LEB128. */
+function lebLen(v: bigint): number {
+  let n = 1
+  for (let x = v >> 7n; x > 0n; x >>= 7n) n += 1
+  return n
+}
+const zig = (v: bigint): bigint => (v >= 0n ? v << 1n : (-v << 1n) - 1n)
+
+function inputOf(r: RecordedRun, ti: number): RunInput {
+  return {
+    c: r.c,
+    ti,
+    g: r.g,
+    path: r.path,
+    sub: r.sub,
+    ...(r.path !== 'datagram' ? { sid: BigInt(r.sid) } : {}),
+    ids: runIds(r),
+    ...(r.osub !== null ? { osub: r.osub } : {}),
+    timesUs: r.times,
+    endsUs: r.ends,
+    sizes: r.sizes,
+    tlUs: r.tl,
+    b: r.b,
+    cont: r.cont,
+    fo: r.fo,
+    foKnown: r.foKnown,
+    eog: r.eog,
+    end: r.end,
+    ...(r.rc !== null ? { rc: r.rc } : {}),
+  }
+}
+
+/**
+ * A run's bytes as the recorder counts them: as the first run of a record,
+ * less what that place gives its track id, group, stream id and start, plus
+ * the most any place can.
+ */
+function counted(r: RecordedRun): number {
+  const one = encodeRuns(0, [inputOf(r, 0)]).byteLength
+  const t0 = BigInt(Math.floor(r.times[0] as number))
+  let place = lebLen(0n) + lebLen(zig(r.g)) + lebLen(zig(t0))
+  let most = RUN_CONTEXT_BYTES
+  if (r.path !== 'datagram') {
+    place += lebLen(zig(BigInt(r.sid)))
+    most += RUN_SID_BYTES
+  }
+  return one - place + most
+}
+
+/** A deterministic PRNG, so a failing sequence repeats. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+describe('pending run bytes', () => {
+  // Reads of the joined run's object times, by how many objects it held.
+  function joinReads(held: number): number {
+    const worker = new RunRecorder(0)
+    const page = new RunRecorder(0)
+    for (let i = 0; i < held; i++) worker.onObject(2, obj(7n, BigInt(i), 1 + i))
+    const first = worker.take()
+    page.absorb(first)
+    const prior = first.runs[0] as RecordedRun
+    let reads = 0
+    ;(prior as unknown as { times: number[] }).times = new Proxy(prior.times, {
+      get(t, k, r) {
+        if (typeof k === 'string' && /^[0-9]+$/.test(k)) reads += 1
+        return Reflect.get(t, k, r)
+      },
+    })
+    for (let i = held; i < held + 5; i++) worker.onObject(2, obj(7n, BigInt(i), 1 + i))
+    page.absorb(worker.take())
+    expect(prior.n).toBe(held + 5)
+    return reads
+  }
+
+  it('counts a forward joined to a run by the forward’s objects alone', () => {
+    expect(joinReads(10_000)).toBe(joinReads(10))
+  })
+
+  it('counts what the runs a take hands over encode to, after any arrivals', () => {
+    const rnd = mulberry32(0x5eed)
+    const int = (n: number): number => Math.floor(rnd() * n)
+    for (let seq = 0; seq < 300; seq++) {
+      const page = new RunRecorder(0)
+      const worker = new RunRecorder(0)
+      let at = 1 + rnd() * 50
+      const last = new Map<string, { g: bigint; o: bigint }>()
+      const next = (k: string): { g: bigint; o: bigint } => {
+        const p = last.get(k) ?? { g: BigInt(int(3)), o: BigInt(int(3)) }
+        const roll = rnd()
+        const step =
+          roll < 0.7
+            ? { g: p.g, o: p.o + 1n }
+            : roll < 0.8
+              ? { g: p.g, o: p.o + BigInt(2 + int(300)) }
+              : roll < 0.9
+                ? { g: p.g + BigInt(1 + int(200)), o: BigInt(int(2)) }
+                : { g: p.g, o: p.o > 0n ? p.o - 1n : 0n }
+        last.set(k, step)
+        return step
+      }
+      const check = (r: readonly RecordedRun[], before: number, after: number): void => {
+        expect(before).toBe(r.reduce((n, x) => n + counted(x), 0) + after)
+        if (r.length === 0) return
+        const inputs = r.map((x) => inputOf(x, int(200)))
+        for (const timing of ['object', 'group'] as const) {
+          expect(encodeRuns(0, inputs, timing).byteLength).toBeLessThanOrEqual(before - after)
+        }
+      }
+      const ops = 20 + int(200)
+      for (let i = 0; i < ops; i++) {
+        at += rnd() < 0.05 ? rnd() * 5_000_000 : rnd() * 40
+        // A worker's connections are its own.
+        const inWorker = rnd() < 0.2
+        const rec = inWorker ? worker : page
+        const c = (inWorker ? 2 : 0) + int(2)
+        const sid = int(4)
+        const roll = rnd()
+        if (roll < 0.5) {
+          const { g, o } = next(`${c}:${sid}`)
+          rec.onObject(
+            c,
+            obj(g, o, at, { streamId: sid, payloadBytes: int(rnd() < 0.1 ? 90_000 : 200) }),
+          )
+        } else if (roll < 0.6) {
+          const { g, o } = next(`f${c}:${sid}`)
+          const sub = rnd() < 0.3 ? null : BigInt(int(400))
+          rec.onObject(c, obj(g, o, at, { key: FETCH, path: 'fetch', sub, streamId: 10 + sid }))
+        } else if (roll < 0.7) {
+          const { g, o } = next(`d${c}`)
+          rec.onObject(c, datagram(g, o, at, rnd() < 0.1))
+        } else if (roll < 0.85) {
+          rec.onPayload(c, rnd() < 0.5 ? sid : 10 + sid, at)
+        } else if (roll < 0.92) {
+          const end = (['fin', 'reset', 'gone'] as const)[int(3)] as 'fin' | 'reset' | 'gone'
+          rec.onStreamEnd(c, sid, end, end === 'reset' ? int(70_000) : undefined, at)
+        } else if (roll < 0.96) {
+          page.absorb(worker.take(rnd() < 0.5))
+        } else {
+          const before = page.pendingRunBytes
+          const t = page.take(rnd() < 0.5)
+          check(t.runs, before, page.pendingRunBytes)
+        }
+      }
+      page.absorb(worker.take())
+      const before = page.pendingRunBytes
+      const t = page.take()
+      check(t.runs, before, page.pendingRunBytes)
+      expect(page.pendingRunBytes).toBe(0)
+    }
   })
 })

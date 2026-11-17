@@ -12,11 +12,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_METRICS } from '../../api/defaults.js'
 import { resetDormantForTest, teardownDormant, useDormantClockForTest } from '../../api/dormant.js'
+import { EscalationController } from '../../api/escalation.js'
 import { FORWARD_INTERVAL_MS } from '../../api/link.js'
+import { CollectorRuntime } from '../../api/session.js'
 import { initWorkerWith } from '../../api/worker.js'
 import { readPreamble } from '../../envelope/index.js'
 import { BEACON_MAX_BYTES } from '../../flush/beacon.js'
+import { ReleasePacer } from '../../flush/pacer.js'
 import type { CollectorConfig, EnvelopeRecord } from '../../types.js'
 import { subgroupBytes } from '../decode/vectors.js'
 import { init, workerBuild } from '../support/init.js'
@@ -96,7 +100,8 @@ function virtualTime(busy: () => boolean) {
   let now = 0
   let nextId = 1
   let order = 0
-  const timers = new Map<number, { due: number; order: number; fn: () => void }>()
+  const timers = new Map<number, { due: number; order: number; ms: number; fn: () => void }>()
+  const fired = new Map<number, number>()
   const due = (until: number): number | undefined => {
     let best: number | undefined
     for (const [id, t] of timers) {
@@ -111,13 +116,15 @@ function virtualTime(busy: () => boolean) {
       clock: { now: () => now, wall: () => 1_700_000_000_000 + now },
       setTimer: (fn: () => void, ms: number): unknown => {
         const id = nextId++
-        timers.set(id, { due: now + Math.max(0, ms), order: order++, fn })
+        timers.set(id, { due: now + Math.max(0, ms), order: order++, ms, fn })
         return id
       },
       clearTimer: (h: unknown): void => {
         timers.delete(h as number)
       },
     },
+    /** Timers armed with `ms` that have fired. */
+    fired: (ms: number): number => fired.get(ms) ?? 0,
     get now() {
       return now
     },
@@ -131,8 +138,9 @@ function virtualTime(busy: () => boolean) {
         }
         const id = due(t)
         if (id === undefined) break
-        const timer = timers.get(id) as { due: number; fn: () => void }
+        const timer = timers.get(id) as { due: number; ms: number; fn: () => void }
         timers.delete(id)
+        fired.set(timer.ms, (fired.get(timer.ms) ?? 0) + 1)
         now = Math.max(now, timer.due)
         timer.fn()
       }
@@ -224,6 +232,10 @@ interface Run {
   readonly resolved: readonly EnvelopeRecord[]
   /** Bytes given to `CompressionStream`, in all, at most in one stream, and at most in one write. */
   readonly gzipped: { readonly total: number; readonly largest: number; readonly piece: number }
+  /** Metrics interval timers that fired. */
+  readonly metricsTicks: number
+  /** When each seal the schedule asked for, which closes the interval, ran. */
+  readonly sealTicks: readonly number[]
 }
 
 interface RecordOptions {
@@ -258,6 +270,13 @@ async function record(
   const life = ending === 'pagehide' ? capturePagehide() : undefined
   // Arrivals stamped on the page's clock, as on a page where they take that long.
   useDormantClockForTest(vt.ports.clock)
+  const sealTicks: number[] = []
+  const rt = CollectorRuntime.prototype as unknown as { _sealNow(tick: boolean): void }
+  const sealNow = rt._sealNow
+  const sealSpy = vi.spyOn(rt, '_sealNow').mockImplementation(function (this: unknown, tick) {
+    if (tick) sealTicks.push(vt.now)
+    sealNow.call(this, tick)
+  })
   try {
     const c = init(base(), {
       persist: false,
@@ -348,8 +367,11 @@ async function record(
       records,
       resolved,
       gzipped: { total: gz.total, largest: gz.largest, piece: gz.piece },
+      metricsTicks: vt.fired(DEFAULT_METRICS.intervalMs),
+      sealTicks,
     }
   } finally {
+    sealSpy.mockRestore()
     useDormantClockForTest(undefined)
     gz.restore()
     life?.restore()
@@ -436,8 +458,34 @@ describe('upload rate while detail is raised', () => {
   }
 
   // Everything a pagehide sends shares the beacon's 64 KB, whenever it comes:
-  // the runs not yet a body, under the threshold gzipped, and the step not
-  // yet gzipped, stored behind them in one body, beside the end record's.
+  // the runs not yet a body, under the threshold gzipped; what is not yet
+  // gzipped, at most a step of records and a step of object runs, so under
+  // the threshold raw, stored behind them or in a body of its own; and the
+  // end record's body. Three bodies at most.
+  async function beaconsWithinCap(
+    seconds: number,
+    video: number,
+    audio: number,
+    realm: 'page' | 'worker' = 'page',
+  ): Promise<void> {
+    const run = await record(seconds, 'pagehide', { video, audio, realm })
+
+    const total = run.beaconed.reduce((n, b) => n + b.byteLength, 0)
+    expect(total, `${seconds} s`).toBeLessThanOrEqual(BEACON_MAX_BYTES)
+    const posted = run.bodies.slice(0, run.bodies.length - run.beaconed.length)
+    const uploaded = new Set(
+      of(await allRecords(posted.map((body) => ({ url: '', body }))), 'batch').map((b) => b.seq),
+    )
+    let sealed = 0
+    for (const b of run.beaconed) {
+      const [batch] = of(await allRecords([{ url: '', body: b }]), 'batch')
+      if (!uploaded.has(batch?.seq ?? -1)) sealed += 1
+    }
+    expect(sealed, `${seconds} s`).toBeLessThanOrEqual(3)
+    expect(of(run.records, 'hdr'), `${seconds} s`).toHaveLength(seconds * (video + audio))
+    expect(of(run.records, 'end')).toHaveLength(1)
+  }
+
   const unloads = [
     { video: 150, audio: 250 },
     { video: 300, audio: 500 },
@@ -445,25 +493,49 @@ describe('upload rate while detail is raised', () => {
   for (const { video, audio } of unloads) {
     it(`beacons at most 64 KB in all, at ${video} + ${audio} objects a second, whenever the page goes`, async () => {
       for (const seconds of [3, 7, 10, 16, 22, 28, 34, 39]) {
-        const run = await record(seconds, 'pagehide', { video, audio })
-
-        const total = run.beaconed.reduce((n, b) => n + b.byteLength, 0)
-        expect(total, `${seconds} s`).toBeLessThanOrEqual(BEACON_MAX_BYTES)
-        const posted = run.bodies.slice(0, run.bodies.length - run.beaconed.length)
-        const uploaded = new Set(
-          of(await allRecords(posted.map((body) => ({ url: '', body }))), 'batch').map(
-            (b) => b.seq,
-          ),
-        )
-        let sealed = 0
-        for (const b of run.beaconed) {
-          const [batch] = of(await allRecords([{ url: '', body: b }]), 'batch')
-          if (!uploaded.has(batch?.seq ?? -1)) sealed += 1
-        }
-        expect(sealed, `${seconds} s`).toBeLessThanOrEqual(3)
-        expect(of(run.records, 'hdr'), `${seconds} s`).toHaveLength(seconds * (video + audio))
-        expect(of(run.records, 'end')).toHaveLength(1)
+        await beaconsWithinCap(seconds, video, audio)
       }
     }, 120_000)
   }
+
+  // A second before each metrics tick, the most object runs are written.
+  for (const realm of ['page', 'worker'] as const) {
+    it(`beacons at most 64 KB in all, at 300 + 500 objects a second, just before a tick, from the ${realm}`, async () => {
+      for (const seconds of [9, 19, 29, 49, 59]) await beaconsWithinCap(seconds, 300, 500, realm)
+    }, 120_000)
+  }
+
+  // An early close writes the runs, and samples neither the pacer's pressure
+  // nor escalation, which count per sample.
+  it('samples pressure and escalation on the metrics tick and seals only, at 300 + 500 objects a second', async () => {
+    const pressure = vi.spyOn(ReleasePacer.prototype, 'notePressure')
+    const escalation = vi.spyOn(EscalationController.prototype, 'tick')
+    try {
+      const run = await record(SECONDS, 'end', { video: 300, audio: 500 })
+
+      const ticks = run.metricsTicks + run.sealTicks.length
+      const rollups = of(run.records, 'rollup').filter((r) => r.conn !== '')
+      expect(rollups.length).toBeGreaterThan(ticks)
+      const samples = pressure.mock.calls.filter(([p]) => p.writerReadyMs === undefined)
+      expect(samples).toHaveLength(ticks)
+      expect(escalation).toHaveBeenCalledTimes(ticks)
+    } finally {
+      pressure.mockRestore()
+      escalation.mockRestore()
+    }
+  }, 60_000)
+
+  // Below a step of object runs an interval, an interval closes on the tick
+  // or at a seal, and at nothing else.
+  it('closes intervals only on the tick or at a seal, at 30 + 50 objects a second', async () => {
+    const run = await record(SECONDS, 'end')
+
+    const ends = of(run.records, 'rollup')
+      .filter((r) => r.conn !== '')
+      .map((r) => r.endMono)
+    expect(ends.length).toBeGreaterThan(1)
+    for (const end of ends.slice(0, -1)) {
+      if (end % DEFAULT_METRICS.intervalMs !== 0) expect(run.sealTicks).toContain(end)
+    }
+  }, 60_000)
 })

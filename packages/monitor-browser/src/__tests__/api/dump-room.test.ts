@@ -143,9 +143,10 @@ describe('a flight dump larger than the store has room for', () => {
       features: ALL_FEATURES.map((f) => (f.feature === 'flightRecorder' ? capturing : f)),
     })
 
-    // Another tab's bodies, still unsent, fill all but 52 KB of the store:
-    // room for one slice's body, and less than the dump's bodies come to.
-    const quota = 15 * 64 * 1024 + 52 * 1024
+    // Another tab's bodies, still unsent, fill all but 52 KB and a threshold
+    // of the store: room for one slice's body beside what this page buffers,
+    // under a threshold, before it seals, and less than the dump's bodies come to.
+    const quota = 15 * 64 * 1024 + 52 * 1024 + 32 * 1024
     const store = await ChunkStore.open('db', quota, { backend: new MemoryBackend() })
     const theirs: string[] = []
     for (let seq = 0; seq < 15; seq++) {

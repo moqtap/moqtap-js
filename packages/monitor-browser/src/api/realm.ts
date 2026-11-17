@@ -491,6 +491,11 @@ export class RealmObserver {
     return { ...t, dropped }
   }
 
+  /** The realm's run recorder, whose pending runs the host closes the interval on. */
+  get runs(): RunRecorder {
+    return this._runs
+  }
+
   /** Objects seen in the current one-second window: the pacer's pressure signal. */
   get objectRate(): number {
     return this._objectsInWindow

@@ -15,7 +15,13 @@
  * Nothing here infers a group start, a loss or an order from ids.
  */
 
-import type { MarkKind, RunEnd, StreamEndKind } from '../envelope/contract.js'
+import {
+  DT_QUANTUM_US,
+  isFetchPath,
+  type MarkKind,
+  type RunEnd,
+  type StreamEndKind,
+} from '../envelope/contract.js'
 import {
   type BucketKey,
   bucketKeyString,
@@ -209,6 +215,22 @@ export function rangeKind(flags: number, draft: SupportedDraft): MarkKind | unde
 /** The largest Object ID. */
 const MAX_U64 = 0xffff_ffff_ffff_ffffn
 
+/**
+ * The most a run's record-dependent fields take: its track index (a u32),
+ * group delta (64-bit zigzag) and start delta (a safe integer).
+ */
+export const RUN_CONTEXT_BYTES = 5 + 10 + 8
+
+/** The same for a stream run's stream id. */
+export const RUN_SID_BYTES = 10
+
+/** A run's counted bytes: `cols` its objects but the last one's end, `ids` its id deltas. */
+interface RunSize {
+  cols: number
+  ids: number
+  bytes: number
+}
+
 export class RunRecorder {
   private readonly streams = new Map<number, Map<number, StreamFlow>>()
   private readonly datagrams = new Map<BucketKey, Map<bigint, RecordedRun>>()
@@ -231,6 +253,16 @@ export class RunRecorder {
   droppedObjects = 0
   /** Bytes the page read and wrote, per connection and second, on this recorder's timeline. */
   readonly bw: BwCounter
+  private readonly _sizes = new WeakMap<RecordedRun, RunSize>()
+  /**
+   * What the runs not yet taken encode to at object timing, which a run at
+   * group timing never exceeds: an upper bound, exact but for the fields
+   * {@link RUN_CONTEXT_BYTES} and {@link RUN_SID_BYTES} bound and a datagram
+   * id delta that `encodeRuns` wraps mod 2^64, counted here unwrapped.
+   */
+  pendingRunBytes = 0
+  /** Called whenever a run's bytes change. */
+  onGrow?: () => void
 
   constructor(
     /** The session anchor's monotonic origin, ms. */
@@ -289,6 +321,7 @@ export class RunRecorder {
     if (run !== null) {
       run.tl = t
       run.ends[run.n - 1] = t
+      this.resize(run)
     } else if (f.taken !== null) {
       this.late.set(f.taken, t)
     }
@@ -313,6 +346,7 @@ export class RunRecorder {
     const run = f.run
     if (run !== null) {
       endRun(run, f, end, code)
+      this.resize(run)
       this.close(run)
       this.open -= 1
     } else if (end !== 'gone' && (f.taken !== null || !f.seen)) {
@@ -475,6 +509,7 @@ export class RunRecorder {
     this.ends = []
     this.late = new Map()
     this.byFlow = new Map(kept.map((r) => [r.flow, r]))
+    for (const r of runs) this.pendingRunBytes -= (this._sizes.get(r) as RunSize).bytes
     return out
   }
 
@@ -494,11 +529,14 @@ export class RunRecorder {
       if (r.sid >= 0) this.sealed.delete(`${r.c}:${r.sid}`)
       const prior = r.cont ? this.byFlow.get(r.flow) : undefined
       if (prior !== undefined && (prior.end === 'open' || prior.end === 'na')) {
+        const from = prior.n
         join(prior, r)
+        this.count(prior, from)
         continue
       }
       this.done.push(r)
       this.byFlow.set(r.flow, r)
+      this.count(r, 0)
     }
     for (const m of t.marks) this.marks.push(m)
     for (const e of t.ends) {
@@ -508,6 +546,7 @@ export class RunRecorder {
         if (e.end !== 'none') {
           prior.end = e.end
           prior.rc = e.rc
+          this.resize(prior)
         }
         if (e.eog) prior.eog = true
         continue
@@ -525,6 +564,7 @@ export class RunRecorder {
     if (here !== undefined && here.last === e.o && here.ref === undefined) {
       here.tl = e.tUs
       here.ends[here.n - 1] = e.tUs
+      this.resize(here)
       return
     }
     const s = this.sealed.get(streamOf(e.flow))
@@ -648,6 +688,7 @@ export class RunRecorder {
       append(run, s.objectId, t, s.payloadBytes)
       run.osub?.push(s.sub)
     }
+    this.count(run, run.n - 1)
     f.lastId = s.objectId
     f.lastGroup = s.groupId
   }
@@ -692,12 +733,82 @@ export class RunRecorder {
       append(run, s.objectId, t, s.payloadBytes)
       if (s.eog) run.eog = true
     }
+    this.count(run, run.n - 1)
   }
 
   private grow(): void {
     this.open += 1
     if (this.open === MAX_OPEN_FLOWS) this.onFull?.()
   }
+
+  /**
+   * Counts `r`'s objects from `from` on, each with the end of the object
+   * before it, which later arrivals no longer move.
+   */
+  private count(r: RecordedRun, from: number): void {
+    let z = this._sizes.get(r)
+    if (z === undefined) {
+      z = { cols: 0, ids: 0, bytes: 0 }
+      this._sizes.set(r, z)
+    }
+    if (from === 0) {
+      z.cols = 0
+      z.ids = 0
+    }
+    for (let k = from; k < r.n; k++) {
+      if (k > 0) {
+        const at = quantum(r, r.times[k - 1] as number)
+        z.cols +=
+          zig(quantum(r, r.times[k] as number) - at) + zig(quantum(r, r.ends[k - 1] as number) - at)
+        const d = (r.ids?.[k] ?? r.o0 + BigInt(k)) - (r.ids?.[k - 1] ?? r.o0 + BigInt(k - 1))
+        z.ids += r.path === 'datagram' ? zig(d) : leb(d - 1n)
+      }
+      const sub = r.osub?.[k]
+      z.cols +=
+        leb(r.sizes[k] as number) + (sub === undefined ? 0 : sub === null ? 1 : 1 + leb(sub))
+    }
+    this.resize(r)
+  }
+
+  /** `r`'s bytes from its counts and fields, into the pending total. */
+  private resize(r: RecordedRun): void {
+    const z = this._sizes.get(r) as RunSize
+    const last = r.n - 1
+    const at = quantum(r, r.times[last] as number)
+    let bytes =
+      2 +
+      RUN_CONTEXT_BYTES +
+      leb(r.c) +
+      leb(r.o0) +
+      leb(r.n) +
+      z.cols +
+      zig(quantum(r, r.ends[last] as number) - at)
+    if (r.ids !== null) bytes += z.ids
+    if (r.path !== 'datagram') bytes += RUN_SID_BYTES
+    if (!isFetchPath(r.path)) bytes += r.sub === null ? 1 : 1 + leb(r.sub)
+    if (r.end === 'reset') bytes += leb(r.rc ?? 0n)
+    this.pendingRunBytes += bytes - z.bytes
+    z.bytes = bytes
+    this.onGrow?.()
+  }
+}
+
+/** Bytes `LebWriter.u` writes for `v`. */
+function leb(v: number | bigint): number {
+  let n = 1
+  for (let x = BigInt(v) >> 7n; x > 0n; x >>= 7n) n += 1
+  return n
+}
+
+/** Bytes `LebWriter.t` and `z` write for `v`, zigzagged. */
+function zig(v: number | bigint): number {
+  const b = BigInt(v)
+  return leb(b < 0n ? -2n * b - 1n : 2n * b)
+}
+
+/** A time's quantum from the run's first start, as `encodeRuns` takes it. */
+function quantum(r: RecordedRun, us: number): number {
+  return Math.floor((Math.floor(us) - Math.floor(r.times[0] as number)) / DT_QUANTUM_US)
 }
 
 function append(run: RecordedRun, id: bigint, t: number, bytes: number): void {

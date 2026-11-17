@@ -98,7 +98,7 @@ the key nor a `connect-src` entry. See
 
 ## What it measures
 
-Every 10 seconds (`metrics.intervalMs`) the collector records, per track and direction:
+Every 10 seconds (`metrics.intervalMs`), and sooner on a busy session, the collector records, per track and direction:
 
 | Signal | Use it to answer |
 |---|---|
@@ -503,7 +503,7 @@ init({
 | `endpoint` | `https://moqgest.com/v1/ingest` | Where uploads go. Set it to use your own ingest or a proxy. |
 | `context` | empty | `actorId`, `contentId`, `environment`, `release`, `tags`. |
 | `detail` | `'baseline'` | The level the whole session runs at. See [Detail levels](#detail-levels). |
-| `metrics.intervalMs` | `10000` | How often a rollup closes. |
+| `metrics.intervalMs` | `10000` | How often a rollup closes, at the latest. |
 | `metrics.maxTracks` | `1024` | Tracks followed per session. Tracks over the limit are counted, not silently dropped. |
 | `flightRecorder.depth` | `'32MB'` | Memory the recorder may use, per page or worker that opens a `WebTransport`. |
 | `flightRecorder.triggers` | none | `stall`, `cadence`. All off unless listed. |

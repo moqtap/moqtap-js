@@ -306,6 +306,8 @@ export class CollectorRuntime {
   private _discarded = false
   private _releaseLock: () => void = () => {}
   private _intervalHandle: unknown
+  /** The timer closing the interval early on its object runs. */
+  private _runsTickHandle: unknown
   /** The one-shot timer landing the post-event timeout on time. See `_scheduleWindowClose`. */
   private _windowHandle: unknown
   private _listeners: [string, (e: unknown) => void, boolean][] = []
@@ -464,6 +466,9 @@ export class CollectorRuntime {
             },
           })
 
+    const grow = (): void => this._runsStep()
+    if (this._realm !== null) this._realm.runs.onGrow = grow
+    this._forwarded.onGrow = grow
     const metrics = build.features.customMetrics
     this._custom = ports.custom ?? metrics?.create((m) => this._onError(new Error(m))) ?? null
     this._customRollup =
@@ -1196,13 +1201,49 @@ export class CollectorRuntime {
     this._intervalHandle = this._timer(run, ms)
   }
 
+  /**
+   * Whether the object runs not yet written, the page's and its workers',
+   * reach half the threshold: the most the part not yet gzipped may hold.
+   */
+  private _runsOver(): boolean {
+    const pending = (this._realm?.runs.pendingRunBytes ?? 0) + this._forwarded.pendingRunBytes
+    return pending >= this.config.upload.byteThreshold / 2
+  }
+
+  /**
+   * Close the interval early, so the runs are written and packed with the
+   * rest. On a timer: a tick between a record and its raw frame would split
+   * the pair across two bodies.
+   */
+  private _runsStep(): void {
+    if (this._runsTickHandle !== undefined || this._ended || this._armed || !this._runsOver()) {
+      return
+    }
+    this._runsTickHandle = this._timer(() => {
+      this._runsTickHandle = undefined
+      if (this._ended || !this._runsOver()) return
+      try {
+        this._close(this._clock.now())
+        // The close holds open runs back; if they alone still reach it, take them open too.
+        if (this._runsOver()) this._writeFacts()
+      } catch (err) {
+        this._onError(err)
+      }
+    }, 0)
+  }
+
   private _tick(): void {
     const now = this._clock.now()
+    this._close(now)
+    this._escalation.tick(now)
+    this._pacer.notePressure({ objectsPerSec: this._realm?.objectRate ?? 0, at: now })
+  }
+
+  /** Close the rollup interval: the realm's, the custom metrics', and the facts behind them. */
+  private _close(now: Mono): void {
     this._realm?.tick(now)
     this._customRollup?.tick(now)
     this._writeFacts(true)
-    this._escalation.tick(now)
-    this._pacer.notePressure({ objectsPerSec: this._realm?.objectRate ?? 0, at: now })
   }
 
   /**
@@ -1860,11 +1901,17 @@ export class CollectorRuntime {
     this._packer?.clear()
     this._life.abort()
     this._wake?.()
-    for (const h of [this._intervalHandle, this._windowHandle, this._retryHandle]) {
+    for (const h of [
+      this._intervalHandle,
+      this._runsTickHandle,
+      this._windowHandle,
+      this._retryHandle,
+    ]) {
       this._cancel(h)
     }
     this._links?.teardown()
     this._intervalHandle = undefined
+    this._runsTickHandle = undefined
     this._windowHandle = undefined
     this._retryHandle = undefined
     const g = globalThis as {
