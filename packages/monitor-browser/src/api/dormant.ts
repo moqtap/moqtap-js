@@ -38,6 +38,7 @@ import type { RingEntry } from '../ring/index.js'
 import { installWebTransportHook, type TransportHook } from '../transport/index.js'
 import { type PresenceHandle, publishPresence } from '../transport/presence.js'
 import type {
+  ClockSource,
   DatagramChunk,
   InterceptedSession,
   Mono,
@@ -230,6 +231,9 @@ function dormantObserver(s: DormantState): TransportObserver {
  */
 let presence: PresenceHandle | null = null
 
+/** What the next hook installed stamps with, while a test drives time. */
+let clockForTest: ClockSource | undefined
+
 export function ensureDormantHook(ring?: RingFactory): TransportHook {
   useDormantRing(ring)
   const live = state
@@ -254,6 +258,7 @@ export function ensureDormantHook(ring?: RingFactory): TransportHook {
       // dormant internal error is swallowed rather than logged, because writing
       // to the console from a module-eval side effect is its own kind of rude.
       onInternalError: () => {},
+      ...(clockForTest !== undefined ? { clock: clockForTest } : {}),
     })
     // Announce ourselves on the page global. Dormant, because that is what we
     // are until a key arrives -- the extension distinguishes the two, and "SDK
@@ -492,6 +497,12 @@ export function resetDormantForTest(): void {
   installFailed = false
   claimant = 0
   claimHeld = false
+  clockForTest = undefined
+}
+
+/** Only for the suite: the clock hooks installed from here on stamp arrivals with. */
+export function useDormantClockForTest(clock: ClockSource | undefined): void {
+  clockForTest = clock
 }
 
 function inert(): TransportHook {

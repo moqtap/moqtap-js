@@ -11,8 +11,8 @@
  * buffered when the page goes still fits the beacon.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { resetDormantForTest, teardownDormant } from '../../api/dormant.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetDormantForTest, teardownDormant, useDormantClockForTest } from '../../api/dormant.js'
 import { FORWARD_INTERVAL_MS } from '../../api/link.js'
 import { initWorkerWith } from '../../api/worker.js'
 import { readPreamble } from '../../envelope/index.js'
@@ -23,6 +23,31 @@ import { init, workerBuild } from '../support/init.js'
 import { settle } from '../support/settle.js'
 import { afterPreamble, allRecords, of, type Post, recordingFetch } from '../support/uploads.js'
 import { MockWebTransport } from '../transport/mocks.js'
+
+/**
+ * Calls to `gzip()` not yet done with. Each counts until the task after it
+ * settles: the code awaiting it, up to the timer or upload it starts, runs in
+ * microtasks before then.
+ */
+const compressing = vi.hoisted(() => ({ n: 0 }))
+
+vi.mock('../../envelope/gzip.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../envelope/gzip.js')>()
+  return {
+    ...real,
+    gzip: (input: Uint8Array): Promise<Uint8Array> => {
+      compressing.n += 1
+      const p = real.gzip(input)
+      const done = (): void => {
+        setImmediate(() => {
+          compressing.n -= 1
+        })
+      }
+      p.then(done, done)
+      return p
+    },
+  }
+})
 
 const g = globalThis as unknown as Record<string, unknown>
 let originalWT: unknown
@@ -64,7 +89,8 @@ const SECONDS = 60
  * let settle before the next. A second of the page's clock passes here in
  * milliseconds, and gzip takes real time: a compression still running when
  * the clock moves on would finish seconds late on the page's clock, which no
- * page sees, so the clock waits while `busy()` says one is.
+ * page sees, so the clock waits while `busy()` says one is, for at most
+ * {@link BUSY_MS}.
  */
 function virtualTime(busy: () => boolean) {
   let now = 0
@@ -98,8 +124,11 @@ function virtualTime(busy: () => boolean) {
     async advanceTo(t: number): Promise<void> {
       for (;;) {
         await settle(8)
-        const until = performance.now() + 5_000
-        while (busy() && performance.now() < until) await settle(1, 1)
+        const until = performance.now() + BUSY_MS
+        while (busy()) {
+          if (performance.now() > until) throw new Error(`gzip still busy after ${BUSY_MS} ms`)
+          await settle(1, 1)
+        }
         const id = due(t)
         if (id === undefined) break
         const timer = timers.get(id) as { due: number; fn: () => void }
@@ -111,6 +140,9 @@ function virtualTime(busy: () => boolean) {
     },
   }
 }
+
+/** Real time the clock waits for compression before the test fails. */
+const BUSY_MS = 5_000
 
 /** Intercepts `pagehide`; everything else still reaches the real global. */
 function capturePagehide(): { fire: (persisted: boolean) => void; restore: () => void } {
@@ -135,14 +167,12 @@ function capturePagehide(): { fire: (persisted: boolean) => void; restore: () =>
 /**
  * Counts what the page hands `CompressionStream`: in all, the most any one
  * stream is given, and the most in one write, which is the longest task
- * compression adds to the page; and the streams whose output is not yet all
- * read.
+ * compression adds to the page.
  */
 function meterGzip(): {
   total: number
   largest: number
   piece: number
-  open: number
   restore: () => void
 } {
   const Real = g.CompressionStream as typeof CompressionStream
@@ -150,7 +180,6 @@ function meterGzip(): {
     total: 0,
     largest: 0,
     piece: 0,
-    open: 0,
     restore: (): void => {
       g.CompressionStream = Real
     },
@@ -170,13 +199,7 @@ function meterGzip(): {
       },
     })
     void tap.readable.pipeTo(real.writable).catch(() => {})
-    m.open += 1
-    const out = new TransformStream<Uint8Array, Uint8Array>({
-      flush() {
-        m.open -= 1
-      },
-    })
-    return { readable: real.readable.pipeThrough(out), writable: tap.writable }
+    return { readable: real.readable, writable: tap.writable }
   }
   return m
 }
@@ -228,11 +251,13 @@ async function record(
   { realm = 'page', burst = 0, video = VIDEO_FPS, audio = AUDIO_PER_SEC }: RecordOptions = {},
 ): Promise<Run> {
   const gz = meterGzip()
-  const vt = virtualTime(() => gz.open > 0)
+  const vt = virtualTime(() => compressing.n > 0)
   const { posts, impl } = recordingFetch()
   const beaconed: Uint8Array[] = []
   const blobs: Blob[] = []
   const life = ending === 'pagehide' ? capturePagehide() : undefined
+  // Arrivals stamped on the page's clock, as on a page where they take that long.
+  useDormantClockForTest(vt.ports.clock)
   try {
     const c = init(base(), {
       persist: false,
@@ -325,6 +350,7 @@ async function record(
       gzipped: { total: gz.total, largest: gz.largest, piece: gz.piece },
     }
   } finally {
+    useDormantClockForTest(undefined)
     gz.restore()
     life?.restore()
   }
