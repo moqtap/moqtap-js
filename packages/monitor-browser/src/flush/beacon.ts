@@ -25,10 +25,10 @@
  *     because it reports *queueing* and never delivery. **This is undetectable**
  *     here or anywhere, and no fallback is possible.
  *
- * 1–3 come back as `false`. Every tail body is also written to IndexedDB, so
- * the next page load on the origin sends it — but that may be days away or
- * never, and the tail carries the `end` record that says how the instance
- * ended.
+ * 1–3 come back as `false`. Every tail body is also stored, so the next page
+ * load on the origin that begins a session sends it, if the browser kept the
+ * write. That may be days away or never, and the tail carries the `end`
+ * record that says how the instance ended.
  *
  * So 1–3 fall back to `fetch(..., {keepalive: true})`: the same property the
  * beacon was wanted for, a request allowed to outlive the document that started

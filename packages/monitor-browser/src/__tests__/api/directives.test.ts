@@ -88,7 +88,8 @@ const near = (ms: number, want: number): boolean => ms > want - 1_000 && ms <= w
 describe('flushMs: someone is watching the session', () => {
   it('seals and uploads on the asked interval, with no flush() call', async () => {
     const { posts, impl } = answering(() => ({ flushMs: 2_000, until: SERVER_NOW + 5_000 }))
-    const t = timers((ms) => (ms === 2_000 ? 10 : ms))
+    // An interval seal counts the next from its body's `through`, a moment before the timer is set.
+    const t = timers((ms) => (near(ms, 2_000) ? 10 : ms))
     const c = init(base(), { ...quiet, fetchImpl: impl, ...t.ports })
     await settle()
     attempt()

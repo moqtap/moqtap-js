@@ -66,10 +66,11 @@ export interface FlushQueueOptions extends Omit<FrameBufferOptions, 'rseq' | 'on
   /** The seal interval in force, ms. */
   readonly sealMs?: () => number
   /**
-   * Monotonic ms the next seal is due, read once per body; undefined when
-   * nothing is scheduled, as when the body after it is sealed at once.
+   * Monotonic ms the next seal is due, read once per body with the body's
+   * `through`; undefined when nothing is scheduled, as when the body after it
+   * is sealed at once.
    */
-  readonly nextSeal?: () => number | undefined
+  readonly nextSeal?: (throughMs: number) => number | undefined
   /** Records dropped on the device before encoding, cumulative. */
   readonly droppedRecords?: () => number
   /** The integrator's offset to UTC as of now, read at each seal. */
@@ -91,6 +92,8 @@ export interface AppOffset {
 export interface SealOptions {
   /** The instance's last body. */
   readonly final?: boolean
+  /** With nothing buffered, a body of only the batch record rather than none. */
+  readonly idle?: boolean
 }
 
 /** The first `count` frames of the open stream, `bytes` long. */
@@ -115,6 +118,7 @@ const ssOf = (ss: SessionIdSource | undefined): { ss?: SessionIdSource } =>
 /** A body's preamble and its frames before the buffered ones. */
 interface Head {
   readonly seq: number
+  readonly throughUs: number
   readonly key: string
   readonly preamble: Uint8Array
   readonly frames: Uint8Array
@@ -126,7 +130,7 @@ export class FlushQueue extends FrameBuffer {
   private readonly _clock: ClockSource
   private readonly _level: () => DetailLevel
   private readonly _sealMs: () => number
-  private readonly _nextSeal: () => number | undefined
+  private readonly _nextSeal: (throughMs: number) => number | undefined
   private readonly _dropped: () => number
   private readonly _appClock: () => AppOffset | undefined
   private readonly _timing: () => Timing
@@ -214,19 +218,21 @@ export class FlushQueue extends FrameBuffer {
 
   /**
    * Seal the open frame stream into a keyed chunk, or return `null` when
-   * there is nothing to seal, in which case no number is taken.
+   * there is nothing to seal and `idle` is not set, in which case no number
+   * is taken.
    *
    * The body is uncompressed and complete. It can be uploaded or beaconed as
    * it stands; {@link compress} replaces it with a smaller one when gzip pays.
    */
   seal(o: SealOptions = {}): Chunk | null {
-    if (this.frameCount === 0) return null
-    // Everything that could throw runs before the frames are taken, so a
-    // failure leaves them buffered for the next seal rather than gone.
+    if (this.frameCount === 0 && o.idle !== true) return null
+    // The body is made before anything is taken, so a seal that throws or is
+    // cut short leaves its number and frames for the next seal.
     const head = this._head(o, this.records)
-    const { frames } = this.takeFrames()
-    this._emitter.sweepClosed()
-    return this._chunk(head, false, head.frames, frames)
+    const chunk = this._chunk(head, false, head.frames, this.peek())
+    this.takeFrames()
+    this._taken(head, this.frameCount === 0)
+    return chunk
   }
 
   /**
@@ -245,10 +251,11 @@ export class FlushQueue extends FrameBuffer {
       segment,
       rest ? this.peek().subarray(front.bytes) : undefined,
     )
+    const chunk = this._chunk(head, true, member)
     if (rest) this.drop(this.pendingBytes, this.frameCount)
     else this.drop(front.bytes, front.count)
-    if (this.frameCount === 0) this._emitter.sweepClosed()
-    return this._chunk(head, true, member)
+    this._taken(head, this.frameCount === 0)
+    return chunk
   }
 
   /**
@@ -264,8 +271,14 @@ export class FlushQueue extends FrameBuffer {
     const head = this._head(o, this.recordsIn(n, span.count))
     const chunk = this._chunk(head, false, head.frames, span.bytes)
     this.drop(n, span.count)
-    if (this.frameCount === 0) this._emitter.sweepClosed()
+    this._taken(head, this.frameCount === 0)
     return chunk
+  }
+
+  /** The frames of `head`'s body are taken: its number and interval are used up. */
+  private _taken(head: Head, empty: boolean): void {
+    this._emitter.sealed(head.seq, head.throughUs)
+    if (empty) this._emitter.sweepClosed()
   }
 
   /** Number and key a body of the first `records` buffered records, and build its preamble and batch. */
@@ -274,8 +287,7 @@ export class FlushQueue extends FrameBuffer {
     const fromUs = e.throughUs
     const throughUs = Math.max(fromUs, Math.floor(this._clock.now() * 1000))
     const refs = this.refsOf(records)
-    e.sealThrough(throughUs)
-    const seq = e.takeSeq()
+    const seq = e.nextSeq
     const key = idempotencyKey(this._sessionId, e.instanceId, seq)
     const sample = e.clock.latest()
     const app = this._appClock()
@@ -317,13 +329,14 @@ export class FlushQueue extends FrameBuffer {
         ...(o.final === true ? {} : { nextUs: this._nextUs(throughUs) }),
       },
     })
-    return { seq, key, preamble, frames: w.take() }
+    return { seq, throughUs, key, preamble, frames: w.take() }
   }
 
   /** When the body after one sealed through `throughUs` is due, µs. */
   private _nextUs(throughUs: number): number {
-    const next = this._nextSeal()
-    return next === undefined ? throughUs : Math.max(throughUs, Math.floor(next * 1000))
+    const next = this._nextSeal(throughUs / 1000)
+    // Rounded: a seal counted from `throughUs` states it plus the interval exactly.
+    return next === undefined ? throughUs : Math.max(throughUs, Math.round(next * 1000))
   }
 
   private _chunk(head: Head, gzipped: boolean, ...parts: Uint8Array[]): Chunk {

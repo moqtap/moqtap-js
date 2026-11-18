@@ -248,7 +248,12 @@ describe.each(ENGINES)('%s: page.close()', (_name, engine) => {
 
       const last = final() as Body
       const end = last.records.find((r) => r.t === 'end')
-      expect(end).toMatchObject({ t: 'end', reason: 'unload', finalSeq: last.seq })
+      const seqs = since().map((b) => `${b.seq}${b.final ? 'F' : ''}`)
+      expect(end, `bodies after the close: ${seqs.join(' ')}`).toMatchObject({
+        t: 'end',
+        reason: 'unload',
+        finalSeq: last.seq,
+      })
       // The unconfirmed body went again under its own number, and the tail
       // came between it and the final body.
       const unconfirmed = since().find((b) => hasNote(b, 'unconfirmed')) as Body

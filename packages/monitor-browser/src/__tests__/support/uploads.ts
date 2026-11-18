@@ -66,7 +66,7 @@ export function preambleOf(body: Uint8Array): {
   v: number
   i: string
   em: [number, number][]
-  seal: { seq: number; from_us: number; through_us: number; ms: number }
+  seal: { seq: number; from_us: number; through_us: number; ms: number; next_us?: number }
 } {
   const n = new DataView(body.buffer, body.byteOffset + BODY_PREAMBLE_BYTES, 4).getUint32(0, false)
   const at = body.byteOffset + BODY_PREAMBLE_BYTES + 4

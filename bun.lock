@@ -55,7 +55,7 @@
       "name": "@moqtap/monitor-browser",
       "version": "0.13.0",
       "dependencies": {
-        "@moqtap/codec": ">=0.15.0",
+        "@moqtap/codec": "^0.17.1",
       },
       "devDependencies": {
         "@moqtap/codec": "workspace:*",

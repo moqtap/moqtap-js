@@ -347,3 +347,115 @@ describe('ChunkStore, degradation', () => {
     expect(reloaded.holdUntil(OTHER)).toBeUndefined()
   })
 })
+
+/** `localStorage`, in memory. */
+class MemoryStorage {
+  readonly rows = new Map<string, string>()
+  get length(): number {
+    return this.rows.size
+  }
+  key(i: number): string | null {
+    return [...this.rows.keys()][i] ?? null
+  }
+  getItem(k: string): string | null {
+    return this.rows.get(k) ?? null
+  }
+  setItem(k: string, v: string): void {
+    this.rows.set(k, v)
+  }
+  removeItem(k: string): void {
+    this.rows.delete(k)
+  }
+  clear(): void {
+    this.rows.clear()
+  }
+}
+
+/** A durable backend kept in memory, as IndexedDB is across page loads. */
+const durable = (): ChunkBackend => patched(new MemoryBackend(), { durable: true })
+
+describe('ChunkStore, the copy a closing page keeps in localStorage', () => {
+  const open = (backend: ChunkBackend, ls: MemoryStorage | null) =>
+    ChunkStore.open('db', MB, { backend, stash: ls as unknown as Storage | null })
+
+  it('is moved into the backend by the next page load, byte for byte, and removed', async () => {
+    const ls = new MemoryStorage()
+    const backend = durable()
+    const closing = await open(new MemoryBackend(), ls)
+    const c = chunk('s1', 3, 70_000)
+    c.bytes = Uint8Array.from({ length: 70_000 }, (_, i) => (i * 7) & 0xff)
+    closing.stash(c, DEST)
+    expect([...ls.rows.keys()]).toEqual(['db:unload:s1:i1:3'])
+
+    const next = await open(backend, ls)
+    expect(ls.rows.size).toBe(0)
+    expect(next.backlog(DEST).map((e) => [e.key, e.seq, e.size])).toEqual([['s1:i1:3', 3, 70_000]])
+    const back = await next.get('s1:i1:3')
+    expect(back).toMatchObject({ sessionId: 's1', instanceId: 'i1', seq: 3, level: 'baseline' })
+    expect(back?.bytes).toEqual(c.bytes)
+    expect(next.backlog(OTHER)).toEqual([])
+  })
+
+  it('is not written for a body the backend already holds', async () => {
+    const ls = new MemoryStorage()
+    const store = await open(new MemoryBackend(), ls)
+    const c = chunk('s1', 0)
+    await store.put(c, DEST)
+    store.stash(c, DEST)
+    expect(ls.rows.size).toBe(0)
+  })
+
+  it('is removed once ingest confirms the body', async () => {
+    const ls = new MemoryStorage()
+    const store = await open(new MemoryBackend(), ls)
+    const c = chunk('s1', 0)
+    store.stash(c, DEST)
+    await store.delete(c.idempotencyKey)
+    expect(ls.rows.size).toBe(0)
+  })
+
+  it('stays while the next page load keeps memory only, until ingest confirms it', async () => {
+    const ls = new MemoryStorage()
+    const closing = await open(new MemoryBackend(), ls)
+    closing.stash(chunk('s1', 0), DEST)
+    const next = await open(new MemoryBackend(), ls)
+    expect(next.backlog(DEST).map((e) => e.key)).toEqual(['s1:i1:0'])
+    expect(ls.rows.size).toBe(1)
+    await next.delete('s1:i1:0')
+    expect(ls.rows.size).toBe(0)
+  })
+
+  it('takes at most 512 K characters per page load, and leaves other rows alone', async () => {
+    const ls = new MemoryStorage()
+    ls.setItem('app', 'the page’s own')
+    const store = await open(new MemoryBackend(), ls)
+    for (let i = 0; i < 20; i++) store.stash(chunk('s1', i, 40_000), DEST)
+    const ours = [...ls.rows.keys()].filter((k) => k.startsWith('db:unload:'))
+    // 40 KB is about 53 K characters of base64.
+    expect(ours).toHaveLength(9)
+    expect(ls.getItem('app')).toBe('the page’s own')
+    const next = await open(durable(), ls)
+    expect(next.chunks).toBe(9)
+    expect([...ls.rows.keys()]).toEqual(['app'])
+  })
+
+  it('drops a row it cannot read, and never throws when storage does', async () => {
+    const ls = new MemoryStorage()
+    ls.setItem('db:unload:x', '{not json')
+    ls.setItem('db:unload:y', '{"key":1}')
+    const errors: unknown[] = []
+    const store = await ChunkStore.open('db', MB, {
+      backend: durable(),
+      stash: ls as unknown as Storage,
+      onInternalError: (e) => errors.push(e),
+    })
+    expect(store.chunks).toBe(0)
+    expect([...ls.rows.keys()]).toEqual([])
+    expect(errors).toHaveLength(1)
+    ls.setItem = () => {
+      throw new Error('QuotaExceededError')
+    }
+    expect(() => store.stash(chunk('s1', 0), DEST)).not.toThrow()
+    expect(store.writeFailures).toBe(1)
+  })
+})

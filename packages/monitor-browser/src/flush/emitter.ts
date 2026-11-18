@@ -104,9 +104,10 @@ export class Emitter {
     return this._seq
   }
 
-  /** Take the next body's number. */
-  takeSeq(): number {
-    return this._seq++
+  /** A body numbered `seq` and sealed through `throughUs` is made; the next takes `seq + 1`. */
+  sealed(seq: number, throughUs: number): void {
+    this._seq = Math.max(this._seq, seq + 1)
+    this._through = Math.max(this._through, throughUs)
   }
 
   /**
@@ -195,11 +196,6 @@ export class Emitter {
     return this._through
   }
 
-  /** A body sealed the interval up to `throughUs`. */
-  sealThrough(throughUs: number): void {
-    this._through = Math.max(this._through, throughUs)
-  }
-
   /**
    * A connection opened, or its draft became known: bodies list it from now
    * until after it closes. A known draft stays the connection's.
@@ -212,6 +208,12 @@ export class Emitter {
     }
     this._conns.delete(c)
     this._conns.set(c, { draft: known?.draft ?? draft, relay, open: true, listed: false })
+  }
+
+  /** Whether any connection is open. */
+  get anyOpen(): boolean {
+    for (const k of this._conns.values()) if (k.open) return true
+    return false
   }
 
   noteConnClosed(c: number): void {
@@ -270,9 +272,17 @@ export class Emitter {
     }
   }
 
+  /**
+   * The `tail.conn` counters: every connection that has received an object,
+   * and every one open in the body's interval, at zero until it receives one.
+   */
   tailConns(): [number, number, number][] {
     const out: [number, number, number][] = []
     for (const [c, t] of this._totals) out.push([c, t[0], t[1]])
+    for (const [c, k] of this._conns) {
+      if ((k.open || k.listed) && !this._totals.has(c)) out.push([c, 0, 0])
+    }
+    out.sort((a, b) => a[0] - b[0])
     return out.slice(-MAX_TAIL_CONNS)
   }
 

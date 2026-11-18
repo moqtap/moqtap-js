@@ -660,6 +660,38 @@ describe('FlushQueue.sealSegment with the rest stored behind the front', () => {
   })
 })
 
+describe('FlushQueue, a seal cut short', () => {
+  // Firefox can cancel a closing page's script at any call: a seal stopped
+  // before its body is made must leave no hole in the numbers or the interval.
+  it('keeps the number, the interval and the frames when the body is not made', async () => {
+    const clock = clockAt(2_000)
+    let fail = false
+    const q = queue({
+      clock: {
+        now: () => clock.t,
+        wall: () => {
+          if (fail) throw new Error('cut')
+          return clock.wall()
+        },
+      },
+    })
+    q.json(note('a'))
+    const first = q.seal() as FlushChunk
+    q.json(note('b'))
+    clock.t = 3_000
+    fail = true
+    expect(() => q.seal()).toThrow('cut')
+    fail = false
+    clock.t = 4_000
+    const next = q.seal() as FlushChunk
+    const a = preambleOf(first.bytes).seal
+    const b = preambleOf(next.bytes).seal
+    expect(b.seq).toBe(a.seq + 1)
+    expect(b.from_us).toBe(a.through_us)
+    expect((await decodeBody(next.bytes)).records.map(nameOf)).toEqual([undefined, 'b'])
+  })
+})
+
 describe('FlushQueue.sealFront', () => {
   it('seals about the bytes asked for, cut in front of a record, and keeps the rest', async () => {
     const q = queue()
@@ -978,6 +1010,67 @@ describe('FlushSchedule', () => {
     expect(() => timers.advance(0)).not.toThrow()
     expect(errors).toHaveLength(1)
   })
+
+  it('takes a body sealed when a seal is due for that seal, and states the one after', () => {
+    const timers = new FakeTimers()
+    const { schedule, fired } = scheduleWith(timers, {
+      earlyFlushesMs: [45_000],
+      now: () => timers.now,
+    })
+    schedule.start(0)
+    timers.advance(0)
+    expect(schedule.promiseNext()).toBe(45_000)
+    timers.advance(44_999)
+    // A body of the caller's own, sealed at 45 s before the early timer runs.
+    timers.now = 45_000
+    expect(schedule.promiseNext()).toBe(105_000)
+    schedule.sealed()
+    timers.advance(60_000)
+    expect(fired).toEqual(['ready', 'interval'])
+  })
+})
+
+describe('FlushSchedule.promiseNext, from the body being sealed', () => {
+  it('counts an interval seal’s next from its body’s through, sealed after the timer ran', () => {
+    const timers = new FakeTimers()
+    const stated: [number, number | undefined][] = []
+    const schedule: FlushSchedule = new FlushSchedule({
+      onFlush: (reason) => {
+        // The seal takes 7 ms; its body states a through after the timer.
+        timers.now += 7
+        if (reason !== 'early') stated.push([timers.now, schedule.promiseNext(timers.now)])
+        // A second piece sealed with it states the same seal.
+        if (reason === 'interval') stated.push([timers.now, schedule.promiseNext(timers.now + 1)])
+      },
+      byteThreshold: 32 * 1024,
+      earlyFlushesMs: [],
+      intervalMs: 1_000,
+      timers,
+      now: () => timers.now,
+    })
+    schedule.start(0)
+    timers.advance(0)
+    timers.advance(1_100)
+    timers.advance(1_000)
+    expect(stated).toEqual([
+      [7, 1_000],
+      [1_007, 2_007],
+      [1_007, 2_007],
+      [2_014, 3_014],
+      [2_014, 3_014],
+    ])
+  })
+
+  it('leaves the interval where it was for an early seal and a seal of the caller’s', () => {
+    const timers = new FakeTimers()
+    const { schedule } = scheduleWith(timers, { earlyFlushesMs: [45_000], now: () => timers.now })
+    schedule.start(0)
+    timers.advance(45_000)
+    timers.now += 7
+    expect(schedule.promiseNext(timers.now)).toBe(105_000)
+    timers.now = 50_000
+    expect(schedule.promiseNext(timers.now)).toBe(105_000)
+  })
 })
 
 describe('FlushSchedule.shorten, while ingest asks for a live view', () => {
@@ -1062,6 +1155,28 @@ describe('FlushSchedule.shorten, while ingest asks for a live view', () => {
     expect(stated.at(-1)).toEqual([12_000, 17_000])
     schedule.stop()
     expect(schedule.promiseNext()).toBeUndefined()
+  })
+
+  it('keeps the stated seal when the short interval lapses at that same time', () => {
+    const timers = new FakeTimers()
+    const stated: [number, number | undefined][] = []
+    const schedule: FlushSchedule = new FlushSchedule({
+      onFlush: () => stated.push([timers.now, schedule.promiseNext()]),
+      byteThreshold: 32 * 1024,
+      earlyFlushesMs: [],
+      timers,
+      now: () => timers.now,
+    })
+    schedule.start(0)
+    timers.advance(0)
+    schedule.shorten(2_000, 8_000)
+    timers.advance(8_000)
+    expect(stated.slice(1)).toEqual([
+      [2_000, 4_000],
+      [4_000, 6_000],
+      [6_000, 8_000],
+      [8_000, 68_000],
+    ])
   })
 
   it('does nothing once stopped, and leaves no timer behind', () => {

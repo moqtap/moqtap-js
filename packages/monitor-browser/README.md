@@ -90,12 +90,13 @@ init({
 ```
 
 By default a session uploads when it is ready, 45 s later, then every 60 s or
-once 32 KB is waiting, whichever comes first. While detail is raised, the 32 KB
-is counted compressed, and an upload holds at most 64 times that uncompressed.
-`upload.earlyFlushesMs`, `upload.intervalMs` and `upload.byteThreshold` set
-those. Each object's start, end and size are sent; `upload.timing: 'group'`
-sends one time and one byte count per run of objects instead, and Insight may
-ask for that too.
+once 32 KB is waiting, whichever comes first. While a connection is open, each
+of those uploads is sent even with nothing new recorded. While detail is raised,
+the 32 KB is counted compressed, and an upload holds at most 64 times that
+uncompressed. `upload.earlyFlushesMs`, `upload.intervalMs` and
+`upload.byteThreshold` set those. Each object's start, end and size are sent;
+`upload.timing: 'group'` sends one time and one byte count per run of objects
+instead, and Insight may ask for that too.
 
 The flight recorder uses memory (`depth`, 32 MB by default) only when a trigger
 is set, in each page or worker that opens a WebTransport. A page that only
@@ -179,16 +180,16 @@ next page load starts at `detail`, or at `baseline` while detail is held.
 
 Without any call, the collector:
 
-| When                                   | It                                                         |
-| -------------------------------------- | ---------------------------------------------------------- |
-| a `WebTransport` is constructed        | begins a session, unless one is running                    |
-| a connection closes                    | records why, and uploads that connection's records         |
-| the page is hidden                     | uploads what it holds                                      |
-| the page closes                        | ends the page load's recording and uploads the rest        |
-| the page enters the back/forward cache | uploads what it holds; the session goes on if restored     |
-| an upload fails                        | retries it                                                 |
-| the page closes with an upload unsent  | sends it from the next page load on the same origin        |
-| a linked worker is terminated          | records its connections closed, with what it last reported |
+| When                                   | It                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------ |
+| a `WebTransport` is constructed        | begins a session, unless one is running                                              |
+| a connection closes                    | records why, and uploads that connection's records                                   |
+| the page is hidden                     | uploads what it holds                                                                |
+| the page closes                        | ends the page load's recording and uploads the rest                                  |
+| the page enters the back/forward cache | uploads what it holds; the session goes on if restored                               |
+| an upload fails                        | retries it                                                                           |
+| the page closes with an upload unsent  | sends it from the next page load on the same origin that constructs a `WebTransport` |
+| a linked worker is terminated          | records its connections closed, with what it last reported                           |
 
 A tab killed with no `pagehide` while visible loses at most the last 60 s.
 
@@ -264,10 +265,12 @@ The features:
   `escalation` as well.
 - `customMetrics`: `defineMetric()` and `observe()`.
 - `persistence`: stores each upload in IndexedDB until ingest accepts it, so
-  one the page could not send is sent on the next page load. It also keeps
-  detail held at `baseline` across page loads, in a second IndexedDB database
-  (`moqtap-collector:holds`); without it, a new page load is held only once
-  its first upload is answered.
+  one the page could not send is sent on the next page load that constructs a
+  `WebTransport`. What the page holds as it closes is also kept in
+  `localStorage` (keys starting `moqtap-collector:unload:`) until the next page
+  load moves it to IndexedDB. It also keeps detail held at `baseline` across
+  page loads, in a second IndexedDB database (`moqtap-collector:holds`);
+  without it, a new page load is held only once its first upload is answered.
 
 ### Compose your own
 

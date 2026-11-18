@@ -356,7 +356,7 @@ Without any call, the collector:
 | the page closes | ends the page load's recording and uploads the rest |
 | the page enters the back/forward cache | uploads what it holds; the session goes on if the page is restored |
 | an upload fails | retries it |
-| the page closes with an upload unsent | sends it from the next page load on the same origin |
+| the page closes with an upload unsent | sends it from the next page load on the same origin that constructs a `WebTransport` |
 | a linked worker is terminated | records its connections closed, with what it last reported |
 
 Terminating a worker is safe at any time. Its open connections are recorded closed at once,
@@ -529,13 +529,17 @@ The exported `DEFAULTS` object holds every default.
 ### Uploads and storage
 
 The `upload` options set how often the page uploads. It also uploads when a connection closes,
-when the page is hidden, on `flush()` and `end()`, and when the page closes.
+when the page is hidden, on `flush()` and `end()`, and when the page closes. While a connection
+is open, every upload that is due is sent, even with nothing new recorded; with none open, an
+upload with nothing to send is skipped.
 
 Data that can't be sent is kept in IndexedDB (database `moqtap-collector`) and sent from the
-next page load on the same origin. If ingest is unreachable, slow or failing, your player isn't
-affected.
+next page load on the same origin that constructs a `WebTransport`. A page load that constructs
+none sends nothing. What the page holds as it closes is also kept in `localStorage`, under keys
+starting `moqtap-collector:unload:`, until the next page load moves it to IndexedDB. Each page
+load keeps at most 512 K characters there. If ingest is unreachable, slow or failing, your player isn't affected.
 
-Workers use neither the network nor IndexedDB. Everything they record is uploaded by the page.
+Workers use neither the network nor storage. Everything they record is uploaded by the page.
 
 If `endpoint` is a proxy in front of Insight's ingest, return ingest's responses with their
 headers unchanged, and on a cross-origin proxy let the page read them
@@ -592,7 +596,8 @@ The optional features are:
 - `flightRecorder`: the `stall` and `cadence` triggers. A page needs `escalation` with it.
 - `customMetrics`: `defineMetric()` and `observe()`.
 - `persistence`: stores each upload in IndexedDB until ingest accepts it, so one the page could
-  not send goes out on the next page load. It also keeps a hold on detail across page loads.
+  not send goes out on the next page load that constructs a `WebTransport`. It also keeps a hold
+  on detail across page loads.
 
 ### Compose your own
 

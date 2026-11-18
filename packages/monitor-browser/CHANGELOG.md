@@ -6,10 +6,15 @@ until 0.11.0, will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.0] - 2026-11-18
 
 ### Changed
 
+- **Breaking:** uploads are v2 bodies: an uncompressed preamble `{v, i, em,
+  seal}`, then the batch record with `clk`, `tail`, `conn` and `trk`. Every
+  record carries `rseq`; the batch record no longer carries `ts`, `wall`,
+  `dropped`, `lost` or `clock`. A page keeps one instance id from `init()`
+  on.
 - **Breaking:** `newSession()` and the `sessionId` option are removed: the
   session is the tab's, and `setContext()` labels the connections of the next
   playback. A `sessionId` key is reported as unknown (`MQ1112`), `MQ1113` is
@@ -30,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** a session no longer ends 30 s after its last connection
   closes, and `EndRecord['reason']` loses `idle`. `budget.elevatedMinutes`
   applies per page load.
+- **Breaking:** a receive track's rollup row no longer carries `objects`,
+  `payloadBytes`, `groups`, `duplicates`, `statusObjects`, `groupGaps`,
+  `outOfOrder` or `gapRanges`.
+- **Breaking:** a page and its workers must use this release; workers forward
+  runs and frames uncompressed, and a worker the page counts gone is not
+  stood in for.
+- **Breaking:** a flight record's `cols.group` and `cols.object` are decimal
+  strings.
 - **Breaking (types):** `SupportedDraft` gains `23`, and `MarkSample['what']`
   gains `{ end: 'group' | 'track' }`, so an exhaustive `switch` over either
   needs the new case.
@@ -40,7 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty string clears a field. `DeliveryPath` gains `fetch_unseen`,
   `ObjectSample.path` is never `null`, a range in `MarkSample['what']` gains
   `first`, and `BatchRecord.conn[].draft` is optional.
-- Requires `@moqtap/codec` 0.15.0.
+- Requires `@moqtap/codec` 0.17.1 or a later 0.17 release.
+- Connection records, `ctrl` and `rollup` carry the connection ordinal `c`;
+  `ctrl` carries `sid` and `at_us`.
 - An upload names each connection's relay by the URL's scheme, host, port
   and path, the path exactly as the connection sends it (an empty `https`
   path is `/`), so latency is matched per relay path; the query, fragment
@@ -49,13 +64,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never longer than `upload.intervalMs`.
 - An upload is sealed at one detail level: a change of detail first seals
   what came before at the old level.
+- A zero-length object with status 0x0 is counted as an object, not a status.
+- From draft-18, a FETCH stream's Group ID Deltas follow the group order its
+  request settled.
 
 ### Added
 
-- Each object received or sent is reported with when it started and ended
-  and its size. An object still arriving when its upload is sealed has its
-  end stated in a later upload (`run-end`).
+- Every object received or sent is recorded, unsampled, as `run` records: per
+  stream and group, or per datagram track and group, each object's id, when
+  it started and ended and its size, with FIRST_OBJECT, END_OF_GROUP and how
+  the stream ended. An object still arriving when its upload is sealed has
+  its end stated in a later upload (`run-end`).
+- Non-Normal statuses, FETCH End-of-Range markers and Prior Group and Object
+  ID Gaps are sent as `mark` records.
 - Each upload but the last states when the next one is due (`seal.next_us`).
+  While a connection is open, that upload is made even with nothing new
+  recorded, as only its batch record.
+- A clock exchange, `POST /v1/clock`, at start and after a clock break.
+- Rollup tracks carry `rq`, the request they are delivered for.
 - A `bw` record: each connection's bytes received and sent per second,
   including those before `init()`.
 - Draft-23, with the `@moqtap/monitor-browser/draft23` entry and its `/thin`,
@@ -75,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MQ1115`: an `actorId`, `contentId`, `environment` or `release` longer than
   256 characters is left out.
 - `upload.timing`: `'object'` (the default) or `'group'`, one time and one
-  byte count per run of objects, which Insight may also ask for. `MQ1116` reports any other value.
+  byte count per run of objects, which Insight may also ask for. `MQ1116`
+  reports any other value.
 
 ### Fixed
 
@@ -84,10 +111,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A fetch stream that decodes a Group or Object ID above 2^64-1 no longer
   counts objects under that ID; from draft-20 it is reported as
   `fetch-desync`.
-- A connection is listed in every body from its open, before its draft is
-  known.
-- A body lists at most 1,024 tracks and 64 connections; what would take it
-  past either is sealed into the next body.
 - End of Group closes a group's `groupOpenMs` span, and Prior Group and Object
   ID Gaps are read on fetch streams before draft-20.
 - A TRACK_STATUS_OK (drafts 13-14) no longer binds Track Alias 0, so a
@@ -95,43 +118,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fetch stream IDs: an End of Range's IDs are absolute on drafts 20-22, an
   Object ID Delta with no Group ID Delta adds to the prior Object ID on
   drafts 18-19, and a flight-recorder dump follows the FETCH's group order.
-- At high object rates, a page closing just before a metrics interval ended
-  could split what it sent across four beacon bodies near the 64 KB limit.
-
-## [0.13.0] - 2026-11-03
-
-### Changed
-
-- **Breaking:** uploads are v2 bodies: an uncompressed preamble `{v, i, em,
-  seal}`, then the batch record with `clk`, `tail`, `conn` and `trk`. Every
-  record carries `rseq`; the batch record no longer carries `ts`, `wall`,
-  `dropped`, `lost` or `clock`.
-- **Breaking:** a page keeps one instance id from `init()` on; `newSession()`
-  changes the session id only, and body `seq` and `rseq` continue.
-- **Breaking:** a receive track's rollup row no longer carries `objects`,
-  `payloadBytes`, `groups`, `duplicates`, `statusObjects`, `groupGaps`,
-  `outOfOrder` or `gapRanges`.
-- **Breaking:** a page and its workers must use this release; workers forward
-  runs and frames uncompressed, and a worker the page counts gone is not
-  stood in for.
-- **Breaking:** a flight record's `cols.group` and `cols.object` are decimal
-  strings.
-- A zero-length object with status 0x0 is counted as an object, not a status.
-- From draft-18, a FETCH stream's Group ID Deltas follow the group order its
-  request settled.
-- Connection records, `ctrl` and `rollup` carry the connection ordinal `c`;
-  `ctrl` carries `sid` and `at_us`. A connection keeps its ordinal across
-  `newSession()`.
-
-### Added
-
-- Every arrival is recorded, unsampled, as `run` records: per stream and
-  group, or per datagram track and group, each object's id and arrival time,
-  with FIRST_OBJECT, END_OF_GROUP and how the stream ended.
-- Non-Normal statuses, FETCH End-of-Range markers and Prior Group and Object
-  ID Gaps are sent as `mark` records.
-- A clock exchange, `POST /v1/clock`, at start and after a clock break.
-- Rollup tracks carry `rq`, the request they are delivered for.
+- An upload made as the page closed was lost when the beacon did not deliver
+  it (Firefox, WebKit, and Chromium on a navigation): its IndexedDB copy was
+  never written. It is now also kept in `localStorage` until the next page
+  load.
 
 ## [0.12.0] - 2026-10-28
 

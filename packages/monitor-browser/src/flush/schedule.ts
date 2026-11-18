@@ -67,6 +67,8 @@ export class FlushSchedule {
   private _intervalAt: Mono | undefined
   /** The next seal a body stated: no re-arm moves the interval past it. */
   private _promised: Mono | undefined
+  /** An interval or byte seal is running: its first body restarts the interval. */
+  private _restarting = false
   private _intervalHandle: unknown
   private _byteHandle: unknown
   /** A shorter interval ingest asked for, until its timer ends it. */
@@ -92,10 +94,26 @@ export class FlushSchedule {
 
   /**
    * When the next seal is due, stated by the body being sealed now; no later
-   * change of interval moves it past this. Undefined once stopped.
+   * change of interval moves it past this. A seal due by now is the body
+   * being sealed, so it is dropped rather than stated. `now` is the body's
+   * `through`: the first body of an interval or byte seal counts the
+   * restarted interval from there, so it states its `through` plus the
+   * interval. Undefined once stopped.
    */
-  promiseNext(): Mono | undefined {
+  promiseNext(now: Mono = this._now()): Mono | undefined {
     if (!this._started || this._stopped) return undefined
+    for (const [h, t] of this._earlyAt) {
+      if (t > now) continue
+      this._timers.clearTimer(h)
+      this._earlyAt.delete(h)
+    }
+    if (this._intervalAt !== undefined && this._intervalAt <= now) {
+      this._promised = undefined
+      this._rearmInterval(now)
+    } else if (this._restarting) {
+      this._rearmInterval(now)
+    }
+    this._restarting = false
     let at = this._intervalAt
     for (const t of this._earlyAt.values()) if (at === undefined || t < at) at = t
     if (at !== undefined) this._promised = at
@@ -147,7 +165,7 @@ export class FlushSchedule {
     this._intervalHandle = this._timers.setTimer(() => {
       this._promised = undefined
       this._rearmInterval()
-      this._fire('interval')
+      this._fire('interval', true)
     }, lastEarly + this._intervalMs)
     this._intervalAt = this._now() + lastEarly + this._intervalMs
     this._handles.push(this._intervalHandle)
@@ -181,7 +199,7 @@ export class FlushSchedule {
       // body states the seal after it.
       this._promised = undefined
       this._rearmInterval()
-      this._fire('bytes')
+      this._fire('bytes', true)
     }, 0)
   }
 
@@ -245,41 +263,55 @@ export class FlushSchedule {
   private _after(ms: number, reason: SealReason): void {
     const h = this._timers.setTimer(() => {
       this._earlyAt.delete(h)
+      this._promised = undefined
       this._fire(reason)
     }, ms)
     this._earlyAt.set(h, this._now() + ms)
     this._handles.push(h)
   }
 
-  private _rearmInterval(): void {
+  /** Arm the interval seal for one interval after `from`, never past a stated seal. */
+  private _rearmInterval(from?: Mono): void {
     if (this._stopped) return
     if (this._intervalHandle !== undefined) {
       this._timers.clearTimer(this._intervalHandle)
       this._handles = this._handles.filter((h) => h !== this._intervalHandle)
     }
     const now = this._now()
-    let ms = this._shortMs ?? this._intervalMs
+    const interval = this._shortMs ?? this._intervalMs
+    let at = (from ?? now) + interval
+    let ms = from === undefined ? interval : at - now
     const p = this._promised
-    if (p !== undefined && p > now) ms = Math.min(ms, p - now)
-    this._intervalHandle = this._timers.setTimer(() => {
-      // The promised seal is this one: the next is stated by its body.
-      this._promised = undefined
-      this._rearmInterval()
-      this._fire('interval')
-    }, ms)
-    this._intervalAt = now + ms
+    // A re-arm at the promised time itself, as a watch lapsing then, still seals then.
+    if (p !== undefined && p >= now && p < at) {
+      at = p
+      ms = p - now
+    }
+    this._intervalHandle = this._timers.setTimer(
+      () => {
+        // The promised seal is this one: the next is stated by its body.
+        this._promised = undefined
+        this._rearmInterval()
+        this._fire('interval', true)
+      },
+      Math.max(0, ms),
+    )
+    this._intervalAt = at
     this._handles.push(this._intervalHandle)
   }
 
-  private _fire(reason: SealReason): void {
+  private _fire(reason: SealReason, restarts = false): void {
     if (this._stopped) return
     // Every seal empties the buffer, so the byte budget restarts whatever the
     // reason was.
     this._bytes = 0
+    this._restarting = restarts
     try {
       this._onFlush(reason)
     } catch (err) {
       this._onError?.(err)
+    } finally {
+      this._restarting = false
     }
   }
 }

@@ -371,7 +371,7 @@ export class CollectorRuntime {
       clock: this._clock,
       level: () => this._escalation.level,
       sealMs: () => this._schedule.sealMs,
-      nextSeal: () => this._schedule.promiseNext(),
+      nextSeal: (throughMs) => this._schedule.promiseNext(throughMs),
       droppedRecords: () => this._emitter.droppedRecords + this._dropped(),
       maxPendingBytes: () => this._cap(),
       onInternalError: this._onError,
@@ -1369,10 +1369,21 @@ export class CollectorRuntime {
     try {
       this._clockCheck()
       if (tick) this._tick()
-      if (this._seal() !== null) void this._drain()
+      if ((this._seal() ?? (tick ? this._sealIdle() : null)) !== null) void this._drain()
     } catch (err) {
       this._onError(err)
     }
+  }
+
+  /**
+   * A due seal found nothing buffered: while a connection is open it still
+   * makes a body, of only the batch record, at the time the last body stated.
+   */
+  private _sealIdle(): Chunk | null {
+    if (this._discarded || this._queue.frameCount > 0 || !this._emitter.anyOpen) return null
+    const chunk = this._queue.seal({ idle: true })
+    if (chunk !== null) this._admit(chunk)
+    return chunk
   }
 
   /**
@@ -1777,10 +1788,10 @@ export class CollectorRuntime {
    * Synchronous throughout: the page may not survive a single `await`. On a
    * real unload the `end` record is sealed as its own small body and beaconed
    * first, so the one record that says how the instance ended is the likeliest
-   * to fit the browser's shared beacon quota; then the tail, then every body
-   * still unconfirmed. Each also goes to IndexedDB under the same key, so one
-   * the browser refuses is sent by the next page load, and one it takes twice
-   * dedupes.
+   * to fit the browser's shared beacon quota; then the bodies with no stored
+   * copy, then the rest. Each is also stored under the same key, so one the
+   * browser refuses is sent by the next page load that begins a session, and
+   * one it takes twice dedupes.
    *
    * A persisted `pagehide` is a page entering the back/forward cache, which may
    * be restored: the tail goes, marked `frozen`, and the instance carries on.
@@ -1857,18 +1868,21 @@ export class CollectorRuntime {
   }
 
   /**
-   * Beacon `first`, then every other body in the outbox, newest last, and the
-   * one whose upload is under way after them all; store each one. The beacon
-   * quota is shared, and that upload's request may already have reached
-   * ingest, so the bodies never sent come before it.
+   * Beacon `first`, then every other body in the outbox: those with no stored
+   * copy, then those with one, which the next page load sends anyway, each
+   * newest last; the one whose upload is under way after them all, since its
+   * request may already have reached ingest. Store each one.
    */
   private _beaconOutbox(first: readonly Chunk[]): void {
     const sending = this._sending
+    const store = this._store
     const rest = this._outbox.filter((c) => !first.includes(c) && c !== sending)
+    const unstored = rest.filter((c) => store === null || !store.has(c.idempotencyKey))
+    const order = [...first, ...unstored, ...rest.filter((c) => !unstored.includes(c))]
     if (sending !== null && this._outbox.includes(sending) && !first.includes(sending)) {
-      rest.push(sending)
+      order.push(sending)
     }
-    for (const chunk of [...first, ...rest]) {
+    for (const chunk of order) {
       if (this._beaconed.has(chunk)) continue
       const outcome = sendTail(this.config.endpoint, chunk.bytes, {
         maxBytes: Math.min(this.config.upload.beaconMaxBytes, BEACON_MAX_BYTES),
@@ -1883,7 +1897,11 @@ export class CollectorRuntime {
       // Metered only once something took it: ingest, the actual meter, never
       // sees a body nothing accepted.
       if (outcome !== false) this._noteBytes(chunk)
-      if (this._store !== null) void this._store.put(chunk, this._dest)
+      if (store !== null) {
+        // A write to IndexedDB started now may never commit: `localStorage` is kept at once.
+        store.stash(chunk, this._dest)
+        void store.put(chunk, this._dest)
+      }
     }
   }
 

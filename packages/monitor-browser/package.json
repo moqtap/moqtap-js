@@ -802,7 +802,7 @@
     "bench": "bun run scripts/bench-runs.ts"
   },
   "dependencies": {
-    "@moqtap/codec": ">=0.15.0"
+    "@moqtap/codec": "^0.17.1"
   },
   "devDependencies": {
     "@moqtap/codec": "workspace:*",

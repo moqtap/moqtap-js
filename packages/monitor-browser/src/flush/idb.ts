@@ -23,6 +23,11 @@ import type { DetailLevel } from '../types.js'
  * 4. **Ingest's hold is kept here too**, per destination, so a page load is
  *    held from its start rather than from its first answer.
  *
+ * 5. **A closing page also writes to `localStorage`.** A write to IndexedDB
+ *    started at `pagehide` may never commit (Firefox, WebKit, and Chromium on
+ *    a navigation), while `localStorage` is written at once. The next page
+ *    load moves those rows into IndexedDB.
+ *
  * The store degrades rather than fails. IndexedDB is absent in some contexts,
  * throws on open in private-mode and sandboxed-iframe contexts, and can reject
  * any write with `QuotaExceededError`. None of that may take the session's
@@ -110,6 +115,11 @@ export interface ChunkStoreOptions {
   readonly factory?: IDBFactory | null
   /** Inject a backend outright. Used by the suite and by hosts with their own storage. */
   readonly backend?: ChunkBackend
+  /**
+   * Where a closing page keeps its unstored bodies. Defaults to
+   * `globalThis.localStorage`; `null` keeps none.
+   */
+  readonly stash?: Storage | null
   readonly onInternalError?: (err: unknown) => void
 }
 
@@ -141,6 +151,41 @@ const HOLDS_DB_SUFFIX = ':holds'
 const HOLDS_DB_VERSION = 1
 /** The version-1 per-session counter store, deleted on upgrade. */
 const LEGACY_META = 'meta'
+/** After the database name: the `localStorage` rows a closing page writes, one per body. */
+const STASH_INFIX = ':unload:'
+/** `localStorage` characters one page load's closing copies take at most. */
+const STASH_MAX_CHARS = 512 * 1024
+
+/** A body kept in `localStorage`: its index row, the body's fields and its bytes in base64. */
+interface StashRow extends ChunkIndexEntry {
+  readonly idempotencyKey: string
+  readonly level: DetailLevel
+  readonly b64: string
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let s = ''
+  for (let i = 0; i < bytes.length; i += 0x2000) {
+    s += String.fromCharCode(...bytes.subarray(i, i + 0x2000))
+  }
+  return btoa(s)
+}
+
+function fromBase64(b64: string): Uint8Array {
+  const s = atob(b64)
+  const out = new Uint8Array(s.length)
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i)
+  return out
+}
+
+/** The default stash: `localStorage`, where reading it does not throw. */
+function platformStash(): Storage | null {
+  try {
+    return (globalThis as { localStorage?: Storage }).localStorage ?? null
+  } catch {
+    return null
+  }
+}
 
 /**
  * A row as read back, from either version of the database.
@@ -215,6 +260,14 @@ const request = <T>(req: IDBRequest<T>): Promise<T> =>
   new Promise<T>((resolve, reject) => {
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error ?? new Error('idb request failed'))
+  })
+
+/** Resolves once `tx` commits, rejects if it fails or aborts. */
+const committed = (tx: IDBTransaction): Promise<void> =>
+  new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error('idb transaction failed'))
+    tx.onabort = () => reject(tx.error ?? new Error('idb transaction aborted'))
   })
 
 function openHolds(dbName: string, factory: IDBFactory): Promise<IDBDatabase> {
@@ -320,10 +373,12 @@ export class IdbBackend implements ChunkBackend {
       bytes: chunk.bytes,
     }
     // One transaction, so a body never outlives its index row or the reverse.
-    return Promise.all([
-      request(tx.objectStore(CHUNKS).put(row)),
-      request(tx.objectStore(INDEX).put(entry)),
-    ]).then(() => undefined)
+    // Resolved at commit, not when the requests succeed: a closing page can
+    // abort the transaction in between, and a body counted as stored gets no
+    // `localStorage` copy.
+    tx.objectStore(CHUNKS).put(row)
+    tx.objectStore(INDEX).put(entry)
+    return committed(tx)
   }
 
   async get(key: string): Promise<Chunk | undefined> {
@@ -402,15 +457,24 @@ export class ChunkStore {
   private _evictedFifo = 0
   private _refused = 0
   private _writeFailures = 0
+  private readonly _stash: Storage | null
+  private readonly _stashPrefix: string
+  /** Keys of the stash rows this store wrote or keeps. */
+  private readonly _stashed = new Set<string>()
+  private _stashChars = 0
 
   private constructor(
     backend: ChunkBackend,
     quotaBytes: number,
     onError: ((err: unknown) => void) | undefined,
+    stash: Storage | null,
+    dbName: string,
   ) {
     this._backend = backend
     this._quota = Math.max(0, quotaBytes)
     this._onError = onError
+    this._stash = stash
+    this._stashPrefix = dbName + STASH_INFIX
   }
 
   /**
@@ -441,7 +505,13 @@ export class ChunkStore {
         }
       }
     }
-    const store = new ChunkStore(backend ?? new MemoryBackend(), quotaBytes, onError)
+    const store = new ChunkStore(
+      backend ?? new MemoryBackend(),
+      quotaBytes,
+      onError,
+      options?.stash === undefined ? platformStash() : options.stash,
+      dbName,
+    )
     await store._load()
     return store
   }
@@ -528,6 +598,39 @@ export class ChunkStore {
   }
 
   /**
+   * Keep a copy of `c` in `localStorage` now, for a page that is closing,
+   * unless one is already stored. Synchronous, and never throws.
+   */
+  stash(c: Chunk, dest: ChunkDestination): void {
+    const ls = this._stash
+    if (ls === null || this._index.has(c.idempotencyKey)) return
+    try {
+      const row: StashRow = {
+        key: c.idempotencyKey,
+        sessionId: c.sessionId,
+        instanceId: c.instanceId,
+        seq: c.seq,
+        createdWallMs: c.createdWallMs,
+        size: c.bytes.byteLength,
+        endpoint: dest.endpoint,
+        keyHash: dest.keyHash,
+        idempotencyKey: c.idempotencyKey,
+        level: c.level,
+        b64: toBase64(c.bytes),
+      }
+      const text = JSON.stringify(row)
+      const prior = this._stashed.has(row.key)
+      if (!prior && this._stashChars + text.length > STASH_MAX_CHARS) return
+      ls.setItem(this._stashPrefix + row.key, text)
+      if (!prior) this._stashChars += text.length
+      this._stashed.add(row.key)
+    } catch (err) {
+      this._writeFailures += 1
+      this._onError?.(err)
+    }
+  }
+
+  /**
    * The stored bodies bound for `dest`, as index rows — oldest first, no
    * bodies, and synchronous, because the rows are already in memory.
    *
@@ -562,6 +665,7 @@ export class ChunkStore {
    * so an upload confirmed by ingest deletes exactly what it sent.
    */
   async delete(key: string): Promise<void> {
+    this._unstash(key)
     const e = this._index.get(key)
     try {
       await this._backend.remove(key)
@@ -629,6 +733,7 @@ export class ChunkStore {
     } catch (err) {
       this._onError?.(err)
     }
+    await this._adoptStash()
     try {
       const holds = (await this._backend.loadHolds?.()) ?? []
       for (const h of holds) {
@@ -644,6 +749,80 @@ export class ChunkStore {
     this._evictTo(this._quota)
   }
 
+  /**
+   * Move the bodies closing page loads left in `localStorage` into the
+   * backend. A row stays while the backend keeps memory only.
+   */
+  private async _adoptStash(): Promise<void> {
+    const ls = this._stash
+    if (ls === null) return
+    const keys: string[] = []
+    try {
+      for (let i = 0; i < ls.length; i++) {
+        const k = ls.key(i)
+        if (k?.startsWith(this._stashPrefix) === true) keys.push(k)
+      }
+    } catch (err) {
+      this._onError?.(err)
+      return
+    }
+    for (const k of keys) {
+      try {
+        const text = ls.getItem(k)
+        if (text === null) continue
+        let r: Partial<StashRow> | null = null
+        let bytes: Uint8Array | null = null
+        try {
+          r = JSON.parse(text) as Partial<StashRow>
+          if (typeof r.key === 'string' && typeof r.b64 === 'string') bytes = fromBase64(r.b64)
+        } catch (err) {
+          this._onError?.(err)
+        }
+        if (r === null || bytes === null || typeof r.key !== 'string') {
+          ls.removeItem(k)
+          continue
+        }
+        const entry: ChunkIndexEntry = {
+          key: r.key,
+          sessionId: r.sessionId ?? '',
+          instanceId: r.instanceId ?? '',
+          seq: r.seq ?? 0,
+          createdWallMs: r.createdWallMs ?? 0,
+          size: bytes.byteLength,
+          endpoint: r.endpoint ?? '',
+          keyHash: r.keyHash ?? '',
+        }
+        if (!this._index.has(entry.key)) {
+          await this._backend.put(entry, {
+            sessionId: entry.sessionId,
+            instanceId: entry.instanceId,
+            seq: entry.seq,
+            idempotencyKey: r.idempotencyKey ?? r.key,
+            createdWallMs: entry.createdWallMs,
+            bytes,
+            level: r.level ?? 'baseline',
+            attempts: 0,
+          })
+          this._index.set(entry.key, entry)
+          this._bytes += entry.size
+        }
+        if (this._backend.durable) ls.removeItem(k)
+        else this._stashed.add(entry.key)
+      } catch (err) {
+        this._onError?.(err)
+      }
+    }
+  }
+
+  private _unstash(key: string): void {
+    if (!this._stashed.delete(key)) return
+    try {
+      this._stash?.removeItem(this._stashPrefix + key)
+    } catch (err) {
+      this._onError?.(err)
+    }
+  }
+
   /** FIFO: oldest `createdWallMs` first, ties broken by sequence. */
   private _evictTo(target: number, keep?: string): void {
     if (this._bytes <= target) return
@@ -656,6 +835,7 @@ export class ChunkStore {
       this._index.delete(e.key)
       this._bytes -= e.size
       this._evictedFifo += 1
+      this._unstash(e.key)
       void this._backend.remove(e.key).catch((err: unknown) => this._onError?.(err))
     }
   }
